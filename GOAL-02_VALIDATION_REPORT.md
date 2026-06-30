@@ -1,6 +1,6 @@
 # GOAL-02 Validation Report
 
-Status: `LOCAL_VALIDATION_PASSED_POSTGRES_SQL_GATE_AUTHORED`
+Status: `BLOCKED_PENDING_POSTGRES_RUNTIME_OR_USER_ACCEPTANCE`
 
 This report records only checks that are safe for GOAL-02.
 
@@ -116,6 +116,19 @@ The continuation audit re-ran the executable local checks and inspected whether 
 - PostgreSQL gate dry run with a placeholder executable: exit code 0; GOAL-01 schema, GOAL-02 schema and GOAL-02 verification SQL paths resolved in order.
 
 Conclusion: the authored PostgreSQL DDL, acceptance SQL and no-Docker runner are present, but PostgreSQL runtime execution is still not available on the current machine.
+
+## Blocked Audit - 2026-07-01
+
+The same completion blocker repeated after the original GOAL-02 implementation turn and the next continuation turn: GOAL-02 local validation passes, but the current machine still has no no-Docker PostgreSQL runtime available for the required PostgreSQL execution gate.
+
+Additional checks:
+
+- `python scripts/core/state/verify_goal_02.py`: exit code 0; local GOAL-02 verifier passed again.
+- `Get-Command psql,postgres,pg_ctl,pg_tmp,initdb -ErrorAction SilentlyContinue`: no command found.
+- PostgreSQL connection environment variables checked: no `DATABASE_URL`, `PGHOST`, `PGPORT`, `PGUSER` or `PGDATABASE` was present.
+- Local command discovery found `winget`, `node` and `npm`, but no project-local PostgreSQL runtime. A global PostgreSQL installation was not performed silently because that is an external environment change, not a GOAL-02 code gate.
+
+Conclusion: GOAL-02 cannot be marked complete from current machine state. Completion requires a successful no-Docker PostgreSQL runtime gate or explicit user acceptance that PostgreSQL runtime execution is deferred to the environment gate for GOAL-02.
 
 ## Review Loops
 
