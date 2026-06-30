@@ -95,6 +95,28 @@ This report records only checks that are safe for GOAL-02.
 - side_effects: none
 - conclusion: GOAL-02 remains within scope.
 
+## Continuation Audit - 2026-07-01
+
+The continuation audit re-ran the executable local checks and inspected whether a no-Docker PostgreSQL runtime was available on this machine.
+
+### Local Checks Re-run
+
+- `python scripts/core/state/verify_goal_02.py`: exit code 0; local GOAL-02 verifier passed.
+- `python -m py_compile scripts/core/state/__init__.py scripts/core/state/goal02_core.py scripts/core/state/verify_goal_02.py`: exit code 0.
+- `sqlite3 :memory: ".read scripts/core/persistence/goal01_schema.sqlite.sql" ".read scripts/core/persistence/goal02_schema.sqlite.sql" "PRAGMA foreign_key_check;"`: exit code 0; no foreign key errors.
+- Boundary search: exit code 0; matches remain limited to non-scope/checklist documentation text.
+
+### PostgreSQL Runtime Availability Check
+
+- `Get-Command psql,postgres,pg_ctl -ErrorAction SilentlyContinue`: no command found.
+- `where.exe psql`, `where.exe postgres`, `where.exe pg_ctl`: no command found.
+- Windows service search for PostgreSQL names/display names: no service found.
+- Common install roots checked: no PostgreSQL directory found under `C:\Program Files\PostgreSQL`, `C:\Program Files (x86)\PostgreSQL`, user Scoop apps or `%LOCALAPPDATA%\Programs`.
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/core/state/run_goal_02_postgres_gate.ps1`: exit code 2 with missing-`psql` message.
+- PostgreSQL gate dry run with a placeholder executable: exit code 0; GOAL-01 schema, GOAL-02 schema and GOAL-02 verification SQL paths resolved in order.
+
+Conclusion: the authored PostgreSQL DDL, acceptance SQL and no-Docker runner are present, but PostgreSQL runtime execution is still not available on the current machine.
+
 ## Review Loops
 
 ### Overbuild / New-State Check

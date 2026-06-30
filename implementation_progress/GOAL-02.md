@@ -33,15 +33,24 @@ Implement production/topic/claim/experiment/tactic state, Core Command Envelope,
 - Ran Python compile check: pass.
 - Ran GOAL-02 boundary scan: pass.
 - Created checkpoint commit `e42f958 Add GOAL-02 core state materializer gate`.
+- Re-ran the GOAL-02 continuation audit on 2026-07-01:
+  - Local GOAL-02 verifier: pass.
+  - SQLite schema/FK check: pass.
+  - Python compile check: pass.
+  - Boundary scan: pass.
+  - PostgreSQL no-Docker runner dry run: pass.
+  - PostgreSQL runtime gate: not run because no `psql`, `postgres`, `pg_ctl`, PostgreSQL service or common local PostgreSQL install was found.
 
 ## Pending Checkpoints
 
 - PostgreSQL runtime DDL plus acceptance SQL execution, if required for final GOAL-02 completion.
-- Decide whether GOAL-02 completion is proven or remains blocked by PostgreSQL runtime absence.
+- User acceptance that local SQLite validation plus authored PostgreSQL SQL gate is sufficient for this checkpoint, if PostgreSQL runtime execution remains deferred to the environment gate.
 
 ## Current Stop Point
 
 Local GOAL-02 Core State and Materializer gates pass; PostgreSQL runtime validation has a no-Docker SQL gate and runner, but still needs a PostgreSQL instance unless the user accepts deferral to the environment gate.
+
+GOAL-02 is not marked complete by Codex yet because the current machine cannot execute the PostgreSQL runtime gate and the user has not yet accepted a GOAL-02-specific PostgreSQL runtime deferral.
 
 ## GOAL-03 Allowed?
 
