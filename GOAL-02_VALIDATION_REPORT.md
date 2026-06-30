@@ -1,6 +1,6 @@
 # GOAL-02 Validation Report
 
-Status: `COMPLETE_POSTGRES_RUNTIME_DEFERRED_TO_ENV_GATE`
+Status: `COMPLETE_POSTGRESQL_RUNTIME_GATE_RESOLVED`
 
 This report records only checks that are safe for GOAL-02.
 
@@ -128,7 +128,7 @@ Additional checks:
 - PostgreSQL connection environment variables checked: no `DATABASE_URL`, `PGHOST`, `PGPORT`, `PGUSER` or `PGDATABASE` was present.
 - Local command discovery found `winget`, `node` and `npm`, but no project-local PostgreSQL runtime. A global PostgreSQL installation was not performed silently because that is an external environment change, not a GOAL-02 code gate.
 
-Conclusion at audit time: GOAL-02 could not be marked complete from machine state alone. Completion required either a successful no-Docker PostgreSQL runtime gate or explicit user acceptance that PostgreSQL runtime execution is deferred to the environment gate for GOAL-02. That acceptance is now recorded in the remaining runtime gap section below.
+Conclusion at audit time: GOAL-02 could not be marked complete from machine state alone. Completion required either a successful no-Docker PostgreSQL runtime gate or explicit user acceptance that PostgreSQL runtime execution is deferred to the environment gate for GOAL-02. That later acceptance has now been superseded by the successful PostgreSQL runtime gate recorded below.
 
 ## Review Loops
 
@@ -146,10 +146,30 @@ Conclusion at audit time: GOAL-02 could not be marked complete from machine stat
 - Rejected commands record rejected receipt/envelope/audit without mutating business state.
 - Injected materializer failure rolls back receipt, version, state and outbox changes.
 
-## Remaining Runtime Gap
+## PostgreSQL Runtime Gate - 2026-07-01
+
+POSTGRESQL_RUNTIME_GATE_RESOLVED
+
+- Docker container started: `creation-assistant-goal-postgres-gate`
+- Image: `postgres:16-alpine`
+- Database: `goal_gate`
+- User: `goal_gate`
+- Host port mapping: none
+- Volume: `creation-assistant-goal-postgres-gate-data` (removed after validation)
+- Container cleanup: stopped and removed after validation
+- Real credentials used: no
+- Production system started: no
+- Legacy SQLite data touched: no
+
+Runtime results:
+
+- Migration chain loaded in PostgreSQL: GOAL-01, GOAL-02 and GOAL-03 schemas passed.
+- `scripts/core/state/verify_goal_02_postgres.sql`: pass.
+- GOAL-02 PostgreSQL runtime supplement for command receipt idempotency, audit/outbox correlation and transaction rollback: pass.
+- No real failure remained for GOAL-02 PostgreSQL runtime gate.
+
+## Runtime Status
 
 Target PostgreSQL DDL exists at `scripts/core/persistence/goal02_schema.postgres.sql`; PostgreSQL acceptance SQL exists at `scripts/core/state/verify_goal_02_postgres.sql`; no-Docker runner exists at `scripts/core/state/run_goal_02_postgres_gate.ps1`.
 
-User explicitly accepted local SQLite validation plus authored PostgreSQL SQL gate as sufficient for GOAL-02 stage acceptance. PostgreSQL runtime execution is deferred to the environment gate.
-
-GOAL-02 is complete for this stage. The deferred environment gate must later run PostgreSQL GOAL-01 + GOAL-02 schemas plus `verify_goal_02_postgres.sql` against a disposable PostgreSQL instance.
+GOAL-02 is complete for this stage. PostgreSQL runtime execution has now passed in the isolated PostgreSQL test container.

@@ -2,7 +2,7 @@
 
 goal: GOAL-03 Scheduler, Job and Worker Lease
 
-status: `LOCAL_VALIDATION_PASSED_POSTGRES_SQL_GATE_AUTHORED`
+status: `COMPLETE_POSTGRESQL_RUNTIME_GATE_RESOLVED`
 
 source_commit: `e411ceb`
 
@@ -28,16 +28,20 @@ Implement Scheduler/Job/Worker lease, retry, recovery, cancel and outbox schedul
 - Ran Python compile check: pass.
 - Ran GOAL-03 PostgreSQL runner dry run: pass.
 - Confirmed GOAL-03 PostgreSQL runtime gate fails closed when `psql` is missing.
+- PostgreSQL runtime gate resolved on 2026-07-01 using isolated Docker PostgreSQL test container `creation-assistant-goal-postgres-gate`:
+  - Loaded GOAL-01, GOAL-02 and GOAL-03 PostgreSQL schemas as the current migration chain.
+  - Ran `verify_goal_03_postgres.sql`: pass.
+  - Ran GOAL-03 PostgreSQL runtime supplement for lease, heartbeat, retry, cancel, expired lease recovery and duplicate side-effect control: pass.
+  - Ran GOAL-03 PostgreSQL `FOR UPDATE SKIP LOCKED` concurrent claim test with two psql sessions: pass.
 
-## Pending Checkpoints
+## Resolved Checkpoints
 
-- PostgreSQL runtime DDL plus acceptance SQL execution, if required for final GOAL-03 completion.
-- User acceptance that local SQLite validation plus authored PostgreSQL SQL gate is sufficient for this checkpoint, if PostgreSQL runtime execution remains deferred to the environment gate.
+- PostgreSQL runtime DDL plus acceptance SQL execution: `POSTGRESQL_RUNTIME_GATE_RESOLVED`.
 
 ## Current Stop Point
 
-Local GOAL-03 Scheduler/Job/Worker gates pass; PostgreSQL runtime validation has a no-Docker SQL gate and runner, but still needs a PostgreSQL instance unless the user accepts deferral to the environment gate for GOAL-03.
+GOAL-03 stage is complete: local Scheduler/Job/Worker gates pass; PostgreSQL SQL gate and no-Docker runner are authored; PostgreSQL runtime execution passed in the isolated PostgreSQL test container.
 
 ## GOAL-04 Allowed?
 
-No.
+No. User explicitly paused all new feature development and this turn does not enter GOAL-04.

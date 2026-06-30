@@ -1,8 +1,8 @@
 # GOAL-01 Validation Report
 
-Status: `COMPLETE_POSTGRES_RUNTIME_DEFERRED_TO_ENV_GATE`
+Status: `COMPLETE_POSTGRESQL_RUNTIME_GATE_RESOLVED`
 
-This report records only checks that are safe for GOAL-01. PostgreSQL runtime execution is deferred to a later environment gate by explicit user acceptance of the local SQLite validation plus authored PostgreSQL SQL gate.
+This report records only checks that are safe for GOAL-01. PostgreSQL runtime execution has now passed in an isolated PostgreSQL test container.
 
 ## Acceptance Checklist
 
@@ -243,10 +243,32 @@ This report records only checks that are safe for GOAL-01. PostgreSQL runtime ex
 - Outbox and audit rows carry `correlation_id`; outbox can carry `causation_id`.
 - Fixture/replay/fault/FakeClock checks use the same `PersistenceStore` handler as the local GOAL-01 gate.
 
+## PostgreSQL Runtime Gate - 2026-07-01
+
+POSTGRESQL_RUNTIME_GATE_RESOLVED
+
+- Docker container started: `creation-assistant-goal-postgres-gate`
+- Image: `postgres:16-alpine`
+- Database: `goal_gate`
+- User: `goal_gate`
+- Host port mapping: none
+- Volume: `creation-assistant-goal-postgres-gate-data` (removed after validation)
+- Container cleanup: stopped and removed after validation
+- Real credentials used: no
+- Production system started: no
+- Legacy SQLite data touched: no
+
+Runtime results:
+
+- Migration chain loaded in PostgreSQL: GOAL-01, GOAL-02 and GOAL-03 schemas passed.
+- `scripts/core/persistence/verify_goal_01_postgres.sql`: pass.
+- GOAL-01 PostgreSQL transaction rollback supplement: pass.
+- No real failure remained for GOAL-01 PostgreSQL runtime gate.
+
 ## Stage Acceptance
 
 Target PostgreSQL DDL exists at `scripts/core/persistence/goal01_schema.postgres.sql`; PostgreSQL acceptance SQL exists at `scripts/core/persistence/verify_goal_01_postgres.sql`.
 
-The user explicitly accepted local SQLite validation plus authored PostgreSQL SQL gate as GOAL-01 stage acceptance. PostgreSQL runtime DDL plus acceptance SQL execution is deferred to the later environment gate.
+PostgreSQL runtime DDL plus acceptance SQL execution has now passed in the isolated PostgreSQL test container.
 
 Docker is not an acceptance prerequisite.

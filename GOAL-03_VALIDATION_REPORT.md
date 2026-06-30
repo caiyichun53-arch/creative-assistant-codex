@@ -1,6 +1,6 @@
 # GOAL-03 Validation Report
 
-Status: `LOCAL_VALIDATION_PASSED_POSTGRES_SQL_GATE_AUTHORED`
+Status: `COMPLETE_POSTGRESQL_RUNTIME_GATE_RESOLVED`
 
 This report records only checks that are safe for GOAL-03.
 
@@ -102,10 +102,35 @@ This report records only checks that are safe for GOAL-03.
 - Outbox dispatch jobs update linked outbox state only on terminal scheduler outcomes.
 - Injected enqueue failure rolls back command receipt and job insertion.
 
-## Remaining Runtime Gap
+## Authored PostgreSQL Gate
 
 Target PostgreSQL DDL exists at `scripts/core/persistence/goal03_schema.postgres.sql`; PostgreSQL acceptance SQL exists at `scripts/core/scheduler/verify_goal_03_postgres.sql`; no-Docker runner exists at `scripts/core/scheduler/run_goal_03_postgres_gate.ps1`.
 
-GOAL-03 should not be marked fully complete until one of these is true:
-- PostgreSQL GOAL-01 + GOAL-02 + GOAL-03 schemas plus `verify_goal_03_postgres.sql` are run against a disposable PostgreSQL instance and the relevant gates pass there.
-- The user accepts local SQLite validation plus authored PostgreSQL SQL gate as sufficient for this checkpoint and defers PostgreSQL runtime execution to the environment gate.
+## PostgreSQL Runtime Gate - 2026-07-01
+
+POSTGRESQL_RUNTIME_GATE_RESOLVED
+
+- Docker container started: `creation-assistant-goal-postgres-gate`
+- Image: `postgres:16-alpine`
+- Database: `goal_gate`
+- User: `goal_gate`
+- Host port mapping: none
+- Volume: `creation-assistant-goal-postgres-gate-data` (removed after validation)
+- Container cleanup: stopped and removed after validation
+- Real credentials used: no
+- Production system started: no
+- Legacy SQLite data touched: no
+
+Runtime results:
+
+- Migration chain loaded in PostgreSQL: GOAL-01, GOAL-02 and GOAL-03 schemas passed.
+- `scripts/core/scheduler/verify_goal_03_postgres.sql`: pass.
+- GOAL-03 PostgreSQL runtime supplement for lease, heartbeat, retry, cancel, expired lease recovery and duplicate side-effect control: pass.
+- GOAL-03 PostgreSQL `FOR UPDATE SKIP LOCKED` concurrent claim test with two psql sessions: pass.
+- No real failure remained for GOAL-03 PostgreSQL runtime gate.
+
+## Runtime Status
+
+Target PostgreSQL DDL exists at `scripts/core/persistence/goal03_schema.postgres.sql`; PostgreSQL acceptance SQL exists at `scripts/core/scheduler/verify_goal_03_postgres.sql`; no-Docker runner exists at `scripts/core/scheduler/run_goal_03_postgres_gate.ps1`.
+
+GOAL-03 is complete for this stage. GOAL-04 was not started.

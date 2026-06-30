@@ -2,7 +2,7 @@
 
 goal: GOAL-02 Core State and Materializer
 
-status: `COMPLETE_POSTGRES_RUNTIME_DEFERRED_TO_ENV_GATE`
+status: `COMPLETE_POSTGRESQL_RUNTIME_GATE_RESOLVED`
 
 source_commit: `3461a92`
 
@@ -46,14 +46,18 @@ Implement production/topic/claim/experiment/tactic state, Core Command Envelope,
   - No `DATABASE_URL` or PostgreSQL connection environment variables were present.
   - `winget` is present, but installing a global PostgreSQL runtime is an external environment change and was not performed silently.
 - User explicitly accepted local SQLite validation plus authored PostgreSQL SQL gate as GOAL-02 stage acceptance; PostgreSQL runtime execution is deferred to the environment gate.
+- PostgreSQL runtime gate resolved on 2026-07-01 using isolated Docker PostgreSQL test container `creation-assistant-goal-postgres-gate`:
+  - Loaded GOAL-01, GOAL-02 and GOAL-03 PostgreSQL schemas as the current migration chain.
+  - Ran `verify_goal_02_postgres.sql`: pass.
+  - Ran GOAL-02 PostgreSQL runtime supplement for command receipt idempotency, audit/outbox correlation and transaction rollback: pass.
 
-## Deferred Checkpoints
+## Resolved Checkpoints
 
-- PostgreSQL runtime DDL plus acceptance SQL execution is deferred to the later environment gate.
+- PostgreSQL runtime DDL plus acceptance SQL execution: `POSTGRESQL_RUNTIME_GATE_RESOLVED`.
 
 ## Current Stop Point
 
-GOAL-02 stage is accepted complete: local SQLite Core State and Materializer gates pass; PostgreSQL SQL gate and no-Docker runner are authored; PostgreSQL runtime execution is deferred to the environment gate by user decision.
+GOAL-02 stage is complete: local SQLite Core State and Materializer gates pass; PostgreSQL SQL gate and no-Docker runner are authored; PostgreSQL runtime execution passed in the isolated PostgreSQL test container.
 
 ## GOAL-03 Allowed?
 

@@ -2,7 +2,7 @@
 
 goal: GOAL-01 Persistence and Traceability
 
-status: `COMPLETE_POSTGRES_RUNTIME_DEFERRED_TO_ENV_GATE`
+status: `COMPLETE_POSTGRESQL_RUNTIME_GATE_RESOLVED`
 
 source_commit: `a8787a439fd281b2d8cec7a7ffe2606426bebab4`
 
@@ -42,15 +42,19 @@ Implement UUIDv7, root/version model, hashes, references, audit, command receipt
 - Refreshed two review loops and cross-chapter ownership checks after expanded coverage.
 - Confirmed there are no temporary audit/runtime files to clean.
 - User explicitly accepted local SQLite validation plus authored PostgreSQL SQL gate as GOAL-01 stage acceptance; PostgreSQL runtime execution is deferred to an environment gate.
+- PostgreSQL runtime gate resolved on 2026-07-01 using isolated Docker PostgreSQL test container `creation-assistant-goal-postgres-gate`:
+  - Loaded `goal01_schema.postgres.sql`, `goal02_schema.postgres.sql` and `goal03_schema.postgres.sql` as the current migration chain.
+  - Ran `verify_goal_01_postgres.sql`: pass.
+  - Ran GOAL-01 PostgreSQL transaction rollback supplement: pass.
 
-## Pending Checkpoints
+## Resolved Checkpoints
 
-- PostgreSQL runtime DDL plus acceptance SQL execution is deferred to the later environment gate.
-- GOAL-02 remains blocked until the user explicitly starts it.
+- PostgreSQL runtime DDL plus acceptance SQL execution: `POSTGRESQL_RUNTIME_GATE_RESOLVED`.
+- Later GOAL-02 and GOAL-03 PostgreSQL runtime gates were also resolved in the same isolated PostgreSQL test container.
 
 ## Current Stop Point
 
-GOAL-01 stage is accepted complete: local SQLite persistence, traceability, fixture/replay/fault/FakeClock gates pass; PostgreSQL SQL gate and no-Docker runner are authored; PostgreSQL runtime execution is deferred to the environment gate by user decision.
+GOAL-01 stage is complete: local SQLite persistence, traceability, fixture/replay/fault/FakeClock gates pass; PostgreSQL SQL gate and no-Docker runner are authored; PostgreSQL runtime execution passed in the isolated PostgreSQL test container.
 
 ## GOAL-02 Allowed?
 
