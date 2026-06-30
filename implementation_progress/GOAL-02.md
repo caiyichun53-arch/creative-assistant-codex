@@ -32,12 +32,12 @@ Implement production/topic/claim/experiment/tactic state, Core Command Envelope,
 - Ran SQLite schema/FK check: pass.
 - Ran Python compile check: pass.
 - Ran GOAL-02 boundary scan: pass.
+- Created checkpoint commit `e42f958 Add GOAL-02 core state materializer gate`.
 
 ## Pending Checkpoints
 
 - PostgreSQL runtime DDL plus acceptance SQL execution, if required for final GOAL-02 completion.
 - Decide whether GOAL-02 completion is proven or remains blocked by PostgreSQL runtime absence.
-- Checkpoint commit.
 
 ## Current Stop Point
 
