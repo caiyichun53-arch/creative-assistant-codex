@@ -42,4 +42,4 @@ Current validation mode:
 - Docker is not a project dependency and is not part of the GOAL-01 route.
 - PostgreSQL DDL is authored as the target contract; `verify_goal_01_postgres.sql` is the no-Docker PostgreSQL acceptance script for any disposable PostgreSQL instance.
 - `run_goal_01_postgres_gate.ps1` is the no-Docker runner for the PostgreSQL gate; it fails with an environment-gap code when `psql` or `DATABASE_URL` is absent.
-- The SQLite schema remains the executable local proof when no PostgreSQL instance is available.
+- The SQLite schema is accepted as the executable local proof for this stage; PostgreSQL runtime execution is deferred to the environment gate.

@@ -1,8 +1,8 @@
 # GOAL-01 Validation Report
 
-Status: `LOCAL_VALIDATION_PASSED_POSTGRES_SQL_GATE_AUTHORED`
+Status: `COMPLETE_POSTGRES_RUNTIME_DEFERRED_TO_ENV_GATE`
 
-This report records only checks that are safe for GOAL-01. It must not claim GOAL-01 completion until all acceptance checks have passing command evidence.
+This report records only checks that are safe for GOAL-01. PostgreSQL runtime execution is deferred to a later environment gate by explicit user acceptance of the local SQLite validation plus authored PostgreSQL SQL gate.
 
 ## Acceptance Checklist
 
@@ -243,12 +243,10 @@ This report records only checks that are safe for GOAL-01. It must not claim GOA
 - Outbox and audit rows carry `correlation_id`; outbox can carry `causation_id`.
 - Fixture/replay/fault/FakeClock checks use the same `PersistenceStore` handler as the local GOAL-01 gate.
 
-## Remaining Runtime Gap
+## Stage Acceptance
 
 Target PostgreSQL DDL exists at `scripts/core/persistence/goal01_schema.postgres.sql`; PostgreSQL acceptance SQL exists at `scripts/core/persistence/verify_goal_01_postgres.sql`.
 
-GOAL-01 should not be marked fully complete until one of these is true:
-- PostgreSQL DDL plus `verify_goal_01_postgres.sql` are run against a disposable PostgreSQL instance and the same acceptance gates pass there.
-- The user accepts the local SQLite validation as sufficient for this checkpoint and defers PostgreSQL execution to the later environment gate.
+The user explicitly accepted local SQLite validation plus authored PostgreSQL SQL gate as GOAL-01 stage acceptance. PostgreSQL runtime DDL plus acceptance SQL execution is deferred to the later environment gate.
 
 Docker is not an acceptance prerequisite.
