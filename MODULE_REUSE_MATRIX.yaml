@@ -1,0 +1,360 @@
+matrix_version: GOAL-00-proposed-v1
+design_baseline: V0.6.2
+repository: caiyichun53-arch/creative-assistant-codex
+source_commit: a8787a439fd281b2d8cec7a7ffe2606426bebab4
+audit_branch: audit/goal-00-v0.6.2
+approval_status: proposed
+formal_goal_status: blocked_for_runtime_validation_and_user_approval
+decision_counts:
+  keep: 2
+  adapt: 15
+  wrap: 4
+  replace: 8
+modules:
+  - module_id: repository_governance
+    path: "README.md; AGENTS.md; CLAUDE.md; BUILD_PLAN.md"
+    current_responsibility: "Defines the legacy Codex/Claude-centred architecture, local runtime and build history."
+    decision: adapt
+    reusable_parts: ["implemented-feature inventory", "deterministic-vs-semantic separation"]
+    conflicts: ["SQLite/direct Feishu/Codex production authority contradict V0.6.2"]
+    migration_actions: ["archive as legacy evidence", "replace active authority with V0.6.2 governance"]
+    dependencies: ["V0.6.2 governance", "Goal resume protocol"]
+    validation: "No active repository instruction may override Hermes Host, Core/Materializer or Codex development-only boundaries."
+    risk_level: medium
+    design_refs: ["V0.6.2 priority", "GOAL-00 migration control"]
+
+  - module_id: dependency_and_deployment
+    path: ".env.example; config/settings.example.yaml; BAT/VBS; repository root"
+    current_responsibility: "Describes a Windows-local runtime with ignored vendor/data/vault/settings and machine-specific CLIs/models."
+    decision: replace
+    reusable_parts: ["configuration concepts", "operational command inventory"]
+    conflicts: ["no dependency lock", "no reproducible Docker/Compose/WSL2 deployment", "hidden machine paths"]
+    migration_actions: ["create locked reproducible packaging", "add target deployment profiles and health checks"]
+    dependencies: ["PostgreSQL", "workers", "ModelGateway"]
+    validation: "A clean machine can install and start the core skeleton without hidden local assets."
+    risk_level: high
+    design_refs: ["deployment baseline", "Clean-room requirement"]
+
+  - module_id: legacy_sqlite_schema
+    path: "scripts/db/schema.sql; scripts/db/init_db.py; scripts/db/migrate_*.py; scripts/db/seed_mvp.py"
+    current_responsibility: "Creates/evolves SQLite tables for accounts, videos, topics, drafts, comments, learning material and tracking."
+    decision: adapt
+    reusable_parts: ["field semantics", "legacy relations and IDs", "migration evidence"]
+    conflicts: ["PostgreSQL required", "no immutable root/version model", "ad hoc migrations"]
+    migration_actions: ["keep SQLite read-only as source", "map every table/column before GOAL-01", "build new Alembic history without rewriting old history"]
+    dependencies: ["GOAL-01 persistence", "data export"]
+    validation: "Every legacy row is reconciled by source ID/hash and the SQLite source remains unchanged."
+    risk_level: high
+    design_refs: ["GOAL-01 Persistence and Traceability", "legacy migration control"]
+
+  - module_id: core_api_materializer
+    path: "distributed SQL in scripts/**/*.py; no dedicated Core/Materializer"
+    current_responsibility: "Collectors, listeners, topic/content scripts and semantic jobs directly mutate business state."
+    decision: replace
+    reusable_parts: ["pure calculations", "legacy SQL as migration specification"]
+    conflicts: ["no Core Command Envelope", "no Materializer transaction boundary", "adapters/skills write state"]
+    migration_actions: ["implement Core commands and Materializer", "remove all direct state writes outside Core"]
+    dependencies: ["PostgreSQL", "audit/outbox", "GOAL-02 states"]
+    validation: "Dependency tests forbid adapters, bindings and Portable Skills from persistence access."
+    risk_level: high
+    design_refs: ["Core/Materializer ownership", "GOAL-02"]
+
+  - module_id: domain_account_model
+    path: "accounts/competitor_accounts schema; config/accounts/**; config/domains/**; scripts/setup/create_domain_account.py"
+    current_responsibility: "Initializes account/domain/persona assets and stores one domain directly on account rows."
+    decision: adapt
+    reusable_parts: ["account identity", "domain configuration", "status and persona concepts"]
+    conflicts: ["no account_domain_binding", "hardcoded 张芝士/泛科普 paths", "unversioned real configs"]
+    migration_actions: ["introduce account-domain bindings", "version domain and production policy", "remove hardcoded names"]
+    dependencies: ["persistence", "domain registry"]
+    validation: "A second domain/account requires configuration and bindings only, not core code/schema edits."
+    risk_level: medium
+    design_refs: ["multi-domain configuration", "account_domain_binding"]
+
+  - module_id: video_snapshot_dp_time
+    path: "scripts/collect/crawl_competitors.py; competitor_videos; video_checks; tracking"
+    current_responsibility: "Stores competitor videos/current metrics/daily checks and placeholder self-owned day-offset tracking."
+    decision: adapt
+    reusable_parts: ["platform item IDs", "raw payloads", "snapshot and age-hours fields"]
+    conflicts: ["no historical/transition/formal-new classes", "no D0-D7 qualification", "no exact P+ target/actual model"]
+    migration_actions: ["map to video roots and immutable snapshots", "implement D/P schedules and eligibility", "retain uncertainty"]
+    dependencies: ["collector adapters", "jobs", "persistence"]
+    validation: "Missed observations do not shift labels; late discovery cannot enter formal D baseline; P+ target/actual ages are retained."
+    risk_level: high
+    design_refs: ["D0-D7 model", "P+ model"]
+
+  - module_id: mediacrawler_adapter
+    path: "scripts/collect/common.py; crawl_competitors.py; reverse/fetch_comments.py; ignored vendor/MediaCrawler"
+    current_responsibility: "Invokes locally modified MediaCrawler, parses JSONL, fetches videos/media/comments and mixes runtime/state effects."
+    decision: wrap
+    reusable_parts: ["JSONL mapping", "fresh-link fetch", "browser locking and raw archive"]
+    conflicts: ["vendor revision/patches absent", "Windows and SQLite coupling", "no capability contract"]
+    migration_actions: ["pin vendor and patches", "implement CollectorPort/MediaCrawlerAdapter", "remove DB/state writes"]
+    dependencies: ["MediaCrawler", "CollectorPort", "Core ingestion"]
+    validation: "Fixture replay gives identical normalized DTOs and the adapter imports no persistence layer."
+    risk_level: high
+    design_refs: ["CollectorAdapter boundary", "GOAL-04"]
+
+  - module_id: netease_adapter
+    path: "scripts/music/collect_netease.py; music_* tables"
+    current_responsibility: "Collects NetEase track/comment data and writes SQLite, files and Obsidian."
+    decision: wrap
+    reusable_parts: ["request/normalization logic", "track/comment mapping", "rate limiting"]
+    conflicts: ["collection, persistence and projection are coupled"]
+    migration_actions: ["extract NetEaseMusicCollectorAdapter", "return raw normalized DTOs only"]
+    dependencies: ["CollectorPort", "Core ingestion", "Materializer"]
+    validation: "Replay validates mapping/deduplication; adapter has no DB or Obsidian imports."
+    risk_level: medium
+    design_refs: ["independent NetEase adapter", "GOAL-04"]
+
+  - module_id: asr_pipeline
+    path: "tools/asr/**; reverse preparation paths"
+    current_responsibility: "Downloads media, runs local ASR, checks transcript quality and writes hit paths/status."
+    decision: wrap
+    reusable_parts: ["local ASR execution", "audio preparation", "quality checks"]
+    conflicts: ["Windows private venv/model paths", "result and state writes coupled", "no immutable transcript envelope"]
+    migration_actions: ["implement ASRPort", "return artifact plus model/parameter/hash metadata", "persist through Core"]
+    dependencies: ["ASR runtime", "file assets", "jobs"]
+    validation: "Fixture audio produces traceable raw/clean transcript revisions without overwriting prior results."
+    risk_level: medium
+    design_refs: ["ASR versioning", "GOAL-04"]
+
+  - module_id: external_language_collectors
+    path: "scripts/language_fuel/collect_mediacrawler.py; scripts/language_fuel/douban/**; probe_platforms.py"
+    current_responsibility: "Collects target-specific language material and mixes acquisition, SQLite and Obsidian output."
+    decision: wrap
+    reusable_parts: ["target-required policies", "platform parsing", "probe utilities"]
+    conflicts: ["no common acquisition port", "must not become formal research provider implicitly"]
+    migration_actions: ["wrap by platform ports", "keep formal research and video/language collection registries separate"]
+    dependencies: ["raw asset store", "Core ingestion", "Materializer"]
+    validation: "Per-platform replay passes and formal research cannot call these collectors."
+    risk_level: medium
+    design_refs: ["formal research/video boundary", "adapter isolation"]
+
+  - module_id: comments_storage
+    path: "scripts/reverse/fetch_comments.py; hit_comments; language_fuel_comments"
+    current_responsibility: "Fetches, filters, stores and normalizes selected comments for analysis and language material."
+    decision: adapt
+    reusable_parts: ["source IDs", "raw/selected layers", "field normalization"]
+    conflicts: ["no early/final sample revision", "policy/version/hash not frozen", "direct writes"]
+    migration_actions: ["separate raw ingestion from sample selection", "version sample policy and basis", "route writes through Core"]
+    dependencies: ["collector adapter", "persistence", "experience pipeline"]
+    validation: "Fixed replay plus policy version yields deterministic selected comment IDs/order."
+    risk_level: medium
+    design_refs: ["dual-stage comments", "standard sample package"]
+
+  - module_id: comment_noise_filter
+    path: "scripts/reverse/comment_filter.py"
+    current_responsibility: "Pure deterministic filtering of obvious spam, ads, emoji-only, repetition and very short comments."
+    decision: keep
+    reusable_parts: ["pure filter", "no LLM", "deterministic rules"]
+    conflicts: []
+    migration_actions: ["retain as pure utility", "add golden fixtures and policy version"]
+    dependencies: []
+    validation: "Golden fixtures reproduce current keep/reject outcomes with no I/O."
+    risk_level: low
+    design_refs: ["deterministic layer", "comment sampling"]
+
+  - module_id: baseline_candidate_analysis
+    path: "scripts/analyze/judge_hits.py; baselines; hits; daily candidate logic"
+    current_responsibility: "Computes median/P90, promotes high-like videos and feeds candidate/topic flow."
+    decision: adapt
+    reusable_parts: ["median/P90 helpers", "account-relative comparison", "configurable thresholds"]
+    conflicts: ["not the mature-history/formal-D/cold-start model", "no per-D early decision", "direct state writes"]
+    migration_actions: ["separate baseline families", "freeze baseline snapshots/basis refs", "reuse only pure calculations"]
+    dependencies: ["D/P snapshots", "Core state", "versioned config"]
+    validation: "Fixtures cover insufficient history, rough D7, formal 20-video baseline, late discovery and early D candidates."
+    risk_level: high
+    design_refs: ["baseline system", "candidate qualification"]
+
+  - module_id: clustering_similarity
+    path: "scripts/analyze/cluster_hits.py"
+    current_responsibility: "Groups same-topic hits using local embeddings and chooses representatives/reverse priority."
+    decision: adapt
+    reusable_parts: ["clustering workflow", "representative selection", "duplicate-analysis avoidance"]
+    conflicts: ["model/config/input trace incomplete", "writes mutable hit rows"]
+    migration_actions: ["freeze model/config/input set", "store versioned clustering runs/relations", "use Core writes"]
+    dependencies: ["model artifact", "persistence"]
+    validation: "Frozen inputs/model/config reproduce relations and representatives."
+    risk_level: medium
+    design_refs: ["content-cluster evidence dedupe", "model traceability"]
+
+  - module_id: language_fuel_atoms
+    path: "scripts/language_fuel/backfill_comments.py; extract_hit_comments.py; store_atoms.py; select_for_topic.py; related tables"
+    current_responsibility: "Normalizes human-language material, proposes evidence-linked atoms/insights and retrieves small packs."
+    decision: adapt
+    reusable_parts: ["raw/source separation", "evidence pointers", "candidate status and small retrieval"]
+    conflicts: ["candidate/published governance incomplete", "direct DB/Obsidian writes", "weak revision ownership"]
+    migration_actions: ["map to candidate evidence/experience/preference objects", "enforce reviewed/published/current gates"]
+    dependencies: ["learning governance", "persistence", "Portable Skills"]
+    validation: "No candidate becomes current without gate; each atom resolves to immutable source text and extraction run."
+    risk_level: medium
+    design_refs: ["four-layer learning governance", "content preference revision"]
+
+  - module_id: structured_research_collector
+    path: ".agents/skills/research-collector/**"
+    current_responsibility: "Builds collection plans, fetches web evidence and validates structured research packs/patches."
+    decision: adapt
+    reusable_parts: ["structured contracts", "evidence packs", "validators"]
+    conflicts: ["not registered SearchProvider/Fetcher", "no provider snapshot/run envelope", "agent-side persistence assumptions"]
+    migration_actions: ["extract SearchProvider/Fetcher ports", "retain contracts as Portable Skill schemas", "persist via Materializer"]
+    dependencies: ["formal research ports", "Runner", "ModelGateway"]
+    validation: "Stub/replay/live use the same validator; outputs have resolvable evidence refs and no video/ASR/comment inputs."
+    risk_level: medium
+    design_refs: ["formal research ports", "TECH-004"]
+
+  - module_id: legacy_research
+    path: "scripts/research/research.py; .claude/skills/研究/SKILL.md"
+    current_responsibility: "Reads topic/current transcript, invokes CLI WebSearch and overwrites research.md."
+    decision: replace
+    reusable_parts: ["separate research artifact idea", "original/source-derived branch intent"]
+    conflicts: ["formal research mixes competitor transcript", "no provider/fetch snapshots", "no evidence/claim trace"]
+    migration_actions: ["retire from formal production path", "replace with structured research through Runner/ModelGateway"]
+    dependencies: ["structured research", "Core/Materializer"]
+    validation: "Formal research rejects video-platform, ASR and comment inputs and resolves every claim to evidence snapshots."
+    risk_level: high
+    design_refs: ["formal research boundary", "claim/evidence traceability"]
+
+  - module_id: topic_content_planning
+    path: "scripts/topics/**; .agents/skills/topic-planner/**; outline-planner/**; prepare_topic.py; dispatch templates"
+    current_responsibility: "Creates/ranks/selects topics and assembles briefs, research and writing task contracts."
+    decision: adapt
+    reusable_parts: ["multiple source types", "original/spinoff split", "full vs writer-safe packs", "structured validators"]
+    conflicts: ["mutable legacy statuses/files", "current-row refs", "semantic subprocess and direct DB coupling"]
+    migration_actions: ["map to immutable topic/research/plan revisions", "build frozen Input Assembly and Binding Manifest"]
+    dependencies: ["Core topic state", "Portable Skills", "evidence refs"]
+    validation: "Every topic/plan resolves to exact source/config versions and rebuilds to the same manifest/hash."
+    risk_level: high
+    design_refs: ["topic state model", "Core input preparation"]
+
+  - module_id: draft_review_versioning
+    path: "scripts/content/save_draft.py; diff_draft.py; creation-* skills; drafts/diffs schema"
+    current_responsibility: "Writes/registers drafts, reviews/polishes content and captures AI-human edits."
+    decision: adapt
+    reusable_parts: ["draft version intent", "human edit pairs", "separate review/diagnose roles"]
+    conflicts: ["draft_v1 overwrite", "approved/published conflation", "missing immutable provenance envelope"]
+    migration_actions: ["create immutable draft/review/approved/published revisions", "store human edits as new revisions/corrections"]
+    dependencies: ["GOAL-01", "content Skills", "publication state"]
+    validation: "Overwrite is rejected; approved and actual published artifacts remain distinct and fully traceable."
+    risk_level: high
+    design_refs: ["immutable history", "approved vs published separation"]
+
+  - module_id: banned_word_checker
+    path: "scripts/content/check_banned.py; config/banned_words.yaml"
+    current_responsibility: "Deterministic post-generation RED/WARN/HINT scan with exit-code gate."
+    decision: keep
+    reusable_parts: ["pure scan", "config severity", "line-level findings"]
+    conflicts: []
+    migration_actions: ["retain behind validator contract", "version/hash the configuration", "add regression fixtures"]
+    dependencies: ["versioned config"]
+    validation: "Golden fixtures cover all severities and production validation calls the same implementation."
+    risk_level: low
+    design_refs: ["deterministic validation", "same production handler"]
+
+  - module_id: experience_evidence_pplus
+    path: "scripts/reverse/**; scripts/humanize/**; language insights/atoms; tracking; vault methods/examples"
+    current_responsibility: "Builds DNA/reduce outputs, examples, human-language bases and partial feedback/tracking material."
+    decision: adapt
+    reusable_parts: ["map/reduce split", "single-source trace intent", "examples and human edit evidence", "metric fields"]
+    conflicts: ["direct formal vault publication", "no candidate/review/published gate", "P+ loop and experiment model incomplete"]
+    migration_actions: ["separate observation/candidate/reviewed/published layers", "import legacy outputs as candidates", "implement exact P+ basis"]
+    dependencies: ["learning governance", "ModelGateway", "Core/Jobs"]
+    validation: "Automated learning creates candidates only; P+ observations link exact published artifacts and basis revisions."
+    risk_level: high
+    design_refs: ["R07 learning governance", "P+ validation loop"]
+
+  - module_id: portable_skills
+    path: ".agents/skills/**; selected .claude/skills/**"
+    current_responsibility: "Defines atomic workflow/content skills, some with validators and some with host paths, DB tables and side effects."
+    decision: adapt
+    reusable_parts: ["atomic decomposition", "trigger boundaries", "schemas/validators/examples"]
+    conflicts: ["incomplete Portable Skill package contract", "host IDs/paths/state codes leak in", "some skills write state/tools"]
+    migration_actions: ["classify portable/binding/dev/legacy", "add skill.yaml and schemas/tests", "remove DB/tool side effects"]
+    dependencies: ["Runner", "Host Binding", "ModelGateway"]
+    validation: "Each portable package runs in stub/replay/live without production DB, host UUIDs or hidden local files."
+    risk_level: high
+    design_refs: ["TECH-004 Portable Skill Package", "five-layer chain"]
+
+  - module_id: model_gateway
+    path: "scripts/llm/call.py; config/settings.example.yaml llm"
+    current_responsibility: "Maps node names to models but actually launches claude -p and records only coarse cooldown state."
+    decision: replace
+    reusable_parts: ["route names", "timeout/session-limit concepts", "prompt lookup idea"]
+    conflicts: ["provider config and implementation disagree", "CLI subscription is production path", "no Run Envelope"]
+    migration_actions: ["implement ModelPort/ModelGateway", "record model/prompt/skill/binding/config/input/output/usage/cost/timing"]
+    dependencies: ["Runner", "versioned config", "audit storage"]
+    validation: "Every semantic run emits the complete versioned Run Envelope and normalized errors."
+    risk_level: high
+    design_refs: ["Runner and Model Port", "Run Envelope"]
+
+  - module_id: feishu_hermes_host
+    path: "scripts/feishu/client.py; listener.py; push.py; no Hermes/OpenClaw binding"
+    current_responsibility: "Directly receives Feishu commands, mutates SQLite, launches scripts and pushes messages/cards."
+    decision: replace
+    reusable_parts: ["command vocabulary", "card/view formatting"]
+    conflicts: ["Feishu replaces Hermes", "host directly writes state", "no command receipt/idempotency/binding manifest"]
+    migration_actions: ["retire direct listener from production", "implement Hermes Host Binding and Core command envelopes", "leave OpenClaw fallback only"]
+    dependencies: ["Hermes", "Core API", "Outbox"]
+    validation: "Feishu cannot mutate state directly; duplicate delivery is idempotent; scheduled core work survives Hermes outage."
+    risk_level: high
+    design_refs: ["Hermes production Host", "Host Binding"]
+
+  - module_id: codex_claude_runtime
+    path: "AGENTS.md; .codex/agents/**; .claude/**; creation-workflow"
+    current_responsibility: "Uses Codex/Claude agents as content cockpit, workflow router and semantic production executor."
+    decision: replace
+    reusable_parts: ["development prompts", "review heuristics", "human checkpoints"]
+    conflicts: ["Codex is development-only", "parallel agent runtime duplicates Host/Core/Job/Skill"]
+    migration_actions: ["retain selected prompts as candidate assets", "move production execution to Hermes/Core/Runner", "keep Codex for development/audit only"]
+    dependencies: ["Hermes", "Portable Skills", "ModelGateway"]
+    validation: "Production end-to-end works with no Codex/Claude development session or multi-agent team."
+    risk_level: high
+    design_refs: ["Codex development-only", "no independent Agent Runtime"]
+
+  - module_id: scheduler_job_worker
+    path: "scripts/run_daily.py; tools/asr/reverse_prep_worker.py; Task Scheduler; BAT/VBS"
+    current_responsibility: "Runs fixed subprocess chains and fire-and-forget background work with text logs."
+    decision: replace
+    reusable_parts: ["step order", "minimum command knowledge", "fail-fast notification intent"]
+    conflicts: ["no durable Job/attempt", "no lease/heartbeat/retry/cancel/idempotency", "host/task scheduler dependence"]
+    migration_actions: ["implement PostgreSQL Job/attempt and FakeClock scheduler", "wrap legacy operations as idempotent migration handlers"]
+    dependencies: ["PostgreSQL", "Core handlers", "Outbox"]
+    validation: "Crash/restart/fault tests show no duplicate side effects and scheduler runs without Hermes online."
+    risk_level: high
+    design_refs: ["GOAL-03", "Hermes Cron restriction"]
+
+  - module_id: obsidian_materializer
+    path: "scripts/language_fuel/obsidian.py; direct vault writes"
+    current_responsibility: "Writes raw material, examples and methods directly into a local Obsidian vault."
+    decision: adapt
+    reusable_parts: ["readable formats", "frontmatter", "source links"]
+    conflicts: ["projection mixed into collectors/LLM scripts", "files can act as state/current", "vault required by checks"]
+    migration_actions: ["make Obsidian one-way derived projection", "separate raw/candidate/published namespaces", "record materialization receipts"]
+    dependencies: ["Core/Materializer", "Outbox", "file store"]
+    validation: "Deleting and rematerializing the derived vault reproduces notes; file edits cannot change business state."
+    risk_level: medium
+    design_refs: ["Obsidian derived-only", "Materializer ownership"]
+
+  - module_id: validation_framework
+    path: "scripts/project_check.py; tools/asr/asr_test.py; validators under .agents/skills"
+    current_responsibility: "Performs local environment probes and selected output checks without an integrated test harness."
+    decision: adapt
+    reusable_parts: ["read-only checks", "structured validators", "external smoke distinction"]
+    conflicts: ["no isolated tests", "no fixture/replay/FakeClock/fault suite", "no Clean-room/CI proof"]
+    migration_actions: ["retain diagnostics", "build tests around production handlers with isolated stores", "add CI and Clean-room proof"]
+    dependencies: ["production handlers", "test assets", "CI"]
+    validation: "Core tests require no real credentials; removing validation assets still leaves the production skeleton startable."
+    risk_level: high
+    design_refs: ["validation architecture", "GOAL-00 process"]
+
+  - module_id: correction_trace_outbox
+    path: "diff_draft.py; scattered logs/hashes/status; no dedicated correction/audit/outbox implementation"
+    current_responsibility: "Captures some edit pairs and text logs but lacks formal correction propagation, receipts, audit, outbox and idempotency."
+    decision: replace
+    reusable_parts: ["human edit pairs", "raw payloads", "some content hashes"]
+    conflicts: ["no correction graph", "no command receipt/audit/outbox", "no correlation/causation or complete provenance"]
+    migration_actions: ["implement GOAL-01 traceability primitives", "migrate diffs as evidence", "add stale-basis propagation in approved later goal"]
+    dependencies: ["PostgreSQL", "Core/Materializer", "Jobs"]
+    validation: "Duplicate commands have one effect; every output traces to exact versions; corrections queue deterministic revalidation without rewriting history."
+    risk_level: high
+    design_refs: ["GOAL-01", "correction propagation"]
