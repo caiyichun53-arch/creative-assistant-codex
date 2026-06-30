@@ -109,6 +109,14 @@ CREATE TABLE IF NOT EXISTS content_preference_profile (
         REFERENCES content_preference_revision(profile_id, revision_id)
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS unique_global_content_preference_profile
+ON content_preference_profile(scope_type)
+WHERE scope_type = 'global';
+
+CREATE UNIQUE INDEX IF NOT EXISTS unique_scoped_content_preference_profile
+ON content_preference_profile(scope_type, scope_id)
+WHERE scope_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS content_preference_revision (
     revision_id          TEXT PRIMARY KEY,
     profile_id           TEXT NOT NULL,
@@ -126,6 +134,18 @@ CREATE TABLE IF NOT EXISTS content_preference_revision (
     FOREIGN KEY(profile_id) REFERENCES content_preference_profile(profile_id) ON DELETE RESTRICT,
     FOREIGN KEY(base_revision_id) REFERENCES content_preference_revision(revision_id) ON DELETE RESTRICT
 );
+
+CREATE TRIGGER IF NOT EXISTS immutable_command_receipt_update
+BEFORE UPDATE ON command_receipt
+BEGIN
+    SELECT RAISE(ABORT, 'command_receipt is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS immutable_command_receipt_delete
+BEFORE DELETE ON command_receipt
+BEGIN
+    SELECT RAISE(ABORT, 'command_receipt is immutable');
+END;
 
 CREATE TRIGGER IF NOT EXISTS immutable_trace_version_update
 BEFORE UPDATE ON trace_version

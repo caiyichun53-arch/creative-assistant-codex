@@ -11,7 +11,10 @@ INSERT INTO trace_version(
     version_id,
     root_id,
     version_no,
+    based_on_version_id,
+    blob_hash,
     content_hash,
+    business_hash,
     projection_version,
     payload_json
 ) VALUES
@@ -19,7 +22,10 @@ INSERT INTO trace_version(
         '018f0000-0000-7000-8000-000000000011',
         '018f0000-0000-7000-8000-000000000001',
         1,
+        NULL,
+        'sha256:blob-a',
         'sha256:a',
+        'sha256:business-a',
         'goal01.v1',
         '{"text":"a"}'::jsonb
     ),
@@ -27,10 +33,99 @@ INSERT INTO trace_version(
         '018f0000-0000-7000-8000-000000000012',
         '018f0000-0000-7000-8000-000000000002',
         1,
+        NULL,
+        NULL,
         'sha256:b',
+        NULL,
         'goal01.v1',
         '{"text":"b"}'::jsonb
     );
+
+DO $$
+DECLARE
+    matched integer;
+BEGIN
+    SELECT count(*)
+      INTO matched
+      FROM trace_version
+     WHERE version_id = '018f0000-0000-7000-8000-000000000011'
+       AND blob_hash = 'sha256:blob-a'
+       AND content_hash = 'sha256:a'
+       AND business_hash = 'sha256:business-a';
+
+    IF matched <> 1 THEN
+        RAISE EXCEPTION 'expected blob/content/business hashes';
+    END IF;
+END $$;
+
+INSERT INTO object_reference(
+    reference_id,
+    source_version_id,
+    relation_role,
+    target_object_kind,
+    target_stable_id,
+    target_version_id,
+    target_content_hash,
+    locator_json
+) VALUES (
+    '018f0000-0000-7000-8000-000000000013',
+    '018f0000-0000-7000-8000-000000000011',
+    'uses_source',
+    'evidence',
+    '018f0000-0000-7000-8000-000000000002',
+    '018f0000-0000-7000-8000-000000000012',
+    'sha256:b',
+    '{"local_ref":"source_1"}'::jsonb
+);
+
+INSERT INTO binding_manifest(
+    manifest_id,
+    source_version_id,
+    local_ref,
+    object_ref_json,
+    before_hash,
+    after_hash
+) VALUES (
+    '018f0000-0000-7000-8000-000000000014',
+    '018f0000-0000-7000-8000-000000000011',
+    'source_1',
+    '{"reference_id":"018f0000-0000-7000-8000-000000000013"}'::jsonb,
+    'sha256:before',
+    'sha256:after'
+);
+
+DO $$
+DECLARE
+    failed boolean := false;
+BEGIN
+    BEGIN
+        UPDATE object_reference
+           SET relation_role = 'changed'
+         WHERE reference_id = '018f0000-0000-7000-8000-000000000013';
+    EXCEPTION WHEN others THEN
+        failed := true;
+    END;
+
+    IF NOT failed THEN
+        RAISE EXCEPTION 'expected object_reference update to be rejected';
+    END IF;
+END $$;
+
+DO $$
+DECLARE
+    failed boolean := false;
+BEGIN
+    BEGIN
+        DELETE FROM binding_manifest
+         WHERE manifest_id = '018f0000-0000-7000-8000-000000000014';
+    EXCEPTION WHEN others THEN
+        failed := true;
+    END;
+
+    IF NOT failed THEN
+        RAISE EXCEPTION 'expected binding_manifest delete to be rejected';
+    END IF;
+END $$;
 
 UPDATE trace_root
    SET current_version_id = '018f0000-0000-7000-8000-000000000011'
@@ -138,10 +233,43 @@ BEGIN
     END IF;
 END $$;
 
+DO $$
+DECLARE
+    failed boolean := false;
+BEGIN
+    BEGIN
+        UPDATE command_receipt
+           SET status = 'failed'
+         WHERE receipt_id = '018f0000-0000-7000-8000-000000000021';
+    EXCEPTION WHEN others THEN
+        failed := true;
+    END;
+
+    IF NOT failed THEN
+        RAISE EXCEPTION 'expected command_receipt update to be rejected';
+    END IF;
+END $$;
+
 INSERT INTO content_preference_profile(profile_id, scope_type, scope_id)
 VALUES
     ('018f0000-0000-7000-8000-000000000031', 'global', NULL),
     ('018f0000-0000-7000-8000-000000000032', 'domain', '018f0000-0000-7000-8000-000000000033');
+
+DO $$
+DECLARE
+    failed boolean := false;
+BEGIN
+    BEGIN
+        INSERT INTO content_preference_profile(profile_id, scope_type, scope_id)
+        VALUES ('018f0000-0000-7000-8000-000000000034', 'global', NULL);
+    EXCEPTION WHEN others THEN
+        failed := true;
+    END;
+
+    IF NOT failed THEN
+        RAISE EXCEPTION 'expected duplicate global preference profile to be rejected';
+    END IF;
+END $$;
 
 INSERT INTO content_preference_revision(
     revision_id,

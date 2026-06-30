@@ -23,11 +23,20 @@ CREATE TABLE IF NOT EXISTS trace_version (
     UNIQUE(root_id, version_no)
 );
 
-ALTER TABLE trace_root
-    ADD CONSTRAINT trace_root_current_version_same_root
-    FOREIGN KEY (root_id, current_version_id)
-    REFERENCES trace_version(root_id, version_id)
-    DEFERRABLE INITIALLY DEFERRED;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'trace_root_current_version_same_root'
+    ) THEN
+        ALTER TABLE trace_root
+            ADD CONSTRAINT trace_root_current_version_same_root
+            FOREIGN KEY (root_id, current_version_id)
+            REFERENCES trace_version(root_id, version_id)
+            DEFERRABLE INITIALLY DEFERRED;
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS object_reference (
     reference_id        uuid PRIMARY KEY,
@@ -103,6 +112,14 @@ CREATE TABLE IF NOT EXISTS content_preference_profile (
     UNIQUE(profile_id, current_revision_id)
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS unique_global_content_preference_profile
+ON content_preference_profile(scope_type)
+WHERE scope_type = 'global';
+
+CREATE UNIQUE INDEX IF NOT EXISTS unique_scoped_content_preference_profile
+ON content_preference_profile(scope_type, scope_id)
+WHERE scope_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS content_preference_revision (
     revision_id        uuid PRIMARY KEY,
     profile_id         uuid NOT NULL REFERENCES content_preference_profile(profile_id) ON DELETE RESTRICT,
@@ -119,11 +136,20 @@ CREATE TABLE IF NOT EXISTS content_preference_revision (
     UNIQUE(profile_id, revision_no)
 );
 
-ALTER TABLE content_preference_profile
-    ADD CONSTRAINT content_preference_current_revision_same_profile
-    FOREIGN KEY (profile_id, current_revision_id)
-    REFERENCES content_preference_revision(profile_id, revision_id)
-    DEFERRABLE INITIALLY DEFERRED;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'content_preference_current_revision_same_profile'
+    ) THEN
+        ALTER TABLE content_preference_profile
+            ADD CONSTRAINT content_preference_current_revision_same_profile
+            FOREIGN KEY (profile_id, current_revision_id)
+            REFERENCES content_preference_revision(profile_id, revision_id)
+            DEFERRABLE INITIALLY DEFERRED;
+    END IF;
+END $$;
 
 CREATE OR REPLACE FUNCTION reject_immutable_update() RETURNS trigger AS $$
 BEGIN
@@ -149,6 +175,11 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS immutable_trace_version_update ON trace_version;
 CREATE TRIGGER immutable_trace_version_update
 BEFORE UPDATE OR DELETE ON trace_version
+FOR EACH ROW EXECUTE FUNCTION reject_immutable_update();
+
+DROP TRIGGER IF EXISTS immutable_command_receipt_update ON command_receipt;
+CREATE TRIGGER immutable_command_receipt_update
+BEFORE UPDATE OR DELETE ON command_receipt
 FOR EACH ROW EXECUTE FUNCTION reject_immutable_update();
 
 DROP TRIGGER IF EXISTS immutable_object_reference_update ON object_reference;

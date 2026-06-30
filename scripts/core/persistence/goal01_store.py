@@ -7,32 +7,60 @@ import sqlite3
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 SCHEMA_PATH = Path(__file__).with_name("goal01_schema.sqlite.sql")
-_LAST_UUID7_MS = -1
-_LAST_UUID7_RAND_A = 0
+
+
+class UUIDv7Generator:
+    """Small UUIDv7 generator with injectable time/randomness for replay tests."""
+
+    def __init__(
+        self,
+        *,
+        now_ms: Callable[[], int] | None = None,
+        randbits: Callable[[int], int] | None = None,
+    ):
+        self.now_ms = now_ms or (lambda: int(time.time() * 1000))
+        self.randbits = randbits or secrets.randbits
+        self.last_ms = -1
+        self.last_rand_a = 0
+
+    def new(self) -> str:
+        unix_ms = self.now_ms()
+        if unix_ms <= self.last_ms:
+            if self.last_rand_a >= 0xFFF:
+                unix_ms = self.last_ms + 1
+                self.last_ms = unix_ms
+                self.last_rand_a = 0
+            else:
+                unix_ms = self.last_ms
+                self.last_rand_a += 1
+        else:
+            self.last_ms = unix_ms
+            self.last_rand_a = self.randbits(12)
+        rand_a = self.last_rand_a
+        rand_b = self.randbits(62)
+        value = _uuid7_int(unix_ms, rand_a, rand_b)
+        return str(uuid.UUID(int=value))
+
+
+def _uuid7_int(unix_ms: int, rand_a: int, rand_b: int) -> int:
+    value = (unix_ms & ((1 << 48) - 1)) << 80
+    value |= 0x7 << 76
+    value |= (rand_a & 0xFFF) << 64
+    value |= 0b10 << 62
+    value |= rand_b & ((1 << 62) - 1)
+    return value
+
+
+_DEFAULT_UUID7_GENERATOR = UUIDv7Generator()
 
 
 def uuid7() -> str:
     """Generate an application-side UUIDv7 string without external dependencies."""
-    global _LAST_UUID7_MS, _LAST_UUID7_RAND_A
-    unix_ms = int(time.time() * 1000)
-    if unix_ms <= _LAST_UUID7_MS:
-        unix_ms = _LAST_UUID7_MS
-        _LAST_UUID7_RAND_A = (_LAST_UUID7_RAND_A + 1) & 0xFFF
-    else:
-        _LAST_UUID7_MS = unix_ms
-        _LAST_UUID7_RAND_A = secrets.randbits(12)
-    rand_a = _LAST_UUID7_RAND_A
-    rand_b = secrets.randbits(62)
-    value = (unix_ms & ((1 << 48) - 1)) << 80
-    value |= 0x7 << 76
-    value |= rand_a << 64
-    value |= 0b10 << 62
-    value |= rand_b
-    return str(uuid.UUID(int=value))
+    return _DEFAULT_UUID7_GENERATOR.new()
 
 
 def canonical_json(value: Any) -> str:
@@ -44,20 +72,25 @@ def content_hash(value: Any, projection_version: str = "goal01.canonical_json.v1
     return hashlib.sha256(payload).hexdigest()
 
 
+def blob_hash(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
 class IdempotencyConflict(RuntimeError):
     pass
 
 
 class PersistenceStore:
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: sqlite3.Connection, *, id_factory: Callable[[], str] = uuid7):
         self.conn = conn
+        self.id_factory = id_factory
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
 
     @classmethod
-    def in_memory(cls) -> "PersistenceStore":
+    def in_memory(cls, *, id_factory: Callable[[], str] = uuid7) -> "PersistenceStore":
         conn = sqlite3.connect(":memory:")
-        store = cls(conn)
+        store = cls(conn, id_factory=id_factory)
         store.install_schema()
         return store
 
@@ -65,7 +98,7 @@ class PersistenceStore:
         self.conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
 
     def create_root(self, object_kind: str) -> str:
-        root_id = uuid7()
+        root_id = self.id_factory()
         self.conn.execute(
             "INSERT INTO trace_root(root_id, object_kind) VALUES(?, ?)",
             (root_id, object_kind),
@@ -79,6 +112,7 @@ class PersistenceStore:
         *,
         projection_version: str = "goal01.canonical_json.v1",
         based_on_version_id: str | None = None,
+        blob_payload: bytes | None = None,
         business_payload: dict[str, Any] | None = None,
     ) -> str:
         row = self.conn.execute(
@@ -86,22 +120,24 @@ class PersistenceStore:
             (root_id,),
         ).fetchone()
         version_no = int(row[0])
-        version_id = uuid7()
+        version_id = self.id_factory()
+        bl_hash = blob_hash(blob_payload) if blob_payload is not None else None
         c_hash = content_hash(payload, projection_version)
         b_hash = content_hash(business_payload, projection_version) if business_payload is not None else None
         self.conn.execute(
             """
             INSERT INTO trace_version(
                 version_id, root_id, version_no, based_on_version_id,
-                content_hash, business_hash, projection_version, payload_json
+                blob_hash, content_hash, business_hash, projection_version, payload_json
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 version_id,
                 root_id,
                 version_no,
                 based_on_version_id,
+                bl_hash,
                 c_hash,
                 b_hash,
                 projection_version,
@@ -130,6 +166,68 @@ class PersistenceStore:
         if cur.rowcount != 1:
             raise RuntimeError("stale root revision or missing root")
 
+    def record_object_reference(
+        self,
+        *,
+        source_version_id: str,
+        relation_role: str,
+        target_object_kind: str,
+        target_stable_id: str,
+        locator: dict[str, Any],
+        target_version_id: str | None = None,
+        target_content_hash: str | None = None,
+    ) -> str:
+        reference_id = self.id_factory()
+        self.conn.execute(
+            """
+            INSERT INTO object_reference(
+                reference_id, source_version_id, relation_role, target_object_kind,
+                target_stable_id, target_version_id, target_content_hash, locator_json
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                reference_id,
+                source_version_id,
+                relation_role,
+                target_object_kind,
+                target_stable_id,
+                target_version_id,
+                target_content_hash,
+                canonical_json(locator),
+            ),
+        )
+        return reference_id
+
+    def record_binding_manifest(
+        self,
+        *,
+        source_version_id: str,
+        local_ref: str,
+        object_ref: dict[str, Any],
+        before_hash: str,
+        after_hash: str,
+    ) -> str:
+        manifest_id = self.id_factory()
+        self.conn.execute(
+            """
+            INSERT INTO binding_manifest(
+                manifest_id, source_version_id, local_ref, object_ref_json,
+                before_hash, after_hash
+            )
+            VALUES(?, ?, ?, ?, ?, ?)
+            """,
+            (
+                manifest_id,
+                source_version_id,
+                local_ref,
+                canonical_json(object_ref),
+                before_hash,
+                after_hash,
+            ),
+        )
+        return manifest_id
+
     def record_command(
         self,
         *,
@@ -155,7 +253,7 @@ class PersistenceStore:
                 raise IdempotencyConflict("idempotency key reused with different request")
             return str(existing["receipt_id"])
 
-        receipt_id = uuid7()
+        receipt_id = self.id_factory()
         self.conn.execute(
             """
             INSERT INTO command_receipt(
@@ -170,7 +268,7 @@ class PersistenceStore:
                 idempotency_key,
                 request_hash,
                 canonical_json(result_payload),
-                correlation_id or uuid7(),
+                correlation_id or self.id_factory(),
                 causation_id,
                 status,
             ),
@@ -189,7 +287,7 @@ class PersistenceStore:
         version_id: str | None = None,
         causation_id: str | None = None,
     ) -> str:
-        audit_id = uuid7()
+        audit_id = self.id_factory()
         self.conn.execute(
             """
             INSERT INTO audit_event(
@@ -220,7 +318,7 @@ class PersistenceStore:
         correlation_id: str,
         causation_id: str | None = None,
     ) -> str:
-        outbox_id = uuid7()
+        outbox_id = self.id_factory()
         self.conn.execute(
             """
             INSERT INTO outbox_message(outbox_id, topic, payload_json, correlation_id, causation_id)
@@ -231,7 +329,7 @@ class PersistenceStore:
         return outbox_id
 
     def create_preference_profile(self, scope_type: str, scope_id: str | None = None) -> str:
-        profile_id = uuid7()
+        profile_id = self.id_factory()
         self.conn.execute(
             """
             INSERT INTO content_preference_profile(profile_id, scope_type, scope_id)
@@ -256,7 +354,7 @@ class PersistenceStore:
             (profile_id,),
         ).fetchone()
         revision_no = int(row[0])
-        revision_id = uuid7()
+        revision_id = self.id_factory()
         self.conn.execute(
             """
             INSERT INTO content_preference_revision(
