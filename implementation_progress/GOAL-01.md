@@ -34,8 +34,11 @@ Implement UUIDv7, root/version model, hashes, references, audit, command receipt
 - Ran Python compile check for GOAL-01 files: pass.
 - Confirmed Docker is not a GOAL-01 dependency and should not be treated as part of the project route.
 - Added no-Docker PostgreSQL acceptance SQL at `scripts/core/persistence/verify_goal_01_postgres.sql`.
+- Added no-Docker PostgreSQL gate runner at `scripts/core/persistence/run_goal_01_postgres_gate.ps1`.
 - Set the GOAL-01 validation rule: do not use Docker again for this goal unless the user explicitly asks for it.
 - Confirmed no existing local no-Docker PostgreSQL runtime/psql binary is available for the target SQL gate.
+- Verified the PostgreSQL gate runner fails closed with exit code 2 when `psql` is missing.
+- Verified the PostgreSQL gate runner dry-run resolves schema and acceptance SQL in order without opening a DB connection.
 - Refreshed two review loops and cross-chapter ownership checks after expanded coverage.
 - Confirmed there are no temporary audit/runtime files to clean.
 
@@ -46,7 +49,7 @@ Implement UUIDv7, root/version model, hashes, references, audit, command receipt
 
 ## Current Stop Point
 
-Local GOAL-01 persistence, traceability, fixture/replay/fault/FakeClock gates pass; PostgreSQL runtime validation now has a no-Docker SQL gate, but still needs a PostgreSQL instance if required for final proof.
+Local GOAL-01 persistence, traceability, fixture/replay/fault/FakeClock gates pass; PostgreSQL runtime validation now has a no-Docker SQL gate and runner, but still needs a PostgreSQL instance if required for final proof.
 
 ## GOAL-02 Allowed?
 

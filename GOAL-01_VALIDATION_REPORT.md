@@ -29,6 +29,7 @@ This report records only checks that are safe for GOAL-01. It must not claim GOA
 - Docker: not a project dependency and not part of the GOAL-01 route.
 - Local executable validation target: SQLite in-memory schema with equivalent GOAL-01 gates.
 - PostgreSQL executable target: `scripts/core/persistence/verify_goal_01_postgres.sql`, to be run against any disposable PostgreSQL instance when one is provided.
+- PostgreSQL gate runner: `scripts/core/persistence/run_goal_01_postgres_gate.ps1`; it uses `psql` only and does not start Docker or install services.
 - PostgreSQL DDL is authored with table/index existence guards and constraint existence checks for checkpoint-safe reruns.
 
 ## Commands
@@ -135,7 +136,29 @@ This report records only checks that are safe for GOAL-01. It must not claim GOA
 - side_effects: none
 - conclusion: no no-Docker local PostgreSQL runtime is currently available to execute the target SQL gate.
 
-### 8. Non-Route Docker Probe
+### 8. PostgreSQL Gate Runner Missing-psql Check
+
+- command: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/core/persistence/run_goal_01_postgres_gate.ps1`
+- working_directory: `I:\Creation_assistant-codex`
+- input: current PATH, no `DATABASE_URL`
+- real_credentials_used: no
+- exit_code: 2
+- stdout/stderr summary: `psql was not found. Install PostgreSQL client tools or pass -PsqlPath. Docker is not used by this gate.`
+- side_effects: none
+- conclusion: the no-Docker gate runner fails closed when PostgreSQL client tools are unavailable.
+
+### 9. PostgreSQL Gate Runner Dry Run
+
+- command: `$fakePsql=(Get-Command powershell).Source; powershell -NoProfile -ExecutionPolicy Bypass -File scripts/core/persistence/run_goal_01_postgres_gate.ps1 -PsqlPath $fakePsql -DatabaseUrl 'postgresql://example.invalid/goal01' -DryRun`
+- working_directory: `I:\Creation_assistant-codex`
+- input: dry-run placeholder executable path and placeholder database URL
+- real_credentials_used: no
+- exit_code: 0
+- stdout/stderr summary: dry run resolved workspace, schema path and `verify_goal_01_postgres.sql` path.
+- side_effects: none; no database connection attempted
+- conclusion: the runner wires the target schema and acceptance SQL in the expected order.
+
+### 10. Non-Route Docker Probe
 
 - command: `docker version --format '{{json .}}'`
 - working_directory: `I:\Creation_assistant-codex`
@@ -146,7 +169,7 @@ This report records only checks that are safe for GOAL-01. It must not claim GOA
 - side_effects: none
 - conclusion: this only proved Docker was not available at that moment; Docker is not required by GOAL-01 and should not be used again for this goal unless explicitly requested by the user.
 
-### 9. Temporary PostgreSQL DDL Load
+### 11. Temporary PostgreSQL DDL Load
 
 - command summary: a one-time disposable PostgreSQL instance was used to load `scripts/core/persistence/goal01_schema.postgres.sql`.
 - working_directory: `I:\Creation_assistant-codex`
@@ -157,7 +180,7 @@ This report records only checks that are safe for GOAL-01. It must not claim GOA
 - side_effects: temporary local verification service only; no project file, runtime route or production dependency was added.
 - conclusion: the PostgreSQL DDL is syntactically loadable. This was a temporary validation method, not a project dependency.
 
-### 10. Boundary Search
+### 12. Boundary Search
 
 - command: `rg -n "production_task|topic_state|claim_state|experiment_state|tactic_state|Hermes|Feishu|ModelGateway|LLM|subprocess|requests|sqlite3.connect\\(.*creation\\.db|data/creation\\.db|CREATE TABLE IF NOT EXISTS (production|topic|claim|experiment|tactic|job|skill|model)" scripts/core goals implementation_progress/GOAL-01.md GOAL-01_VALIDATION_REPORT.md`
 - working_directory: `I:\Creation_assistant-codex`
@@ -168,7 +191,7 @@ This report records only checks that are safe for GOAL-01. It must not claim GOA
 - side_effects: none
 - conclusion: GOAL-01 code stays within scope and does not enter GOAL-02 or runtime-host work.
 
-### 11. Persistence Object Ownership Search
+### 13. Persistence Object Ownership Search
 
 - command: `rg -n "content_preference|trace_root|trace_version|object_reference|binding_manifest|command_receipt|audit_event|outbox_message|CREATE TABLE|CREATE UNIQUE INDEX" scripts/core/persistence/goal01_schema.sqlite.sql scripts/core/persistence/goal01_schema.postgres.sql scripts/core/persistence/verify_goal_01_postgres.sql`
 - working_directory: `I:\Creation_assistant-codex`
@@ -179,11 +202,11 @@ This report records only checks that are safe for GOAL-01. It must not claim GOA
 - side_effects: none
 - conclusion: persistence objects remain inside GOAL-01 ownership and do not introduce GOAL-02 business states.
 
-### 12. PostgreSQL Acceptance SQL Authored
+### 14. PostgreSQL Acceptance SQL Authored
 
 - file: `scripts/core/persistence/verify_goal_01_postgres.sql`
 - input: target PostgreSQL schema after `goal01_schema.postgres.sql`
-- intended execution form: `psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f scripts/core/persistence/goal01_schema.postgres.sql -f scripts/core/persistence/verify_goal_01_postgres.sql`
+- intended execution form: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/core/persistence/run_goal_01_postgres_gate.ps1 -DatabaseUrl $env:DATABASE_URL`
 - real_credentials_used: no
 - side_effects: none when reviewed; the script itself wraps verification data in a transaction and rolls it back.
 - coverage:
