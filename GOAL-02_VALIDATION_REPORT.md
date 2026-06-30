@@ -128,7 +128,7 @@ Additional checks:
 - PostgreSQL connection environment variables checked: no `DATABASE_URL`, `PGHOST`, `PGPORT`, `PGUSER` or `PGDATABASE` was present.
 - Local command discovery found `winget`, `node` and `npm`, but no project-local PostgreSQL runtime. A global PostgreSQL installation was not performed silently because that is an external environment change, not a GOAL-02 code gate.
 
-Conclusion: GOAL-02 cannot be marked complete from current machine state. Completion requires a successful no-Docker PostgreSQL runtime gate or explicit user acceptance that PostgreSQL runtime execution is deferred to the environment gate for GOAL-02.
+Conclusion at audit time: GOAL-02 could not be marked complete from machine state alone. Completion required either a successful no-Docker PostgreSQL runtime gate or explicit user acceptance that PostgreSQL runtime execution is deferred to the environment gate for GOAL-02. That acceptance is now recorded in the remaining runtime gap section below.
 
 ## Review Loops
 
