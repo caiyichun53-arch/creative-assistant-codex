@@ -2,7 +2,7 @@
 
 goal: GOAL-03 Scheduler, Job and Worker Lease
 
-status: `COMPLETE_POSTGRESQL_RUNTIME_GATE_RESOLVED`
+status: `GOAL-03_COMPLETE_WAITING_USER_APPROVAL`
 
 source_commit: `e411ceb`
 
@@ -33,6 +33,11 @@ Implement Scheduler/Job/Worker lease, retry, recovery, cancel and outbox schedul
   - Ran `verify_goal_03_postgres.sql`: pass.
   - Ran GOAL-03 PostgreSQL runtime supplement for lease, heartbeat, retry, cancel, expired lease recovery and duplicate side-effect control: pass.
   - Ran GOAL-03 PostgreSQL `FOR UPDATE SKIP LOCKED` concurrent claim test with two psql sessions: pass.
+- GOAL-03 closeout check:
+  - Local GOAL-03 verification: pass.
+  - GOAL-03 Python compile check: pass.
+  - GOAL-01 + GOAL-02 + GOAL-03 SQLite schema/FK check: pass.
+  - No real GOAL-03 failure remained to fix.
 
 ## Resolved Checkpoints
 
@@ -40,7 +45,7 @@ Implement Scheduler/Job/Worker lease, retry, recovery, cancel and outbox schedul
 
 ## Current Stop Point
 
-GOAL-03 stage is complete: local Scheduler/Job/Worker gates pass; PostgreSQL SQL gate and no-Docker runner are authored; PostgreSQL runtime execution passed in the isolated PostgreSQL test container.
+GOAL-03 implementation and runtime gates are complete and waiting for user approval.
 
 ## GOAL-04 Allowed?
 

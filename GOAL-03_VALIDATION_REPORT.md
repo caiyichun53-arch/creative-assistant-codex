@@ -1,6 +1,6 @@
 # GOAL-03 Validation Report
 
-Status: `COMPLETE_POSTGRESQL_RUNTIME_GATE_RESOLVED`
+Status: `GOAL-03_COMPLETE_WAITING_USER_APPROVAL`
 
 This report records only checks that are safe for GOAL-03.
 
@@ -129,8 +129,15 @@ Runtime results:
 - GOAL-03 PostgreSQL `FOR UPDATE SKIP LOCKED` concurrent claim test with two psql sessions: pass.
 - No real failure remained for GOAL-03 PostgreSQL runtime gate.
 
+## Closeout Check
+
+- `python scripts/core/scheduler/verify_goal_03.py`: pass.
+- `python -m py_compile scripts/core/scheduler/__init__.py scripts/core/scheduler/goal03_scheduler.py scripts/core/scheduler/verify_goal_03.py`: pass.
+- `sqlite3 :memory: ".read scripts/core/persistence/goal01_schema.sqlite.sql" ".read scripts/core/persistence/goal02_schema.sqlite.sql" ".read scripts/core/persistence/goal03_schema.sqlite.sql" "PRAGMA foreign_key_check;"`: pass.
+- No real GOAL-03 failure remained to fix.
+
 ## Runtime Status
 
 Target PostgreSQL DDL exists at `scripts/core/persistence/goal03_schema.postgres.sql`; PostgreSQL acceptance SQL exists at `scripts/core/scheduler/verify_goal_03_postgres.sql`; no-Docker runner exists at `scripts/core/scheduler/run_goal_03_postgres_gate.ps1`.
 
-GOAL-03 is complete for this stage. GOAL-04 was not started.
+GOAL-03 implementation and runtime gates are complete and waiting for user approval. GOAL-04 was not started.
