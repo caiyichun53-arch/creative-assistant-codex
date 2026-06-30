@@ -2,7 +2,7 @@
 
 goal: GOAL-02 Core State and Materializer
 
-status: `BLOCKED_PENDING_POSTGRES_RUNTIME_OR_USER_ACCEPTANCE`
+status: `COMPLETE_POSTGRES_RUNTIME_DEFERRED_TO_ENV_GATE`
 
 source_commit: `3461a92`
 
@@ -45,23 +45,16 @@ Implement production/topic/claim/experiment/tactic state, Core Command Envelope,
   - No local `psql`, `postgres`, `pg_ctl`, `initdb` or `pg_tmp` command was found.
   - No `DATABASE_URL` or PostgreSQL connection environment variables were present.
   - `winget` is present, but installing a global PostgreSQL runtime is an external environment change and was not performed silently.
+- User explicitly accepted local SQLite validation plus authored PostgreSQL SQL gate as GOAL-02 stage acceptance; PostgreSQL runtime execution is deferred to the environment gate.
 
-## Pending Checkpoints
+## Deferred Checkpoints
 
-- PostgreSQL runtime DDL plus acceptance SQL execution, if required for final GOAL-02 completion.
-- User acceptance that local SQLite validation plus authored PostgreSQL SQL gate is sufficient for this checkpoint, if PostgreSQL runtime execution remains deferred to the environment gate.
+- PostgreSQL runtime DDL plus acceptance SQL execution is deferred to the later environment gate.
 
 ## Current Stop Point
 
-Local GOAL-02 Core State and Materializer gates pass; PostgreSQL runtime validation has a no-Docker SQL gate and runner, but still needs a PostgreSQL instance unless the user accepts deferral to the environment gate.
-
-GOAL-02 is not marked complete by Codex yet because the current machine cannot execute the PostgreSQL runtime gate and the user has not yet accepted a GOAL-02-specific PostgreSQL runtime deferral.
-
-The same completion blocker has now repeated across the GOAL-02 implementation turn and two continuation turns. GOAL-02 is blocked until either:
-
-- A disposable no-Docker PostgreSQL runtime plus `psql` is available and `scripts/core/state/run_goal_02_postgres_gate.ps1` passes.
-- The user explicitly accepts local SQLite validation plus authored PostgreSQL SQL gate as sufficient for GOAL-02, with PostgreSQL runtime execution deferred to the environment gate.
+GOAL-02 stage is accepted complete: local SQLite Core State and Materializer gates pass; PostgreSQL SQL gate and no-Docker runner are authored; PostgreSQL runtime execution is deferred to the environment gate by user decision.
 
 ## GOAL-03 Allowed?
 
-No.
+Yes, after explicit user start.

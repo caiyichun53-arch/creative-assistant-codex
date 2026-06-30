@@ -1,6 +1,6 @@
 # GOAL-02 Validation Report
 
-Status: `BLOCKED_PENDING_POSTGRES_RUNTIME_OR_USER_ACCEPTANCE`
+Status: `COMPLETE_POSTGRES_RUNTIME_DEFERRED_TO_ENV_GATE`
 
 This report records only checks that are safe for GOAL-02.
 
@@ -150,6 +150,6 @@ Conclusion: GOAL-02 cannot be marked complete from current machine state. Comple
 
 Target PostgreSQL DDL exists at `scripts/core/persistence/goal02_schema.postgres.sql`; PostgreSQL acceptance SQL exists at `scripts/core/state/verify_goal_02_postgres.sql`; no-Docker runner exists at `scripts/core/state/run_goal_02_postgres_gate.ps1`.
 
-GOAL-02 should not be marked fully complete until one of these is true:
-- PostgreSQL GOAL-01 + GOAL-02 schemas plus `verify_goal_02_postgres.sql` are run against a disposable PostgreSQL instance and the relevant gates pass there.
-- The user accepts local SQLite validation plus authored PostgreSQL SQL gate as sufficient for this checkpoint and defers PostgreSQL runtime execution to the environment gate.
+User explicitly accepted local SQLite validation plus authored PostgreSQL SQL gate as sufficient for GOAL-02 stage acceptance. PostgreSQL runtime execution is deferred to the environment gate.
+
+GOAL-02 is complete for this stage. The deferred environment gate must later run PostgreSQL GOAL-01 + GOAL-02 schemas plus `verify_goal_02_postgres.sql` against a disposable PostgreSQL instance.

@@ -35,5 +35,6 @@ Implementation plan:
 5. Record validation evidence in `GOAL-02_VALIDATION_REPORT.md`.
 
 Current validation mode:
-- PostgreSQL runtime remains deferred to environment gate unless a no-Docker `psql` + disposable database is provided.
-- SQLite in-memory validation is the executable local proof for GOAL-02 handler behavior.
+- SQLite in-memory validation is the accepted executable local proof for GOAL-02 handler behavior at this stage.
+- Target PostgreSQL DDL, acceptance SQL and no-Docker runner are authored.
+- PostgreSQL runtime execution is deferred to the later environment gate by user decision.
