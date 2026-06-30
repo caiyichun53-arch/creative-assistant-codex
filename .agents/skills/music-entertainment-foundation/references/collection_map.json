@@ -1,0 +1,214 @@
+{
+  "version": 1,
+  "domain": "music_entertainment",
+  "description": "音乐娱乐领域采集地图。通用采集脚本读取本文件，把不同对象类型映射成确定性的领域采集任务。",
+  "object_type_aliases": {
+    "person_or_entity": "person",
+    "topic_direction": "topic_direction",
+    "event": "topic_direction",
+    "abstract_topic": "topic_direction",
+    "product_or_org": "topic_direction",
+    "mixed_or_unknown": "topic_direction",
+    "work": "work"
+  },
+  "tasks": {
+    "person": [
+      {
+        "task_id": "music_person_profile_001",
+        "layer": "domain_fact",
+        "purpose": "核对人物身份、职业阶段、官方资料、重要时间线和非八卦边界",
+        "source_priority": ["artist_official", "label", "authority_database", "mainstream_media"],
+        "target_questions": [
+          "这个人物的官方身份、职业阶段和关键时间线是什么？",
+          "哪些材料属于事实来源，哪些只是媒体或粉丝叙述？",
+          "有哪些容易八卦化、苦情化或标签化的材料需要排除？"
+        ],
+        "search_query_templates": [
+          "{task_object} 官方 简介 时间线 采访",
+          "{task_object} 唱片公司 奖项 发行 作品",
+          "{task_object} official biography interview awards"
+        ]
+      },
+      {
+        "task_id": "music_person_works_001",
+        "layer": "domain_fact",
+        "purpose": "采集代表专辑、代表歌曲、制作信息、奖项和作品阶段",
+        "source_priority": ["streaming_profile", "discography", "award_database", "artist_official"],
+        "target_questions": [
+          "哪些专辑代表创作阶段？",
+          "哪些歌曲代表大众入口？",
+          "哪些作品代表专业音乐价值或风格变化？"
+        ],
+        "search_query_templates": [
+          "{task_object} 代表作 热门歌曲 专辑 Apple Music Spotify",
+          "{task_object} discography top songs albums",
+          "{task_object} 金曲奖 获奖 专辑 歌曲"
+        ],
+        "domain_collectors": [
+          {
+            "collector": "netease",
+            "status": "candidate_needed",
+            "purpose": "确定代表歌曲 ID 后，采集歌曲评论作为接受度材料。"
+          }
+        ]
+      },
+      {
+        "task_id": "music_person_reviews_001",
+        "layer": "domain_viewpoint",
+        "purpose": "采集专业乐评、长评、人物专访和主要评价框架",
+        "source_priority": ["professional_review", "douban_reviews", "music_media", "interview"],
+        "target_questions": [
+          "专业材料如何评价这个人物的音乐位置或娱乐位置？",
+          "哪些作品、阶段或选择被反复讨论？",
+          "常见误读、粉丝滤镜或过度神话在哪里？"
+        ],
+        "search_query_templates": [
+          "{task_object} 乐评 深度 采访",
+          "{task_object} 豆瓣 长评 专辑 纪录片",
+          "{task_object} music review interview analysis"
+        ],
+        "domain_collectors": [
+          {
+            "collector": "douban",
+            "status": "subject_id_needed",
+            "purpose": "确定专辑/纪录片/传记片 subject_id 后，采集豆瓣长评和短评。"
+          }
+        ]
+      },
+      {
+        "task_id": "music_person_reception_001",
+        "layer": "domain_reception",
+        "purpose": "采集公众记忆、平台热门入口、评论情绪和传播场景",
+        "source_priority": ["streaming_top_songs", "netease_comments", "youtube_music", "douban_comments"],
+        "target_questions": [
+          "普通受众最常通过哪些歌曲、角色或作品记住这个人物？",
+          "公众评论里反复出现的情绪、标签和误读是什么？",
+          "大众入口与专业价值是否一致？"
+        ],
+        "search_query_templates": [
+          "{task_object} 热门歌曲 评论 代表作",
+          "{task_object} YouTube Music top songs",
+          "{task_object} 豆瓣 短评 评价"
+        ]
+      }
+    ],
+    "song": [
+      {
+        "task_id": "music_song_fact_001",
+        "layer": "domain_fact",
+        "purpose": "核对歌曲发行、词曲、制作、歌词、MV、现场版本和收录专辑",
+        "source_priority": ["streaming_track", "lyrics", "label", "artist_official"],
+        "target_questions": [
+          "歌曲的发行、词曲、制作和收录信息是什么？",
+          "歌词和编曲里有哪些可分析的核心材料？",
+          "是否存在重要现场版、翻唱版或传播版本？"
+        ],
+        "search_query_templates": [
+          "{task_object} 歌曲 发行 词曲 编曲",
+          "{task_object} lyrics live cover version",
+          "{task_object} MV 现场版"
+        ]
+      },
+      {
+        "task_id": "music_song_reception_001",
+        "layer": "domain_reception",
+        "purpose": "采集歌曲评论、听众记忆、传播场景和平台热度",
+        "source_priority": ["netease_comments", "youtube_comments", "streaming_stats"],
+        "target_questions": [
+          "听众为什么记住这首歌？",
+          "评论里反复出现的生活场景和情绪是什么？",
+          "它的传播入口和代表性来自哪里？"
+        ],
+        "search_query_templates": [
+          "{task_object} 网易云 评论",
+          "{task_object} YouTube 评论 播放",
+          "{task_object} 歌曲 评价 热门"
+        ],
+        "domain_collectors": [
+          {
+            "collector": "netease",
+            "status": "candidate_needed",
+            "purpose": "确定歌曲 ID 后，采集歌曲评论。"
+          }
+        ]
+      }
+    ],
+    "album": [
+      {
+        "task_id": "music_album_fact_001",
+        "layer": "domain_fact",
+        "purpose": "核对专辑发行、曲目、制作班底、时代背景和奖项",
+        "source_priority": ["streaming_album", "label", "artist_official", "award_database"],
+        "target_questions": [
+          "专辑发行和制作背景是什么？",
+          "曲目结构、制作班底和时代位置是什么？",
+          "哪些事实材料可支撑专辑判断？"
+        ],
+        "search_query_templates": [
+          "{task_object} 专辑 发行 曲目 制作",
+          "{task_object} album review production credits",
+          "{task_object} 奖项 乐评"
+        ]
+      },
+      {
+        "task_id": "music_album_reviews_001",
+        "layer": "domain_viewpoint",
+        "purpose": "采集专辑长评、短评、专业乐评和争议点",
+        "source_priority": ["douban_reviews", "professional_review", "music_media"],
+        "target_questions": [
+          "专辑被如何评价？",
+          "哪些曲目、概念或制作被反复讨论？",
+          "争议点和失败边界在哪里？"
+        ],
+        "search_query_templates": [
+          "{task_object} 豆瓣 长评 短评",
+          "{task_object} 乐评 专辑 分析",
+          "{task_object} album review"
+        ],
+        "domain_collectors": [
+          {
+            "collector": "douban",
+            "status": "subject_id_needed",
+            "purpose": "确定豆瓣 subject_id 后，采集长评/短评。"
+          }
+        ]
+      }
+    ],
+    "topic_direction": [
+      {
+        "task_id": "music_topic_decision_001",
+        "layer": "decision_support",
+        "purpose": "验证音乐娱乐选题方向是否有事实、作品、评论和接受度支撑",
+        "source_priority": ["fact", "work_text", "professional_review", "platform_reception"],
+        "target_questions": [
+          "这个选题方向的核心判断能否被作品和事实支撑？",
+          "公众接受度是否支持这个角度？",
+          "哪些材料会削弱或推翻这个方向？"
+        ],
+        "search_query_templates": [
+          "{task_object} 原因 机制 案例 音乐娱乐",
+          "{task_object} 票务 平台 黄牛 主办方 监管",
+          "{task_object} 评论 争议 规则 现实"
+        ]
+      }
+    ],
+    "work": [
+      {
+        "task_id": "music_work_identify_001",
+        "layer": "domain_fact",
+        "purpose": "判断作品是歌曲、专辑、纪录片、传记片还是混合作品，并采集基础事实",
+        "source_priority": ["official", "streaming_profile", "douban", "media"],
+        "target_questions": [
+          "这个作品属于歌曲、专辑、纪录片、传记片还是其他形式？",
+          "基础发行、制作、参与者和平台信息是什么？",
+          "它适合按哪类音乐娱乐内容处理？"
+        ],
+        "search_query_templates": [
+          "{task_object} 发行 制作 介绍",
+          "{task_object} 豆瓣 Apple Music Spotify",
+          "{task_object} review analysis"
+        ]
+      }
+    ]
+  }
+}

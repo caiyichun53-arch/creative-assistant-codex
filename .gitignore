@@ -1,0 +1,43 @@
+# Local secrets and machine-specific runtime config
+.env
+.env.*
+!.env.example
+config/settings.yaml
+config/accounts/*.yaml
+!config/accounts/example.yaml
+config/domains/*.yaml
+!config/domains/example.yaml
+
+# Runtime data, generated artifacts, caches, and logs
+data/
+outputs/
+logs/
+.playwright-cli/
+vendor/
+vault/
+
+# Databases and transient state
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Local agent/tool state
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+
+# Node/npm caches that can be recreated
+node_modules/
+npm-cache/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db

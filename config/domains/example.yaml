@@ -1,0 +1,7 @@
+# Copy to config/domains/<domain-name>.yaml and fill real competitor seeds locally.
+name: example_domain
+description: Example short-video content domain.
+audience: General audience.
+script_target_chars: 1500
+script_chars_range: [1300, 1700]
+competitor_seeds: []

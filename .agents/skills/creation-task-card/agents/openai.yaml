@@ -1,0 +1,3 @@
+display_name: 写手任务卡
+short_description: 填写写手派活任务卡，明确 brief、beats、draft 和篇幅参数。
+default_prompt: Use $creation-task-card to build the writer task card for topic <id>.

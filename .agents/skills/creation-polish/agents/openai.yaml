@@ -1,0 +1,3 @@
+display_name: 精修返稿
+short_description: 根据优化意见精修 draft_v1.md，不改选题和结构方向。
+default_prompt: Use $creation-polish to polish draft_v1 for topic <id>.

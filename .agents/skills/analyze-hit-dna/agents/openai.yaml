@@ -1,0 +1,4 @@
+interface:
+  display_name: "爆款拆解"
+  short_description: "对已备料爆款执行单条或批量拆解并验收笔记回写状态边界"
+  default_prompt: "Use $analyze-hit-dna to analyze hit video DNA for Creation Assistant."

@@ -1,0 +1,3 @@
+display_name: 篇级审稿
+short_description: 按审稿手册对 draft_v1 做 PASS/WARN/FAIL 判卷。
+default_prompt: Use $creation-review to review draft_v1 for topic <id>.

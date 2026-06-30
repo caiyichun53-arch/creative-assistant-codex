@@ -1,0 +1,4 @@
+interface:
+  display_name: "新建领域账号"
+  short_description: "为新领域和自营账号创建配置目录人设数据库账号记录入口"
+  default_prompt: "Use $create-domain-account to create a new domain and account for Creation Assistant."

@@ -1,0 +1,3 @@
+display_name: 创作备料
+short_description: 为 topic 生成并验收 brief_full.md 和写手版 brief.md。
+default_prompt: Use $creation-prepare-topic to prepare materials for topic <id>.

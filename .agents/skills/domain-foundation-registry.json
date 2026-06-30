@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "description": "领域知识包注册表。通用流程 skill 先查这里，再按命名约定查找 .agents/skills/<domain>-foundation。",
+  "domains": {
+    "music_entertainment": {
+      "display_name": "音乐娱乐",
+      "skill_name": "music-entertainment-foundation",
+      "path": ".agents/skills/music-entertainment-foundation",
+      "aliases": [
+        "music",
+        "entertainment",
+        "音乐",
+        "音乐娱乐",
+        "音乐人物",
+        "娱乐人物"
+      ],
+      "status": "active"
+    }
+  }
+}

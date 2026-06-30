@@ -1,0 +1,3 @@
+display_name: 钩子审核
+short_description: 独立审核三个候选开头，输出 PASS/WARN/FAIL 和打回意见。
+default_prompt: Use $creation-hook-review to review hook candidates for topic <id>.

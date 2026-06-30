@@ -1,0 +1,3 @@
+display_name: 创作主编路由
+short_description: 按主编、写手、拍级产物接力完成选题创作、审核、优化、校验和登记。
+default_prompt: Use $creation-workflow to run the chief-editor writing workflow for topic <id>.

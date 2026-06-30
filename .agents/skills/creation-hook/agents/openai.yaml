@@ -1,0 +1,3 @@
+display_name: 钩子生成
+short_description: 为选题生成三个候选开头，写入 beats/钩子.md。
+default_prompt: Use $creation-hook to create three hook candidates for topic <id>.

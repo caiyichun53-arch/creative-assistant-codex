@@ -1,0 +1,8 @@
+# Copy to config/accounts/<account-name>.yaml and fill real account data locally.
+name: example_account
+domain: example_domain
+platform: douyin
+sec_user_id: ""
+profile_url: ""
+persona: vault/人设/example_account.md
+status: active

@@ -1,0 +1,3 @@
+display_name: 创作对齐
+short_description: 执行第 0 拍对齐，生成可用事实清单并确认创作模式。
+default_prompt: Use $creation-align to run the alignment beat for topic <id>.

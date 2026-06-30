@@ -1,0 +1,3 @@
+display_name: 禁词校验
+short_description: 调用 check_banned.py 检查 RED/WARN/HINT，RED 必须返修。
+default_prompt: Use $creation-banned-check to check banned terms for topic <id>.

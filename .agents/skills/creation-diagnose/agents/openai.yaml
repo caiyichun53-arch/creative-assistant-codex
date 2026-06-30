@@ -1,0 +1,3 @@
+display_name: 优化诊断
+short_description: 对已过审初稿提出整篇优化意见，只挑不改。
+default_prompt: Use $creation-diagnose to diagnose improvements for topic <id>.

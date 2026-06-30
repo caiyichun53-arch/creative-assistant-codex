@@ -1,0 +1,38 @@
+# 第一轮能力卡审查表：第二轮
+
+- decision 含义: keep=独立保留；merge=合并入稳定卡；rewrite=原卡方向有价值但需要重写。
+
+- `album_appreciation_001` [听众情绪] -> **merge** => `stable_001`：与初听时刻、生命阶段、媒介记忆属于同一类入口能力，合并保留。
+- `album_appreciation_002` [音乐赏析] -> **merge** => `stable_002`：与流派/年代校正共同构成同代坐标能力。
+- `album_appreciation_003` [音乐赏析] -> **merge** => `stable_003`：保留声音细节到艺术判断的核心，但与影响路径、身体反应合并。
+- `album_appreciation_004` [专辑叙事] -> **merge** => `stable_004`：与概念专辑核心命题合并，形成专辑统摄能力。
+- `album_appreciation_005` [人物传记] -> **rewrite** => `stable_007`：原卡类别偏人物传记，本质是舆论噪音校正，重写归入标签校正。
+- `album_appreciation_006` [人物传记] -> **merge** => `stable_011`：与人物心理命题、作品痕迹合并，并强化避免心理诊断。
+- `album_appreciation_007` [音乐赏析] -> **merge** => `stable_003`：影响路径需要落到可听见元素，合并到声音元素能力。
+- `album_appreciation_008` [听众情绪] -> **merge** => `stable_003`：身体反应可作为声音元素证词，合并处理。
+- `album_appreciation_009` [专辑叙事] -> **keep** => `stable_005`：单张作品在职业弧线中的位置判断独立保留。
+- `album_appreciation_010` [音乐赏析] -> **merge** => `stable_006`：与集体情绪、情绪入口边界合并。
+- `biography_001` [人物传记] -> **merge** => `stable_007`：公众标签与事实细节的矛盾是人物传记常用入口，合并保留。
+- `biography_002` [人物传记] -> **merge** => `stable_008`：极限处境动作和关键现场功能可合并为人物精神判断。
+- `biography_003` [人物传记/背景故事] -> **merge** => `stable_009`：传记截断与主动叙事范围属于同一能力。
+- `biography_004` [听众情绪/人物传记] -> **merge** => `stable_001`：人物音乐的初遇记忆并入具体初听入口。
+- `biography_005` [人物传记] -> **keep** => `stable_010`：神话形象与私人细节对照是独立人物复杂性能力。
+- `biography_006` [人物传记/音乐赏析] -> **merge** => `stable_011`：作品替代心理分析，与心理命题作品化合并。
+- `biography_007` [人物传记/背景故事] -> **merge** => `stable_008`：关键现场的功能判断并入极限动作定义精神。
+- `biography_008` [人物传记] -> **keep** => `stable_012`：关系因果权重是独立人物传记能力。
+- `listener_emotion_001` [听众情绪] -> **merge** => `stable_001`：生命阶段时间锚并入具体初听入口。
+- `listener_emotion_002` [听众情绪] -> **keep** => `stable_013`：微观动作承载情绪独立保留。
+- `listener_emotion_003` [听众情绪] -> **keep** => `stable_014`：那时/现在重听结构独立保留。
+- `listener_emotion_004` [音乐赏析] -> **keep** => `stable_015`：比较式聆听适合主题盘点和赏析，独立保留。
+- `listener_emotion_005` [听众情绪] -> **merge** => `stable_001`：感官介质与初听入口合并。
+- `listener_emotion_006` [主题盘点] -> **rewrite** => `stable_006`：原卡过宽，重写为情绪层级与分析边界。
+- `listener_emotion_007` [听众情绪] -> **keep** => `stable_016`：缺席者情感有高风险，需要独立边界。
+- `listener_emotion_008` [音乐赏析] -> **keep** => `stable_017`：歌词进入真实生活场景是独立词作判断。
+- `topic_planning_001` [人物传记/背景故事] -> **merge** => `stable_009`：主动声明叙事范围并入传记截断判断。
+- `topic_planning_002` [专辑叙事/音乐赏析] -> **merge** => `stable_004`：概念专辑核心命题并入核心曲目统摄。
+- `topic_planning_003` [背景故事/音乐赏析] -> **keep** => `stable_018`：创作现场转作品气质独立保留。
+- `topic_planning_004` [主题盘点/背景故事] -> **merge** => `stable_002`：流派误解校正并入同代声音坐标。
+- `topic_planning_005` [人物传记/背景故事] -> **merge** => `stable_011`：心理早期经历只在能作品化时使用，合并。
+- `topic_planning_006` [人物传记/背景故事] -> **keep** => `stable_019`：影视版本与史实对照独立保留。
+- `topic_planning_007` [听众情绪/专辑叙事] -> **merge** => `stable_006`：集体情绪入口并入情绪服务分析。
+- `topic_planning_008` [音乐赏析/背景故事] -> **keep** => `stable_020`：背景必要性分级是全类型基础能力。

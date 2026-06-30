@@ -1,0 +1,3 @@
+display_name: 成稿
+short_description: 根据对齐、钩子和大纲写出 draft_v1.md 初稿。
+default_prompt: Use $creation-draft to write draft_v1 for topic <id>.

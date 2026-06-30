@@ -1,0 +1,130 @@
+# Copy to config/settings.yaml and adjust local paths before running.
+
+paths:
+  db: data/creation.db
+  vault: vault
+  raw: data/raw
+  drafts: data/drafts
+  logs: logs
+
+llm:
+  provider: codex
+  default: codex-low
+  aliases:
+    codex-low: gpt-5.4-mini
+    codex-mid: gpt-5.5
+    codex-high: gpt-5.5
+    claude-haiku: haiku
+    claude-sonnet: sonnet
+    claude-opus: opus
+  codex:
+    command: codex
+    sandbox: read-only
+    skip_git_repo_check: true
+    extra_args: []
+  routes:
+    topic_judge: codex-low
+    reverse_dna: codex-mid
+    reverse_reduce: codex-mid
+    language_fuel_extract: codex-mid
+    human_flavor: codex-mid
+    ai_flavor_judge: codex-low
+    research: codex-mid
+
+hit_detection:
+  baseline_window_days: 90
+  baseline_min_samples: 30
+  excess_threshold: 3.0
+  p90_required: true
+  observe_days: 7
+  recheck_interval_hours: 24
+
+candidate_pool:
+  decay_half_life_days: 7
+  expire_heat: 0.1
+  reheat_boost: 0.5
+
+reverse_engine:
+  # Local model root. Keep real absolute paths in config/settings.yaml only.
+  models_root: models
+  asr_model: sensevoice/sensevoice-small
+  vad_model: modelscope_cache/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
+  min_transcript_chars: 80
+
+humanize:
+  # Local source corpus path. Leave empty until configured.
+  corpus_dir: ""
+  chunk_chars: 60000
+  reduce_chars: 80000
+  out_dir: data/humanize
+
+crawler:
+  daily_max_notes: 20
+  rate_limit_jitter_sec: [3, 10]
+  incremental: true
+
+language_fuel:
+  vault_dir: 语感燃料
+  default_write_obsidian: true
+  adapters:
+    mediacrawler:
+      enabled: true
+      adapter_status: vendor_available
+      platforms: [xhs, douyin, kuaishou, bilibili, weibo, tieba, zhihu]
+      source_kind_by_platform:
+        xhs: post
+        douyin: short_comment
+        kuaishou: short_comment
+        bilibili: short_comment
+        weibo: post
+        tieba: post
+        zhihu: article_or_answer
+  platforms:
+    douban:
+      enabled: true
+      platform_name: 豆瓣
+      adapter_status: implemented_multi_channel
+      probe_status: unknown
+      out_dir: data/language_fuel/douban
+      default_limit: 10
+      request_interval_sec: 1.0
+      require_target: true
+      channels:
+        movie:
+          enabled: true
+          domain: film
+          domain_name: 影视
+          source_kind: long_review
+          content_focus: searched_movie_full_reviews
+        book:
+          enabled: true
+          domain: book
+          domain_name: 读书
+          source_kind: long_review
+          content_focus: searched_book_full_reviews
+        music:
+          enabled: true
+          domain: music
+          domain_name: 音乐
+          source_kind: long_review
+          content_focus: searched_music_full_reviews
+        group:
+          enabled: true
+          domain: community
+          domain_name: 小组
+          source_kind: group_topic
+          content_focus: whitelisted_group_topics_and_replies
+          require_whitelist: true
+          group_whitelist: []
+    music:
+      netease:
+        enabled: true
+        platform_name: 网易云音乐
+        source_kind: short_comment
+        content_focus: song_listener_comments
+        adapter_status: implemented
+        probe_status: unknown
+        out_dir: data/music/netease
+        page_size: 20
+        default_comment_limit: 100
+        request_interval_sec: 0.8

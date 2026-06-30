@@ -1,0 +1,4 @@
+interface:
+  display_name: "创作助手技能标准"
+  short_description: "规范本项目本地创作技能的结构边界验收和经验存放要求"
+  default_prompt: "Use $creation-skill-standard to design a compliant local skill for Creation Assistant."
