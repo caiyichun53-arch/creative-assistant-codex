@@ -2,7 +2,7 @@
 
 goal: GOAL-01 Persistence and Traceability
 
-status: `LOCAL_VALIDATION_PASSED_POSTGRES_RUNTIME_BLOCKED`
+status: `LOCAL_VALIDATION_PASSED_POSTGRES_SQL_GATE_AUTHORED`
 
 source_commit: `a8787a439fd281b2d8cec7a7ffe2606426bebab4`
 
@@ -22,23 +22,25 @@ Implement UUIDv7, root/version model, hashes, references, audit, command receipt
   - `V0.6.2:4856-4914`
   - `V0.6.2:5905-5918`
   - `V0.6.2:6551-6568`
-- Confirmed `psql`, `postgres` and `pg_ctl` are not available in PATH; Docker and SQLite are available.
+- Confirmed `psql`, `postgres` and `pg_ctl` are not available in PATH; SQLite is available.
 - Created GOAL-01 ExecPlan.
 - Added target PostgreSQL DDL and executable SQLite validation DDL.
 - Added GOAL-01 persistence helper and verification script.
 - Ran local SQLite/in-memory GOAL-01 acceptance verification: pass.
 - Ran Python compile check for GOAL-01 files: pass.
-- Confirmed Docker daemon is not running, so disposable PostgreSQL service validation is blocked in current environment.
+- Confirmed Docker is not a GOAL-01 dependency and should not be treated as part of the project route.
+- Added no-Docker PostgreSQL acceptance SQL at `scripts/core/persistence/verify_goal_01_postgres.sql`.
+- Set the GOAL-01 validation rule: do not use Docker again for this goal unless the user explicitly asks for it.
 
 ## Pending Checkpoints
 
-- PostgreSQL runtime DDL execution, if required for final GOAL-01 completion.
+- PostgreSQL runtime DDL plus acceptance SQL execution, if required for final GOAL-01 completion.
 - Clean temporary files.
 - Decide whether GOAL-01 completion is proven or remains blocked by PostgreSQL runtime absence.
 
 ## Current Stop Point
 
-Local GOAL-01 persistence and traceability gate passes; PostgreSQL runtime validation is blocked by missing/stopped local PostgreSQL service.
+Local GOAL-01 persistence and traceability gate passes; PostgreSQL runtime validation now has a no-Docker SQL gate, but still needs a PostgreSQL instance if required for final proof.
 
 ## GOAL-02 Allowed?
 

@@ -36,5 +36,6 @@ Implementation plan:
 
 Current validation mode:
 - `psql`/PostgreSQL server is not available in PATH in the current environment.
-- Docker is available, but GOAL-01 first validates rules locally without pulling/running external services.
-- PostgreSQL DDL is authored as the target contract; the SQLite schema is the executable local proof for the same gates.
+- Docker is not a project dependency and is not part of the GOAL-01 route.
+- PostgreSQL DDL is authored as the target contract; `verify_goal_01_postgres.sql` is the no-Docker PostgreSQL acceptance script for any disposable PostgreSQL instance.
+- The SQLite schema remains the executable local proof when no PostgreSQL instance is available.

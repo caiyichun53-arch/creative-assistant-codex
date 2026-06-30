@@ -1,6 +1,6 @@
 # GOAL-01 Validation Report
 
-Status: `LOCAL_VALIDATION_PASSED_POSTGRES_RUNTIME_BLOCKED`
+Status: `LOCAL_VALIDATION_PASSED_POSTGRES_SQL_GATE_AUTHORED`
 
 This report records only checks that are safe for GOAL-01. It must not claim GOAL-01 completion until all acceptance checks have passing command evidence.
 
@@ -23,8 +23,9 @@ This report records only checks that are safe for GOAL-01. It must not claim GOA
 ## Environment
 
 - PostgreSQL CLI/server availability: not found in PATH at GOAL-01 start.
-- Docker availability: Docker client found, but Docker Desktop daemon was not running.
+- Docker: not a project dependency and not part of the GOAL-01 route.
 - Local executable validation target: SQLite in-memory schema with equivalent GOAL-01 gates.
+- PostgreSQL executable target: `scripts/core/persistence/verify_goal_01_postgres.sql`, to be run against any disposable PostgreSQL instance when one is provided.
 
 ## Commands
 
@@ -94,7 +95,7 @@ This report records only checks that are safe for GOAL-01. It must not claim GOA
 - side_effects: none
 - conclusion: no local PostgreSQL CLI/server is available through PATH.
 
-### 6. Docker Daemon Availability
+### 6. Non-Route Docker Probe
 
 - command: `docker version --format '{{json .}}'`
 - working_directory: `I:\Creation_assistant-codex`
@@ -103,9 +104,20 @@ This report records only checks that are safe for GOAL-01. It must not claim GOA
 - exit_code: 1
 - stdout/stderr summary: Docker client `29.4.0`; server unavailable because Docker Desktop Linux engine pipe was not found.
 - side_effects: none
-- conclusion: ephemeral PostgreSQL container validation is currently blocked.
+- conclusion: this only proved Docker was not available at that moment; Docker is not required by GOAL-01 and should not be used again for this goal unless explicitly requested by the user.
 
-### 7. Boundary Search
+### 7. Temporary PostgreSQL DDL Load
+
+- command summary: a one-time disposable PostgreSQL instance was used to load `scripts/core/persistence/goal01_schema.postgres.sql`.
+- working_directory: `I:\Creation_assistant-codex`
+- input: target PostgreSQL DDL
+- real_credentials_used: no
+- exit_code: 0
+- stdout/stderr summary: target DDL loaded and the 9 expected GOAL-01 tables were listed.
+- side_effects: temporary local verification service only; no project file, runtime route or production dependency was added.
+- conclusion: the PostgreSQL DDL is syntactically loadable. This was a temporary validation method, not a project dependency.
+
+### 8. Boundary Search
 
 - command: `rg -n "production_task|topic_state|claim_state|experiment_state|tactic_state|Hermes|Feishu|ModelGateway|LLM|subprocess|requests|sqlite3.connect\\(.*creation\\.db|data/creation\\.db" scripts/core goals implementation_progress/GOAL-01.md GOAL-01_VALIDATION_REPORT.md`
 - working_directory: `I:\Creation_assistant-codex`
@@ -115,6 +127,22 @@ This report records only checks that are safe for GOAL-01. It must not claim GOA
 - stdout/stderr summary: matches only in `goals/GOAL-01.md` non-scope statements; no GOAL-01 code introduces Hermes/Feishu/ModelGateway/LLM/subprocess/live DB coupling.
 - side_effects: none
 - conclusion: GOAL-01 code stays within scope and does not enter GOAL-02 or runtime-host work.
+
+### 9. PostgreSQL Acceptance SQL Authored
+
+- file: `scripts/core/persistence/verify_goal_01_postgres.sql`
+- input: target PostgreSQL schema after `goal01_schema.postgres.sql`
+- intended execution form: `psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f scripts/core/persistence/goal01_schema.postgres.sql -f scripts/core/persistence/verify_goal_01_postgres.sql`
+- real_credentials_used: no
+- side_effects: none when reviewed; the script itself wraps verification data in a transaction and rolls it back.
+- coverage:
+  - immutable `trace_version` update/delete rejection
+  - same-root current version pointer rejection
+  - command receipt uniqueness gate
+  - candidate preference current pointer rejection
+  - same-profile published current preference requirement
+  - audit/outbox correlation
+- conclusion: PostgreSQL runtime acceptance can now be executed without Docker when a PostgreSQL instance is available.
 
 ## Review Loops
 
@@ -135,8 +163,10 @@ This report records only checks that are safe for GOAL-01. It must not claim GOA
 
 ## Remaining Runtime Gap
 
-Target PostgreSQL DDL exists at `scripts/core/persistence/goal01_schema.postgres.sql`, but it has not been executed against a PostgreSQL server because no server/CLI is available and Docker daemon is stopped.
+Target PostgreSQL DDL exists at `scripts/core/persistence/goal01_schema.postgres.sql`; PostgreSQL acceptance SQL exists at `scripts/core/persistence/verify_goal_01_postgres.sql`.
 
 GOAL-01 should not be marked fully complete until one of these is true:
-- PostgreSQL DDL is run against a disposable PostgreSQL instance and the same acceptance gates pass there.
+- PostgreSQL DDL plus `verify_goal_01_postgres.sql` are run against a disposable PostgreSQL instance and the same acceptance gates pass there.
 - The user accepts the local SQLite validation as sufficient for this checkpoint and defers PostgreSQL execution to the later environment gate.
+
+Docker is not an acceptance prerequisite.
