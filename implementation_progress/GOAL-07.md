@@ -36,11 +36,16 @@ GOAL-06_inherited_commit:
   - immutable Run Envelope materialization through existing trace/version/audit store;
   - deterministic fake-provider verification;
   - failure envelope verification.
+- Added Portable Skill contract and clean-room validation:
+  - self-contained `PortableSkillSpec`;
+  - no table, ORM, Host UUID or formal state write leaks in the portable contract;
+  - required input and prompt rendering validation.
+- Added Host Binding separation and Runner execution contract:
+  - `HostBindingSpec` maps host payload into portable skill input without leaking host identity;
+  - `PortableSkillRunner` executes through `ModelGateway` and does not own formal business state.
 
 ## Remaining Checkpoints
 
-- Add Portable Skill contract and clean-room validation with no host/database leaks.
-- Add Host Binding separation and Runner execution contract.
 - Prove Runner, Binding and ModelGateway integrate without bypassing Core/Materializer.
 
 ## Modified Files
@@ -49,6 +54,7 @@ GOAL-06_inherited_commit:
 - `implementation_progress/GOAL-07.md`
 - `scripts/core/model_gateway/__init__.py`
 - `scripts/core/model_gateway/goal07_model_gateway.py`
+- `scripts/core/model_gateway/goal07_skill_runner.py`
 - `scripts/core/model_gateway/verify_goal_07.py`
 
 ## Migration Changes
@@ -59,7 +65,7 @@ GOAL-06_inherited_commit:
 
 - `python scripts/core/model_gateway/verify_goal_07.py`
   - exit_code: 0
-- `python -m py_compile scripts/core/model_gateway/__init__.py scripts/core/model_gateway/goal07_model_gateway.py scripts/core/model_gateway/verify_goal_07.py`
+- `python -m py_compile scripts/core/model_gateway/__init__.py scripts/core/model_gateway/goal07_model_gateway.py scripts/core/model_gateway/goal07_skill_runner.py scripts/core/model_gateway/verify_goal_07.py`
   - exit_code: 0
 - `git diff --check`
   - exit_code: 0
@@ -69,6 +75,9 @@ GOAL-06_inherited_commit:
 - PASS fake provider records traceable run envelope.
 - PASS unknown route rejected before provider execution.
 - PASS provider failure records failed run envelope.
+- PASS portable skill clean-room rejects host/database leaks.
+- PASS host binding maps inputs without leaking host identity.
+- PASS runner executes portable skill through ModelGateway contract.
 - GOAL-07 ModelGateway verification passed.
 
 ## Real Blockers
@@ -77,8 +86,9 @@ GOAL-06_inherited_commit:
 
 ## Next Resume Point
 
-- Add Portable Skill contract and clean-room validation with no host/database leaks.
+- Prove Runner, Binding and ModelGateway integrate without bypassing Core/Materializer.
 
 ## Checkpoint Commit
 
 - This round checkpoint commit subject: `Start GOAL-07 formal model gateway`
+- This round checkpoint commit subject: `Add GOAL-07 portable skill runner contract`

@@ -12,8 +12,16 @@ from .goal07_model_gateway import (
     ModelRunResult,
     ModelUsage,
 )
+from .goal07_skill_runner import (
+    HostBindingSpec,
+    PortableSkillRunner,
+    PortableSkillSpec,
+    SkillContractError,
+    SkillRunResult,
+)
 
 __all__ = [
+    "HostBindingSpec",
     "ModelGateway",
     "ModelGatewayError",
     "ModelProvider",
@@ -24,4 +32,8 @@ __all__ = [
     "ModelRunMaterializer",
     "ModelRunResult",
     "ModelUsage",
+    "PortableSkillRunner",
+    "PortableSkillSpec",
+    "SkillContractError",
+    "SkillRunResult",
 ]

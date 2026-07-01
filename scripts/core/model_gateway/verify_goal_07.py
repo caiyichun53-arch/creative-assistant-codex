@@ -17,6 +17,13 @@ from scripts.core.model_gateway.goal07_model_gateway import (
     ModelRunMaterializer,
     ModelUsage,
 )
+from scripts.core.model_gateway.goal07_skill_runner import (
+    HostBindingSpec,
+    PortableSkillRunner,
+    PortableSkillSpec,
+    SkillContractError,
+    _contains_token,
+)
 from scripts.core.persistence.goal01_store import PersistenceStore, UUIDv7Generator, content_hash
 
 
@@ -179,10 +186,106 @@ def test_provider_failure_records_failed_envelope() -> None:
     raise AssertionError("expected provider failure")
 
 
+def make_portable_skill() -> PortableSkillSpec:
+    return PortableSkillSpec(
+        skill_name="formal-research-summarizer",
+        skill_version="0.1.0",
+        route_name="research_synthesis",
+        prompt_template="Summarize evidence for topic {topic_id}: {evidence_text}",
+        required_input_keys=("topic_id", "evidence_text"),
+        output_contract={"format": "plain_text", "max_chars": 400},
+    )
+
+
+def test_portable_skill_clean_room_rejects_host_database_leaks() -> None:
+    skill = make_portable_skill()
+    skill.validate_clean_room()
+    payload_text = json.dumps(skill.as_payload(), ensure_ascii=False)
+    for token in ("database", "table", "orm", "host_uuid", "trace_root", "formal_status"):
+        assert not _contains_token(payload_text.lower(), token)
+
+    leaked = PortableSkillSpec(
+        skill_name="bad-skill",
+        skill_version="0.1.0",
+        route_name="research_synthesis",
+        prompt_template="Write trace_root {topic_id}",
+        required_input_keys=("topic_id",),
+        output_contract={"format": "plain_text"},
+    )
+    try:
+        leaked.validate_clean_room()
+    except SkillContractError:
+        print("PASS portable skill clean-room rejects host/database leaks")
+        return
+    raise AssertionError("expected portable skill leak rejection")
+
+
+def test_host_binding_maps_without_leaking_host_identity() -> None:
+    binding = HostBindingSpec(
+        binding_name="topic-first-research",
+        binding_version="0.1.0",
+        input_map={"topic_id": "topic_id", "evidence_text": "brief_text"},
+        static_inputs={"audience": "fixture"},
+    )
+    bound = binding.bind(
+        {
+            "topic_id": "topic-7",
+            "brief_text": "fixture evidence",
+            "host_uuid": "host-only-value",
+        }
+    )
+
+    assert bound == {"audience": "fixture", "topic_id": "topic-7", "evidence_text": "fixture evidence"}
+    assert "host_uuid" not in json.dumps(bound, ensure_ascii=False).lower()
+    assert binding.binding_hash
+    print("PASS host binding maps inputs without leaking host identity")
+
+
+def test_runner_executes_skill_through_model_gateway_contract() -> None:
+    store = make_store()
+    provider = FakeModelProvider()
+    route = make_route()
+    gateway = ModelGateway(
+        routes={route.route_name: route},
+        providers={provider.provider_name: provider},
+        materializer=ModelRunMaterializer(store),
+        monotonic_ms=Clock().now_ms,
+    )
+    binding = HostBindingSpec(
+        binding_name="topic-first-research",
+        binding_version="0.1.0",
+        input_map={"topic_id": "topic_id", "evidence_text": "brief_text"},
+    )
+    skill_input = binding.bind({"topic_id": "topic-7", "brief_text": "fixture evidence"})
+    result = PortableSkillRunner(gateway).run(
+        skill=make_portable_skill(),
+        input_payload=skill_input,
+        binding=binding,
+    )
+
+    assert result.output_text == "fake:fake-model-v1:topic-7"
+    payload = json.loads(
+        store.conn.execute(
+            "SELECT payload_json FROM trace_version WHERE version_id=?",
+            (result.model_run.envelope_version_id,),
+        ).fetchone()["payload_json"]
+    )
+    assert payload["skill_name"] == "formal-research-summarizer"
+    assert payload["skill_hash"]
+    assert payload["binding_name"] == "topic-first-research"
+    assert payload["binding_hash"]
+    assert payload["route_name"] == "research_synthesis"
+    assert store.conn.execute("SELECT count(*) FROM trace_root WHERE object_kind='model_run_envelope'").fetchone()[0] == 1
+    print("PASS runner executes portable skill through ModelGateway contract")
+
+
 def main() -> None:
     test_fake_provider_records_traceable_envelope()
     test_unknown_route_rejected_before_provider_execution()
     test_provider_failure_records_failed_envelope()
+    test_portable_skill_clean_room_rejects_host_database_leaks()
+    test_host_binding_maps_without_leaking_host_identity()
+    test_runner_executes_skill_through_model_gateway_contract()
     print("GOAL-07 ModelGateway verification passed")
 
 
