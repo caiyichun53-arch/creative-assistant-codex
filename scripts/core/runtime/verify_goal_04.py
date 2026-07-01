@@ -8,7 +8,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.core.persistence.goal01_store import UUIDv7Generator
-from scripts.core.runtime.goal04_runtime_host import RuntimeHost
+from scripts.core.runtime.goal04_runtime_host import RuntimeHandlerContract, RuntimeHost, RuntimeHostError
 from scripts.core.scheduler.goal03_scheduler import Goal03Scheduler
 
 
@@ -46,7 +46,15 @@ def test_idle_when_no_job() -> None:
 
 def test_dispatch_success_completes_job() -> None:
     scheduler, host = make_runtime()
-    host.register_handler("local.echo", lambda payload: {"echo": payload["value"]})
+    host.register_handler(
+        "local.echo",
+        lambda payload: {"echo": payload["value"]},
+        contract=RuntimeHandlerContract(
+            job_kind="local.echo",
+            required_payload_keys=("value",),
+            required_result_keys=("echo",),
+        ),
+    )
     enqueued = scheduler.enqueue_job(
         job_kind="local.echo",
         payload={"value": "ok"},
@@ -58,6 +66,70 @@ def test_dispatch_success_completes_job() -> None:
     job = scheduler.get_job(enqueued.job_id)
     assert job["status"] == "succeeded"
     print("PASS runtime host dispatch success")
+
+
+def test_contract_mismatch_rejected_at_registration() -> None:
+    _scheduler, host = make_runtime()
+    try:
+        host.register_handler(
+            "local.echo",
+            lambda payload: payload,
+            contract=RuntimeHandlerContract(job_kind="local.other"),
+        )
+    except RuntimeHostError:
+        print("PASS runtime host rejects mismatched contract")
+        return
+    raise AssertionError("expected runtime host contract mismatch rejection")
+
+
+def test_contract_input_error_dead_letters_without_retry() -> None:
+    scheduler, host = make_runtime()
+    host.register_handler(
+        "local.needs-input",
+        lambda payload: {"ok": payload["required"]},
+        contract=RuntimeHandlerContract(
+            job_kind="local.needs-input",
+            required_payload_keys=("required",),
+        ),
+    )
+    enqueued = scheduler.enqueue_job(
+        job_kind="local.needs-input",
+        payload={"other": "missing"},
+        idempotency_key="runtime-contract-input",
+        max_attempts=2,
+    )
+    result = host.run_once()
+    assert result.status == "failed"
+    assert result.reason == "contract_input_error"
+    job = scheduler.get_job(enqueued.job_id)
+    assert job["status"] == "dead"
+    assert job["attempt_count"] == 1
+    print("PASS runtime host contract input error dead-letters")
+
+
+def test_contract_output_error_requeues() -> None:
+    scheduler, host = make_runtime()
+    host.register_handler(
+        "local.needs-output",
+        lambda _payload: {"other": "missing"},
+        contract=RuntimeHandlerContract(
+            job_kind="local.needs-output",
+            required_result_keys=("required",),
+        ),
+    )
+    enqueued = scheduler.enqueue_job(
+        job_kind="local.needs-output",
+        payload={"value": "ok"},
+        idempotency_key="runtime-contract-output",
+        max_attempts=2,
+    )
+    result = host.run_once()
+    assert result.status == "failed"
+    assert result.reason == "contract_output_error"
+    job = scheduler.get_job(enqueued.job_id)
+    assert job["status"] == "queued"
+    assert job["attempt_count"] == 1
+    print("PASS runtime host contract output error requeues")
 
 
 def test_handler_failure_requeues_job() -> None:
@@ -106,6 +178,9 @@ def test_unknown_handler_dead_letters_without_duplicate_side_effect() -> None:
 def main() -> int:
     test_idle_when_no_job()
     test_dispatch_success_completes_job()
+    test_contract_mismatch_rejected_at_registration()
+    test_contract_input_error_dead_letters_without_retry()
+    test_contract_output_error_requeues()
     test_handler_failure_requeues_job()
     test_unknown_handler_dead_letters_without_duplicate_side_effect()
     print("GOAL-04 verification passed")

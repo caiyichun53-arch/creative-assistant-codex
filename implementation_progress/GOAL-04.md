@@ -2,7 +2,7 @@
 
 goal: GOAL-04 Runtime Host and Local Handler Dispatch
 
-status: `IN_PROGRESS_CHECKPOINT_01_COMPLETE`
+status: `IN_PROGRESS_CHECKPOINT_02_COMPLETE`
 
 source_commit: `8cd0fdb`
 
@@ -20,16 +20,25 @@ Implement a minimal runtime host on top of GOAL-03 scheduler jobs. Dispatch is l
 - Added minimal runtime host dispatch surface on top of GOAL-03 scheduler.
 - Verified success, failure and unknown-handler paths with local in-memory tests.
 - Ran GOAL-04 Python compile check: pass.
+- Completed runtime contract persistence decision:
+  - No GOAL-04 database persistence is needed for the current local handler dispatch surface.
+  - Added `RuntimeHandlerContract` to the local runtime host registry for deterministic handler input/output boundaries.
+- Added adapter boundary tests before external integration:
+  - Contract job-kind mismatch is rejected at registration.
+  - Missing required payload keys fail without retry.
+  - Missing required result keys fail through scheduler retry path.
+- Confirmed no PostgreSQL-specific runtime host gate is needed for this checkpoint because no PostgreSQL-only behavior was added.
+- Re-ran GOAL-04 local verification and Python compile check: pass.
 
 ## Pending Checkpoints
 
-- Persist any GOAL-04-specific runtime contract if needed after the first dispatch surface.
-- Add PostgreSQL-specific runtime host gate only if GOAL-04 adds PostgreSQL-only behavior.
-- Add adapter boundary tests before any external integration.
+- Add external adapter boundary tests before any actual external integration.
+- Add PostgreSQL-specific runtime host gate only if a later GOAL-04 checkpoint adds PostgreSQL-only behavior.
+- Decide whether runtime host needs bounded batch execution after single-job dispatch.
 
 ## Current Stop Point
 
-GOAL-04 checkpoint 01 is complete. Continue next from runtime contract persistence decision. GOAL-05 is not allowed.
+GOAL-04 checkpoint 02 is complete. Continue next from external adapter boundary tests before any actual external integration. GOAL-05 is not allowed.
 
 ## GOAL-05 Allowed?
 
