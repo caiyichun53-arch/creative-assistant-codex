@@ -1,0 +1,129 @@
+# Copy to config/live_gates.yaml for local validation runs.
+# Keep config/live_gates.yaml untracked if it contains machine-specific paths.
+
+environment: validation
+allow_live_calls: false
+shadow_only: true
+preflight_required: true
+env_file: .env.live-gates
+evidence_root: validation_evidence
+status_file: EXTERNAL_LIVE_GATE_STATUS.yaml
+allowed_database_roots:
+  - data/validation/live_gates
+  - validation_evidence/databases
+
+gates:
+  - gate_id: GATE-HERMES-REAL-HOST
+    adapter: HermesCoreBridge
+    live_enabled: false
+    isolated_database: data/validation/live_gates/v0.6.2/hermes_host.sqlite
+    required_env:
+      - HERMES_TEST_HOST_URL
+      - HERMES_TEST_TOKEN
+      - HERMES_TEST_ACTOR_ID
+    required_test_env:
+      - kind: isolated_database
+        name: isolated Hermes validation database
+        value: data/validation/live_gates/v0.6.2/hermes_host.sqlite
+
+  - gate_id: GATE-FEISHU-THIN-BINDING
+    adapter: FeishuThinBinding
+    live_enabled: false
+    isolated_database: data/validation/live_gates/v0.6.2/feishu_binding.sqlite
+    required_env:
+      - FEISHU_APP_ID
+      - FEISHU_APP_SECRET
+      - FEISHU_CHAT_ID
+      - FEISHU_EVENT_VERIFICATION_TOKEN
+    required_test_env:
+      - kind: isolated_database
+        name: isolated Feishu validation database
+        value: data/validation/live_gates/v0.6.2/feishu_binding.sqlite
+
+  - gate_id: GATE-MODEL-PROVIDER
+    adapter: ModelGateway
+    live_enabled: false
+    isolated_database: data/validation/live_gates/v0.6.2/model_provider.sqlite
+    required_env:
+      - MODEL_PROVIDER_API_KEY
+      - MODEL_PROVIDER_PROJECT_ID
+      - MODEL_PROVIDER_MODEL
+      - MODEL_PROVIDER_COST_CAP
+    required_test_env:
+      - kind: isolated_database
+        name: isolated model validation database
+        value: data/validation/live_gates/v0.6.2/model_provider.sqlite
+
+  - gate_id: GATE-ASR
+    adapter: ASR command boundary
+    live_enabled: false
+    isolated_database: data/validation/live_gates/v0.6.2/asr/creation.db
+    required_env:
+      - ASR_TEST_MEDIA_PATH
+      - ASR_MODELS_ROOT
+    required_test_env:
+      - kind: isolated_database
+        name: isolated ASR validation database
+        value: data/validation/live_gates/v0.6.2/asr/creation.db
+      - kind: path_exists
+        name: ASR entrypoint
+        value: tools/asr/transcribe.py
+
+  - gate_id: GATE-SEARCH-PROVIDER
+    adapter: FormalResearchService
+    live_enabled: false
+    isolated_database: data/validation/live_gates/v0.6.2/search_provider.sqlite
+    required_env:
+      - SEARCH_PROVIDER_API_KEY
+      - SEARCH_PROVIDER_NAME
+      - SEARCH_PROVIDER_QUERY_FILE
+    required_test_env:
+      - kind: isolated_database
+        name: isolated search validation database
+        value: data/validation/live_gates/v0.6.2/search_provider.sqlite
+
+  - gate_id: GATE-EXTERNAL-COLLECTOR-ADAPTER
+    adapter: External collector adapter boundary
+    live_enabled: false
+    isolated_database: data/validation/live_gates/v0.6.2/external_collector/creation.db
+    required_env:
+      - COLLECTOR_TEST_PROFILE_DIR
+      - COLLECTOR_TEST_SAMPLE_URL
+    required_test_env:
+      - kind: isolated_database
+        name: isolated collector validation database
+        value: data/validation/live_gates/v0.6.2/external_collector/creation.db
+      - kind: path_exists
+        name: collector entrypoint
+        value: scripts/collect/crawl_competitors.py
+
+  - gate_id: GATE-SHADOW-E2E
+    adapter: GOAL-12 staging shadow boundary
+    live_enabled: false
+    isolated_database: data/validation/live_gates/v0.6.2/shadow_e2e.sqlite
+    required_env:
+      - SHADOW_PUBLICATION_SINK
+      - HERMES_TEST_HOST_URL
+      - FEISHU_CHAT_ID
+      - MODEL_PROVIDER_API_KEY
+      - SEARCH_PROVIDER_API_KEY
+    required_test_env:
+      - kind: isolated_database
+        name: isolated shadow E2E validation database
+        value: data/validation/live_gates/v0.6.2/shadow_e2e.sqlite
+      - kind: configured_value
+        name: shadow-only sink
+        value: shadow-only
+
+  - gate_id: GATE-CONTINUOUS-FAULT-RECOVERY
+    adapter: Scheduler and RuntimeHost
+    live_enabled: false
+    isolated_database: data/validation/live_gates/v0.6.2/continuous_fault_recovery.sqlite
+    required_env:
+      - CONTINUOUS_RUN_DURATION_MINUTES
+      - CONTINUOUS_RUN_MAX_EXTERNAL_CALLS
+      - HERMES_TEST_HOST_URL
+    required_test_env:
+      - kind: isolated_database
+        name: isolated continuous validation database
+        value: data/validation/live_gates/v0.6.2/continuous_fault_recovery.sqlite

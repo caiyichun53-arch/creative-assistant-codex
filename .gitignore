@@ -2,11 +2,17 @@
 .env
 .env.*
 !.env.example
+!.env.live-gates.example
 config/settings.yaml
+config/live_gates.yaml
 config/accounts/*.yaml
 !config/accounts/example.yaml
 config/domains/*.yaml
 !config/domains/example.yaml
+*secret*
+*secrets*
+*.pem
+*.key
 
 # Runtime data, generated artifacts, caches, and logs
 data/
@@ -15,6 +21,22 @@ logs/
 .playwright-cli/
 vendor/
 vault/
+validation_evidence/*
+!validation_evidence/.gitignore
+!validation_evidence/README.md
+browser_profile*/
+browser-profiles/
+profiles/
+sessions/
+cookies/
+*.har
+*.trace
+*.webm
+*.mp4
+*.wav
+*.mp3
+external_responses/
+raw_external/
 
 # Databases and transient state
 *.db

@@ -1,0 +1,139 @@
+status: DRY_RUN_PASSED
+updated_at: '2026-07-01T18:46:14Z'
+gates:
+  GATE-HERMES-REAL-HOST:
+    status: DRY_RUN_PASSED
+    latest_result:
+      gate_id: GATE-HERMES-REAL-HOST
+      started_at: '2026-07-01T18:46:14Z'
+      finished_at: '2026-07-01T18:46:14Z'
+      environment: validation
+      adapter: HermesCoreBridge
+      request_hash: 34d166ec8ef8be30b0f23a4026fc4a507ed280fe7039d508fc454e6c0c02b5d5
+      response_hash: e89af47d45e7a5dbedf6aeee5974c8fe1219c4d5be814708e5559e0d40318a14
+      correlation_id: GATE-HERMES-REAL-HOST.dry-run.2026-07-01T18:46:14Z
+      exit_code: 0
+      status: DRY_RUN_PASSED
+      external_side_effect: false
+      failure_reason: ''
+      evidence_location: validation_evidence\GATE-HERMES-REAL-HOST\20260701T184614
+      mode: dry-run
+  GATE-FEISHU-THIN-BINDING:
+    status: DRY_RUN_PASSED
+    latest_result:
+      gate_id: GATE-FEISHU-THIN-BINDING
+      started_at: '2026-07-01T18:46:14Z'
+      finished_at: '2026-07-01T18:46:14Z'
+      environment: validation
+      adapter: FeishuThinBinding
+      request_hash: 405ff454a13dcd6bac1d56f073ee45c33e534fec7923f0b1d086a703e755ff04
+      response_hash: 19e4644b454730bc8c6afa51355172b6d981e3dea837ee1224b9240cd54f00b1
+      correlation_id: GATE-FEISHU-THIN-BINDING.dry-run.2026-07-01T18:46:14Z
+      exit_code: 0
+      status: DRY_RUN_PASSED
+      external_side_effect: false
+      failure_reason: ''
+      evidence_location: validation_evidence\GATE-FEISHU-THIN-BINDING\20260701T184614
+      mode: dry-run
+  GATE-MODEL-PROVIDER:
+    status: DRY_RUN_PASSED
+    latest_result:
+      gate_id: GATE-MODEL-PROVIDER
+      started_at: '2026-07-01T18:46:14Z'
+      finished_at: '2026-07-01T18:46:14Z'
+      environment: validation
+      adapter: ModelGateway
+      request_hash: 292660fa59292f04384ebcf22ecea5c878e9a95bea84f3280c1a20d04580edb3
+      response_hash: ef6e03c0d11e081ded1de20d57b56001ad029b20b562f8218ec9bad441c66bcc
+      correlation_id: GATE-MODEL-PROVIDER.dry-run.2026-07-01T18:46:14Z
+      exit_code: 0
+      status: DRY_RUN_PASSED
+      external_side_effect: false
+      failure_reason: ''
+      evidence_location: validation_evidence\GATE-MODEL-PROVIDER\20260701T184614
+      mode: dry-run
+  GATE-ASR:
+    status: DRY_RUN_PASSED
+    latest_result:
+      gate_id: GATE-ASR
+      started_at: '2026-07-01T18:46:14Z'
+      finished_at: '2026-07-01T18:46:14Z'
+      environment: validation
+      adapter: ASR command boundary
+      request_hash: 306d2a64c316015e264358b6b77fe9a765b39fc6bd90a85bbac9dbcca4a94358
+      response_hash: 0b6c18fddc260d305493d2a6e44bf042c97f499547903436946a3efc3ba079c5
+      correlation_id: GATE-ASR.dry-run.2026-07-01T18:46:14Z
+      exit_code: 0
+      status: DRY_RUN_PASSED
+      external_side_effect: false
+      failure_reason: ''
+      evidence_location: validation_evidence\GATE-ASR\20260701T184614
+      mode: dry-run
+  GATE-SEARCH-PROVIDER:
+    status: DRY_RUN_PASSED
+    latest_result:
+      gate_id: GATE-SEARCH-PROVIDER
+      started_at: '2026-07-01T18:46:14Z'
+      finished_at: '2026-07-01T18:46:14Z'
+      environment: validation
+      adapter: FormalResearchService
+      request_hash: 854a94bdde87a4e52a9d8bd836b33caedd6d786a4d60865d656871d3690f19a8
+      response_hash: 28564abb6f12fd3d616523fd9013533a80346fc0cbc6ec4a96a0c2dcbd45018c
+      correlation_id: GATE-SEARCH-PROVIDER.dry-run.2026-07-01T18:46:14Z
+      exit_code: 0
+      status: DRY_RUN_PASSED
+      external_side_effect: false
+      failure_reason: ''
+      evidence_location: validation_evidence\GATE-SEARCH-PROVIDER\20260701T184614
+      mode: dry-run
+  GATE-EXTERNAL-COLLECTOR-ADAPTER:
+    status: DRY_RUN_PASSED
+    latest_result:
+      gate_id: GATE-EXTERNAL-COLLECTOR-ADAPTER
+      started_at: '2026-07-01T18:46:14Z'
+      finished_at: '2026-07-01T18:46:14Z'
+      environment: validation
+      adapter: External collector adapter boundary
+      request_hash: ab7b9e4c9c106eb1502c97383b513ba3e3c1029792311df3cc5629d761fe9273
+      response_hash: f12b6de4eca1449d6d0001d3bd7461bd7483b258483e6cf60a51ccb4a80040d9
+      correlation_id: GATE-EXTERNAL-COLLECTOR-ADAPTER.dry-run.2026-07-01T18:46:14Z
+      exit_code: 0
+      status: DRY_RUN_PASSED
+      external_side_effect: false
+      failure_reason: ''
+      evidence_location: validation_evidence\GATE-EXTERNAL-COLLECTOR-ADAPTER\20260701T184614
+      mode: dry-run
+  GATE-SHADOW-E2E:
+    status: DRY_RUN_PASSED
+    latest_result:
+      gate_id: GATE-SHADOW-E2E
+      started_at: '2026-07-01T18:46:14Z'
+      finished_at: '2026-07-01T18:46:14Z'
+      environment: validation
+      adapter: GOAL-12 staging shadow boundary
+      request_hash: 861ed5539a799f764c40bc1fb3ae8cb255bef84660920bd1a62dfe9440f0507f
+      response_hash: dc242a0835ddf7900e7e6213fd888775345f6514a6c724541f771dfc2385d198
+      correlation_id: GATE-SHADOW-E2E.dry-run.2026-07-01T18:46:14Z
+      exit_code: 0
+      status: DRY_RUN_PASSED
+      external_side_effect: false
+      failure_reason: ''
+      evidence_location: validation_evidence\GATE-SHADOW-E2E\20260701T184614
+      mode: dry-run
+  GATE-CONTINUOUS-FAULT-RECOVERY:
+    status: DRY_RUN_PASSED
+    latest_result:
+      gate_id: GATE-CONTINUOUS-FAULT-RECOVERY
+      started_at: '2026-07-01T18:46:14Z'
+      finished_at: '2026-07-01T18:46:14Z'
+      environment: validation
+      adapter: Scheduler and RuntimeHost
+      request_hash: 6d7736b172a1fa77d6eea9905263129f1e1d267b9035d5d44bcd7016b17d4602
+      response_hash: f24cf06bf816dbcb2329c9806c1e42a855fe1f6978b077593fda0f043320c08d
+      correlation_id: GATE-CONTINUOUS-FAULT-RECOVERY.dry-run.2026-07-01T18:46:14Z
+      exit_code: 0
+      status: DRY_RUN_PASSED
+      external_side_effect: false
+      failure_reason: ''
+      evidence_location: validation_evidence\GATE-CONTINUOUS-FAULT-RECOVERY\20260701T184614
+      mode: dry-run
