@@ -1,6 +1,6 @@
 # GOAL-07 Formal ModelGateway and Run Envelope Baseline
 
-status: `GOAL-07_IN_PROGRESS`
+status: `GOAL-07_COMPLETE_WAITING_USER_APPROVAL`
 
 ## Scope
 

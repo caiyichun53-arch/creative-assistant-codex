@@ -2,7 +2,7 @@
 
 goal: GOAL-07 Formal ModelGateway, Portable Skill and Run Envelope Baseline
 
-status: `GOAL-07_IN_PROGRESS`
+status: `GOAL-07_COMPLETE_WAITING_USER_APPROVAL`
 
 source_commit: `3e0b60a1bfc938b84988e3ddd1ef36fbb43b7194`
 
@@ -43,10 +43,15 @@ GOAL-06_inherited_commit:
 - Added Host Binding separation and Runner execution contract:
   - `HostBindingSpec` maps host payload into portable skill input without leaking host identity;
   - `PortableSkillRunner` executes through `ModelGateway` and does not own formal business state.
+- Proved Runner, Binding and ModelGateway integration does not bypass Core/Materializer:
+  - Binding filters host-only identity/state fields out of portable input;
+  - Runner invokes ModelGateway and does not receive a persistence store;
+  - the integrated path writes only `model_run_envelope` through `ModelRunMaterializer`;
+  - no command receipt, outbox, binding manifest or preference state is written.
 
 ## Remaining Checkpoints
 
-- Prove Runner, Binding and ModelGateway integrate without bypassing Core/Materializer.
+- None inside the current GOAL-07 local scope.
 
 ## Modified Files
 
@@ -66,6 +71,9 @@ GOAL-06_inherited_commit:
 - `python scripts/core/model_gateway/verify_goal_07.py`
   - exit_code: 0
 - `python -m py_compile scripts/core/model_gateway/__init__.py scripts/core/model_gateway/goal07_model_gateway.py scripts/core/model_gateway/goal07_skill_runner.py scripts/core/model_gateway/verify_goal_07.py`
+  - exit_code: 1
+  - result: local `__pycache__` write denied on Windows; not a code compile error.
+- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'goal07_pycache'; python -m py_compile scripts/core/model_gateway/__init__.py scripts/core/model_gateway/goal07_model_gateway.py scripts/core/model_gateway/goal07_skill_runner.py scripts/core/model_gateway/verify_goal_07.py`
   - exit_code: 0
 - `git diff --check`
   - exit_code: 0
@@ -78,6 +86,7 @@ GOAL-06_inherited_commit:
 - PASS portable skill clean-room rejects host/database leaks.
 - PASS host binding maps inputs without leaking host identity.
 - PASS runner executes portable skill through ModelGateway contract.
+- PASS integration only writes run envelope through Materializer.
 - GOAL-07 ModelGateway verification passed.
 
 ## Real Blockers
@@ -86,9 +95,10 @@ GOAL-06_inherited_commit:
 
 ## Next Resume Point
 
-- Prove Runner, Binding and ModelGateway integrate without bypassing Core/Materializer.
+- Await user approval before any GOAL-08 work.
 
 ## Checkpoint Commit
 
 - This round checkpoint commit subject: `Start GOAL-07 formal model gateway`
 - This round checkpoint commit subject: `Add GOAL-07 portable skill runner contract`
+- This round checkpoint commit subject: `Close GOAL-07 model gateway boundary`

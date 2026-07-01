@@ -279,6 +279,55 @@ def test_runner_executes_skill_through_model_gateway_contract() -> None:
     print("PASS runner executes portable skill through ModelGateway contract")
 
 
+def test_integration_only_writes_run_envelope_through_materializer() -> None:
+    store = make_store()
+    provider = FakeModelProvider()
+    route = make_route()
+    gateway = ModelGateway(
+        routes={route.route_name: route},
+        providers={provider.provider_name: provider},
+        materializer=ModelRunMaterializer(store),
+        monotonic_ms=Clock().now_ms,
+    )
+    binding = HostBindingSpec(
+        binding_name="topic-first-research",
+        binding_version="0.1.0",
+        input_map={"topic_id": "topic_id", "evidence_text": "brief_text"},
+    )
+    portable_input = binding.bind(
+        {
+            "topic_id": "topic-7",
+            "brief_text": "fixture evidence",
+            "host_uuid": "host-only-value",
+            "formal_status": "host-only-status",
+        }
+    )
+
+    PortableSkillRunner(gateway).run(
+        skill=make_portable_skill(),
+        input_payload=portable_input,
+        binding=binding,
+    )
+
+    object_kinds = {
+        row["object_kind"]: row["count"]
+        for row in store.conn.execute("SELECT object_kind, count(*) AS count FROM trace_root GROUP BY object_kind")
+    }
+    assert object_kinds == {"model_run_envelope": 1}
+    assert store.conn.execute("SELECT count(*) FROM trace_version").fetchone()[0] == 1
+    assert store.conn.execute("SELECT count(*) FROM audit_event").fetchone()[0] == 1
+    assert store.conn.execute("SELECT count(*) FROM command_receipt").fetchone()[0] == 0
+    assert store.conn.execute("SELECT count(*) FROM outbox_message").fetchone()[0] == 0
+    assert store.conn.execute("SELECT count(*) FROM binding_manifest").fetchone()[0] == 0
+    assert store.conn.execute("SELECT count(*) FROM content_preference_profile").fetchone()[0] == 0
+    payload = json.loads(store.conn.execute("SELECT payload_json FROM trace_version").fetchone()["payload_json"])
+    assert payload["prompt_hash"]
+    assert "Summarize evidence" not in json.dumps(payload, ensure_ascii=False)
+    assert "host_uuid" not in json.dumps(payload, ensure_ascii=False).lower()
+    assert "formal_status" not in json.dumps(payload, ensure_ascii=False).lower()
+    print("PASS integration only writes run envelope through Materializer")
+
+
 def main() -> None:
     test_fake_provider_records_traceable_envelope()
     test_unknown_route_rejected_before_provider_execution()
@@ -286,6 +335,7 @@ def main() -> None:
     test_portable_skill_clean_room_rejects_host_database_leaks()
     test_host_binding_maps_without_leaking_host_identity()
     test_runner_executes_skill_through_model_gateway_contract()
+    test_integration_only_writes_run_envelope_through_materializer()
     print("GOAL-07 ModelGateway verification passed")
 
 
