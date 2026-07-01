@@ -1,5 +1,5 @@
-status: NOT_READY
-updated_at: '2026-07-01T20:33:14Z'
+status: DRY_RUN_PASSED
+updated_at: '2026-07-01T22:40:15Z'
 gates:
   GATE-HERMES-REAL-HOST:
     status: DRY_RUN_PASSED
@@ -36,22 +36,39 @@ gates:
       evidence_location: validation_evidence\GATE-FEISHU-THIN-BINDING\20260701T184614
       mode: dry-run
   GATE-MODEL-PROVIDER:
-    status: DRY_RUN_PASSED
+    status: LIVE_PASSED
     latest_result:
       gate_id: GATE-MODEL-PROVIDER
-      started_at: '2026-07-01T18:46:14Z'
-      finished_at: '2026-07-01T18:46:14Z'
+      started_at: '2026-07-01T22:40:10Z'
+      finished_at: '2026-07-01T22:40:15Z'
       environment: validation
       adapter: ModelGateway
-      request_hash: 292660fa59292f04384ebcf22ecea5c878e9a95bea84f3280c1a20d04580edb3
-      response_hash: ef6e03c0d11e081ded1de20d57b56001ad029b20b562f8218ec9bad441c66bcc
-      correlation_id: GATE-MODEL-PROVIDER.dry-run.2026-07-01T18:46:14Z
+      request_hash: 3619edf8b4c74573155d22e9341b188b430fb61cfaa66f622cb5e20cd510eca5
+      response_hash: 2ba33151a70786fa2700ccf84e93c686dcfe99ec847b299c52f38324cd3c466e
+      correlation_id: GATE-MODEL-PROVIDER.run.2026-07-01T22:40:10Z
       exit_code: 0
-      status: DRY_RUN_PASSED
-      external_side_effect: false
+      status: LIVE_PASSED
+      external_side_effect: true
       failure_reason: ''
-      evidence_location: validation_evidence\GATE-MODEL-PROVIDER\20260701T184614
-      mode: dry-run
+      evidence_location: validation_evidence\GATE-MODEL-PROVIDER\20260701T224010
+      mode: run
+      provider: hermes
+      provider_adapter: HermesModelProviderAdapter
+      invocation_chain:
+      - ModelGateway
+      - HermesModelProviderAdapter
+      usage_status: available
+      cost_status: not_available
+      cost_cap_amount: '0.01'
+      cost_cap_currency: USD
+      cost_cap_status: not_available
+      cost_cap_hard_limit_verified: false
+      cost_cap_note: provider did not return parseable USD cost.amount; amount-level
+        cost-cap comparison was not completed
+      secret_redaction:
+        api_key_leaked: false
+        authorization_header_leaked: false
+      response_body_recorded: false
   GATE-ASR:
     status: LIVE_PASSED
     latest_result:

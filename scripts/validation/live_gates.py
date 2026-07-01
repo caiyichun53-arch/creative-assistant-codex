@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import decimal
 import hashlib
 import io
 import json
@@ -17,6 +18,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig
 
 ALLOWED_STATUSES = {
     "NOT_READY",
@@ -148,6 +151,68 @@ def redact(value: Any) -> Any:
 def _looks_secret_key(key: str) -> bool:
     lowered = key.lower()
     return any(marker in lowered for marker in ("secret", "token", "cookie", "session", "api_key", "password"))
+
+
+def _required_env_value(config: "LiveGateConfig", key: str) -> str:
+    value = config.env_value(key)
+    if is_placeholder(value):
+        raise MissingCredential(key)
+    return str(value)
+
+
+def _valid_base_url(value: str | None) -> bool:
+    if is_placeholder(value):
+        return False
+    return str(value).startswith(("http://", "https://"))
+
+
+def _valid_decimal(value: str | None) -> bool:
+    if is_placeholder(value):
+        return False
+    try:
+        parsed = decimal.Decimal(str(value))
+    except decimal.InvalidOperation:
+        return False
+    return parsed >= 0
+
+
+def _decimal_value(value: str | None) -> decimal.Decimal:
+    if not _valid_decimal(value):
+        raise MissingTestEnvironment("MODEL_PROVIDER_COST_CAP must be a decimal USD amount")
+    return decimal.Decimal(str(value))
+
+
+def _cost_cap_result(cost: dict[str, Any], cap: decimal.Decimal) -> dict[str, Any]:
+    currency = str(cost.get("currency", "")).upper()
+    amount = cost.get("amount")
+    if currency != "USD" or amount is None:
+        return {
+            "cost_cap_status": "not_available",
+            "cost_cap_unit": "USD",
+            "cost_cap": str(cap),
+            "cost_amount": "not_available",
+            "cost_currency": currency or "not_available",
+            "cost_cap_comparison": "not_available",
+        }
+    try:
+        actual = decimal.Decimal(str(amount))
+    except decimal.InvalidOperation:
+        return {
+            "cost_cap_status": "not_available",
+            "cost_cap_unit": "USD",
+            "cost_cap": str(cap),
+            "cost_amount": "not_available",
+            "cost_currency": currency,
+            "cost_cap_comparison": "not_available",
+        }
+    return {
+        "cost_cap_status": "within_cap" if actual <= cap else "exceeded",
+        "cost_cap_unit": "USD",
+        "cost_cap": str(cap),
+        "cost_amount": str(actual),
+        "cost_currency": currency,
+        "cost_cap_comparison": "actual_usd_amount_lte_configured_usd_cap",
+    }
 
 
 class LiveGateConfig:
@@ -359,6 +424,28 @@ class DryRunModelProvider:
 
 class ModelProviderHarness(BaseHarness):
     adapter_name = "ModelGateway"
+    live_route_name = "hermes_live_validation"
+
+    def preflight(self) -> dict[str, Any]:
+        response = super().preflight()
+        cost_cap = self.config.env_value("MODEL_PROVIDER_COST_CAP")
+        base_url = self.config.env_value("MODEL_PROVIDER_BASE_URL")
+        _decimal_value(cost_cap)
+        if not _valid_base_url(base_url):
+            raise MissingTestEnvironment("MODEL_PROVIDER_BASE_URL must start with http:// or https://")
+        return response | {
+            "provider": "hermes",
+            "cost_cap_unit": "USD",
+            "cost_cap_format": "decimal amount",
+            "cost_cap_comparison": "provider cost.amount is compared when provider cost.currency is USD; otherwise cost is not_available",
+            "required_fields": (
+                "MODEL_PROVIDER_API_KEY",
+                "MODEL_PROVIDER_BASE_URL",
+                "MODEL_PROVIDER_MODEL",
+                "MODEL_PROVIDER_COST_CAP",
+            ),
+            "optional_fields": ("MODEL_PROVIDER_PROJECT_ID",),
+        }
 
     def dry_run(self) -> dict[str, Any]:
         from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelRequest, ModelRoute, ModelRunMaterializer
@@ -394,6 +481,92 @@ class ModelProviderHarness(BaseHarness):
         }
         store.conn.close()
         return response
+
+    def run_live(self) -> dict[str, Any]:
+        from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelRequest, ModelRoute, ModelRunMaterializer
+        from scripts.core.persistence.goal01_store import PersistenceStore, content_hash
+
+        api_key = _required_env_value(self.config, "MODEL_PROVIDER_API_KEY")
+        base_url = _required_env_value(self.config, "MODEL_PROVIDER_BASE_URL")
+        model = _required_env_value(self.config, "MODEL_PROVIDER_MODEL")
+        cost_cap = _required_env_value(self.config, "MODEL_PROVIDER_COST_CAP")
+        cost_cap_amount = _decimal_value(cost_cap)
+        if not _valid_base_url(base_url):
+            raise MissingTestEnvironment("MODEL_PROVIDER_BASE_URL must start with http:// or https://")
+
+        store = PersistenceStore.in_memory()
+        route = ModelRoute(
+            route_name=self.live_route_name,
+            provider_name="hermes",
+            model_name=model,
+            config_version="live-gates.hermes-model.v1",
+            config_hash=content_hash(
+                {
+                    "provider": "hermes",
+                    "model": model,
+                    "base_url_configured": True,
+                    "project_id_present": not is_placeholder(self.config.env_value("MODEL_PROVIDER_PROJECT_ID")),
+                    "cost_cap": cost_cap,
+                },
+                "live-gates.hermes-model.route.v1",
+            ),
+            parameters={"temperature": 0},
+            timeout_ms=30_000,
+        )
+        provider = HermesModelProviderAdapter(
+            HermesModelProviderConfig(
+                api_key=api_key,
+                base_url=base_url,
+                model=model,
+                timeout_seconds=30.0,
+            )
+        )
+        gateway = ModelGateway(
+            routes={route.route_name: route},
+            providers={provider.provider_name: provider},
+            materializer=ModelRunMaterializer(store),
+        )
+        try:
+            result = gateway.complete(
+                ModelRequest(
+                    route_name=route.route_name,
+                    prompt="Return the exact text: live-gate-hermes-model-ok",
+                    input_payload={"gate_id": self.gate_id, "purpose": "model_provider_live_validation"},
+                    correlation_id=f"{self.gate_id}.live",
+                    metadata={"project_id_status": "available" if self.config.env_value("MODEL_PROVIDER_PROJECT_ID") else "not_available"},
+                )
+            )
+            if not result.output_text.strip():
+                raise LiveGateError("Hermes model provider returned empty output")
+            envelope = result.envelope
+            cost_cap_check = _cost_cap_result(envelope.cost or {}, cost_cap_amount)
+            if cost_cap_check["cost_cap_status"] == "exceeded":
+                raise LiveGateError(
+                    "MODEL_PROVIDER_COST_CAP exceeded: "
+                    f"{cost_cap_check['cost_amount']} {cost_cap_check['cost_currency']} > "
+                    f"{cost_cap_check['cost_cap']} {cost_cap_check['cost_cap_unit']}"
+                )
+            response = {
+                "provider": envelope.provider_name,
+                "model": envelope.model_name,
+                "status": envelope.status,
+                "error_type": None,
+                "provider_request_id_status": (envelope.metadata or {}).get("provider_request_id_status", "not_available"),
+                "usage_status": (envelope.metadata or {}).get("usage_status", "not_available"),
+                "cost_status": (envelope.cost or {}).get("status", "not_available"),
+                "finish_reason": (envelope.metadata or {}).get("finish_reason", "not_available"),
+                "latency_ms": envelope.duration_ms,
+                "input_hash": envelope.input_hash,
+                "output_hash": envelope.output_hash,
+                "envelope_version_id": result.envelope_version_id,
+                "correlation_id": envelope.correlation_id,
+                "external_side_effect": True,
+            } | cost_cap_check
+            return response
+        except Exception as exc:
+            raise LiveGateError(f"Hermes model provider live call failed: {type(exc).__name__}: {exc}") from exc
+        finally:
+            store.conn.close()
 
 
 class DryRunSearchProvider:

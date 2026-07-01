@@ -19,9 +19,17 @@ from .goal07_skill_runner import (
     SkillContractError,
     SkillRunResult,
 )
+from .hermes_model_provider import (
+    HermesModelProviderAdapter,
+    HermesModelProviderConfig,
+    HermesModelProviderError,
+)
 
 __all__ = [
     "HostBindingSpec",
+    "HermesModelProviderAdapter",
+    "HermesModelProviderConfig",
+    "HermesModelProviderError",
     "ModelGateway",
     "ModelGatewayError",
     "ModelProvider",
