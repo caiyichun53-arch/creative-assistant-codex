@@ -1,5 +1,5 @@
 status: DRY_RUN_PASSED
-updated_at: '2026-07-01T23:16:27Z'
+updated_at: '2026-07-01T23:55:30Z'
 gates:
   GATE-HERMES-REAL-HOST:
     status: DRY_RUN_PASSED
@@ -39,18 +39,18 @@ gates:
     status: LIVE_PASSED
     latest_result:
       gate_id: GATE-MODEL-PROVIDER
-      started_at: '2026-07-01T23:16:25Z'
-      finished_at: '2026-07-01T23:16:27Z'
+      started_at: '2026-07-01T23:55:27Z'
+      finished_at: '2026-07-01T23:55:30Z'
       environment: validation
       adapter: ModelGateway
       request_hash: 3619edf8b4c74573155d22e9341b188b430fb61cfaa66f622cb5e20cd510eca5
-      response_hash: 0fd6663dc7eff8d8745ad7ed388c80c1552ec2cff8b230d5f62f3e4ac0a23633
-      correlation_id: GATE-MODEL-PROVIDER.run.2026-07-01T23:16:25Z
+      response_hash: 1bd10085b4756f20f5adec46780feb40bddc17ebcadc4e57522ba5ef6aea31ba
+      correlation_id: GATE-MODEL-PROVIDER.run.2026-07-01T23:55:27Z
       exit_code: 0
       status: LIVE_PASSED
       external_side_effect: true
       failure_reason: ''
-      evidence_location: validation_evidence\GATE-MODEL-PROVIDER\20260701T231625
+      evidence_location: validation_evidence\GATE-MODEL-PROVIDER\20260701T235527
       mode: run
       provider: hermes
       provider_adapter: HermesModelProviderAdapter
@@ -61,15 +61,15 @@ gates:
       usage_status: available
       cost_status: not_applicable
       monetary_cost_cap: not_applicable
+      visible_output_status: available
+      expected_output_match: true
+      finish_reason: stop
       actual_call_count: 1
+      retry_count: 0
       live_call_limit: 1
       max_retries: 0
-      retry_count: 0
       timeout_ms: 30000
-      max_output_tokens: 8
-      visible_output_status: empty
-      provider_request_id_status: available
-      finish_reason: length
+      gate_max_output_tokens: 128
       input_hash_recorded: true
       output_hash_recorded: true
       envelope_recorded: true

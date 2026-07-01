@@ -447,11 +447,12 @@ class DryRunModelProvider:
 class ModelProviderHarness(BaseHarness):
     adapter_name = "ModelGateway"
     live_route_name = "hermes_live_validation"
+    expected_output = "MODEL_GATE_OK"
     billing_mode = "subscription"
     live_call_limit = 1
     max_retries = 0
     timeout_ms = 30_000
-    max_output_tokens = 8
+    gate_max_output_tokens = 128
 
     def preflight(self) -> dict[str, Any]:
         response = super().preflight()
@@ -467,7 +468,7 @@ class ModelProviderHarness(BaseHarness):
             "live_call_limit": self.live_call_limit,
             "max_retries": self.max_retries,
             "timeout_ms": self.timeout_ms,
-            "max_output_tokens": self.max_output_tokens,
+            "gate_max_output_tokens": self.gate_max_output_tokens,
             "required_fields": (
                 "MODEL_PROVIDER_API_KEY",
                 "MODEL_PROVIDER_BASE_URL",
@@ -538,12 +539,12 @@ class ModelProviderHarness(BaseHarness):
                     "live_call_limit": self.live_call_limit,
                     "max_retries": self.max_retries,
                     "timeout_ms": self.timeout_ms,
-                    "max_output_tokens": self.max_output_tokens,
+                    "gate_max_output_tokens": self.gate_max_output_tokens,
                     "reasoning_effort": "low",
                 },
                 "live-gates.hermes-model.route.v1",
             ),
-            parameters={"temperature": 0, "max_completion_tokens": self.max_output_tokens, "reasoning_effort": "low"},
+            parameters={"temperature": 0, "max_completion_tokens": self.gate_max_output_tokens, "reasoning_effort": "low"},
             timeout_ms=self.timeout_ms,
         )
         provider = HermesModelProviderAdapter(
@@ -564,12 +565,15 @@ class ModelProviderHarness(BaseHarness):
             result = gateway.complete(
                 ModelRequest(
                     route_name=route.route_name,
-                    prompt="Reply with only: OK",
+                    prompt=f"Reply with only: {self.expected_output}",
                     input_payload={"gate_id": self.gate_id, "purpose": "model_provider_live_validation"},
                     correlation_id=f"{self.gate_id}.live",
                     metadata={"project_id_status": "available" if self.config.env_value("MODEL_PROVIDER_PROJECT_ID") else "not_available"},
                 )
             )
+            expected_output_match = result.output_text.strip() == self.expected_output
+            if not expected_output_match:
+                raise LiveGateError("Hermes model provider output did not match expected MODEL_GATE_OK marker")
             envelope = result.envelope
             metadata = envelope.metadata or {}
             billing_mode = metadata.get("billing_mode") or (envelope.cost or {}).get("billing_mode") or self.billing_mode
@@ -591,6 +595,7 @@ class ModelProviderHarness(BaseHarness):
                 "cost_status": metadata.get("cost_status", (envelope.cost or {}).get("status", "not_available")),
                 "finish_reason": metadata.get("finish_reason", "not_available"),
                 "visible_output_status": metadata.get("visible_output_status", "not_available"),
+                "expected_output_match": expected_output_match,
                 "latency_ms": envelope.duration_ms,
                 "input_hash": envelope.input_hash,
                 "output_hash": envelope.output_hash,
@@ -602,7 +607,7 @@ class ModelProviderHarness(BaseHarness):
                 "max_retries": self.max_retries,
                 "retry_count": metadata.get("retry_count", self.max_retries),
                 "timeout_ms": self.timeout_ms,
-                "max_output_tokens": self.max_output_tokens,
+                "gate_max_output_tokens": self.gate_max_output_tokens,
             } | cost_cap_check
             return response
         except Exception as exc:

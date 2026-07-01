@@ -262,10 +262,10 @@ class LiveGateHarnessTests(unittest.TestCase):
                 nonlocal call_count
                 call_count += 1
                 assert route.provider_name == "hermes"
-                assert route.parameters["max_completion_tokens"] == 8
+                assert route.parameters["max_completion_tokens"] == 128
                 assert route.parameters["reasoning_effort"] == "low"
                 return ModelProviderResult(
-                    output_text="live-gate-hermes-model-ok",
+                    output_text="MODEL_GATE_OK",
                     usage=ModelUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
                     cost={"status": "not_applicable", "billing_mode": "subscription"},
                     provider_request_id="provider-request-1",
@@ -305,12 +305,13 @@ class LiveGateHarnessTests(unittest.TestCase):
             self.assertEqual(manifest["response"]["cost_status"], "not_applicable")
             self.assertEqual(manifest["response"]["monetary_cost_cap"], "not_applicable")
             self.assertEqual(manifest["response"]["visible_output_status"], "available")
+            self.assertTrue(manifest["response"]["expected_output_match"])
             self.assertEqual(manifest["response"]["actual_call_count"], 1)
             self.assertEqual(manifest["response"]["live_call_limit"], 1)
             self.assertEqual(manifest["response"]["max_retries"], 0)
             self.assertEqual(manifest["response"]["retry_count"], 0)
             self.assertEqual(manifest["response"]["timeout_ms"], 30000)
-            self.assertEqual(manifest["response"]["max_output_tokens"], 8)
+            self.assertEqual(manifest["response"]["gate_max_output_tokens"], 128)
             self.assertTrue(manifest["response"]["input_hash"])
             self.assertTrue(manifest["response"]["output_hash"])
 
@@ -350,7 +351,7 @@ class LiveGateHarnessTests(unittest.TestCase):
 
             def complete(self, request, route):
                 return ModelProviderResult(
-                    output_text="live-gate-hermes-model-ok",
+                    output_text="MODEL_GATE_OK",
                     usage=ModelUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
                     cost={"currency": "USD", "amount": "0.02"},
                     provider_request_id="provider-request-1",
