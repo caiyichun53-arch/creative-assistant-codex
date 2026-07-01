@@ -19,6 +19,7 @@ class ModelRoute:
     config_version: str
     config_hash: str
     parameters: dict[str, Any] | None = None
+    timeout_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class ModelRequest:
     route_name: str
     prompt: str
     input_payload: dict[str, Any]
+    correlation_id: str | None = None
     skill_name: str | None = None
     skill_version: str | None = None
     skill_hash: str | None = None
@@ -54,6 +56,7 @@ class ModelProviderResult:
 @dataclass(frozen=True)
 class ModelRunEnvelope:
     status: str
+    correlation_id: str | None
     route_name: str
     provider_name: str
     model_name: str
@@ -78,6 +81,7 @@ class ModelRunEnvelope:
     def as_payload(self) -> dict[str, Any]:
         return {
             "status": self.status,
+            "correlation_id": self.correlation_id,
             "route_name": self.route_name,
             "provider_name": self.provider_name,
             "model_name": self.model_name,
@@ -204,6 +208,22 @@ class ModelGateway:
             raise ModelGatewayError(f"model provider failed: {exc}") from exc
 
         duration_ms = max(0, self.monotonic_ms() - start_ms)
+        if route.timeout_ms is not None and duration_ms > route.timeout_ms:
+            envelope = self._build_envelope(
+                request=request,
+                route=route,
+                status="failed",
+                duration_ms=duration_ms,
+                output_text=None,
+                usage=provider_result.usage,
+                cost=provider_result.cost,
+                provider_request_id=provider_result.provider_request_id,
+                error={"code": "timeout", "timeout_ms": route.timeout_ms, "duration_ms": duration_ms},
+                metadata=provider_result.metadata,
+            )
+            self.materializer.persist_envelope(envelope)
+            raise ModelGatewayError(f"model provider timed out after {duration_ms}ms")
+
         envelope = self._build_envelope(
             request=request,
             route=route,
@@ -245,6 +265,7 @@ class ModelGateway:
     ) -> ModelRunEnvelope:
         return ModelRunEnvelope(
             status=status,
+            correlation_id=request.correlation_id,
             route_name=route.route_name,
             provider_name=route.provider_name,
             model_name=route.model_name,

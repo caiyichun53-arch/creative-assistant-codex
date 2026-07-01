@@ -130,6 +130,7 @@ class PortableSkillRunner:
         skill: PortableSkillSpec,
         input_payload: dict[str, Any],
         binding: HostBindingSpec | None = None,
+        correlation_id: str | None = None,
     ) -> SkillRunResult:
         prompt = skill.render_prompt(input_payload)
         model_run = self.gateway.complete(
@@ -137,6 +138,7 @@ class PortableSkillRunner:
                 route_name=skill.route_name,
                 prompt=prompt,
                 input_payload=input_payload,
+                correlation_id=correlation_id,
                 skill_name=skill.skill_name,
                 skill_version=skill.skill_version,
                 skill_hash=skill.skill_hash,
