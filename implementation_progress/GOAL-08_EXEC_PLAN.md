@@ -1,6 +1,6 @@
 # GOAL-08 ExecPlan
 
-status: `GOAL-08_IN_PROGRESS`
+status: `GOAL-08_COMPLETE_WAITING_USER_APPROVAL`
 
 source_definition: `goals/GOAL-08.md`
 
@@ -34,6 +34,7 @@ source_definition: `goals/GOAL-08.md`
 
 ## This Round
 
-- Implement checkpoint 4.
-- Next resume point after this checkpoint is checkpoint 5.
+- Implement checkpoint 5.
+- Generate validation report and clean-room proof.
+- Stop at GOAL-08 completion waiting user approval.
 - Do not enter GOAL-09.

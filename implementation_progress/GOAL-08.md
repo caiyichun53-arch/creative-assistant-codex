@@ -2,7 +2,7 @@
 
 goal: GOAL-08 Formal content production chain versioning and provenance
 
-status: `GOAL-08_IN_PROGRESS`
+status: `GOAL-08_COMPLETE_WAITING_USER_APPROVAL`
 
 source_commit: `4aaa90a4374da20604e1fc77bc21060ac9297b1e`
 
@@ -73,15 +73,19 @@ GOAL-07_validated_code_commit:
   - Repeated idempotency keys replay without duplicate formal side effects.
   - Changed payloads under the same idempotency key are rejected.
   - Injected publication capture failures roll back formal versions, refs, receipts and outbox state.
+- Checkpoint 5 complete: GOAL-08 closeout.
+  - Generated GOAL-08 validation report.
+  - Generated GOAL-08 clean-room proof.
+  - GOAL-08 scoped verification passed.
+  - GOAL-09 Permission remains `false`.
 
 ## Remaining Checkpoints
 
-- GOAL-08 validation report.
-- GOAL-08 clean-room proof.
+- None.
 
 ## Current Resume Point
 
-- Resume at GOAL-08 ExecPlan checkpoint 5: GOAL-08 closeout.
+- GOAL-08 complete; stop and wait for user approval. Do not enter GOAL-09.
 
 ## Modified Files
 
@@ -91,6 +95,8 @@ GOAL-07_validated_code_commit:
 - `scripts/core/production/__init__.py`
 - `scripts/core/production/goal08_production_chain.py`
 - `scripts/core/production/verify_goal_08.py`
+- `implementation_progress/GOAL-08_VALIDATION_REPORT.md`
+- `implementation_progress/GOAL-08_CLEAN_ROOM_PROOF.md`
 
 ## Migration Changes
 
@@ -141,10 +147,11 @@ GOAL-07_validated_code_commit:
 - `d4e496034e43b934584bc7ec21cc594ccb7de39b` - docs(goal-08): restore formal task definition
 - `af4ecddfc1e08428036d434b824c56ec0c8fbc82` - feat(goal-08): add production version chain materializer
 - `d99326e7283c92472f72ba9ba44a0d18c6e50f6d` - feat(goal-08): add review rejection provenance
+- `be6e24d01c6248e4131e6f913666109721b721bc` - test(goal-08): cover fault replay gates
 
 ## Next First Unfinished Checkpoint
 
-- GOAL-08 closeout.
+- None.
 
 ## GOAL-09 Permission
 
