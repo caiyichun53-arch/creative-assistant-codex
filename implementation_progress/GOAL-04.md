@@ -2,9 +2,9 @@
 
 goal: GOAL-04 Runtime Host and Local Handler Dispatch
 
-status: `IN_PROGRESS_CHECKPOINT_02_COMPLETE`
+status: `IN_PROGRESS_CHECKPOINT_04_COMPLETE`
 
-source_commit: `8cd0fdb`
+source_commit: `dfe17a7`
 
 branch: `codex/goal-04-v0.6.2`
 
@@ -29,16 +29,27 @@ Implement a minimal runtime host on top of GOAL-03 scheduler jobs. Dispatch is l
   - Missing required result keys fail through scheduler retry path.
 - Confirmed no PostgreSQL-specific runtime host gate is needed for this checkpoint because no PostgreSQL-only behavior was added.
 - Re-ran GOAL-04 local verification and Python compile check: pass.
+- Added external adapter boundary before actual external integration:
+  - Added `RuntimeAdapter` for local deterministic adapter registration.
+  - Local adapter dispatch succeeds through the same runtime host and scheduler path.
+  - Adapter marked with external I/O is rejected for this checkpoint.
+  - Adapter contract mismatch is rejected.
+- Re-ran GOAL-04 local verification and Python compile check: pass.
+- Completed bounded batch execution decision after single-job dispatch:
+  - Added `RuntimeHost.run_batch(max_jobs=...)` as a bounded loop over the existing `run_once` path.
+  - Batch execution stops at `max_jobs` or the first idle scheduler claim.
+  - Nonpositive batch limits are rejected.
+  - No new persistence, external adapter, PostgreSQL-only behavior or GOAL-05 orchestration was added.
+- Re-ran GOAL-04 local verification and Python compile check: pass.
 
 ## Pending Checkpoints
 
-- Add external adapter boundary tests before any actual external integration.
 - Add PostgreSQL-specific runtime host gate only if a later GOAL-04 checkpoint adds PostgreSQL-only behavior.
-- Decide whether runtime host needs bounded batch execution after single-job dispatch.
+- Add concrete external adapter only after explicit user approval in a later goal/checkpoint.
 
 ## Current Stop Point
 
-GOAL-04 checkpoint 02 is complete. Continue next from external adapter boundary tests before any actual external integration. GOAL-05 is not allowed.
+GOAL-04 checkpoint 04 is complete. Continue next only from a user-approved GOAL-04 expansion; current remaining items are conditional and GOAL-05 is not allowed.
 
 ## GOAL-05 Allowed?
 

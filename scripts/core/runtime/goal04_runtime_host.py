@@ -21,6 +21,15 @@ class RuntimeHandlerContract:
 
 
 @dataclass(frozen=True)
+class RuntimeAdapter:
+    adapter_name: str
+    job_kind: str
+    handler: RuntimeHandler
+    contract: RuntimeHandlerContract
+    uses_external_io: bool = False
+
+
+@dataclass(frozen=True)
 class RuntimeStepResult:
     status: str
     job_id: str | None = None
@@ -48,6 +57,17 @@ class RuntimeHost:
         if effective_contract.job_kind != job_kind:
             raise RuntimeHostError("handler contract job_kind mismatch")
         self._handlers[job_kind] = (handler, effective_contract)
+
+    def register_adapter(self, adapter: RuntimeAdapter) -> None:
+        if not adapter.adapter_name:
+            raise RuntimeHostError("adapter_name is required")
+        if adapter.uses_external_io:
+            raise RuntimeHostError("external adapter I/O is outside GOAL-04 current checkpoint")
+        self.register_handler(
+            adapter.job_kind,
+            adapter.handler,
+            contract=adapter.contract,
+        )
 
     def run_once(self, *, lease_seconds: int = 60, retry_unknown: bool = False) -> RuntimeStepResult:
         try:
@@ -140,6 +160,23 @@ class RuntimeHost:
             attempt_id=claim.attempt_id,
             job_kind=job_kind,
         )
+
+    def run_batch(
+        self,
+        *,
+        max_jobs: int,
+        lease_seconds: int = 60,
+        retry_unknown: bool = False,
+    ) -> list[RuntimeStepResult]:
+        if max_jobs < 1:
+            raise RuntimeHostError("max_jobs must be positive")
+        results: list[RuntimeStepResult] = []
+        for _ in range(max_jobs):
+            result = self.run_once(lease_seconds=lease_seconds, retry_unknown=retry_unknown)
+            if result.status == "idle":
+                break
+            results.append(result)
+        return results
 
     @staticmethod
     def _missing_keys(payload: dict[str, Any], required_keys: tuple[str, ...]) -> list[str]:

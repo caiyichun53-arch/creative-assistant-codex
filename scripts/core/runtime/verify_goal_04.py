@@ -8,7 +8,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.core.persistence.goal01_store import UUIDv7Generator
-from scripts.core.runtime.goal04_runtime_host import RuntimeHandlerContract, RuntimeHost, RuntimeHostError
+from scripts.core.runtime.goal04_runtime_host import RuntimeAdapter, RuntimeHandlerContract, RuntimeHost, RuntimeHostError
 from scripts.core.scheduler.goal03_scheduler import Goal03Scheduler
 
 
@@ -132,6 +132,67 @@ def test_contract_output_error_requeues() -> None:
     print("PASS runtime host contract output error requeues")
 
 
+def test_local_adapter_dispatch_success() -> None:
+    scheduler, host = make_runtime()
+    host.register_adapter(
+        RuntimeAdapter(
+            adapter_name="local-test-adapter",
+            job_kind="adapter.local.echo",
+            handler=lambda payload: {"echo": payload["value"]},
+            contract=RuntimeHandlerContract(
+                job_kind="adapter.local.echo",
+                required_payload_keys=("value",),
+                required_result_keys=("echo",),
+            ),
+        )
+    )
+    enqueued = scheduler.enqueue_job(
+        job_kind="adapter.local.echo",
+        payload={"value": "ok"},
+        idempotency_key="runtime-adapter-local",
+    )
+    result = host.run_once()
+    assert result.status == "succeeded"
+    assert result.job_id == enqueued.job_id
+    assert scheduler.get_job(enqueued.job_id)["status"] == "succeeded"
+    print("PASS runtime host local adapter dispatch")
+
+
+def test_external_adapter_io_rejected_before_integration() -> None:
+    _scheduler, host = make_runtime()
+    try:
+        host.register_adapter(
+            RuntimeAdapter(
+                adapter_name="future-external-adapter",
+                job_kind="adapter.external.echo",
+                handler=lambda payload: payload,
+                contract=RuntimeHandlerContract(job_kind="adapter.external.echo"),
+                uses_external_io=True,
+            )
+        )
+    except RuntimeHostError:
+        print("PASS runtime host rejects external adapter I/O")
+        return
+    raise AssertionError("expected external adapter I/O rejection")
+
+
+def test_adapter_contract_mismatch_rejected() -> None:
+    _scheduler, host = make_runtime()
+    try:
+        host.register_adapter(
+            RuntimeAdapter(
+                adapter_name="bad-adapter",
+                job_kind="adapter.bad",
+                handler=lambda payload: payload,
+                contract=RuntimeHandlerContract(job_kind="adapter.other"),
+            )
+        )
+    except RuntimeHostError:
+        print("PASS runtime host rejects adapter contract mismatch")
+        return
+    raise AssertionError("expected adapter contract mismatch rejection")
+
+
 def test_handler_failure_requeues_job() -> None:
     scheduler, host = make_runtime()
 
@@ -175,14 +236,72 @@ def test_unknown_handler_dead_letters_without_duplicate_side_effect() -> None:
     print("PASS runtime host unknown handler dead-letters once")
 
 
+def test_batch_dispatch_respects_max_jobs() -> None:
+    scheduler, host = make_runtime()
+    host.register_handler(
+        "local.echo",
+        lambda payload: {"echo": payload["value"]},
+        contract=RuntimeHandlerContract(
+            job_kind="local.echo",
+            required_payload_keys=("value",),
+            required_result_keys=("echo",),
+        ),
+    )
+    for index in range(3):
+        scheduler.enqueue_job(
+            job_kind="local.echo",
+            payload={"value": f"ok-{index}"},
+            idempotency_key=f"runtime-batch-{index}",
+        )
+    results = host.run_batch(max_jobs=2)
+    assert len(results) == 2
+    assert all(result.status == "succeeded" for result in results)
+    succeeded = scheduler.conn.execute("SELECT count(*) FROM scheduler_job WHERE status='succeeded'").fetchone()[0]
+    queued = scheduler.conn.execute("SELECT count(*) FROM scheduler_job WHERE status='queued'").fetchone()[0]
+    assert succeeded == 2
+    assert queued == 1
+    print("PASS runtime host batch respects max jobs")
+
+
+def test_batch_dispatch_stops_on_idle() -> None:
+    scheduler, host = make_runtime()
+    host.register_handler("local.noop", lambda _payload: {"ok": True})
+    scheduler.enqueue_job(
+        job_kind="local.noop",
+        payload={},
+        idempotency_key="runtime-batch-idle",
+    )
+    results = host.run_batch(max_jobs=3)
+    assert len(results) == 1
+    assert results[0].status == "succeeded"
+    assert host.run_once().status == "idle"
+    print("PASS runtime host batch stops on idle")
+
+
+def test_batch_dispatch_rejects_nonpositive_limit() -> None:
+    _scheduler, host = make_runtime()
+    try:
+        host.run_batch(max_jobs=0)
+    except RuntimeHostError:
+        print("PASS runtime host batch rejects nonpositive limit")
+        return
+    raise AssertionError("expected runtime host batch limit rejection")
+
+
 def main() -> int:
     test_idle_when_no_job()
     test_dispatch_success_completes_job()
     test_contract_mismatch_rejected_at_registration()
     test_contract_input_error_dead_letters_without_retry()
     test_contract_output_error_requeues()
+    test_local_adapter_dispatch_success()
+    test_external_adapter_io_rejected_before_integration()
+    test_adapter_contract_mismatch_rejected()
     test_handler_failure_requeues_job()
     test_unknown_handler_dead_letters_without_duplicate_side_effect()
+    test_batch_dispatch_respects_max_jobs()
+    test_batch_dispatch_stops_on_idle()
+    test_batch_dispatch_rejects_nonpositive_limit()
     print("GOAL-04 verification passed")
     return 0
 

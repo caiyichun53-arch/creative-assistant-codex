@@ -38,6 +38,11 @@ Implement Scheduler/Job/Worker lease, retry, recovery, cancel and outbox schedul
   - GOAL-03 Python compile check: pass.
   - GOAL-01 + GOAL-02 + GOAL-03 SQLite schema/FK check: pass.
   - No real GOAL-03 failure remained to fix.
+- GOAL-03 closeout reconfirmed on 2026-07-01:
+  - Read GOAL-03 progress, validation report, PostgreSQL runtime gate result, GOAL-03 source/tests and current git diff.
+  - Confirmed PostgreSQL runtime gate is already resolved; no Docker container was started in this closeout pass.
+  - Re-ran only GOAL-03 local minimum gates: local verification, Python compile check and SQLite schema/FK check all passed.
+  - No remaining GOAL-03 acceptance item failed.
 
 ## Resolved Checkpoints
 
@@ -46,6 +51,8 @@ Implement Scheduler/Job/Worker lease, retry, recovery, cancel and outbox schedul
 ## Current Stop Point
 
 GOAL-03 implementation and runtime gates are complete and waiting for user approval.
+
+Required status: `GOAL-03_COMPLETE_WAITING_USER_APPROVAL`
 
 ## GOAL-04 Allowed?
 
