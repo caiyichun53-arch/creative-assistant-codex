@@ -60,16 +60,21 @@ GOAL-08_inherited_commit:
   - Formal failures and independent external counterexamples recompute recommendation status without direct deprecate/restore publication.
   - Repeated formal failures, independent external counterexamples, structural revision signals and human revision requests produce proposal triggers only.
   - Manual lock and deprecated status are not silently overridden.
+- Checkpoint 5 complete: added `experience_revision_propose` output gate and proposal publication path.
+  - Proposal output rejects host persistent fields and `no_proposal` publication.
+  - Proposal output must be a complete schema with evidence mapping, not a diff-only payload.
+  - Proposal publication checks base versions are still current.
+  - Published proposal hashes cannot be consumed twice.
+  - Published proposals are immutable trace versions with base/evidence/skill-run refs, command receipt, audit and outbox.
 
 ## Remaining Checkpoints
 
-- Checkpoint 5: Add `experience_revision_propose` output gate and proposal publication path.
 - Checkpoint 6: Add inferred content preference candidate gate separated from CR-002 tactics.
 - Checkpoint 7: Add fault/replay/clean-room validation and closeout report.
 
 ## Current Resume Point
 
-- Continue with Checkpoint 5.
+- Continue with Checkpoint 6.
 
 ## Modified Files
 
@@ -88,7 +93,7 @@ GOAL-08_inherited_commit:
 
 - `python scripts/core/experience/verify_goal_09.py`
   - exit_code: 0
-  - tests: 9
+  - tests: 12
   - real_external_credentials_used: no
   - external_side_effects: none
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'goal09_pycache'; python -m py_compile scripts/core/experience/__init__.py scripts/core/experience/goal09_experiments.py scripts/core/experience/verify_goal_09.py`
@@ -110,10 +115,11 @@ GOAL-08_inherited_commit:
 - This round checkpoint commit subject: `feat(goal-09): add pplus experiment metric gate`
 - `7c79939` - feat(goal-09): add experiment review boundary
 - This round checkpoint commit subject: `feat(goal-09): add cr002 experience triggers`
+- This round checkpoint commit subject: `feat(goal-09): add experience proposal gate`
 
 ## Next First Unfinished Checkpoint
 
-- Checkpoint 5: Add `experience_revision_propose` output gate and proposal publication path.
+- Checkpoint 6: Add inferred content preference candidate gate separated from CR-002 tactics.
 
 ## GOAL-10 Permission
 

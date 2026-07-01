@@ -32,11 +32,12 @@ This ExecPlan is restored from V0.6.2 GOAL-09 paragraphs 2269-2285 plus direct C
    - Detect repeated formal failures, independent external counterexamples, structural revision signals and human revision requests.
    - Keep deprecate/restore behind formal proposal rules.
 5. Proposal output and publication.
-   - Status: next.
+   - Status: complete.
    - Accept at most one complete proposal per run.
    - Reject proposal outputs containing tactic IDs, version IDs, proposal IDs or transaction commands.
    - Publish only after base version and proposal hash checks.
 6. Inferred preference candidate gate.
+   - Status: next.
    - Keep inferred preference candidates separate from CR-002 tactics.
    - Keep inferred candidates unpublished until calibrated.
    - Preserve evidence links to edits, approvals/rejections, publication captures and P+.

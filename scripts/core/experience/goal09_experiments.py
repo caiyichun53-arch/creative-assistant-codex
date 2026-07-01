@@ -28,6 +28,28 @@ EVIDENCE_KINDS = frozenset(
         "human_revision_request",
     }
 )
+PROPOSAL_TYPES = frozenset({"revise", "split", "merge", "deprecate", "restore", "no_proposal"})
+FORBIDDEN_PROPOSAL_OUTPUT_KEYS = frozenset(
+    {
+        "tactic_id",
+        "version_id",
+        "proposal_id",
+        "transaction_command",
+        "command_scope",
+        "receipt_id",
+        "current_version_id",
+        "trace_root",
+        "trace_version",
+    }
+)
+REQUIRED_PROPOSED_EXPERIENCE_FIELDS = frozenset(
+    {
+        "mechanism",
+        "usage_action",
+        "applicable_conditions",
+        "failure_conditions",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -198,6 +220,57 @@ class ExperienceStateResult:
         }
 
 
+@dataclass(frozen=True)
+class ExperienceRevisionProposalOutput:
+    proposal_type: str
+    trigger_kind: str
+    proposed_experiences: tuple[dict[str, Any], ...]
+    evidence_mapping: dict[str, list[str]]
+    rationale: str
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "proposal_type": self.proposal_type,
+            "trigger_kind": self.trigger_kind,
+            "proposed_experiences": list(self.proposed_experiences),
+            "evidence_mapping": self.evidence_mapping,
+            "rationale": self.rationale,
+        }
+
+
+@dataclass(frozen=True)
+class ExperienceRevisionProposalPublishCommand:
+    actor: str
+    idempotency_key: str
+    output: ExperienceRevisionProposalOutput
+    trigger: ProposalTrigger
+    base_version_refs: tuple[VersionRef, ...]
+    evidence_refs: tuple[VersionRef, ...]
+    skill_run_ref: VersionRef | None = None
+    correlation_id: str | None = None
+    causation_id: str | None = None
+
+    def request_payload(self) -> dict[str, Any]:
+        return {
+            "output": self.output.as_payload(),
+            "trigger": self.trigger.as_payload(),
+            "base_version_refs": [ref.as_payload() for ref in self.base_version_refs],
+            "evidence_refs": [ref.as_payload() for ref in self.evidence_refs],
+            "skill_run_ref": self.skill_run_ref.as_payload() if self.skill_run_ref else None,
+        }
+
+
+@dataclass(frozen=True)
+class ExperienceRevisionProposalPublishResult:
+    root_id: str
+    version_id: str
+    proposal_hash: str
+    receipt_id: str
+    audit_id: str | None
+    outbox_id: str | None
+    replayed: bool = False
+
+
 class ExperimentMaterializer:
     def __init__(self, store: PersistenceStore):
         self.store = store
@@ -290,6 +363,91 @@ class ExperimentMaterializer:
             )
             return ExperimentResult(root_id, version_id, receipt_id, audit_id, outbox_id, signal, review_boundary)
 
+    def publish_experience_revision_proposal(
+        self,
+        command: ExperienceRevisionProposalPublishCommand,
+    ) -> ExperienceRevisionProposalPublishResult:
+        self._validate_proposal_publish_command(command)
+        existing = self._existing_proposal_publish_result(command)
+        if existing is not None:
+            return existing
+        proposal_hash = content_hash(command.output.as_payload(), "goal09.experience_revision_proposal_output.v1")
+        self._assert_base_versions_are_current(command.base_version_refs)
+        self._assert_proposal_hash_unused(proposal_hash)
+        with self.conn:
+            root_id = self.store.create_root("goal09_experience_revision_proposal")
+            payload = {
+                "goal": "GOAL-09",
+                "status": "published",
+                "proposal_hash": proposal_hash,
+                "output": command.output.as_payload(),
+                "trigger": command.trigger.as_payload(),
+                "base_version_refs": [ref.as_payload() for ref in command.base_version_refs],
+                "evidence_refs": [ref.as_payload() for ref in command.evidence_refs],
+                "skill_run_ref": command.skill_run_ref.as_payload() if command.skill_run_ref else None,
+            }
+            version_id = self.store.append_version(
+                root_id,
+                payload,
+                projection_version="goal09.experience_revision_proposal.v1",
+                business_payload={
+                    "status": "published",
+                    "proposal_hash": proposal_hash,
+                    "proposal_type": command.output.proposal_type,
+                    "trigger_kind": command.output.trigger_kind,
+                },
+            )
+            self.store.set_current_version(root_id, version_id)
+            for ref in (*command.base_version_refs, *command.evidence_refs):
+                self._record_ref(version_id, ref)
+            if command.skill_run_ref:
+                self._record_ref(version_id, command.skill_run_ref)
+            result_payload = {"root_id": root_id, "version_id": version_id, "proposal_hash": proposal_hash}
+            receipt_id = self.store.record_command(
+                command_scope="goal09.experience_revision_proposal.publish",
+                idempotency_key=command.idempotency_key,
+                request_payload=command.request_payload(),
+                result_payload=result_payload,
+                correlation_id=command.correlation_id or root_id,
+                causation_id=command.causation_id,
+                status="succeeded",
+            )
+            audit_id = self.store.record_audit(
+                event_type="goal09.experience_revision_proposal.published",
+                actor=command.actor,
+                object_kind="goal09_experience_revision_proposal",
+                object_id=root_id,
+                version_id=version_id,
+                payload={
+                    "receipt_id": receipt_id,
+                    "proposal_hash": proposal_hash,
+                    "proposal_type": command.output.proposal_type,
+                    "trigger_kind": command.output.trigger_kind,
+                },
+                correlation_id=command.correlation_id or root_id,
+                causation_id=command.causation_id,
+            )
+            outbox_id = self.store.enqueue_outbox(
+                topic="goal09.experience_revision_proposal.published",
+                payload={
+                    "root_id": root_id,
+                    "version_id": version_id,
+                    "proposal_hash": proposal_hash,
+                    "proposal_type": command.output.proposal_type,
+                    "trigger_kind": command.output.trigger_kind,
+                },
+                correlation_id=command.correlation_id or root_id,
+                causation_id=audit_id,
+            )
+            return ExperienceRevisionProposalPublishResult(
+                root_id,
+                version_id,
+                proposal_hash,
+                receipt_id,
+                audit_id,
+                outbox_id,
+            )
+
     def _existing_result(self, command: ExperimentResultCommand) -> ExperimentResult | None:
         row = self.conn.execute(
             """
@@ -312,6 +470,33 @@ class ExperimentMaterializer:
             outbox_id=None,
             metric_signal=MetricSignal(**result["metric_signal"]),
             review_boundary=ExperimentReviewBoundary(**result["experiment_review_boundary"]),
+            replayed=True,
+        )
+
+    def _existing_proposal_publish_result(
+        self,
+        command: ExperienceRevisionProposalPublishCommand,
+    ) -> ExperienceRevisionProposalPublishResult | None:
+        row = self.conn.execute(
+            """
+            SELECT receipt_id, request_hash, result_json
+              FROM command_receipt
+             WHERE command_scope=? AND idempotency_key=?
+            """,
+            ("goal09.experience_revision_proposal.publish", command.idempotency_key),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["request_hash"] != content_hash(command.request_payload()):
+            raise IdempotencyConflict("idempotency key reused with different request")
+        result = json.loads(row["result_json"])
+        return ExperienceRevisionProposalPublishResult(
+            root_id=str(result["root_id"]),
+            version_id=str(result["version_id"]),
+            proposal_hash=str(result["proposal_hash"]),
+            receipt_id=str(row["receipt_id"]),
+            audit_id=None,
+            outbox_id=None,
             replayed=True,
         )
 
@@ -348,6 +533,46 @@ class ExperimentMaterializer:
             raise ExperimentError("metric checkpoint is required")
         _validate_version_ref(command.primary_hypothesis_ref)
         _validate_version_ref(command.publication_capture_ref)
+
+    def _validate_proposal_publish_command(self, command: ExperienceRevisionProposalPublishCommand) -> None:
+        if not command.actor:
+            raise ExperimentError("actor is required")
+        if not command.idempotency_key:
+            raise ExperimentError("idempotency_key is required")
+        if not command.base_version_refs:
+            raise ExperimentError("base_version_refs are required")
+        if not command.evidence_refs:
+            raise ExperimentError("evidence_refs are required")
+        for ref in (*command.base_version_refs, *command.evidence_refs):
+            _validate_version_ref(ref)
+        if command.skill_run_ref:
+            _validate_version_ref(command.skill_run_ref)
+        validate_experience_revision_proposal_output(command.output, command.trigger)
+
+    def _assert_base_versions_are_current(self, refs: tuple[VersionRef, ...]) -> None:
+        for ref in refs:
+            row = self.conn.execute(
+                "SELECT current_version_id FROM trace_root WHERE root_id=?",
+                (ref.target_stable_id,),
+            ).fetchone()
+            if row is None:
+                raise ExperimentError("base root is missing")
+            if row["current_version_id"] != ref.target_version_id:
+                raise ExperimentError("base version is no longer current")
+
+    def _assert_proposal_hash_unused(self, proposal_hash: str) -> None:
+        rows = self.conn.execute(
+            """
+            SELECT payload_json
+              FROM trace_version v
+              JOIN trace_root r ON r.root_id=v.root_id
+             WHERE r.object_kind='goal09_experience_revision_proposal'
+            """
+        ).fetchall()
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            if payload.get("status") == "published" and payload.get("proposal_hash") == proposal_hash:
+                raise ExperimentError("proposal_hash was already published")
 
 
 def compute_metric_signal(command: ExperimentResultCommand) -> MetricSignal:
@@ -437,6 +662,50 @@ def recompute_experience_state(command: ExperienceStateInput) -> ExperienceState
         proposal_triggers=triggers,
         audit_reasons=(status_reason, f"maturity:{maturity_level}", f"triggers:{len(triggers)}"),
     )
+
+
+def validate_experience_revision_proposal_output(
+    output: ExperienceRevisionProposalOutput,
+    trigger: ProposalTrigger,
+) -> None:
+    if output.proposal_type not in PROPOSAL_TYPES:
+        raise ExperimentError(f"unsupported proposal_type: {output.proposal_type}")
+    if output.proposal_type == "no_proposal":
+        raise ExperimentError("no_proposal is a run result and cannot be published as a proposal")
+    if output.proposal_type not in trigger.allowed_proposal_types:
+        raise ExperimentError("proposal_type is not allowed for trigger")
+    if output.trigger_kind != trigger.trigger_kind:
+        raise ExperimentError("proposal trigger_kind mismatch")
+    if not output.proposed_experiences:
+        raise ExperimentError("proposed_experiences are required")
+    if not output.evidence_mapping:
+        raise ExperimentError("evidence_mapping is required")
+    if not output.rationale:
+        raise ExperimentError("rationale is required")
+    _reject_forbidden_proposal_keys(output.as_payload())
+    for proposed in output.proposed_experiences:
+        missing = REQUIRED_PROPOSED_EXPERIENCE_FIELDS.difference(proposed)
+        if missing:
+            raise ExperimentError(f"proposed experience missing fields: {sorted(missing)}")
+        if "diff" in proposed:
+            raise ExperimentError("proposal output must be a complete schema, not a diff")
+    mapped_evidence = {evidence_id for values in output.evidence_mapping.values() for evidence_id in values}
+    if not mapped_evidence:
+        raise ExperimentError("evidence_mapping must map at least one evidence id")
+    if not mapped_evidence.issubset(set(trigger.evidence_ids)):
+        raise ExperimentError("evidence_mapping contains evidence outside the trigger")
+
+
+def _reject_forbidden_proposal_keys(value: Any) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized = str(key).lower()
+            if normalized in FORBIDDEN_PROPOSAL_OUTPUT_KEYS:
+                raise ExperimentError(f"proposal output leaks forbidden host field: {key}")
+            _reject_forbidden_proposal_keys(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _reject_forbidden_proposal_keys(item)
 
 
 def _validate_experience_state_input(command: ExperienceStateInput) -> None:
