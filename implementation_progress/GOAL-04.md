@@ -2,9 +2,9 @@
 
 goal: GOAL-04 Runtime Host and Local Handler Dispatch
 
-status: `IN_PROGRESS_CHECKPOINT_04_COMPLETE`
+status: `GOAL-04_COMPLETE_WAITING_USER_APPROVAL`
 
-source_commit: `dfe17a7`
+source_commit: `c3832e7`
 
 branch: `codex/goal-04-v0.6.2`
 
@@ -42,14 +42,15 @@ Implement a minimal runtime host on top of GOAL-03 scheduler jobs. Dispatch is l
   - No new persistence, external adapter, PostgreSQL-only behavior or GOAL-05 orchestration was added.
 - Re-ran GOAL-04 local verification and Python compile check: pass.
 
-## Pending Checkpoints
+## Remaining Conditional Checkpoints
 
-- Add PostgreSQL-specific runtime host gate only if a later GOAL-04 checkpoint adds PostgreSQL-only behavior.
+- None inside the current GOAL-04 scope.
+- Add PostgreSQL-specific runtime host gate only if a later approved checkpoint adds PostgreSQL-only behavior.
 - Add concrete external adapter only after explicit user approval in a later goal/checkpoint.
 
 ## Current Stop Point
 
-GOAL-04 checkpoint 04 is complete. Continue next only from a user-approved GOAL-04 expansion; current remaining items are conditional and GOAL-05 is not allowed.
+GOAL-04 is complete and waiting for user approval. Continue next only from a user-approved GOAL-04 expansion or explicit GOAL-05 approval; GOAL-05 is not allowed from this checkpoint.
 
 ## GOAL-05 Allowed?
 
