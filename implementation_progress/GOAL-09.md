@@ -55,17 +55,21 @@ GOAL-08_inherited_commit:
   - Ambiguous publication changes, unknown actual use, attribution conflicts and major confounders are recorded as review-required boundaries.
   - Deterministic invalid P+ inputs remain Core inconclusive results and are not sent to review/model.
   - The review boundary is materialized with the immutable experiment result and does not override the metric signal.
+- Checkpoint 4 complete: added CR-002 deterministic experience recomputation and proposal eligibility triggers.
+  - Eligible formal primary-used P+ evidence recomputes maturity level.
+  - Formal failures and independent external counterexamples recompute recommendation status without direct deprecate/restore publication.
+  - Repeated formal failures, independent external counterexamples, structural revision signals and human revision requests produce proposal triggers only.
+  - Manual lock and deprecated status are not silently overridden.
 
 ## Remaining Checkpoints
 
-- Checkpoint 4: Add CR-002 deterministic experience recomputation and proposal eligibility triggers.
 - Checkpoint 5: Add `experience_revision_propose` output gate and proposal publication path.
 - Checkpoint 6: Add inferred content preference candidate gate separated from CR-002 tactics.
 - Checkpoint 7: Add fault/replay/clean-room validation and closeout report.
 
 ## Current Resume Point
 
-- Continue with Checkpoint 4.
+- Continue with Checkpoint 5.
 
 ## Modified Files
 
@@ -84,7 +88,7 @@ GOAL-08_inherited_commit:
 
 - `python scripts/core/experience/verify_goal_09.py`
   - exit_code: 0
-  - tests: 6
+  - tests: 9
   - real_external_credentials_used: no
   - external_side_effects: none
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'goal09_pycache'; python -m py_compile scripts/core/experience/__init__.py scripts/core/experience/goal09_experiments.py scripts/core/experience/verify_goal_09.py`
@@ -104,11 +108,12 @@ GOAL-08_inherited_commit:
 
 - `1752215` - docs(goal-09): restore formal control package
 - This round checkpoint commit subject: `feat(goal-09): add pplus experiment metric gate`
-- Pending for Checkpoint 3.
+- `7c79939` - feat(goal-09): add experiment review boundary
+- This round checkpoint commit subject: `feat(goal-09): add cr002 experience triggers`
 
 ## Next First Unfinished Checkpoint
 
-- Checkpoint 4: Add CR-002 deterministic experience recomputation and proposal eligibility triggers.
+- Checkpoint 5: Add `experience_revision_propose` output gate and proposal publication path.
 
 ## GOAL-10 Permission
 

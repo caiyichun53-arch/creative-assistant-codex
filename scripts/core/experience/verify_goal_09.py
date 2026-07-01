@@ -9,9 +9,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.core.experience.goal09_experiments import (  # noqa: E402
+    ExperienceEvidence,
+    ExperienceStateInput,
     ExperimentMaterializer,
     ExperimentResultCommand,
     PPlusMetricInput,
+    recompute_experience_state,
 )
 from scripts.core.persistence.goal01_store import (  # noqa: E402
     IdempotencyConflict,
@@ -280,6 +283,167 @@ def test_major_confounder_requires_review_without_overriding_metric_signal() -> 
     print("PASS GOAL-09 experiment_review boundary does not override deterministic metric signal")
 
 
+def test_cr002_recompute_maturity_status_and_repeated_failure_trigger() -> None:
+    result = recompute_experience_state(
+        ExperienceStateInput(
+            tactic_key="tactic-9",
+            current_recommendation_status="active",
+            evidence=(
+                ExperienceEvidence(
+                    evidence_id="support-1",
+                    evidence_kind="formal_p_result",
+                    independence_key="topic-a",
+                    metric_signal="supported",
+                    primary_used=True,
+                    core_question_hash="q-a",
+                ),
+                ExperienceEvidence(
+                    evidence_id="support-2",
+                    evidence_kind="formal_p_result",
+                    independence_key="topic-b",
+                    metric_signal="supported",
+                    primary_used=True,
+                    core_question_hash="q-b",
+                ),
+                ExperienceEvidence(
+                    evidence_id="support-3",
+                    evidence_kind="formal_p_result",
+                    independence_key="topic-c",
+                    metric_signal="supported",
+                    primary_used=True,
+                    core_question_hash="q-c",
+                ),
+                ExperienceEvidence(
+                    evidence_id="failure-1",
+                    evidence_kind="formal_p_result",
+                    independence_key="topic-d",
+                    metric_signal="not_supported",
+                    primary_used=True,
+                    core_question_hash="q-d",
+                ),
+                ExperienceEvidence(
+                    evidence_id="failure-2",
+                    evidence_kind="formal_p_result",
+                    independence_key="topic-e",
+                    metric_signal="not_supported",
+                    primary_used=True,
+                    core_question_hash="q-e",
+                ),
+                ExperienceEvidence(
+                    evidence_id="failure-3",
+                    evidence_kind="formal_p_result",
+                    independence_key="topic-f",
+                    metric_signal="not_supported",
+                    primary_used=True,
+                    core_question_hash="q-f",
+                ),
+            ),
+        )
+    )
+
+    assert result.maturity_level == "L5"
+    assert result.recommendation_status == "paused"
+    assert result.formal_supports == 3
+    assert result.formal_failures == 3
+    assert len(result.proposal_triggers) == 1
+    trigger = result.proposal_triggers[0]
+    assert trigger.trigger_kind == "repeated_formal_failures"
+    assert trigger.allowed_proposal_types == ("revise", "split", "deprecate", "no_proposal")
+    print("PASS GOAL-09 CR-002 recomputes maturity/status and repeated failure trigger")
+
+
+def test_cr002_external_structural_and_human_triggers_do_not_publish_proposals() -> None:
+    result = recompute_experience_state(
+        ExperienceStateInput(
+            tactic_key="tactic-10",
+            current_recommendation_status="active",
+            evidence=(
+                ExperienceEvidence(
+                    evidence_id="external-1",
+                    evidence_kind="external_counterexample",
+                    independence_key="source-a",
+                ),
+                ExperienceEvidence(
+                    evidence_id="external-2",
+                    evidence_kind="external_counterexample",
+                    independence_key="source-b",
+                ),
+                ExperienceEvidence(
+                    evidence_id="external-duplicate",
+                    evidence_kind="external_counterexample",
+                    independence_key="source-b",
+                ),
+                ExperienceEvidence(
+                    evidence_id="structural-1",
+                    evidence_kind="structural_revision_signal",
+                    independence_key="signal-a",
+                ),
+                ExperienceEvidence(
+                    evidence_id="human-1",
+                    evidence_kind="human_revision_request",
+                    independence_key="request-a",
+                    requested_action="restore",
+                ),
+            ),
+        )
+    )
+
+    assert result.recommendation_status == "watch"
+    assert result.independent_external_counterexamples == 2
+    triggers = {trigger.trigger_kind: trigger for trigger in result.proposal_triggers}
+    assert set(triggers) == {
+        "independent_external_counterexamples",
+        "structural_revision_signal",
+        "human_requested_revision",
+    }
+    assert triggers["independent_external_counterexamples"].evidence_ids == ("external-1", "external-2")
+    assert "restore" in triggers["human_requested_revision"].allowed_proposal_types
+    assert all("published" not in trigger.as_payload() for trigger in result.proposal_triggers)
+    print("PASS GOAL-09 CR-002 detects proposal triggers without publishing proposals")
+
+
+def test_cr002_manual_lock_and_deprecated_are_not_silently_overridden() -> None:
+    locked = recompute_experience_state(
+        ExperienceStateInput(
+            tactic_key="tactic-11",
+            current_recommendation_status="active",
+            manual_lock=True,
+            evidence=(
+                ExperienceEvidence(
+                    evidence_id="failure-locked",
+                    evidence_kind="formal_p_result",
+                    independence_key="topic-locked",
+                    metric_signal="not_supported",
+                    primary_used=True,
+                    core_question_hash="q-locked",
+                ),
+            ),
+        )
+    )
+    deprecated = recompute_experience_state(
+        ExperienceStateInput(
+            tactic_key="tactic-12",
+            current_recommendation_status="deprecated",
+            evidence=(
+                ExperienceEvidence(
+                    evidence_id="support-late",
+                    evidence_kind="formal_p_result",
+                    independence_key="topic-late",
+                    metric_signal="supported",
+                    primary_used=True,
+                    core_question_hash="q-late",
+                ),
+            ),
+        )
+    )
+
+    assert locked.recommendation_status == "active"
+    assert "manual_lock" in locked.audit_reasons[0]
+    assert deprecated.recommendation_status == "deprecated"
+    assert "restore proposal" in deprecated.audit_reasons[0]
+    print("PASS GOAL-09 CR-002 respects manual lock and deprecated proposal boundary")
+
+
 def main() -> None:
     test_formal_primary_used_p_plus_materializes_supported_signal()
     test_ineligible_when_primary_not_used_even_with_high_p_plus()
@@ -287,6 +451,9 @@ def main() -> None:
     test_inconclusive_deterministic_inputs_do_not_call_review_or_model()
     test_experiment_review_boundary_requires_review_only_for_ambiguous_attribution()
     test_major_confounder_requires_review_without_overriding_metric_signal()
+    test_cr002_recompute_maturity_status_and_repeated_failure_trigger()
+    test_cr002_external_structural_and_human_triggers_do_not_publish_proposals()
+    test_cr002_manual_lock_and_deprecated_are_not_silently_overridden()
     print("GOAL-09 experiment metric verification passed")
 
 

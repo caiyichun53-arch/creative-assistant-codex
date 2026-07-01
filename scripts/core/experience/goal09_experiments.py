@@ -18,6 +18,16 @@ ACTUAL_USE_STATUSES = frozenset({"used", "not_used", "unknown"})
 EXPERIMENT_KINDS = frozenset({"formal", "observational"})
 PUBLICATION_RELATIONS = frozenset({"same_as_approved", "modified_text_provided", "unknown_pending_check"})
 REVIEW_PUBLICATION_RELATIONS = frozenset({"modified_text_provided", "unknown_pending_check"})
+RECOMMENDATION_STATUSES = frozenset({"active", "watch", "paused", "deprecated"})
+EVIDENCE_KINDS = frozenset(
+    {
+        "formal_p_result",
+        "external_support",
+        "external_counterexample",
+        "structural_revision_signal",
+        "human_revision_request",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -114,6 +124,78 @@ class ExperimentResult:
     metric_signal: MetricSignal
     review_boundary: ExperimentReviewBoundary
     replayed: bool = False
+
+
+@dataclass(frozen=True)
+class ExperienceEvidence:
+    evidence_id: str
+    evidence_kind: str
+    independence_key: str
+    eligible: bool = True
+    metric_signal: str | None = None
+    primary_used: bool = False
+    core_question_hash: str | None = None
+    requested_action: str | None = None
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "evidence_id": self.evidence_id,
+            "evidence_kind": self.evidence_kind,
+            "independence_key": self.independence_key,
+            "eligible": self.eligible,
+            "metric_signal": self.metric_signal,
+            "primary_used": self.primary_used,
+            "core_question_hash": self.core_question_hash,
+            "requested_action": self.requested_action,
+        }
+
+
+@dataclass(frozen=True)
+class ExperienceStateInput:
+    tactic_key: str
+    current_recommendation_status: str
+    evidence: tuple[ExperienceEvidence, ...]
+    manual_lock: bool = False
+
+
+@dataclass(frozen=True)
+class ProposalTrigger:
+    trigger_kind: str
+    allowed_proposal_types: tuple[str, ...]
+    evidence_ids: tuple[str, ...]
+    reason: str
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "trigger_kind": self.trigger_kind,
+            "allowed_proposal_types": list(self.allowed_proposal_types),
+            "evidence_ids": list(self.evidence_ids),
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class ExperienceStateResult:
+    tactic_key: str
+    maturity_level: str
+    recommendation_status: str
+    formal_supports: int
+    formal_failures: int
+    independent_external_counterexamples: int
+    proposal_triggers: tuple[ProposalTrigger, ...]
+    audit_reasons: tuple[str, ...]
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "tactic_key": self.tactic_key,
+            "maturity_level": self.maturity_level,
+            "recommendation_status": self.recommendation_status,
+            "formal_supports": self.formal_supports,
+            "formal_failures": self.formal_failures,
+            "independent_external_counterexamples": self.independent_external_counterexamples,
+            "proposal_triggers": [trigger.as_payload() for trigger in self.proposal_triggers],
+            "audit_reasons": list(self.audit_reasons),
+        }
 
 
 class ExperimentMaterializer:
@@ -327,6 +409,177 @@ def _has_deterministic_metric_invalidity(signal: MetricSignal) -> bool:
         "baseline is zero or negative",
         "observed value is negative",
     }
+
+
+def recompute_experience_state(command: ExperienceStateInput) -> ExperienceStateResult:
+    _validate_experience_state_input(command)
+    formal_supports = _formal_evidence(command.evidence, "supported")
+    formal_failures = _formal_evidence(command.evidence, "not_supported")
+    external_counterexamples = _eligible_by_kind(command.evidence, "external_counterexample")
+    structural_signals = _eligible_by_kind(command.evidence, "structural_revision_signal")
+    human_requests = _eligible_by_kind(command.evidence, "human_revision_request")
+
+    maturity_level = _maturity_level(formal_supports, command.evidence)
+    computed_status, status_reason = _recommendation_status(
+        current_status=command.current_recommendation_status,
+        manual_lock=command.manual_lock,
+        formal_failures=formal_failures,
+        external_counterexamples=external_counterexamples,
+    )
+    triggers = _proposal_triggers(formal_failures, external_counterexamples, structural_signals, human_requests)
+    return ExperienceStateResult(
+        tactic_key=command.tactic_key,
+        maturity_level=maturity_level,
+        recommendation_status=computed_status,
+        formal_supports=len(formal_supports),
+        formal_failures=len(formal_failures),
+        independent_external_counterexamples=len(_independent(external_counterexamples)),
+        proposal_triggers=triggers,
+        audit_reasons=(status_reason, f"maturity:{maturity_level}", f"triggers:{len(triggers)}"),
+    )
+
+
+def _validate_experience_state_input(command: ExperienceStateInput) -> None:
+    if not command.tactic_key:
+        raise ExperimentError("tactic_key is required")
+    if command.current_recommendation_status not in RECOMMENDATION_STATUSES:
+        raise ExperimentError(f"unsupported recommendation status: {command.current_recommendation_status}")
+    for item in command.evidence:
+        if not item.evidence_id:
+            raise ExperimentError("evidence_id is required")
+        if item.evidence_kind not in EVIDENCE_KINDS:
+            raise ExperimentError(f"unsupported evidence_kind: {item.evidence_kind}")
+        if not item.independence_key:
+            raise ExperimentError("independence_key is required")
+        if item.metric_signal and item.metric_signal not in METRIC_SIGNALS:
+            raise ExperimentError(f"unsupported metric_signal: {item.metric_signal}")
+
+
+def _formal_evidence(evidence: tuple[ExperienceEvidence, ...], metric_signal: str) -> tuple[ExperienceEvidence, ...]:
+    return tuple(
+        item
+        for item in evidence
+        if item.evidence_kind == "formal_p_result"
+        and item.eligible
+        and item.primary_used
+        and item.metric_signal == metric_signal
+    )
+
+
+def _eligible_by_kind(evidence: tuple[ExperienceEvidence, ...], evidence_kind: str) -> tuple[ExperienceEvidence, ...]:
+    return tuple(item for item in evidence if item.evidence_kind == evidence_kind and item.eligible)
+
+
+def _independent(evidence: tuple[ExperienceEvidence, ...]) -> tuple[ExperienceEvidence, ...]:
+    seen: set[str] = set()
+    unique: list[ExperienceEvidence] = []
+    for item in evidence:
+        if item.independence_key in seen:
+            continue
+        seen.add(item.independence_key)
+        unique.append(item)
+    return tuple(unique)
+
+
+def _maturity_level(formal_supports: tuple[ExperienceEvidence, ...], evidence: tuple[ExperienceEvidence, ...]) -> str:
+    independent_supports = _independent(
+        tuple(
+            item
+            for item in evidence
+            if item.eligible
+            and item.evidence_kind in {"formal_p_result", "external_support"}
+            and (item.evidence_kind == "external_support" or item.metric_signal == "supported")
+        )
+    )
+    formal_questions = {item.core_question_hash or item.independence_key for item in formal_supports}
+    if len(formal_supports) >= 3 and len(formal_questions) >= 3:
+        return "L5"
+    if len(formal_supports) >= 2 and len(formal_questions) >= 2:
+        return "L4"
+    if formal_supports:
+        return "L3"
+    if len(independent_supports) >= 2:
+        return "L2"
+    if independent_supports:
+        return "L1"
+    return "L0"
+
+
+def _recommendation_status(
+    *,
+    current_status: str,
+    manual_lock: bool,
+    formal_failures: tuple[ExperienceEvidence, ...],
+    external_counterexamples: tuple[ExperienceEvidence, ...],
+) -> tuple[str, str]:
+    if current_status == "deprecated":
+        return "deprecated", "deprecated requires formal restore proposal"
+    if manual_lock:
+        return current_status, "manual_lock blocks automatic recommendation transition"
+    failure_questions = {item.core_question_hash or item.independence_key for item in formal_failures}
+    if len(formal_failures) >= 3 and len(failure_questions) >= 3:
+        return "paused", "three independent formal failures"
+    if formal_failures:
+        return "watch", "formal failure observed"
+    if len(_independent(external_counterexamples)) >= 2:
+        return "watch", "two independent external counterexamples"
+    return "active", "no active risk signal"
+
+
+def _proposal_triggers(
+    formal_failures: tuple[ExperienceEvidence, ...],
+    external_counterexamples: tuple[ExperienceEvidence, ...],
+    structural_signals: tuple[ExperienceEvidence, ...],
+    human_requests: tuple[ExperienceEvidence, ...],
+) -> tuple[ProposalTrigger, ...]:
+    triggers: list[ProposalTrigger] = []
+    failure_questions = {item.core_question_hash or item.independence_key for item in formal_failures}
+    if len(formal_failures) >= 3 and len(failure_questions) >= 3:
+        triggers.append(
+            ProposalTrigger(
+                trigger_kind="repeated_formal_failures",
+                allowed_proposal_types=("revise", "split", "deprecate", "no_proposal"),
+                evidence_ids=tuple(item.evidence_id for item in formal_failures),
+                reason="at least three formal failures across different core questions",
+            )
+        )
+    independent_counterexamples = _independent(external_counterexamples)
+    if len(independent_counterexamples) >= 2:
+        triggers.append(
+            ProposalTrigger(
+                trigger_kind="independent_external_counterexamples",
+                allowed_proposal_types=("revise", "split", "no_proposal"),
+                evidence_ids=tuple(item.evidence_id for item in independent_counterexamples),
+                reason="two independent eligible external counterexamples",
+            )
+        )
+    if structural_signals:
+        triggers.append(
+            ProposalTrigger(
+                trigger_kind="structural_revision_signal",
+                allowed_proposal_types=("revise", "split", "merge", "no_proposal"),
+                evidence_ids=tuple(item.evidence_id for item in structural_signals),
+                reason="eligible structural revision signal",
+            )
+        )
+    if human_requests:
+        requested_restore = any(item.requested_action == "restore" for item in human_requests)
+        allowed = ("revise", "split", "merge", "deprecate", "restore", "no_proposal") if requested_restore else (
+            "revise",
+            "split",
+            "merge",
+            "deprecate",
+            "no_proposal",
+        )
+        triggers.append(
+            ProposalTrigger(
+                trigger_kind="human_requested_revision",
+                allowed_proposal_types=allowed,
+                evidence_ids=tuple(item.evidence_id for item in human_requests),
+                reason="human explicitly requested experience revision",
+            )
+        )
+    return tuple(triggers)
 
 
 def _validate_version_ref(ref: VersionRef) -> None:

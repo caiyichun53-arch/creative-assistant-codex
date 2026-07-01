@@ -27,11 +27,12 @@ This ExecPlan is restored from V0.6.2 GOAL-09 paragraphs 2269-2285 plus direct C
    - Do not call the model for clean deterministic experiments.
    - Do not let review override deterministic technical invalidity.
 4. CR-002 deterministic engine and proposal trigger.
-   - Status: next.
+   - Status: complete.
    - Recompute evidence maturity and recommendation status from formal evidence.
    - Detect repeated formal failures, independent external counterexamples, structural revision signals and human revision requests.
    - Keep deprecate/restore behind formal proposal rules.
 5. Proposal output and publication.
+   - Status: next.
    - Accept at most one complete proposal per run.
    - Reject proposal outputs containing tactic IDs, version IDs, proposal IDs or transaction commands.
    - Publish only after base version and proposal hash checks.
