@@ -17,6 +17,7 @@ ARTIFACT_KINDS = frozenset(
         "content_plan",
         "script",
         "review",
+        "rejection",
         "approval",
         "approved_draft",
         "publication_capture",
@@ -31,6 +32,27 @@ PREFERENCE_ORIGINS = frozenset(
         "approval",
         "rejection",
         "publication_capture",
+    }
+)
+
+REVIEW_TARGET_ROLES = frozenset(
+    {
+        "reviews_script_version",
+        "reviews_approved_draft_version",
+    }
+)
+
+REJECTION_TARGET_ROLES = frozenset(
+    {
+        "rejects_script_version",
+        "rejects_approved_draft_version",
+    }
+)
+
+REVIEWABLE_OBJECT_KINDS = frozenset(
+    {
+        "production_script",
+        "production_approved_draft",
     }
 )
 
@@ -341,6 +363,10 @@ class ProductionVersionChainMaterializer:
             raise ProductionChainError("content_payload is required")
         for ref in (*command.evidence_refs, *command.preference_instruction_refs):
             _validate_version_ref(ref)
+        if command.artifact_kind == "review":
+            _validate_review_target(command, REVIEW_TARGET_ROLES, "review")
+        if command.artifact_kind == "rejection":
+            _validate_review_target(command, REJECTION_TARGET_ROLES, "rejection")
         if command.model_run_envelope_version_id and not command.model_run_root_id:
             raise ProductionChainError("model_run_root_id is required with model_run_envelope_version_id")
 
@@ -373,3 +399,18 @@ def _validate_version_ref(ref: VersionRef) -> None:
         raise ProductionChainError("reference must point to a concrete version or content hash")
     if not ref.locator:
         raise ProductionChainError("reference locator is required")
+
+
+def _validate_review_target(
+    command: ProductionArtifactCommand,
+    allowed_roles: frozenset[str],
+    artifact_kind: str,
+) -> None:
+    for ref in command.evidence_refs:
+        if ref.relation_role in allowed_roles:
+            if ref.target_object_kind not in REVIEWABLE_OBJECT_KINDS:
+                raise ProductionChainError(f"{artifact_kind} target must be a script or approved draft")
+            if not ref.target_version_id:
+                raise ProductionChainError(f"{artifact_kind} target_version_id is required")
+            return
+    raise ProductionChainError(f"{artifact_kind} must reference the reviewed production version")

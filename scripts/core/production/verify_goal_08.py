@@ -340,9 +340,85 @@ def test_approval_publication_and_preference_candidate_are_separate() -> None:
     print("PASS GOAL-08 approval/publication separation and non-permanent preference candidate")
 
 
+def test_review_and_rejection_point_to_exact_reviewed_versions() -> None:
+    store = make_store()
+    materializer = ProductionVersionChainMaterializer(store)
+    _evidence_root, _evidence_version, evidence_ref = create_evidence(store)
+
+    script = materializer.materialize_artifact(
+        ProductionArtifactCommand(
+            artifact_kind="script",
+            topic_id="topic-10",
+            actor="writer",
+            idempotency_key="topic-10-script-v1",
+            content_payload={"text": "script for review"},
+            evidence_refs=(evidence_ref,),
+        )
+    )
+    review = materializer.materialize_artifact(
+        ProductionArtifactCommand(
+            artifact_kind="review",
+            topic_id="topic-10",
+            actor="reviewer",
+            idempotency_key="topic-10-review-v1",
+            content_payload={"decision": "needs_changes", "notes": ["tighten opening"]},
+            evidence_refs=(
+                VersionRef(
+                    relation_role="reviews_script_version",
+                    target_object_kind="production_script",
+                    target_stable_id=script.root_id,
+                    target_version_id=script.version_id,
+                    locator={"topic_id": "topic-10", "field": "script"},
+                ),
+            ),
+        )
+    )
+    rejection = materializer.materialize_artifact(
+        ProductionArtifactCommand(
+            artifact_kind="rejection",
+            topic_id="topic-10",
+            actor="reviewer",
+            idempotency_key="topic-10-rejection-v1",
+            content_payload={"reason": "opening does not match evidence"},
+            evidence_refs=(
+                VersionRef(
+                    relation_role="rejects_script_version",
+                    target_object_kind="production_script",
+                    target_stable_id=script.root_id,
+                    target_version_id=script.version_id,
+                    locator={"topic_id": "topic-10", "field": "script"},
+                ),
+                evidence_ref,
+            ),
+        )
+    )
+
+    for version_id, role in (
+        (review.version_id, "reviews_script_version"),
+        (rejection.version_id, "rejects_script_version"),
+    ):
+        refs = store.conn.execute(
+            "SELECT relation_role, target_object_kind, target_version_id FROM object_reference WHERE source_version_id=?",
+            (version_id,),
+        ).fetchall()
+        assert any(
+            row["relation_role"] == role
+            and row["target_object_kind"] == "production_script"
+            and row["target_version_id"] == script.version_id
+            for row in refs
+        )
+    assert payload_for(store, script.version_id)["content_payload"] == {"text": "script for review"}
+    assert store.conn.execute(
+        "SELECT count(*) FROM trace_version WHERE root_id=?",
+        (script.root_id,),
+    ).fetchone()[0] == 1
+    print("PASS GOAL-08 review/rejection provenance points to exact reviewed versions")
+
+
 def main() -> None:
     test_content_versions_are_immutable_and_replay_safe()
     test_approval_publication_and_preference_candidate_are_separate()
+    test_review_and_rejection_point_to_exact_reviewed_versions()
     print("GOAL-08 production chain verification passed")
 
 

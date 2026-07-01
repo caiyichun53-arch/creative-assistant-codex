@@ -34,6 +34,6 @@ source_definition: `goals/GOAL-08.md`
 
 ## This Round
 
-- Implement checkpoint 1.
-- Implement checkpoint 2.
+- Implement checkpoint 3.
+- Next resume point after this checkpoint is checkpoint 4.
 - Do not enter GOAL-09.

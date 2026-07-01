@@ -65,17 +65,20 @@ GOAL-07_validated_code_commit:
   - Publication capture may differ from the approved draft while both versions remain readable.
   - Manual edit evidence can create only a candidate preference revision.
   - A single manual edit does not set `content_preference_profile.current_revision_id`.
+- Checkpoint 3 complete: review and rejection provenance.
+  - Review artifacts must point to the exact script or approved draft version being reviewed.
+  - Rejection artifacts must point to the exact script or approved draft version being rejected.
+  - Rejection evidence refs are recorded on the rejection artifact without mutating the reviewed content version.
 
 ## Remaining Checkpoints
 
-- Review and rejection provenance checkpoint.
 - Fault and replay gates for changed idempotency payloads and injected failures.
 - GOAL-08 validation report.
 - GOAL-08 clean-room proof.
 
 ## Current Resume Point
 
-- Resume at GOAL-08 ExecPlan checkpoint 3: review and rejection provenance.
+- Resume at GOAL-08 ExecPlan checkpoint 4: fault and replay gates.
 
 ## Modified Files
 
@@ -97,7 +100,7 @@ GOAL-07_validated_code_commit:
   - exit_code: 0
 - `python scripts/core/production/verify_goal_08.py`
   - exit_code: 0
-  - tests: 2
+  - tests: 3
   - real_external_credentials_used: no
   - external_side_effects: none
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'goal08_pycache'; python -m py_compile scripts/core/production/__init__.py scripts/core/production/goal08_production_chain.py scripts/core/production/verify_goal_08.py`
@@ -110,6 +113,8 @@ GOAL-07_validated_code_commit:
 - Idempotent replay of repeated script materialization returns the original command receipt/version and does not duplicate audit/outbox/formal versions.
 - Approved draft and publication capture separation verified with fixture payloads.
 - Manual edit creates a candidate preference revision without publishing it as current preference.
+- Review and rejection artifacts point to concrete reviewed version IDs.
+- Rejection provenance does not mutate the reviewed content version.
 
 ## PostgreSQL Gate
 
@@ -133,7 +138,7 @@ GOAL-07_validated_code_commit:
 
 ## Next First Unfinished Checkpoint
 
-- Review and rejection provenance.
+- Fault and replay gates.
 
 ## GOAL-09 Permission
 
