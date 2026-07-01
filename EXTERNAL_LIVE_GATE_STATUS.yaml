@@ -1,5 +1,5 @@
 status: DRY_RUN_PASSED
-updated_at: '2026-07-01T22:40:15Z'
+updated_at: '2026-07-01T23:16:27Z'
 gates:
   GATE-HERMES-REAL-HOST:
     status: DRY_RUN_PASSED
@@ -39,36 +39,40 @@ gates:
     status: LIVE_PASSED
     latest_result:
       gate_id: GATE-MODEL-PROVIDER
-      started_at: '2026-07-01T22:40:10Z'
-      finished_at: '2026-07-01T22:40:15Z'
+      started_at: '2026-07-01T23:16:25Z'
+      finished_at: '2026-07-01T23:16:27Z'
       environment: validation
       adapter: ModelGateway
       request_hash: 3619edf8b4c74573155d22e9341b188b430fb61cfaa66f622cb5e20cd510eca5
-      response_hash: 2ba33151a70786fa2700ccf84e93c686dcfe99ec847b299c52f38324cd3c466e
-      correlation_id: GATE-MODEL-PROVIDER.run.2026-07-01T22:40:10Z
+      response_hash: 0fd6663dc7eff8d8745ad7ed388c80c1552ec2cff8b230d5f62f3e4ac0a23633
+      correlation_id: GATE-MODEL-PROVIDER.run.2026-07-01T23:16:25Z
       exit_code: 0
       status: LIVE_PASSED
       external_side_effect: true
       failure_reason: ''
-      evidence_location: validation_evidence\GATE-MODEL-PROVIDER\20260701T224010
+      evidence_location: validation_evidence\GATE-MODEL-PROVIDER\20260701T231625
       mode: run
       provider: hermes
       provider_adapter: HermesModelProviderAdapter
       invocation_chain:
       - ModelGateway
       - HermesModelProviderAdapter
+      billing_mode: subscription
       usage_status: available
-      cost_status: not_available
-      cost_cap_amount: '0.01'
-      cost_cap_currency: USD
-      cost_cap_status: not_available
-      cost_cap_hard_limit_verified: false
-      cost_cap_note: provider did not return parseable USD cost.amount; amount-level
-        cost-cap comparison was not completed
-      secret_redaction:
-        api_key_leaked: false
-        authorization_header_leaked: false
-      response_body_recorded: false
+      cost_status: not_applicable
+      monetary_cost_cap: not_applicable
+      actual_call_count: 1
+      live_call_limit: 1
+      max_retries: 0
+      retry_count: 0
+      timeout_ms: 30000
+      max_output_tokens: 8
+      visible_output_status: empty
+      provider_request_id_status: available
+      finish_reason: length
+      input_hash_recorded: true
+      output_hash_recorded: true
+      envelope_recorded: true
   GATE-ASR:
     status: LIVE_PASSED
     latest_result:

@@ -48,9 +48,9 @@ gates:
       - MODEL_PROVIDER_API_KEY
       - MODEL_PROVIDER_BASE_URL
       - MODEL_PROVIDER_MODEL
-      - MODEL_PROVIDER_COST_CAP
     optional_env:
       - MODEL_PROVIDER_PROJECT_ID
+      - MODEL_PROVIDER_COST_CAP
     required_test_env:
       - kind: isolated_database
         name: isolated model validation database

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import decimal
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ from scripts.core.model_gateway.hermes_model_provider import (
 from scripts.validation.live_gates import (
     GATE_IDS,
     LiveGateConfig,
+    _cost_cap_result,
     command_dry_run,
     command_preflight,
     run_gate_mode,
@@ -56,7 +58,6 @@ class LiveGateHarnessTests(unittest.TestCase):
             "MODEL_PROVIDER_API_KEY": "test-model-key",
             "MODEL_PROVIDER_BASE_URL": "https://example.invalid/v1",
             "MODEL_PROVIDER_MODEL": "test-hermes-model",
-            "MODEL_PROVIDER_COST_CAP": "0.01",
         }
         values.update(overrides)
         return values
@@ -143,7 +144,19 @@ class LiveGateHarnessTests(unittest.TestCase):
             result = run_gate_mode(config=config, gate_id="GATE-MODEL-PROVIDER", mode="preflight", status_path=tmp / "status.yaml")
             self.assertEqual(result.status, "PREFLIGHT_PASSED")
             manifest = yaml.safe_load((self.manifest_path(result) / "run_manifest.yaml").read_text(encoding="utf-8"))
-            self.assertEqual(manifest["response"]["cost_cap_unit"], "USD")
+            self.assertEqual(manifest["response"]["billing_mode"], "subscription")
+            self.assertEqual(manifest["response"]["monetary_cost_cap"], "not_applicable")
+
+    def test_model_preflight_cost_cap_is_optional_for_subscription_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            values = self.model_env(MODEL_PROVIDER_COST_CAP="__PLACEHOLDER__")
+            config = self.make_config(tmp, env_values=values)
+            result = run_gate_mode(config=config, gate_id="GATE-MODEL-PROVIDER", mode="preflight", status_path=tmp / "status.yaml")
+            self.assertEqual(result.status, "PREFLIGHT_PASSED")
+            manifest = yaml.safe_load((self.manifest_path(result) / "run_manifest.yaml").read_text(encoding="utf-8"))
+            self.assertNotIn("MODEL_PROVIDER_COST_CAP", manifest["response"]["required_fields"])
+            self.assertIn("MODEL_PROVIDER_COST_CAP", manifest["response"]["optional_fields"])
 
     def test_hermes_adapter_records_usage_not_available(self) -> None:
         class FakeCompletions:
@@ -172,7 +185,41 @@ class LiveGateHarnessTests(unittest.TestCase):
         )
         self.assertEqual(result.usage.total_tokens, 0)
         self.assertEqual(result.metadata["usage_status"], "not_available")
-        self.assertEqual(result.cost["status"], "not_available")
+        self.assertEqual(result.metadata["billing_mode"], "subscription")
+        self.assertEqual(result.metadata["cost_status"], "not_applicable")
+        self.assertEqual(result.metadata["visible_output_status"], "available")
+        self.assertEqual(result.cost["status"], "not_applicable")
+        self.assertEqual(result.cost["billing_mode"], "subscription")
+
+    def test_hermes_adapter_allows_empty_visible_output_for_minimal_token_gate(self) -> None:
+        class FakeCompletions:
+            def create(self, **kwargs):
+                return SimpleNamespace(
+                    id="provider-request-empty",
+                    usage=SimpleNamespace(prompt_tokens=1, completion_tokens=8, total_tokens=9),
+                    choices=[SimpleNamespace(message=SimpleNamespace(content=""), finish_reason="length")],
+                )
+
+        class FakeClient:
+            chat = SimpleNamespace(completions=FakeCompletions())
+
+        adapter = HermesModelProviderAdapter(
+            HermesModelProviderConfig(api_key="test-model-key", base_url="https://example.invalid/v1", model="test-model"),
+            client_factory=lambda **kwargs: FakeClient(),
+        )
+        result = adapter.complete(
+            SimpleNamespace(prompt="hello"),
+            ModelRoute(
+                route_name="test",
+                provider_name="hermes",
+                model_name="test-model",
+                config_version="test",
+                config_hash="hash",
+            ),
+        )
+        self.assertEqual(result.output_text, "")
+        self.assertEqual(result.metadata["visible_output_status"], "empty")
+        self.assertEqual(result.metadata["cost_status"], "not_applicable")
 
     def test_hermes_adapter_scrubs_api_key_from_errors(self) -> None:
         secret = "test-model-key"
@@ -203,6 +250,8 @@ class LiveGateHarnessTests(unittest.TestCase):
         self.assertIn("<redacted>", str(raised.exception))
 
     def test_model_live_path_uses_gateway_and_not_dry_run_provider(self) -> None:
+        call_count = 0
+
         class FakeHermesAdapter:
             provider_name = "hermes"
 
@@ -210,18 +259,25 @@ class LiveGateHarnessTests(unittest.TestCase):
                 self.config = config
 
             def complete(self, request, route):
+                nonlocal call_count
+                call_count += 1
                 assert route.provider_name == "hermes"
+                assert route.parameters["max_completion_tokens"] == 8
+                assert route.parameters["reasoning_effort"] == "low"
                 return ModelProviderResult(
                     output_text="live-gate-hermes-model-ok",
                     usage=ModelUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
-                    cost={"status": "not_available"},
+                    cost={"status": "not_applicable", "billing_mode": "subscription"},
                     provider_request_id="provider-request-1",
                     metadata={
                         "external_io": True,
+                        "billing_mode": "subscription",
                         "usage_status": "available",
-                        "cost_status": "not_available",
+                        "cost_status": "not_applicable",
                         "provider_request_id_status": "available",
                         "finish_reason": "stop",
+                        "visible_output_status": "available",
+                        "retry_count": 0,
                     },
                 )
 
@@ -241,9 +297,20 @@ class LiveGateHarnessTests(unittest.TestCase):
                     status_path=tmp / "status.yaml",
             )
             self.assertEqual(result.status, "LIVE_PASSED")
+            self.assertEqual(call_count, 1)
             manifest = yaml.safe_load((self.manifest_path(result) / "run_manifest.yaml").read_text(encoding="utf-8"))
             self.assertEqual(manifest["response"]["provider"], "hermes")
             self.assertEqual(manifest["response"]["status"], "succeeded")
+            self.assertEqual(manifest["response"]["billing_mode"], "subscription")
+            self.assertEqual(manifest["response"]["cost_status"], "not_applicable")
+            self.assertEqual(manifest["response"]["monetary_cost_cap"], "not_applicable")
+            self.assertEqual(manifest["response"]["visible_output_status"], "available")
+            self.assertEqual(manifest["response"]["actual_call_count"], 1)
+            self.assertEqual(manifest["response"]["live_call_limit"], 1)
+            self.assertEqual(manifest["response"]["max_retries"], 0)
+            self.assertEqual(manifest["response"]["retry_count"], 0)
+            self.assertEqual(manifest["response"]["timeout_ms"], 30000)
+            self.assertEqual(manifest["response"]["max_output_tokens"], 8)
             self.assertTrue(manifest["response"]["input_hash"])
             self.assertTrue(manifest["response"]["output_hash"])
 
@@ -274,8 +341,8 @@ class LiveGateHarnessTests(unittest.TestCase):
             manifest_text = (self.manifest_path(result) / "run_manifest.yaml").read_text(encoding="utf-8")
             self.assertNotIn("test-secret-key", manifest_text)
 
-    def test_model_live_cost_cap_exceeded_fails(self) -> None:
-        class CostlyHermesAdapter:
+    def test_metered_provider_cost_cap_exceeded_fails_when_enabled(self) -> None:
+        class CostlyMeteredAdapter:
             provider_name = "hermes"
 
             def __init__(self, config):
@@ -289,6 +356,7 @@ class LiveGateHarnessTests(unittest.TestCase):
                     provider_request_id="provider-request-1",
                     metadata={
                         "external_io": True,
+                        "billing_mode": "metered",
                         "usage_status": "available",
                         "cost_status": "available",
                         "provider_request_id_status": "available",
@@ -299,7 +367,7 @@ class LiveGateHarnessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
             config = self.make_config(tmp, env_values=self.model_env(MODEL_PROVIDER_COST_CAP="0.01"), live_model_gate=True)
-            with mock.patch("scripts.validation.live_gates.HermesModelProviderAdapter", CostlyHermesAdapter):
+            with mock.patch("scripts.validation.live_gates.HermesModelProviderAdapter", CostlyMeteredAdapter):
                 result = run_gate_mode(
                     config=config,
                     gate_id="GATE-MODEL-PROVIDER",
@@ -310,6 +378,11 @@ class LiveGateHarnessTests(unittest.TestCase):
                 )
             self.assertEqual(result.status, "LIVE_FAILED")
             self.assertIn("MODEL_PROVIDER_COST_CAP exceeded", result.failure_reason)
+
+    def test_metered_cost_cap_helper_still_compares_amounts(self) -> None:
+        result = _cost_cap_result({"currency": "USD", "amount": "0.005"}, decimal.Decimal("0.01"), billing_mode="metered")
+        self.assertEqual(result["cost_cap_status"], "within_cap")
+        self.assertEqual(result["cost_cap_comparison"], "actual_usd_amount_lte_configured_usd_cap")
 
     def test_hermes_host_gate_dry_run_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as td:

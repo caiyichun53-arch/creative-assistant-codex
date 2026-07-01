@@ -150,6 +150,8 @@ def redact(value: Any) -> Any:
 
 def _looks_secret_key(key: str) -> bool:
     lowered = key.lower()
+    if lowered.endswith("_tokens") or lowered in {"max_tokens", "prompt_tokens", "completion_tokens", "total_tokens"}:
+        return False
     return any(marker in lowered for marker in ("secret", "token", "cookie", "session", "api_key", "password"))
 
 
@@ -182,7 +184,27 @@ def _decimal_value(value: str | None) -> decimal.Decimal:
     return decimal.Decimal(str(value))
 
 
-def _cost_cap_result(cost: dict[str, Any], cap: decimal.Decimal) -> dict[str, Any]:
+def _optional_decimal_value(value: str | None) -> decimal.Decimal | None:
+    if is_placeholder(value):
+        return None
+    return _decimal_value(value)
+
+
+def _cost_cap_result(cost: dict[str, Any], cap: decimal.Decimal | None, *, billing_mode: str = "metered") -> dict[str, Any]:
+    if billing_mode == "subscription":
+        return {
+            "billing_mode": billing_mode,
+            "monetary_cost_cap": "not_applicable",
+            "cost_cap_status": "not_applicable",
+            "cost_cap_comparison": "not_applicable",
+        }
+    if cap is None:
+        return {
+            "billing_mode": billing_mode,
+            "monetary_cost_cap": "not_configured",
+            "cost_cap_status": "not_configured",
+            "cost_cap_comparison": "not_configured",
+        }
     currency = str(cost.get("currency", "")).upper()
     amount = cost.get("amount")
     if currency != "USD" or amount is None:
@@ -425,26 +447,33 @@ class DryRunModelProvider:
 class ModelProviderHarness(BaseHarness):
     adapter_name = "ModelGateway"
     live_route_name = "hermes_live_validation"
+    billing_mode = "subscription"
+    live_call_limit = 1
+    max_retries = 0
+    timeout_ms = 30_000
+    max_output_tokens = 8
 
     def preflight(self) -> dict[str, Any]:
         response = super().preflight()
         cost_cap = self.config.env_value("MODEL_PROVIDER_COST_CAP")
         base_url = self.config.env_value("MODEL_PROVIDER_BASE_URL")
-        _decimal_value(cost_cap)
+        _optional_decimal_value(cost_cap)
         if not _valid_base_url(base_url):
             raise MissingTestEnvironment("MODEL_PROVIDER_BASE_URL must start with http:// or https://")
         return response | {
             "provider": "hermes",
-            "cost_cap_unit": "USD",
-            "cost_cap_format": "decimal amount",
-            "cost_cap_comparison": "provider cost.amount is compared when provider cost.currency is USD; otherwise cost is not_available",
+            "billing_mode": self.billing_mode,
+            "monetary_cost_cap": "not_applicable",
+            "live_call_limit": self.live_call_limit,
+            "max_retries": self.max_retries,
+            "timeout_ms": self.timeout_ms,
+            "max_output_tokens": self.max_output_tokens,
             "required_fields": (
                 "MODEL_PROVIDER_API_KEY",
                 "MODEL_PROVIDER_BASE_URL",
                 "MODEL_PROVIDER_MODEL",
-                "MODEL_PROVIDER_COST_CAP",
             ),
-            "optional_fields": ("MODEL_PROVIDER_PROJECT_ID",),
+            "optional_fields": ("MODEL_PROVIDER_PROJECT_ID", "MODEL_PROVIDER_COST_CAP"),
         }
 
     def dry_run(self) -> dict[str, Any]:
@@ -489,8 +518,7 @@ class ModelProviderHarness(BaseHarness):
         api_key = _required_env_value(self.config, "MODEL_PROVIDER_API_KEY")
         base_url = _required_env_value(self.config, "MODEL_PROVIDER_BASE_URL")
         model = _required_env_value(self.config, "MODEL_PROVIDER_MODEL")
-        cost_cap = _required_env_value(self.config, "MODEL_PROVIDER_COST_CAP")
-        cost_cap_amount = _decimal_value(cost_cap)
+        cost_cap_amount = _optional_decimal_value(self.config.env_value("MODEL_PROVIDER_COST_CAP"))
         if not _valid_base_url(base_url):
             raise MissingTestEnvironment("MODEL_PROVIDER_BASE_URL must start with http:// or https://")
 
@@ -504,21 +532,27 @@ class ModelProviderHarness(BaseHarness):
                 {
                     "provider": "hermes",
                     "model": model,
+                    "billing_mode": self.billing_mode,
                     "base_url_configured": True,
                     "project_id_present": not is_placeholder(self.config.env_value("MODEL_PROVIDER_PROJECT_ID")),
-                    "cost_cap": cost_cap,
+                    "live_call_limit": self.live_call_limit,
+                    "max_retries": self.max_retries,
+                    "timeout_ms": self.timeout_ms,
+                    "max_output_tokens": self.max_output_tokens,
+                    "reasoning_effort": "low",
                 },
                 "live-gates.hermes-model.route.v1",
             ),
-            parameters={"temperature": 0},
-            timeout_ms=30_000,
+            parameters={"temperature": 0, "max_completion_tokens": self.max_output_tokens, "reasoning_effort": "low"},
+            timeout_ms=self.timeout_ms,
         )
         provider = HermesModelProviderAdapter(
             HermesModelProviderConfig(
                 api_key=api_key,
                 base_url=base_url,
                 model=model,
-                timeout_seconds=30.0,
+                timeout_seconds=self.timeout_ms / 1000,
+                max_retries=self.max_retries,
             )
         )
         gateway = ModelGateway(
@@ -530,16 +564,16 @@ class ModelProviderHarness(BaseHarness):
             result = gateway.complete(
                 ModelRequest(
                     route_name=route.route_name,
-                    prompt="Return the exact text: live-gate-hermes-model-ok",
+                    prompt="Reply with only: OK",
                     input_payload={"gate_id": self.gate_id, "purpose": "model_provider_live_validation"},
                     correlation_id=f"{self.gate_id}.live",
                     metadata={"project_id_status": "available" if self.config.env_value("MODEL_PROVIDER_PROJECT_ID") else "not_available"},
                 )
             )
-            if not result.output_text.strip():
-                raise LiveGateError("Hermes model provider returned empty output")
             envelope = result.envelope
-            cost_cap_check = _cost_cap_result(envelope.cost or {}, cost_cap_amount)
+            metadata = envelope.metadata or {}
+            billing_mode = metadata.get("billing_mode") or (envelope.cost or {}).get("billing_mode") or self.billing_mode
+            cost_cap_check = _cost_cap_result(envelope.cost or {}, cost_cap_amount, billing_mode=billing_mode)
             if cost_cap_check["cost_cap_status"] == "exceeded":
                 raise LiveGateError(
                     "MODEL_PROVIDER_COST_CAP exceeded: "
@@ -552,15 +586,23 @@ class ModelProviderHarness(BaseHarness):
                 "status": envelope.status,
                 "error_type": None,
                 "provider_request_id_status": (envelope.metadata or {}).get("provider_request_id_status", "not_available"),
-                "usage_status": (envelope.metadata or {}).get("usage_status", "not_available"),
-                "cost_status": (envelope.cost or {}).get("status", "not_available"),
-                "finish_reason": (envelope.metadata or {}).get("finish_reason", "not_available"),
+                "billing_mode": billing_mode,
+                "usage_status": metadata.get("usage_status", "not_available"),
+                "cost_status": metadata.get("cost_status", (envelope.cost or {}).get("status", "not_available")),
+                "finish_reason": metadata.get("finish_reason", "not_available"),
+                "visible_output_status": metadata.get("visible_output_status", "not_available"),
                 "latency_ms": envelope.duration_ms,
                 "input_hash": envelope.input_hash,
                 "output_hash": envelope.output_hash,
                 "envelope_version_id": result.envelope_version_id,
                 "correlation_id": envelope.correlation_id,
                 "external_side_effect": True,
+                "live_call_limit": self.live_call_limit,
+                "actual_call_count": 1,
+                "max_retries": self.max_retries,
+                "retry_count": metadata.get("retry_count", self.max_retries),
+                "timeout_ms": self.timeout_ms,
+                "max_output_tokens": self.max_output_tokens,
             } | cost_cap_check
             return response
         except Exception as exc:

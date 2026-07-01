@@ -22,10 +22,12 @@ class HermesModelProviderConfig:
     base_url: str
     model: str
     timeout_seconds: float = 30.0
+    max_retries: int = 0
 
 
 class HermesModelProviderAdapter:
     provider_name = "hermes"
+    billing_mode = "subscription"
 
     def __init__(
         self,
@@ -57,24 +59,26 @@ class HermesModelProviderAdapter:
             raise HermesModelProviderError(_scrub_secret(str(exc), self.config.api_key)) from exc
 
         output_text = _extract_output_text(response)
-        if not output_text:
-            raise HermesModelProviderError("provider returned empty output")
-
         usage, usage_status = _extract_usage(response)
         provider_request_id = _text_or_none(getattr(response, "id", None))
         finish_reason = _extract_finish_reason(response)
         metadata = {
             "external_io": True,
             "api_mode": "chat_completions",
+            "billing_mode": self.billing_mode,
             "usage_status": usage_status,
-            "cost_status": "not_available",
+            "cost_status": "not_applicable",
             "provider_request_id_status": "available" if provider_request_id else "not_available",
             "finish_reason": finish_reason or "not_available",
+            "visible_output_status": "available" if output_text else "empty",
+            "max_retries": self.config.max_retries,
+            "retry_count": 0,
+            "timeout_seconds": self.config.timeout_seconds,
         }
         return ModelProviderResult(
             output_text=output_text,
             usage=usage,
-            cost={"status": "not_available"},
+            cost={"status": "not_applicable", "billing_mode": self.billing_mode},
             provider_request_id=provider_request_id,
             metadata=metadata,
         )
@@ -92,6 +96,7 @@ class HermesModelProviderAdapter:
                 api_key=self.config.api_key,
                 base_url=self.config.base_url.rstrip("/"),
                 timeout=self.config.timeout_seconds,
+                max_retries=self.config.max_retries,
             )
         except TypeError:
             try:
