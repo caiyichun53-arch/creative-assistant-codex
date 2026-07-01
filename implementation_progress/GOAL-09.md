@@ -44,10 +44,15 @@ GOAL-08_inherited_commit:
 ## Completed Checkpoints
 
 - Checkpoint 1 complete: restored GOAL-09 formal control package from V0.6.2 direct GOAL-09 and directly referenced CR-002/R07 sections.
+- Checkpoint 2 complete: added deterministic P+ metric signal and formal experiment eligibility materialization.
+  - Formal primary-used experiments materialize immutable `goal09_experiment_result` versions.
+  - Metric signal returns `supported`, `not_supported`, `inconclusive` or `ineligible` without model calls.
+  - P+ success cannot override an ineligible experiment where the primary hypothesis was not actually used.
+  - P+ does not publish content preference; GOAL-08 candidate preference revisions remain candidates.
+  - Repeated idempotency keys replay the original result; changed payloads are rejected.
 
 ## Remaining Checkpoints
 
-- Checkpoint 2: Add deterministic P+ metric signal and formal experiment eligibility materialization.
 - Checkpoint 3: Add `experiment_review` boundary for ambiguous publication/attribution cases without overriding deterministic Core outcomes.
 - Checkpoint 4: Add CR-002 deterministic experience recomputation and proposal eligibility triggers.
 - Checkpoint 5: Add `experience_revision_propose` output gate and proposal publication path.
@@ -56,13 +61,16 @@ GOAL-08_inherited_commit:
 
 ## Current Resume Point
 
-- Continue with Checkpoint 2.
+- Continue with Checkpoint 3.
 
 ## Modified Files
 
 - `goals/GOAL-09.md`
 - `implementation_progress/GOAL-09.md`
 - `implementation_progress/GOAL-09_EXEC_PLAN.md`
+- `scripts/core/experience/__init__.py`
+- `scripts/core/experience/goal09_experiments.py`
+- `scripts/core/experience/verify_goal_09.py`
 
 ## Migration Changes
 
@@ -70,7 +78,15 @@ GOAL-08_inherited_commit:
 
 ## Test Commands
 
-- Pending for Checkpoint 2.
+- `python scripts/core/experience/verify_goal_09.py`
+  - exit_code: 0
+  - tests: 4
+  - real_external_credentials_used: no
+  - external_side_effects: none
+- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'goal09_pycache'; python -m py_compile scripts/core/experience/__init__.py scripts/core/experience/goal09_experiments.py scripts/core/experience/verify_goal_09.py`
+  - exit_code: 0
+- `git diff --check`
+  - exit_code: 0
 
 ## External Live Gate
 
@@ -82,11 +98,12 @@ GOAL-08_inherited_commit:
 
 ## Checkpoint Commits
 
-- Pending.
+- `1752215` - docs(goal-09): restore formal control package
+- This round checkpoint commit subject: `feat(goal-09): add pplus experiment metric gate`
 
 ## Next First Unfinished Checkpoint
 
-- Checkpoint 2: Add deterministic P+ metric signal and formal experiment eligibility materialization.
+- Checkpoint 3: Add `experiment_review` boundary for ambiguous publication/attribution cases without overriding deterministic Core outcomes.
 
 ## GOAL-10 Permission
 

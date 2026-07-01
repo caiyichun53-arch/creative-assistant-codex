@@ -9,17 +9,20 @@ This ExecPlan is restored from V0.6.2 GOAL-09 paragraphs 2269-2285 plus direct C
 ## Atomic Checkpoints
 
 1. Restore GOAL-09 control package.
+   - Status: complete.
    - Create `goals/GOAL-09.md`.
    - Create `implementation_progress/GOAL-09.md`.
    - Create this ExecPlan.
    - Record missing generic control package files without marking a spec blocker.
 2. Deterministic P+ metric signal and formal experiment eligibility.
+   - Status: complete.
    - Use fixture/FakeClock inputs only.
    - Accept only formal experiments where the primary tactic was actually used.
    - Compute deterministic `supported`, `not_supported`, `inconclusive` or `ineligible` metric signal.
    - Materialize the experiment result through Core/Materializer only.
    - Prove P+ does not write current user preference.
 3. `experiment_review` boundary.
+   - Status: next.
    - Invoke only for ambiguous publication changes, attribution conflicts or recorded confounders.
    - Do not call the model for clean deterministic experiments.
    - Do not let review override deterministic technical invalidity.
