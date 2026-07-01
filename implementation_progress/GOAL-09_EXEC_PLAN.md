@@ -1,6 +1,6 @@
 # GOAL-09 ExecPlan
 
-status: `GOAL-09_IN_PROGRESS`
+status: `GOAL-09_COMPLETE_WAITING_USER_APPROVAL`
 
 ## Source
 
@@ -42,7 +42,7 @@ This ExecPlan is restored from V0.6.2 GOAL-09 paragraphs 2269-2285 plus direct C
    - Keep inferred candidates unpublished until calibrated.
    - Preserve evidence links to edits, approvals/rejections, publication captures and P+.
 7. Closeout gates.
-   - Status: next.
+   - Status: complete.
    - Run focused fixture/replay/fault/Clean-room tests.
    - Generate GOAL-09 validation report and clean-room proof.
    - Stop at approval gate and do not enter GOAL-10.
@@ -52,3 +52,7 @@ This ExecPlan is restored from V0.6.2 GOAL-09 paragraphs 2269-2285 plus direct C
 - Complete at most two tightly related checkpoints.
 - Do not run full repository tests.
 - Do not add external live provider/platform gates.
+
+## Final Resume Point
+
+- GOAL-09 complete; wait for user approval before GOAL-10.

@@ -2,7 +2,7 @@
 
 goal: GOAL-09 Experiments and Experience
 
-status: `GOAL-09_IN_PROGRESS`
+status: `GOAL-09_COMPLETE_WAITING_USER_APPROVAL`
 
 source_commit: `6003df81707913bd42808f04b3334b96f3c71c57`
 
@@ -10,6 +10,9 @@ branch: `codex/goal-09-v0.6.2`
 
 GOAL-08_inherited_commit:
   `6003df81707913bd42808f04b3334b96f3c71c57`
+
+validated_code_commit:
+  `d422e55fad83ea083d0c614b6cd615eff1458a70`
 
 ## Starting Checks
 
@@ -72,14 +75,22 @@ GOAL-08_inherited_commit:
   - CR-002 tactic/proposal evidence is rejected for inferred preference candidates.
   - Auto-publish is rejected even when the inferred signal is marked calibrated.
   - Current preference pointers are not updated by inferred candidate creation.
+- Checkpoint 7 complete: fault, replay, clean-room validation and final closeout.
+  - GOAL-09 focused fixture/replay/fault/clean-room verification passed.
+  - Proposal publication requires regression, ablation, compatibility and provenance gates.
+  - Fault injection rolls back proposal publication with no partial formal side effects.
+  - Replay returns original results without duplicate formal side effects.
+  - Formal Skill and candidate Skill repositories remain separate and are not created, mutated or published by GOAL-09.
+  - Inferred preference candidates do not become current preference.
+  - All formal GOAL-09 writes are through `ExperimentMaterializer` and existing Core/Persistence materializer primitives.
 
 ## Remaining Checkpoints
 
-- Checkpoint 7: Add fault/replay/clean-room validation and closeout report.
+- None.
 
 ## Current Resume Point
 
-- Continue with Checkpoint 7.
+- GOAL-09 complete; stop and wait for user approval. Do not enter GOAL-10.
 
 ## Modified Files
 
@@ -89,6 +100,8 @@ GOAL-08_inherited_commit:
 - `scripts/core/experience/__init__.py`
 - `scripts/core/experience/goal09_experiments.py`
 - `scripts/core/experience/verify_goal_09.py`
+- `GOAL-09_VALIDATION_REPORT.md`
+- `GOAL-09_CLEAN_ROOM_PROOF.md`
 
 ## Migration Changes
 
@@ -98,7 +111,7 @@ GOAL-08_inherited_commit:
 
 - `python scripts/core/experience/verify_goal_09.py`
   - exit_code: 0
-  - tests: 15
+  - tests: 18
   - real_external_credentials_used: no
   - external_side_effects: none
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'goal09_pycache'; python -m py_compile scripts/core/experience/__init__.py scripts/core/experience/goal09_experiments.py scripts/core/experience/verify_goal_09.py`
@@ -108,7 +121,8 @@ GOAL-08_inherited_commit:
 
 ## External Live Gate
 
-- None evaluated in this checkpoint.
+- None required for local GOAL-09 closeout.
+- Real model/platform live or shadow tests are external gates only and are not local blockers.
 
 ## Real Blockers
 
@@ -122,10 +136,11 @@ GOAL-08_inherited_commit:
 - This round checkpoint commit subject: `feat(goal-09): add cr002 experience triggers`
 - This round checkpoint commit subject: `feat(goal-09): add experience proposal gate`
 - This round checkpoint commit subject: `feat(goal-09): add inferred preference gate`
+- `d422e55fad83ea083d0c614b6cd615eff1458a70` - test(goal-09): cover closeout gates
 
 ## Next First Unfinished Checkpoint
 
-- Checkpoint 7: Add fault/replay/clean-room validation and closeout report.
+- None.
 
 ## GOAL-10 Permission
 
