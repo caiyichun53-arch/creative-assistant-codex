@@ -44,43 +44,77 @@ GOAL-07_validated_code_commit:
 - `MODULE_MANIFEST.yaml`: missing.
 - `CODEX_GOAL_RESUME_PROTOCOL.md`: missing.
 - Missing control package files are recorded as completeness issues only; they do not block GOAL-08 implementation under the restored V0.6.2 definition.
+- Follow-on control files checked for existence only:
+  - `goals/GOAL-09.md`: missing.
+  - `goals/GOAL-10.md`: missing.
+  - `goals/GOAL-11.md`: missing.
+  - `goals/GOAL-12.md`: missing.
+- GOAL-09 through GOAL-12 control file absence is a control package completeness issue only; GOAL-08 remains in progress and no later Goal was started.
 
 ## Completed Checkpoints
 
 - Restored formal GOAL-08 task definition from V0.6.2.
 - Corrected GOAL-08 status from `GOAL-08_BLOCKED_BY_SPEC_DECISION` to `GOAL-08_IN_PROGRESS`.
+- Created GOAL-08 ExecPlan.
+- Checkpoint 1 complete: production artifact version-chain materializer.
+  - `research_output`, `content_plan`, `script`, `review`, `approval`, `approved_draft`, `publication_capture` and `manual_edit` artifacts materialize as immutable `trace_version` records.
+  - New body changes append a new version under the same root and keep old versions readable.
+  - Evidence refs and GOAL-07 model run envelope refs are concrete `object_reference` records.
+- Checkpoint 2 complete: approval/publication/preference evidence boundary.
+  - Approved draft and actual publication capture use separate roots and versions.
+  - Publication capture may differ from the approved draft while both versions remain readable.
+  - Manual edit evidence can create only a candidate preference revision.
+  - A single manual edit does not set `content_preference_profile.current_revision_id`.
 
 ## Remaining Checkpoints
 
-- Build GOAL-08 atomic ExecPlan from the restored task definition.
-- Implement the production version chain for research/content plan/script/review/approval/publication capture/manual edits.
-- Prove approved draft and actual published artifact separation.
-- Prove explicit preference instructions and evidence references without permanent preference promotion from a single edit.
+- Review and rejection provenance checkpoint.
+- Fault and replay gates for changed idempotency payloads and injected failures.
+- GOAL-08 validation report.
+- GOAL-08 clean-room proof.
 
 ## Current Resume Point
 
-- Start GOAL-08 implementation from the restored formal task definition.
+- Resume at GOAL-08 ExecPlan checkpoint 3: review and rejection provenance.
 
 ## Modified Files
 
 - `goals/GOAL-08.md`
+- `implementation_progress/GOAL-08_EXEC_PLAN.md`
 - `implementation_progress/GOAL-08.md`
+- `scripts/core/production/__init__.py`
+- `scripts/core/production/goal08_production_chain.py`
+- `scripts/core/production/verify_goal_08.py`
 
 ## Migration Changes
 
 - None.
+- No new business table was added.
 
 ## Test Commands
 
-- Pending for this control-file correction.
+- `git diff --check`
+  - exit_code: 0
+- `python scripts/core/production/verify_goal_08.py`
+  - exit_code: 0
+  - tests: 2
+  - real_external_credentials_used: no
+  - external_side_effects: none
+- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'goal08_pycache'; python -m py_compile scripts/core/production/__init__.py scripts/core/production/goal08_production_chain.py scripts/core/production/verify_goal_08.py`
+  - exit_code: 0
 
 ## Fixture/Replay Coverage
 
-- None in this round.
+- FakeClock-backed UUIDv7 fixture store used.
+- GOAL-07 fake ModelGateway/PortableSkillRunner path used to produce a concrete `model_run_envelope` version referenced by a GOAL-08 script version.
+- Idempotent replay of repeated script materialization returns the original command receipt/version and does not duplicate audit/outbox/formal versions.
+- Approved draft and publication capture separation verified with fixture payloads.
+- Manual edit creates a candidate preference revision without publishing it as current preference.
 
 ## PostgreSQL Gate
 
-- Not run; no implementation checkpoint was available without the formal GOAL-08 task definition.
+- Not run in this checkpoint round.
+- No migration changes were made; current GOAL-08 verification uses the existing in-memory persistence schema and materializer boundary.
 
 ## External Live Gate
 
@@ -94,11 +128,12 @@ GOAL-07_validated_code_commit:
 ## Checkpoint Commits
 
 - `b9cf4d16364616fc9bc15ba7a7c57ce4a37700fe` - docs(goal-08): record formal definition blocker
-- Pending: docs(goal-08): restore formal task definition
+- `d4e496034e43b934584bc7ec21cc594ccb7de39b` - docs(goal-08): restore formal task definition
+- Pending: feat(goal-08): add production version chain materializer
 
 ## Next First Unfinished Checkpoint
 
-- Build the GOAL-08 atomic ExecPlan and implement the first production version-chain checkpoint.
+- Review and rejection provenance.
 
 ## GOAL-09 Permission
 
