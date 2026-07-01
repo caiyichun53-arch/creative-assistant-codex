@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.core.correction.goal10_corrections import (  # noqa: E402
     CorrectionMaterializer,
+    CorrectionPropagationCommand,
     CorrectionRegistrationCommand,
 )
 from scripts.core.persistence.goal01_store import (  # noqa: E402
@@ -243,11 +244,112 @@ def test_impact_basis_key_is_stable_for_same_correction_target_and_action() -> N
     print("PASS GOAL-10 impact basis key is stable and action kind is bounded")
 
 
+def test_propagation_converges_when_business_hash_and_refs_are_unchanged() -> None:
+    store = make_store()
+    target_ref = create_version(store, "research_claim", {"claim": "old"})
+    consumer_ref = create_version(
+        store,
+        "content_plan",
+        {"outline": "uses source by reference only"},
+        business_payload={"outline": "uses source by reference only"},
+    )
+    record_ref(store, consumer_ref, target_ref, "evidence_ref")
+    materializer = CorrectionMaterializer(store)
+    registration = materializer.register_correction(make_command(store, target_ref, idempotency_key="goal10-converge"))
+    impact = registration.impacts[0]
+
+    first = materializer.process_impact(
+        CorrectionPropagationCommand(
+            actor="propagation-worker",
+            idempotency_key="goal10-process-converge",
+            impact_root_id=impact.root_id,
+            expected_basis_hash=impact.expected_basis_hash,
+            correlation_id=registration.version_id,
+            causation_id=impact.version_id,
+        )
+    )
+    replay = materializer.process_impact(
+        CorrectionPropagationCommand(
+            actor="propagation-worker",
+            idempotency_key="goal10-process-converge",
+            impact_root_id=impact.root_id,
+            expected_basis_hash=impact.expected_basis_hash,
+            correlation_id=registration.version_id,
+            causation_id=impact.version_id,
+        )
+    )
+
+    assert first.processing_status == "completed"
+    assert first.stop_reason == "business_equivalent_refs_unchanged"
+    assert first.result["replacement_version_id"] is None
+    assert replay.replayed
+    assert replay.impact_version_id == first.impact_version_id
+    assert store.conn.execute(
+        "SELECT count(*) FROM trace_version WHERE root_id=?",
+        (consumer_ref.target_stable_id,),
+    ).fetchone()[0] == 1
+    assert store.conn.execute(
+        "SELECT count(*) FROM outbox_message WHERE topic='goal10.correction.impact.completed'"
+    ).fetchone()[0] == 1
+    print("PASS GOAL-10 propagation converges without duplicate side effects")
+
+
+def test_propagation_creates_replacement_version_when_business_hash_changes() -> None:
+    store = make_store()
+    target_ref = create_version(store, "research_claim", {"claim": "old"})
+    consumer_ref = create_version(
+        store,
+        "content_plan",
+        {"claim": "old", "outline": "uses corrected fact in body"},
+        business_payload={"claim": "old", "outline": "uses corrected fact in body"},
+    )
+    record_ref(store, consumer_ref, target_ref, "evidence_ref")
+    materializer = CorrectionMaterializer(store)
+    registration = materializer.register_correction(make_command(store, target_ref, idempotency_key="goal10-replace"))
+    impact = registration.impacts[0]
+
+    result = materializer.process_impact(
+        CorrectionPropagationCommand(
+            actor="propagation-worker",
+            idempotency_key="goal10-process-replace",
+            impact_root_id=impact.root_id,
+            expected_basis_hash=impact.expected_basis_hash,
+            correlation_id=registration.version_id,
+            causation_id=impact.version_id,
+        )
+    )
+
+    assert result.processing_status == "completed"
+    assert result.stop_reason == "replacement_version_created"
+    replacement_version_id = result.result["replacement_version_id"]
+    assert replacement_version_id
+    replacement_payload = payload_for(store, replacement_version_id)
+    assert replacement_payload["claim"] == "corrected fact"
+    current = store.conn.execute(
+        "SELECT current_version_id FROM trace_root WHERE root_id=?",
+        (consumer_ref.target_stable_id,),
+    ).fetchone()["current_version_id"]
+    assert current == replacement_version_id
+    assert store.conn.execute(
+        """
+        SELECT count(*)
+          FROM object_reference
+         WHERE source_version_id=?
+           AND relation_role='corrected_by_goal10_correction'
+           AND target_version_id=?
+        """,
+        (replacement_version_id, registration.version_id),
+    ).fetchone()[0] == 1
+    print("PASS GOAL-10 propagation creates replacement versions through materializer")
+
+
 def main() -> None:
     test_correction_record_is_immutable_and_preserves_original_history()
     test_identical_correction_replays_without_duplicate_side_effects()
     test_direct_dependency_index_uses_explicit_refs_only()
     test_impact_basis_key_is_stable_for_same_correction_target_and_action()
+    test_propagation_converges_when_business_hash_and_refs_are_unchanged()
+    test_propagation_creates_replacement_version_when_business_hash_changes()
     print("GOAL-10 correction contract verification passed")
 
 

@@ -116,4 +116,8 @@ Start from the first unfinished checkpoint in `implementation_progress/GOAL-10.m
 
 - Checkpoint 1 restored the GOAL-10 formal control package.
 - Checkpoints 2 and 3 added fixture-first correction contracts and minimal correction registration / direct dependency impact planning.
+- Checkpoint 4 added impact propagation processing and convergence:
+  - equivalent business output with unchanged refs stops without replacement;
+  - changed business output creates a replacement version with lineage through `CorrectionMaterializer`;
+  - repeated propagation replays without duplicate outbox or replacement side effects.
 - No migration changes yet.

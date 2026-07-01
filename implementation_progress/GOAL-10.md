@@ -56,16 +56,20 @@ starting_head:
   - Correction records, dependency index entries and impacts are immutable trace versions.
   - GOAL-10 internal correction references are excluded from dependency scanning.
   - No migration or new table was introduced.
+- Checkpoint 4 complete: added propagation processing and convergence.
+  - Impact processing appends immutable impact status versions instead of mutating prior history.
+  - Equivalent business output with unchanged refs stops propagation without creating a replacement.
+  - Changed business output creates a replacement version through `CorrectionMaterializer`, preserves lineage and switches current.
+  - Repeated impact processing returns the original result without duplicate outbox or replacement side effects.
 
 ## Remaining Checkpoints
 
-- Checkpoint 4: add propagation processing and convergence.
 - Checkpoint 5: add blocked/resume and recovery behavior using existing GOAL-03 job/retry/lease/recovery foundation.
 - Checkpoint 6: add reporting, fault, replay and clean-room closeout.
 
 ## Current Resume Point
 
-- Continue with checkpoint 4: propagation processing and convergence.
+- Continue with checkpoint 5: blocked/resume and recovery behavior.
 
 ## Modified Files
 
@@ -106,6 +110,7 @@ starting_head:
   - bounded action kinds
 - Replay coverage started:
   - repeated correction command returns the original result without duplicate side effects.
+  - repeated impact propagation returns the original result without duplicate outbox or replacement side effects.
 - Fault coverage:
   - Not yet started; checkpoint 6 is the scoped fault/clean-room closeout.
 
@@ -125,10 +130,11 @@ starting_head:
 
 - This round checkpoint commit subject: `docs(goal-10): restore formal control package`
 - Pending checkpoint 2/3 commit subject: `feat(goal-10): add correction registration contracts`
+- Pending checkpoint 4 commit subject: `feat(goal-10): add propagation convergence`
 
 ## Next First Unfinished Checkpoint
 
-- Checkpoint 4: add propagation processing and convergence.
+- Checkpoint 5: add blocked/resume and recovery behavior.
 
 ## GOAL-11 Permission
 
