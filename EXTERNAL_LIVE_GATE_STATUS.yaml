@@ -1,5 +1,5 @@
-status: DRY_RUN_PASSED
-updated_at: '2026-07-01T18:46:14Z'
+status: NOT_READY
+updated_at: '2026-07-01T20:33:14Z'
 gates:
   GATE-HERMES-REAL-HOST:
     status: DRY_RUN_PASSED
@@ -53,22 +53,35 @@ gates:
       evidence_location: validation_evidence\GATE-MODEL-PROVIDER\20260701T184614
       mode: dry-run
   GATE-ASR:
-    status: DRY_RUN_PASSED
+    status: LIVE_PASSED
     latest_result:
       gate_id: GATE-ASR
-      started_at: '2026-07-01T18:46:14Z'
-      finished_at: '2026-07-01T18:46:14Z'
+      started_at: '2026-07-01T20:32:09Z'
+      finished_at: '2026-07-01T20:33:14Z'
       environment: validation
-      adapter: ASR command boundary
-      request_hash: 306d2a64c316015e264358b6b77fe9a765b39fc6bd90a85bbac9dbcca4a94358
-      response_hash: 0b6c18fddc260d305493d2a6e44bf042c97f499547903436946a3efc3ba079c5
-      correlation_id: GATE-ASR.dry-run.2026-07-01T18:46:14Z
+      adapter: FunASR SenseVoice local runtime via tools/asr configuration
+      request_hash: b963b673aadc582d5d0fd54d26f8d0f3b66a5afa133a8d2da4e0c0eb6782ce06
+      response_hash: 480ec2cb97389e9e3d9ed6d7ad107d9e5ca25865f331b219084f18907aae0e8b
+      correlation_id: GATE-ASR.live.2026-07-01T20:32:09Z
       exit_code: 0
-      status: DRY_RUN_PASSED
+      status: LIVE_PASSED
       external_side_effect: false
       failure_reason: ''
-      evidence_location: validation_evidence\GATE-ASR\20260701T184614
-      mode: dry-run
+      evidence_location: validation_evidence/GATE-ASR/20260701T203209
+      mode: live
+      external_network_call: false
+      input_media_hash_recorded: true
+      output_text_hash_recorded: true
+      audio_extension: .wav
+      audio_size_bytes: 152322126
+      output_chars: 4147
+      redacted_text_summary: 1997年6月1...划分为三个阶段。 (4147 chars)
+      duration_ms: 64463
+      model_root_confirmed: true
+      model_root_name: AI_Models
+      asr_model_subdir: sensevoice/sensevoice-small
+      vad_model_subdir: modelscope_cache/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
+      code_defect: false
   GATE-SEARCH-PROVIDER:
     status: DRY_RUN_PASSED
     latest_result:
