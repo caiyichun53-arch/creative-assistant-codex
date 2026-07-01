@@ -2,7 +2,7 @@
 
 goal: GOAL-08 Formal content production chain versioning and provenance
 
-status: `GOAL-08_BLOCKED_BY_SPEC_DECISION`
+status: `GOAL-08_IN_PROGRESS`
 
 source_commit: `4aaa90a4374da20604e1fc77bc21060ac9297b1e`
 
@@ -33,24 +33,37 @@ GOAL-07_validated_code_commit:
   - `goals/`
   - `docs/`
   - `implementation_progress/`
-- No formal GOAL-08 task definition was found.
-- Existing files stop at `goals/GOAL-07.md` and `implementation_progress/GOAL-07.md`.
+- Previous finding: no formal GOAL-08 task definition was present in the repository.
+- Resolved: restored `goals/GOAL-08.md` from the V0.6.2 formal GOAL-08 definition provided by the user.
+- The previous formal definition missing condition is retained here as history and is no longer an active blocker.
+
+## Control Package Check
+
+- `goals/GOAL-08.md`: restored in this round.
+- `IMPLEMENTATION_PLAN.md`: missing.
+- `MODULE_MANIFEST.yaml`: missing.
+- `CODEX_GOAL_RESUME_PROTOCOL.md`: missing.
+- Missing control package files are recorded as completeness issues only; they do not block GOAL-08 implementation under the restored V0.6.2 definition.
 
 ## Completed Checkpoints
 
-- None.
+- Restored formal GOAL-08 task definition from V0.6.2.
+- Corrected GOAL-08 status from `GOAL-08_BLOCKED_BY_SPEC_DECISION` to `GOAL-08_IN_PROGRESS`.
 
 ## Remaining Checkpoints
 
-- Blocked until a formal GOAL-08 task definition exists in the repository.
+- Build GOAL-08 atomic ExecPlan from the restored task definition.
+- Implement the production version chain for research/content plan/script/review/approval/publication capture/manual edits.
+- Prove approved draft and actual published artifact separation.
+- Prove explicit preference instructions and evidence references without permanent preference promotion from a single edit.
 
 ## Current Resume Point
 
-- Add or provide the repository GOAL-08 formal task definition.
-- Resume by reading that definition, then determine the first unfinished GOAL-08 checkpoint.
+- Start GOAL-08 implementation from the restored formal task definition.
 
 ## Modified Files
 
+- `goals/GOAL-08.md`
 - `implementation_progress/GOAL-08.md`
 
 ## Migration Changes
@@ -59,7 +72,7 @@ GOAL-07_validated_code_commit:
 
 ## Test Commands
 
-- Not run; no implementation checkpoint was available without the formal GOAL-08 task definition.
+- Pending for this control-file correction.
 
 ## Fixture/Replay Coverage
 
@@ -75,15 +88,17 @@ GOAL-07_validated_code_commit:
 
 ## Real Blockers
 
-- `GOAL-08_BLOCKED_BY_SPEC_DECISION`: the repository does not currently contain a formal GOAL-08 task definition, and the user prompt explicitly forbids adding GOAL-08 tasks solely from the prompt.
+- None.
+- Historical note: the earlier `GOAL-08_BLOCKED_BY_SPEC_DECISION` entry was caused by missing repository control file material, not by an unresolved GOAL-08 business specification decision.
 
 ## Checkpoint Commits
 
-- Pending.
+- `b9cf4d16364616fc9bc15ba7a7c57ce4a37700fe` - docs(goal-08): record formal definition blocker
+- Pending: docs(goal-08): restore formal task definition
 
 ## Next First Unfinished Checkpoint
 
-- Recover GOAL-08 from the formal repository task definition.
+- Build the GOAL-08 atomic ExecPlan and implement the first production version-chain checkpoint.
 
 ## GOAL-09 Permission
 
