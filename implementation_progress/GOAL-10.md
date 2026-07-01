@@ -61,15 +61,19 @@ starting_head:
   - Equivalent business output with unchanged refs stops propagation without creating a replacement.
   - Changed business output creates a replacement version through `CorrectionMaterializer`, preserves lineage and switches current.
   - Repeated impact processing returns the original result without duplicate outbox or replacement side effects.
+- Checkpoint 5 complete: added blocked/resume and recovery behavior.
+  - GOAL-10 impact jobs are enqueued through existing GOAL-03 scheduler idempotency.
+  - A failed attempt after durable `processing` status can retry from that impact position.
+  - Retried processing does not create duplicate replacement versions or duplicate completed side effects.
+  - Blocked and resumed impacts append immutable status versions and record audit events with `correlation_id` and `causation_id`.
 
 ## Remaining Checkpoints
 
-- Checkpoint 5: add blocked/resume and recovery behavior using existing GOAL-03 job/retry/lease/recovery foundation.
 - Checkpoint 6: add reporting, fault, replay and clean-room closeout.
 
 ## Current Resume Point
 
-- Continue with checkpoint 5: blocked/resume and recovery behavior.
+- Continue with checkpoint 6: reporting, fault, replay and clean-room closeout.
 
 ## Modified Files
 
@@ -86,6 +90,17 @@ starting_head:
 
 ## Test Commands
 
+- `git diff --check`
+  - exit_code: 0
+- `python scripts/core/correction/verify_goal_10.py`
+  - exit_code: 0
+  - tests: 8
+  - real_external_credentials_used: no
+  - external_side_effects: none
+- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'goal10_pycache'; python -m py_compile scripts/core/correction/__init__.py scripts/core/correction/goal10_corrections.py scripts/core/correction/verify_goal_10.py`
+  - exit_code: 0
+- `python scripts/core/scheduler/verify_goal_03.py`
+  - exit_code: 0
 - `git diff --check`
   - exit_code: 0
 - `python scripts/core/correction/verify_goal_10.py`
@@ -108,11 +123,16 @@ starting_head:
   - explicit direct dependency impact planning
   - semantic-only non-impact guard
   - bounded action kinds
+  - propagation convergence
+  - replacement version creation
+  - blocked/resume audit correlation and causation
 - Replay coverage started:
   - repeated correction command returns the original result without duplicate side effects.
   - repeated impact propagation returns the original result without duplicate outbox or replacement side effects.
+  - job retry resumes a partially processed impact without duplicate replacement versions.
 - Fault coverage:
-  - Not yet started; checkpoint 6 is the scoped fault/clean-room closeout.
+  - Checkpoint 5 covers injected failure after durable impact `processing` status.
+  - Checkpoint 6 remains the scoped final fault/replay/clean-room closeout.
 
 ## PostgreSQL Gate
 
@@ -130,11 +150,12 @@ starting_head:
 
 - This round checkpoint commit subject: `docs(goal-10): restore formal control package`
 - Pending checkpoint 2/3 commit subject: `feat(goal-10): add correction registration contracts`
-- Pending checkpoint 4 commit subject: `feat(goal-10): add propagation convergence`
+- Checkpoint 4 commit: `4997e8c feat(goal-10): add propagation convergence`
+- Checkpoint 5 commit subject: `feat(goal-10): add blocked resume recovery`
 
 ## Next First Unfinished Checkpoint
 
-- Checkpoint 5: add blocked/resume and recovery behavior.
+- Checkpoint 6: add reporting, fault, replay and clean-room closeout.
 
 ## GOAL-11 Permission
 

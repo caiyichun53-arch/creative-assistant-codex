@@ -120,4 +120,9 @@ Start from the first unfinished checkpoint in `implementation_progress/GOAL-10.m
   - equivalent business output with unchanged refs stops without replacement;
   - changed business output creates a replacement version with lineage through `CorrectionMaterializer`;
   - repeated propagation replays without duplicate outbox or replacement side effects.
+- Checkpoint 5 added blocked/resume and recovery behavior:
+  - impact jobs use existing GOAL-03 scheduler enqueue/retry semantics;
+  - partial failure after durable `processing` status resumes from that impact position;
+  - blocked and resumed impacts retain audit `correlation_id` and `causation_id`;
+  - repeated recovery does not duplicate replacement versions.
 - No migration changes yet.

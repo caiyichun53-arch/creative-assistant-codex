@@ -10,9 +10,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.core.correction.goal10_corrections import (  # noqa: E402
+    GOAL10_PROPAGATION_JOB_KIND,
     CorrectionMaterializer,
     CorrectionPropagationCommand,
     CorrectionRegistrationCommand,
+    CorrectionResumeCommand,
 )
 from scripts.core.persistence.goal01_store import (  # noqa: E402
     IdempotencyConflict,
@@ -21,6 +23,7 @@ from scripts.core.persistence.goal01_store import (  # noqa: E402
     content_hash,
 )
 from scripts.core.production.goal08_production_chain import VersionRef  # noqa: E402
+from scripts.core.scheduler.goal03_scheduler import Goal03Scheduler  # noqa: E402
 
 
 class FakeClock:
@@ -30,6 +33,9 @@ class FakeClock:
     def now_ms(self) -> int:
         self.value += 1
         return self.value
+
+    def advance(self, ms: int) -> None:
+        self.value += ms
 
 
 def make_store() -> PersistenceStore:
@@ -343,6 +349,173 @@ def test_propagation_creates_replacement_version_when_business_hash_changes() ->
     print("PASS GOAL-10 propagation creates replacement versions through materializer")
 
 
+def test_blocked_and_resume_recovery_have_audit_correlation_and_causation() -> None:
+    store = make_store()
+    target_ref = create_version(store, "research_claim", {"claim": "old"})
+    approved_ref = create_version(store, "production_approved_draft", {"claim": "old"})
+    record_ref(store, approved_ref, target_ref, "input_assembly_included_ref")
+    materializer = CorrectionMaterializer(store)
+    registration = materializer.register_correction(make_command(store, target_ref, idempotency_key="goal10-block"))
+    impact = registration.impacts[0]
+
+    blocked = materializer.process_impact(
+        CorrectionPropagationCommand(
+            actor="propagation-worker",
+            idempotency_key="goal10-process-block",
+            impact_root_id=impact.root_id,
+            expected_basis_hash=impact.expected_basis_hash,
+            correlation_id=registration.version_id,
+            causation_id=impact.version_id,
+        )
+    )
+    assert blocked.processing_status == "blocked"
+    assert blocked.stop_reason == "require_user_reconfirmation"
+    blocked_audit = store.conn.execute(
+        """
+        SELECT correlation_id, causation_id
+          FROM audit_event
+         WHERE event_type='goal10.correction.impact.blocked'
+           AND object_id=?
+        """,
+        (impact.root_id,),
+    ).fetchone()
+    assert blocked_audit["correlation_id"] == registration.version_id
+    assert blocked_audit["causation_id"] == impact.version_id
+
+    resumed = materializer.resume_blocked_impact(
+        CorrectionResumeCommand(
+            actor="human-reviewer",
+            idempotency_key="goal10-resume-block",
+            impact_root_id=impact.root_id,
+            human_action="reconfirmed corrected draft",
+            correlation_id=registration.version_id,
+            causation_id=blocked.impact_version_id,
+        )
+    )
+    assert resumed.processing_status == "planned"
+    resume_audit = store.conn.execute(
+        """
+        SELECT correlation_id, causation_id
+          FROM audit_event
+         WHERE event_type='goal10.correction.impact.resumed'
+           AND object_id=?
+        """,
+        (impact.root_id,),
+    ).fetchone()
+    assert resume_audit["correlation_id"] == registration.version_id
+    assert resume_audit["causation_id"] == blocked.impact_version_id
+
+    completed = materializer.process_impact(
+        CorrectionPropagationCommand(
+            actor="propagation-worker",
+            idempotency_key="goal10-process-resumed",
+            impact_root_id=impact.root_id,
+            expected_basis_hash=impact.expected_basis_hash,
+            correlation_id=registration.version_id,
+            causation_id=resumed.impact_version_id,
+        )
+    )
+    assert completed.processing_status == "completed"
+    assert completed.stop_reason == "human_action_recorded"
+    print("PASS GOAL-10 blocked and resume recovery keep audit correlation causation")
+
+
+def test_job_retry_recovers_processing_impact_without_duplicate_replacement() -> None:
+    clock = FakeClock()
+    generator = UUIDv7Generator(now_ms=clock.now_ms, randbits=lambda bits: 202)
+    store = PersistenceStore.in_memory(id_factory=generator.new)
+    scheduler = Goal03Scheduler(store, id_factory=generator.new, now_ms=clock.now_ms)
+    target_ref = create_version(store, "research_claim", {"claim": "old"})
+    consumer_ref = create_version(
+        store,
+        "content_plan",
+        {"claim": "old", "outline": "uses corrected fact"},
+        business_payload={"claim": "old", "outline": "uses corrected fact"},
+    )
+    record_ref(store, consumer_ref, target_ref, "evidence_ref")
+    materializer = CorrectionMaterializer(store)
+    registration = materializer.register_correction(make_command(store, target_ref, idempotency_key="goal10-job"))
+    impact = registration.impacts[0]
+
+    enqueued = materializer.enqueue_impact_jobs(scheduler, registration.version_id, max_attempts=2)
+    replayed_enqueue = materializer.enqueue_impact_jobs(scheduler, registration.version_id, max_attempts=2)
+    assert len(enqueued) == 1
+    assert replayed_enqueue[0].replayed
+    job = scheduler.get_job(enqueued[0].job_id)
+    assert job["job_kind"] == GOAL10_PROPAGATION_JOB_KIND
+    first_claim = scheduler.claim_next(worker_id="goal10-worker", lease_seconds=1)
+    try:
+        materializer.process_impact(
+            CorrectionPropagationCommand(
+                actor="goal10-worker",
+                idempotency_key=f"goal10.process.{impact.root_id}.{impact.expected_basis_hash}",
+                impact_root_id=impact.root_id,
+                expected_basis_hash=impact.expected_basis_hash,
+                correlation_id=registration.version_id,
+                causation_id=registration.version_id,
+                inject_fault_after_processing=True,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - fixture checks scheduler recovery path.
+        assert "injected fault" in str(exc)
+    else:
+        raise AssertionError("expected injected impact processing fault")
+    next_status = scheduler.fail(
+        attempt_id=first_claim.attempt_id,
+        worker_id="goal10-worker",
+        error={"code": "injected_processing_fault"},
+        retry=True,
+    )
+    assert next_status == "queued"
+    _processing_version, processing_payload = materializer._current_impact(impact.root_id)
+    assert processing_payload["processing_status"] == "processing"
+
+    second_claim = scheduler.claim_next(worker_id="goal10-worker", lease_seconds=1)
+    recovered = materializer.process_impact(
+        CorrectionPropagationCommand(
+            actor="goal10-worker",
+            idempotency_key=f"goal10.process.{impact.root_id}.{impact.expected_basis_hash}",
+            impact_root_id=impact.root_id,
+            expected_basis_hash=impact.expected_basis_hash,
+            correlation_id=registration.version_id,
+            causation_id=registration.version_id,
+        )
+    )
+    scheduler.complete(
+        attempt_id=second_claim.attempt_id,
+        worker_id="goal10-worker",
+        result={"impact_root_id": impact.root_id, "processing_status": recovered.processing_status},
+    )
+    assert recovered.processing_status == "completed"
+    assert recovered.stop_reason == "replacement_version_created"
+    assert scheduler.get_job(enqueued[0].job_id)["status"] == "succeeded"
+    assert store.conn.execute(
+        """
+        SELECT count(*)
+          FROM trace_version tv
+          JOIN object_reference r ON r.source_version_id=tv.version_id
+         WHERE tv.root_id=?
+           AND tv.based_on_version_id=?
+           AND r.relation_role='corrected_by_goal10_correction'
+           AND r.target_version_id=?
+        """,
+        (consumer_ref.target_stable_id, consumer_ref.target_version_id, registration.version_id),
+    ).fetchone()[0] == 1
+    replay = materializer.process_impact(
+        CorrectionPropagationCommand(
+            actor="goal10-worker",
+            idempotency_key=f"goal10.process.{impact.root_id}.{impact.expected_basis_hash}",
+            impact_root_id=impact.root_id,
+            expected_basis_hash=impact.expected_basis_hash,
+            correlation_id=registration.version_id,
+            causation_id=registration.version_id,
+        )
+    )
+    assert replay.replayed
+    assert replay.result["replacement_version_id"] == recovered.result["replacement_version_id"]
+    print("PASS GOAL-10 job retry resumes processing impact without duplicate replacement")
+
+
 def main() -> None:
     test_correction_record_is_immutable_and_preserves_original_history()
     test_identical_correction_replays_without_duplicate_side_effects()
@@ -350,6 +523,8 @@ def main() -> None:
     test_impact_basis_key_is_stable_for_same_correction_target_and_action()
     test_propagation_converges_when_business_hash_and_refs_are_unchanged()
     test_propagation_creates_replacement_version_when_business_hash_changes()
+    test_blocked_and_resume_recovery_have_audit_correlation_and_causation()
+    test_job_retry_recovers_processing_impact_without_duplicate_replacement()
     print("GOAL-10 correction contract verification passed")
 
 

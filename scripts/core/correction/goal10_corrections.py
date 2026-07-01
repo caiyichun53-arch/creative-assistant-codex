@@ -288,24 +288,29 @@ class CorrectionMaterializer:
 
         correlation_id = command.correlation_id or impact_payload["correction_version_id"]
         causation_id = command.causation_id or impact_version_id
-        processing_version_id = self._append_impact_version(
-            command.impact_root_id,
-            impact_payload,
-            processing_status="processing",
-            result={"started_from_version_id": impact_version_id},
-            stop_reason=None,
-            human_attention=None,
-        )
-        self.store.record_audit(
-            event_type="goal10.correction.impact.processing",
-            actor=command.actor,
-            object_kind="goal10_correction_impact",
-            object_id=command.impact_root_id,
-            version_id=processing_version_id,
-            payload={"expected_basis_hash": command.expected_basis_hash},
-            correlation_id=correlation_id,
-            causation_id=causation_id,
-        )
+        with self.conn:
+            processing_result = {"started_from_version_id": impact_version_id}
+            prior_result = impact_payload.get("result") or {}
+            if prior_result.get("human_action"):
+                processing_result["human_action"] = prior_result["human_action"]
+            processing_version_id = self._append_impact_version(
+                command.impact_root_id,
+                impact_payload,
+                processing_status="processing",
+                result=processing_result,
+                stop_reason=None,
+                human_attention=None,
+            )
+            self.store.record_audit(
+                event_type="goal10.correction.impact.processing",
+                actor=command.actor,
+                object_kind="goal10_correction_impact",
+                object_id=command.impact_root_id,
+                version_id=processing_version_id,
+                payload={"expected_basis_hash": command.expected_basis_hash},
+                correlation_id=correlation_id,
+                causation_id=causation_id,
+            )
         if command.inject_fault_after_processing:
             raise CorrectionError("injected fault after impact processing mark")
 
