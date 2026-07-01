@@ -50,10 +50,14 @@ GOAL-08_inherited_commit:
   - P+ success cannot override an ineligible experiment where the primary hypothesis was not actually used.
   - P+ does not publish content preference; GOAL-08 candidate preference revisions remain candidates.
   - Repeated idempotency keys replay the original result; changed payloads are rejected.
+- Checkpoint 3 complete: added `experiment_review` boundary.
+  - Clean deterministic experiments do not require review.
+  - Ambiguous publication changes, unknown actual use, attribution conflicts and major confounders are recorded as review-required boundaries.
+  - Deterministic invalid P+ inputs remain Core inconclusive results and are not sent to review/model.
+  - The review boundary is materialized with the immutable experiment result and does not override the metric signal.
 
 ## Remaining Checkpoints
 
-- Checkpoint 3: Add `experiment_review` boundary for ambiguous publication/attribution cases without overriding deterministic Core outcomes.
 - Checkpoint 4: Add CR-002 deterministic experience recomputation and proposal eligibility triggers.
 - Checkpoint 5: Add `experience_revision_propose` output gate and proposal publication path.
 - Checkpoint 6: Add inferred content preference candidate gate separated from CR-002 tactics.
@@ -61,7 +65,7 @@ GOAL-08_inherited_commit:
 
 ## Current Resume Point
 
-- Continue with Checkpoint 3.
+- Continue with Checkpoint 4.
 
 ## Modified Files
 
@@ -80,7 +84,7 @@ GOAL-08_inherited_commit:
 
 - `python scripts/core/experience/verify_goal_09.py`
   - exit_code: 0
-  - tests: 4
+  - tests: 6
   - real_external_credentials_used: no
   - external_side_effects: none
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'goal09_pycache'; python -m py_compile scripts/core/experience/__init__.py scripts/core/experience/goal09_experiments.py scripts/core/experience/verify_goal_09.py`
@@ -100,10 +104,11 @@ GOAL-08_inherited_commit:
 
 - `1752215` - docs(goal-09): restore formal control package
 - This round checkpoint commit subject: `feat(goal-09): add pplus experiment metric gate`
+- Pending for Checkpoint 3.
 
 ## Next First Unfinished Checkpoint
 
-- Checkpoint 3: Add `experiment_review` boundary for ambiguous publication/attribution cases without overriding deterministic Core outcomes.
+- Checkpoint 4: Add CR-002 deterministic experience recomputation and proposal eligibility triggers.
 
 ## GOAL-10 Permission
 

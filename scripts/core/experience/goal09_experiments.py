@@ -16,6 +16,8 @@ class ExperimentError(RuntimeError):
 METRIC_SIGNALS = frozenset({"supported", "not_supported", "inconclusive", "ineligible"})
 ACTUAL_USE_STATUSES = frozenset({"used", "not_used", "unknown"})
 EXPERIMENT_KINDS = frozenset({"formal", "observational"})
+PUBLICATION_RELATIONS = frozenset({"same_as_approved", "modified_text_provided", "unknown_pending_check"})
+REVIEW_PUBLICATION_RELATIONS = frozenset({"modified_text_provided", "unknown_pending_check"})
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,7 @@ class ExperimentResultCommand:
     actual_use_status: str
     major_confounder: bool = False
     publication_relation: str = "same_as_approved"
+    attribution_conflict: bool = False
     notes: tuple[str, ...] = ()
     correlation_id: str | None = None
     causation_id: str | None = None
@@ -66,6 +69,7 @@ class ExperimentResultCommand:
             "actual_use_status": self.actual_use_status,
             "major_confounder": self.major_confounder,
             "publication_relation": self.publication_relation,
+            "attribution_conflict": self.attribution_conflict,
             "notes": list(self.notes),
         }
 
@@ -87,6 +91,20 @@ class MetricSignal:
 
 
 @dataclass(frozen=True)
+class ExperimentReviewBoundary:
+    required: bool
+    reasons: tuple[str, ...]
+    blocked_by_deterministic_invalidity: bool = False
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "required": self.required,
+            "reasons": list(self.reasons),
+            "blocked_by_deterministic_invalidity": self.blocked_by_deterministic_invalidity,
+        }
+
+
+@dataclass(frozen=True)
 class ExperimentResult:
     root_id: str
     version_id: str
@@ -94,6 +112,7 @@ class ExperimentResult:
     audit_id: str | None
     outbox_id: str | None
     metric_signal: MetricSignal
+    review_boundary: ExperimentReviewBoundary
     replayed: bool = False
 
 
@@ -108,6 +127,7 @@ class ExperimentMaterializer:
         if existing is not None:
             return existing
         signal = compute_metric_signal(command)
+        review_boundary = determine_experiment_review_boundary(command, signal)
         with self.conn:
             root_id = self.store.create_root("goal09_experiment_result")
             payload = {
@@ -117,10 +137,12 @@ class ExperimentMaterializer:
                 "experiment_kind": command.experiment_kind,
                 "metric": command.metric.as_payload(),
                 "metric_signal": signal.as_payload(),
+                "experiment_review_boundary": review_boundary.as_payload(),
                 "primary_hypothesis_frozen": command.primary_hypothesis_frozen,
                 "actual_use_status": command.actual_use_status,
                 "major_confounder": command.major_confounder,
                 "publication_relation": command.publication_relation,
+                "attribution_conflict": command.attribution_conflict,
                 "notes": list(command.notes),
             }
             version_id = self.store.append_version(
@@ -133,6 +155,7 @@ class ExperimentMaterializer:
                     "signal": signal.signal,
                     "eligible": signal.eligible,
                     "reason": signal.reason,
+                    "review_required": review_boundary.required,
                 },
             )
             self.store.set_current_version(root_id, version_id)
@@ -142,6 +165,7 @@ class ExperimentMaterializer:
                 "root_id": root_id,
                 "version_id": version_id,
                 "metric_signal": signal.as_payload(),
+                "experiment_review_boundary": review_boundary.as_payload(),
             }
             receipt_id = self.store.record_command(
                 command_scope="goal09.experiment_result",
@@ -163,6 +187,7 @@ class ExperimentMaterializer:
                     "signal": signal.signal,
                     "eligible": signal.eligible,
                     "reason": signal.reason,
+                    "review_required": review_boundary.required,
                 },
                 correlation_id=command.correlation_id or root_id,
                 causation_id=command.causation_id,
@@ -176,11 +201,12 @@ class ExperimentMaterializer:
                     "version_id": version_id,
                     "signal": signal.signal,
                     "eligible": signal.eligible,
+                    "review_required": review_boundary.required,
                 },
                 correlation_id=command.correlation_id or root_id,
                 causation_id=audit_id,
             )
-            return ExperimentResult(root_id, version_id, receipt_id, audit_id, outbox_id, signal)
+            return ExperimentResult(root_id, version_id, receipt_id, audit_id, outbox_id, signal, review_boundary)
 
     def _existing_result(self, command: ExperimentResultCommand) -> ExperimentResult | None:
         row = self.conn.execute(
@@ -203,6 +229,7 @@ class ExperimentMaterializer:
             audit_id=None,
             outbox_id=None,
             metric_signal=MetricSignal(**result["metric_signal"]),
+            review_boundary=ExperimentReviewBoundary(**result["experiment_review_boundary"]),
             replayed=True,
         )
 
@@ -231,6 +258,8 @@ class ExperimentMaterializer:
             raise ExperimentError(f"unsupported experiment_kind: {command.experiment_kind}")
         if command.actual_use_status not in ACTUAL_USE_STATUSES:
             raise ExperimentError(f"unsupported actual_use_status: {command.actual_use_status}")
+        if command.publication_relation not in PUBLICATION_RELATIONS:
+            raise ExperimentError(f"unsupported publication_relation: {command.publication_relation}")
         if not command.metric.metric_name:
             raise ExperimentError("metric_name is required")
         if not command.metric.checkpoint:
@@ -244,6 +273,8 @@ def compute_metric_signal(command: ExperimentResultCommand) -> MetricSignal:
         return MetricSignal("ineligible", False, "experiment is observational", None)
     if not command.primary_hypothesis_frozen:
         return MetricSignal("ineligible", False, "primary hypothesis was not frozen before publication", None)
+    if command.actual_use_status == "unknown":
+        return MetricSignal("inconclusive", False, "primary hypothesis actual use is unknown", None)
     if command.actual_use_status != "used":
         return MetricSignal("ineligible", False, "primary hypothesis was not actually used", None)
     if command.major_confounder:
@@ -264,6 +295,38 @@ def compute_metric_signal(command: ExperimentResultCommand) -> MetricSignal:
     ratio = observed / baseline
     signal = "supported" if ratio >= threshold else "not_supported"
     return MetricSignal(signal, True, f"{command.metric.metric_name} ratio evaluated", _decimal_to_text(ratio))
+
+
+def determine_experiment_review_boundary(
+    command: ExperimentResultCommand,
+    signal: MetricSignal | None = None,
+) -> ExperimentReviewBoundary:
+    signal = signal or compute_metric_signal(command)
+    if _has_deterministic_metric_invalidity(signal):
+        return ExperimentReviewBoundary(
+            required=False,
+            reasons=(signal.reason,),
+            blocked_by_deterministic_invalidity=True,
+        )
+
+    reasons: list[str] = []
+    if command.publication_relation in REVIEW_PUBLICATION_RELATIONS:
+        reasons.append(f"publication_relation:{command.publication_relation}")
+    if command.actual_use_status == "unknown":
+        reasons.append("actual_use_status:unknown")
+    if command.major_confounder:
+        reasons.append("major_confounder")
+    if command.attribution_conflict:
+        reasons.append("attribution_conflict")
+    return ExperimentReviewBoundary(required=bool(reasons), reasons=tuple(reasons))
+
+
+def _has_deterministic_metric_invalidity(signal: MetricSignal) -> bool:
+    return signal.signal == "inconclusive" and signal.reason in {
+        "missing P+ metric input",
+        "baseline is zero or negative",
+        "observed value is negative",
+    }
 
 
 def _validate_version_ref(ref: VersionRef) -> None:

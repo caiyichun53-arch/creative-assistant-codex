@@ -73,6 +73,8 @@ def make_experiment_command(
     frozen: bool = True,
     actual_use_status: str = "used",
     major_confounder: bool = False,
+    publication_relation: str = "same_as_approved",
+    attribution_conflict: bool = False,
     baseline_value: int | None = 100,
     observed_value: int | None = 150,
 ) -> ExperimentResultCommand:
@@ -105,6 +107,8 @@ def make_experiment_command(
         primary_hypothesis_frozen=frozen,
         actual_use_status=actual_use_status,
         major_confounder=major_confounder,
+        publication_relation=publication_relation,
+        attribution_conflict=attribution_conflict,
     )
 
 
@@ -117,6 +121,7 @@ def test_formal_primary_used_p_plus_materializes_supported_signal() -> None:
     assert payload["metric_signal"]["signal"] == "supported"
     assert payload["metric_signal"]["eligible"] is True
     assert payload["metric_signal"]["ratio"] == "1.5"
+    assert payload["experiment_review_boundary"]["required"] is False
     refs = store.conn.execute(
         "SELECT relation_role, target_object_kind FROM object_reference WHERE source_version_id=?",
         (result.version_id,),
@@ -218,10 +223,61 @@ def test_inconclusive_deterministic_inputs_do_not_call_review_or_model() -> None
     assert result.metric_signal.signal == "inconclusive"
     assert result.metric_signal.eligible is True
     assert "baseline" in result.metric_signal.reason
+    assert result.review_boundary.required is False
+    assert result.review_boundary.blocked_by_deterministic_invalidity is True
     assert store.conn.execute(
         "SELECT count(*) FROM trace_root WHERE object_kind='model_run_envelope'"
     ).fetchone()[0] == 0
     print("PASS GOAL-09 deterministic invalid P+ input stays inconclusive without model/review")
+
+
+def test_experiment_review_boundary_requires_review_only_for_ambiguous_attribution() -> None:
+    store = make_store()
+    result = ExperimentMaterializer(store).record_experiment_result(
+        make_experiment_command(
+            store,
+            idempotency_key="goal09-exp-review-needed",
+            actual_use_status="unknown",
+            publication_relation="modified_text_provided",
+            attribution_conflict=True,
+            baseline_value=100,
+            observed_value=300,
+        )
+    )
+
+    payload = payload_for(store, result.version_id)
+    boundary = payload["experiment_review_boundary"]
+    assert result.metric_signal.signal == "inconclusive"
+    assert result.review_boundary.required is True
+    assert boundary["required"] is True
+    assert set(boundary["reasons"]) == {
+        "publication_relation:modified_text_provided",
+        "actual_use_status:unknown",
+        "attribution_conflict",
+    }
+    assert store.conn.execute(
+        "SELECT count(*) FROM trace_root WHERE object_kind='model_run_envelope'"
+    ).fetchone()[0] == 0
+    print("PASS GOAL-09 experiment_review boundary triggers only for ambiguous attribution")
+
+
+def test_major_confounder_requires_review_without_overriding_metric_signal() -> None:
+    store = make_store()
+    result = ExperimentMaterializer(store).record_experiment_result(
+        make_experiment_command(
+            store,
+            idempotency_key="goal09-exp-major-confounder",
+            major_confounder=True,
+            baseline_value=100,
+            observed_value=400,
+        )
+    )
+
+    assert result.metric_signal.signal == "inconclusive"
+    assert result.metric_signal.reason == "major confounder recorded"
+    assert result.review_boundary.required is True
+    assert result.review_boundary.reasons == ("major_confounder",)
+    print("PASS GOAL-09 experiment_review boundary does not override deterministic metric signal")
 
 
 def main() -> None:
@@ -229,6 +285,8 @@ def main() -> None:
     test_ineligible_when_primary_not_used_even_with_high_p_plus()
     test_metric_signal_replay_and_conflict_gate()
     test_inconclusive_deterministic_inputs_do_not_call_review_or_model()
+    test_experiment_review_boundary_requires_review_only_for_ambiguous_attribution()
+    test_major_confounder_requires_review_without_overriding_metric_signal()
     print("GOAL-09 experiment metric verification passed")
 
 

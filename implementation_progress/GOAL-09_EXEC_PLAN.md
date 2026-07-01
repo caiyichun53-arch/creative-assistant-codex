@@ -22,11 +22,12 @@ This ExecPlan is restored from V0.6.2 GOAL-09 paragraphs 2269-2285 plus direct C
    - Materialize the experiment result through Core/Materializer only.
    - Prove P+ does not write current user preference.
 3. `experiment_review` boundary.
-   - Status: next.
+   - Status: complete.
    - Invoke only for ambiguous publication changes, attribution conflicts or recorded confounders.
    - Do not call the model for clean deterministic experiments.
    - Do not let review override deterministic technical invalidity.
 4. CR-002 deterministic engine and proposal trigger.
+   - Status: next.
    - Recompute evidence maturity and recommendation status from formal evidence.
    - Detect repeated formal failures, independent external counterexamples, structural revision signals and human revision requests.
    - Keep deprecate/restore behind formal proposal rules.
