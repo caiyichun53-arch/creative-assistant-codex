@@ -2,6 +2,8 @@
 
 from scripts.core.hermes.goal11_host_binding import (
     FeishuBindingEvent,
+    FeishuResponseDispatcher,
+    FeishuSendResult,
     FeishuThinBinding,
     HermesCoreBridge,
     HermesDispatchResult,
@@ -11,6 +13,8 @@ from scripts.core.hermes.goal11_host_binding import (
 
 __all__ = [
     "FeishuBindingEvent",
+    "FeishuResponseDispatcher",
+    "FeishuSendResult",
     "FeishuThinBinding",
     "HermesCoreBridge",
     "HermesDispatchResult",

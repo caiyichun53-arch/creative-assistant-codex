@@ -13,7 +13,9 @@ Goal: GOAL-11 Hermes Host Binding and Feishu Thin Interaction
 
 ## Scope
 
-Build the local Hermes production-host binding contract and Feishu thin-interaction adapter contract. Use fake/fixture/replay validation only in this round.
+Build the local Hermes production-host binding contract and Feishu thin-interaction adapter contract. Use fake/fixture/replay validation for local gates.
+
+Checkpoint remains an internal implementation and commit boundary only. It is not a stop boundary; after checkpoints 3, 4 and 5, continue directly to the next checkpoint unless a listed stop condition is met.
 
 ## Non-goals
 
@@ -37,7 +39,7 @@ Expected files are limited to GOAL-11 direct scope:
 
 ## Migrations
 
-No migration changes are planned in checkpoints 1-2. Later checkpoints may only add schema if command/message receipt state cannot be represented safely by existing GOAL-01/02/03 primitives.
+No migration changes are planned. Checkpoints 3-6 must first use existing GOAL-01/02/03 primitives for receipt, outbox, scheduler and recovery behavior.
 
 ## Atomic Checkpoints
 
@@ -95,3 +97,7 @@ Start from the first unfinished checkpoint in `implementation_progress/GOAL-11.m
 
 - Checkpoint 1 restored the GOAL-11 control package.
 - Checkpoint 2 added the local Hermes/Feishu fake binding contract and replay tests.
+- Checkpoint 3 added explicit host message receipt, immutable host-message trace versions and Feishu response outbox routing.
+- Checkpoint 4 added Scheduler/Worker response job enqueue, Hermes-offline lease recovery and worker completion coverage.
+- Checkpoint 5 added fake Feishu response send receipt, idempotent replay and injected failure retry coverage without live external I/O.
+- Checkpoint 6 added validation report and clean-room proof.

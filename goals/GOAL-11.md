@@ -1,6 +1,6 @@
 # GOAL-11 Hermes Host Binding and Feishu Thin Interaction
 
-status: `GOAL-11_IN_PROGRESS`
+status: `GOAL-11_COMPLETE_WAITING_USER_APPROVAL`
 
 ## Design Source
 

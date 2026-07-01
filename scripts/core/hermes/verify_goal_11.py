@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -8,12 +9,18 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.core.hermes.goal11_host_binding import (
+    GOAL11_HOST_MESSAGE_SCOPE,
+    GOAL11_RESPONSE_SEND_SCOPE,
+    GOAL11_RESPONSE_TOPIC,
     FeishuBindingEvent,
+    FeishuResponseDispatcher,
     FeishuThinBinding,
     HermesCoreBridge,
     HermesHostBindingError,
 )
 from scripts.core.persistence.goal01_store import IdempotencyConflict, UUIDv7Generator
+from scripts.core.runtime.goal04_runtime_host import RuntimeHandlerContract, RuntimeHost
+from scripts.core.scheduler.goal03_scheduler import Goal03Scheduler
 from scripts.core.state.goal02_core import CoreMaterializer
 
 
@@ -23,6 +30,9 @@ class FakeClock:
 
     def now_ms(self) -> int:
         return self.current_ms
+
+    def advance_ms(self, delta_ms: int) -> None:
+        self.current_ms += delta_ms
 
 
 class DeterministicBits:
@@ -41,6 +51,25 @@ def make_core() -> CoreMaterializer:
     core.grant_permission("hermes", "create_state")
     core.grant_permission("hermes", "transition_state")
     return core
+
+
+def make_scheduler(core: CoreMaterializer, clock: FakeClock | None = None) -> Goal03Scheduler:
+    active_clock = clock or FakeClock(1_725_100_000_000)
+    return Goal03Scheduler(core.store, id_factory=core.id_factory, now_ms=active_clock.now_ms)
+
+
+def make_runtime(scheduler: Goal03Scheduler, dispatcher: FeishuResponseDispatcher) -> RuntimeHost:
+    runtime = RuntimeHost(scheduler, worker_id="goal11-worker")
+    runtime.register_handler(
+        "outbox.dispatch",
+        dispatcher.handler(),
+        contract=RuntimeHandlerContract(
+            job_kind="outbox.dispatch",
+            required_payload_keys=("outbox_id", "topic", "payload"),
+            required_result_keys=("outbox_id", "reply_channel_id", "receipt_id"),
+        ),
+    )
+    return runtime
 
 
 def make_create_topic_event(event_id: str = "evt-topic-create") -> FeishuBindingEvent:
@@ -80,14 +109,25 @@ def test_hermes_dispatches_formal_state_through_core() -> None:
     result = bridge.dispatch(message)
 
     assert result.status == "succeeded"
+    assert result.receipt_id != result.core_receipt_id
+    assert result.host_message_version_id is not None
+    assert result.response_outbox_id is not None
     assert result.object_id is not None
     assert result.state == "candidate"
     assert core.conn.execute("SELECT count(*) FROM topic_state").fetchone()[0] == 1
     assert core.conn.execute("SELECT count(*) FROM command_receipt WHERE command_scope='goal02.core'").fetchone()[0] == 1
+    assert core.conn.execute(
+        "SELECT count(*) FROM command_receipt WHERE command_scope=?",
+        (GOAL11_HOST_MESSAGE_SCOPE,),
+    ).fetchone()[0] == 1
+    assert core.conn.execute("SELECT count(*) FROM trace_root WHERE object_kind='goal11_host_message'").fetchone()[0] == 1
+    outbox = core.conn.execute("SELECT topic, status FROM outbox_message WHERE outbox_id=?", (result.response_outbox_id,)).fetchone()
+    assert outbox["topic"] == GOAL11_RESPONSE_TOPIC
+    assert outbox["status"] == "pending"
     command = core.conn.execute("SELECT actor, command_type FROM core_command_envelope").fetchone()
     assert command["actor"] == "hermes"
     assert command["command_type"] == "create_state"
-    print("PASS Hermes dispatches formal state through Core")
+    print("PASS Hermes records host receipt and dispatches formal state through Core")
 
 
 def test_duplicate_feishu_event_replays_without_duplicate_state() -> None:
@@ -99,10 +139,17 @@ def test_duplicate_feishu_event_replays_without_duplicate_state() -> None:
     replay = bridge.dispatch(message)
 
     assert first.receipt_id == replay.receipt_id
+    assert first.core_receipt_id == replay.core_receipt_id
+    assert first.response_outbox_id == replay.response_outbox_id
     assert replay.replayed
     assert core.conn.execute("SELECT count(*) FROM topic_state").fetchone()[0] == 1
     assert core.conn.execute("SELECT count(*) FROM command_receipt WHERE command_scope='goal02.core'").fetchone()[0] == 1
-    print("PASS duplicate Feishu event replays without duplicate state")
+    assert core.conn.execute(
+        "SELECT count(*) FROM command_receipt WHERE command_scope=?",
+        (GOAL11_HOST_MESSAGE_SCOPE,),
+    ).fetchone()[0] == 1
+    assert core.conn.execute("SELECT count(*) FROM outbox_message WHERE topic=?", (GOAL11_RESPONSE_TOPIC,)).fetchone()[0] == 1
+    print("PASS duplicate Feishu event replays without duplicate state or response")
 
 
 def test_changed_payload_with_same_event_key_is_rejected() -> None:
@@ -125,6 +172,10 @@ def test_changed_payload_with_same_event_key_is_rejected() -> None:
         bridge.dispatch(binding.to_hermes_message(changed))
     except IdempotencyConflict:
         assert core.conn.execute("SELECT count(*) FROM topic_state").fetchone()[0] == 1
+        assert core.conn.execute(
+            "SELECT count(*) FROM command_receipt WHERE command_scope=?",
+            (GOAL11_HOST_MESSAGE_SCOPE,),
+        ).fetchone()[0] == 1
         print("PASS changed payload with same event key rejected")
         return
     raise AssertionError("expected idempotency conflict")
@@ -155,12 +206,102 @@ def test_non_hermes_host_rejected_before_core() -> None:
     raise AssertionError("expected non-Hermes host rejection")
 
 
+def test_response_outbox_enqueues_and_worker_sends_without_hermes() -> None:
+    core = make_core()
+    bridge = HermesCoreBridge(core)
+    dispatch = bridge.dispatch(FeishuThinBinding().to_hermes_message(make_create_topic_event("evt-response")))
+    scheduler = make_scheduler(core)
+    job_ids = bridge.enqueue_response_jobs(scheduler)
+    replay_job_ids = bridge.enqueue_response_jobs(scheduler)
+    dispatcher = FeishuResponseDispatcher(core.store)
+    runtime = make_runtime(scheduler, dispatcher)
+
+    assert job_ids == replay_job_ids
+    assert len(job_ids) == 1
+    result = runtime.run_once()
+
+    assert result.status == "succeeded"
+    assert core.conn.execute("SELECT status FROM outbox_message WHERE outbox_id=?", (dispatch.response_outbox_id,)).fetchone()[
+        "status"
+    ] == "sent"
+    assert len(dispatcher.sent) == 1
+    assert core.conn.execute(
+        "SELECT count(*) FROM command_receipt WHERE command_scope=?",
+        (GOAL11_RESPONSE_SEND_SCOPE,),
+    ).fetchone()[0] == 1
+    assert core.conn.execute("SELECT count(*) FROM scheduler_job WHERE status='succeeded'").fetchone()[0] == 1
+    print("PASS response outbox worker sends without Hermes")
+
+
+def test_scheduler_recovers_response_job_after_hermes_offline_lease() -> None:
+    clock = FakeClock(1_725_100_000_000)
+    core = make_core()
+    bridge = HermesCoreBridge(core)
+    dispatch = bridge.dispatch(FeishuThinBinding().to_hermes_message(make_create_topic_event("evt-lease-recover")))
+    scheduler = make_scheduler(core, clock)
+    (job_id,) = bridge.enqueue_response_jobs(scheduler)
+    claim = scheduler.claim_next(worker_id="offline-hermes", lease_seconds=1)
+
+    assert claim.job_id == job_id
+    clock.advance_ms(2_000)
+    recovered = scheduler.recover_expired_leases(actor="goal11.scheduler.recovery")
+    dispatcher = FeishuResponseDispatcher(core.store)
+    runtime = make_runtime(scheduler, dispatcher)
+    result = runtime.run_once()
+
+    assert recovered == 1
+    assert result.status == "succeeded"
+    job = scheduler.get_job(job_id)
+    assert job["status"] == "succeeded"
+    assert job["attempt_count"] == 2
+    assert core.conn.execute("SELECT status FROM outbox_message WHERE outbox_id=?", (dispatch.response_outbox_id,)).fetchone()[
+        "status"
+    ] == "sent"
+    print("PASS scheduler recovers response job after Hermes offline lease")
+
+
+def test_fake_feishu_failure_retries_without_duplicate_send() -> None:
+    core = make_core()
+    bridge = HermesCoreBridge(core)
+    dispatch = bridge.dispatch(FeishuThinBinding().to_hermes_message(make_create_topic_event("evt-send-retry")))
+    assert dispatch.response_outbox_id is not None
+    scheduler = make_scheduler(core)
+    (job_id,) = bridge.enqueue_response_jobs(scheduler)
+    dispatcher = FeishuResponseDispatcher(core.store, fail_once_outbox_ids={dispatch.response_outbox_id})
+    runtime = make_runtime(scheduler, dispatcher)
+
+    first = runtime.run_once()
+    second = runtime.run_once()
+    job = scheduler.get_job(job_id)
+    payload = json.loads(job["payload_json"])
+    replay = dispatcher.dispatch(payload)
+
+    assert first.status == "failed"
+    assert first.reason == "handler_error"
+    assert second.status == "succeeded"
+    assert job["status"] == "succeeded"
+    assert job["attempt_count"] == 2
+    assert len(dispatcher.sent) == 1
+    assert replay.replayed
+    assert core.conn.execute(
+        "SELECT count(*) FROM command_receipt WHERE command_scope=?",
+        (GOAL11_RESPONSE_SEND_SCOPE,),
+    ).fetchone()[0] == 1
+    assert core.conn.execute("SELECT status FROM outbox_message WHERE outbox_id=?", (dispatch.response_outbox_id,)).fetchone()[
+        "status"
+    ] == "sent"
+    print("PASS fake Feishu failure retries without duplicate send")
+
+
 def main() -> int:
     test_feishu_binding_only_maps_to_hermes_message()
     test_hermes_dispatches_formal_state_through_core()
     test_duplicate_feishu_event_replays_without_duplicate_state()
     test_changed_payload_with_same_event_key_is_rejected()
     test_non_hermes_host_rejected_before_core()
+    test_response_outbox_enqueues_and_worker_sends_without_hermes()
+    test_scheduler_recovers_response_job_after_hermes_offline_lease()
+    test_fake_feishu_failure_retries_without_duplicate_send()
     print("GOAL-11 verification passed")
     return 0
 

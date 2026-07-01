@@ -2,7 +2,7 @@
 
 goal: GOAL-11 Hermes Host Binding and Feishu Thin Interaction
 
-status: `GOAL-11_IN_PROGRESS`
+status: `GOAL-11_COMPLETE_WAITING_USER_APPROVAL`
 
 source_commit: `ed17c2089876143a2f820c5006a5eea79e07ab3b`
 
@@ -45,17 +45,28 @@ starting_head:
   - Hermes bridge dispatches formal state changes only through `CoreMaterializer.execute`.
   - Duplicate Feishu events replay through Core command receipts without duplicate topic state.
   - Reusing the same message idempotency key with changed payload is rejected.
+- Checkpoint 3 complete: added explicit host message receipt, response/outbox and replay records.
+  - Hermes records `goal11_host_message` trace versions through the existing `PersistenceStore`.
+  - Host message receipt uses `goal11.host_message.receive` without replacing Core command receipt authority.
+  - Feishu response metadata is written to local outbox topic `goal11.host_response.pending`.
+  - Duplicate host messages replay without duplicate host traces or response outbox rows.
+- Checkpoint 4 complete: added Scheduler/Worker retry and recovery coverage for Hermes temporary offline behavior.
+  - GOAL-11 response outbox rows are enqueued through existing GOAL-03 scheduler idempotency.
+  - GOAL-04 `RuntimeHost` dispatches response jobs without requiring the Hermes bridge to be online.
+  - Expired leased response jobs recover and complete without duplicate response side effects.
+- Checkpoint 5 complete: added Feishu response binding replay/fault coverage without live external I/O.
+  - Fake Feishu response send records command receipts under `goal11.feishu_response.send`.
+  - Injected fake send failure retries through Scheduler/Worker and sends once.
+  - Direct replay of the same fake send job returns the original receipt without duplicate sends.
+- Checkpoint 6 complete: added validation report and clean-room proof.
 
 ## Remaining Checkpoints
 
-- Checkpoint 3: Add explicit host message receipt, response/outbox and replay records.
-- Checkpoint 4: Add Scheduler/Worker retry and recovery coverage for Hermes temporary offline behavior.
-- Checkpoint 5: Add Feishu response binding replay/fault coverage without live external I/O.
-- Checkpoint 6: Add validation report and clean-room closeout.
+- None.
 
 ## Current Resume Point
 
-- Next first unfinished checkpoint: checkpoint 3.
+- Stop for user approval. Do not enter GOAL-12.
 
 ## Modified Files
 
@@ -65,6 +76,8 @@ starting_head:
 - `scripts/core/hermes/__init__.py`
 - `scripts/core/hermes/goal11_host_binding.py`
 - `scripts/core/hermes/verify_goal_11.py`
+- `GOAL-11_VALIDATION_REPORT.md`
+- `GOAL-11_CLEAN_ROOM_PROOF.md`
 
 ## Migration Changes
 
@@ -74,7 +87,7 @@ starting_head:
 
 - `python scripts/core/hermes/verify_goal_11.py`
   - exit_code: 0
-  - tests: 5
+  - tests: 8
   - real_external_credentials_used: no
   - external_side_effects: none
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'goal11_pycache'; python -m py_compile scripts/core/hermes/__init__.py scripts/core/hermes/goal11_host_binding.py scripts/core/hermes/verify_goal_11.py`
@@ -83,11 +96,15 @@ starting_head:
   - exit_code: 0
 - `python scripts/core/state/verify_goal_02.py`
   - exit_code: 0
+- `python scripts/core/scheduler/verify_goal_03.py`
+  - exit_code: 0
+- `python scripts/core/runtime/verify_goal_04.py`
+  - exit_code: 0
 
 ## External Live Gate
 
-- None required for checkpoints 1-2.
-- Real Hermes and real Feishu are external live gates only, not local core blockers.
+- None required for GOAL-11 local core closeout.
+- Real Hermes and real Feishu live checks are optional external integration gates, not local core blockers.
 
 ## Real Blockers
 
@@ -95,7 +112,8 @@ starting_head:
 
 ## Checkpoint Commit
 
-- Pending checkpoint 1/2 commit subject: `feat(goal-11): add hermes host binding contract`
+- Checkpoint 1/2 commit: `3bb6bc8 feat(goal-11): add hermes host binding contract`
+- Pending checkpoint 3-6 commit subject: `feat(goal-11): complete hermes response recovery`
 
 ## GOAL-12 Permission
 
