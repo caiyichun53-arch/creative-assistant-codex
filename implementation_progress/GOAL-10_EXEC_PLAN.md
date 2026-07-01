@@ -114,4 +114,6 @@ Start from the first unfinished checkpoint in `implementation_progress/GOAL-10.m
 
 ## Results
 
-No implementation results yet beyond formal control package recovery.
+- Checkpoint 1 restored the GOAL-10 formal control package.
+- Checkpoints 2 and 3 added fixture-first correction contracts and minimal correction registration / direct dependency impact planning.
+- No migration changes yet.

@@ -44,24 +44,37 @@ starting_head:
 ## Completed Checkpoints
 
 - Checkpoint 1 complete: restored GOAL-10 formal control package from V0.6.2 direct GOAL-10 and directly referenced TECH-005/CR-005/resume/template sections.
+- Checkpoint 2 complete: added fixture-first correction contract tests.
+  - Correction record is immutable and preserves the original historical version.
+  - Identical correction replay creates no duplicate correction record, impact, receipt or outbox.
+  - Changed payload with the same idempotency key is rejected.
+  - Direct dependency index uses explicit `object_reference` and `binding_manifest` refs only.
+  - Semantic text mentions without formal refs do not create impacts.
+  - Impact basis key and action kind are deterministic and bounded.
+- Checkpoint 3 complete: implemented minimal correction registration and direct dependency impact planning through existing Core/Materializer primitives.
+  - `CorrectionMaterializer` uses existing `PersistenceStore` root/version, command receipt, audit, outbox and idempotency.
+  - Correction records, dependency index entries and impacts are immutable trace versions.
+  - GOAL-10 internal correction references are excluded from dependency scanning.
+  - No migration or new table was introduced.
 
 ## Remaining Checkpoints
 
-- Checkpoint 2: add fixture-first correction contract tests.
-- Checkpoint 3: implement correction registration and direct dependency impact planning through existing Core/Materializer patterns.
 - Checkpoint 4: add propagation processing and convergence.
 - Checkpoint 5: add blocked/resume and recovery behavior using existing GOAL-03 job/retry/lease/recovery foundation.
 - Checkpoint 6: add reporting, fault, replay and clean-room closeout.
 
 ## Current Resume Point
 
-- Continue with checkpoint 2: fixture-first correction contract tests.
+- Continue with checkpoint 4: propagation processing and convergence.
 
 ## Modified Files
 
 - `goals/GOAL-10.md`
 - `implementation_progress/GOAL-10.md`
 - `implementation_progress/GOAL-10_EXEC_PLAN.md`
+- `scripts/core/correction/__init__.py`
+- `scripts/core/correction/goal10_corrections.py`
+- `scripts/core/correction/verify_goal_10.py`
 
 ## Migration Changes
 
@@ -71,10 +84,30 @@ starting_head:
 
 - `git diff --check`
   - exit_code: 0
+- `python scripts/core/correction/verify_goal_10.py`
+  - exit_code: 0
+  - tests: 4
+  - real_external_credentials_used: no
+  - external_side_effects: none
+- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'goal10_pycache'; python -m py_compile scripts/core/correction/__init__.py scripts/core/correction/goal10_corrections.py scripts/core/correction/verify_goal_10.py`
+  - exit_code: 0
+- `git diff --check`
+  - exit_code: 0
 
 ## Fixture / Replay / Fault Coverage
 
-- Not yet started; checkpoint 2 is the first test checkpoint.
+- Fixture coverage started:
+  - immutable correction basis
+  - original history remains readable
+  - idempotent replay
+  - idempotency conflict rejection
+  - explicit direct dependency impact planning
+  - semantic-only non-impact guard
+  - bounded action kinds
+- Replay coverage started:
+  - repeated correction command returns the original result without duplicate side effects.
+- Fault coverage:
+  - Not yet started; checkpoint 6 is the scoped fault/clean-room closeout.
 
 ## PostgreSQL Gate
 
@@ -91,10 +124,11 @@ starting_head:
 ## Checkpoint Commits
 
 - This round checkpoint commit subject: `docs(goal-10): restore formal control package`
+- Pending checkpoint 2/3 commit subject: `feat(goal-10): add correction registration contracts`
 
 ## Next First Unfinished Checkpoint
 
-- Checkpoint 2: fixture-first correction contract tests.
+- Checkpoint 4: add propagation processing and convergence.
 
 ## GOAL-11 Permission
 
