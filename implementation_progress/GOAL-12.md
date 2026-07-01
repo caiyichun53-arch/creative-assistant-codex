@@ -2,7 +2,7 @@
 
 goal: GOAL-12 End-to-End Staging
 
-status: `IN_PROGRESS`
+status: `GOAL-12_COMPLETE_WITH_EXTERNAL_LIVE_GATES`
 
 branch: `codex/goal-12-v0.6.2`
 
@@ -42,12 +42,11 @@ starting_head: `f4191d38bd415f7bf62055a784eff21afdfdd056`
 
 ## Remaining Checkpoints
 
-- Produce validation report, clean-room proof and final system acceptance report.
-- Commit documentation closeout.
+- None for local forced gates.
 
 ## Current Resume Point
 
-- Continue GOAL-12 final reporting and closeout in the same turn.
+- GOAL-12 local closeout complete. Await external live/shadow gates only.
 
 ## Test Commands
 
@@ -83,8 +82,21 @@ starting_head: `f4191d38bd415f7bf62055a784eff21afdfdd056`
 ## External Live Gate
 
 - Real Hermes/Feishu/live provider or platform validation remains external.
-- No real credentials or irreversible external I/O are used in local GOAL-12.
+- Production credentials, live attachments, live push/reply, live SearchProvider/Fetcher/ASR/model/platform shadow and 14-day production continuous-run remain external gates.
+- No real credentials or irreversible external I/O were used in local GOAL-12.
 
 ## Real Blockers
 
 - None at this checkpoint.
+
+## Final Reports
+
+- `GOAL-12_VALIDATION_REPORT.md`
+- `GOAL-12_CLEAN_ROOM_PROOF.md`
+- `GOAL-12_SYSTEM_ACCEPTANCE_REPORT.md`
+
+## Final Result
+
+- Local forced gates: passed.
+- Remaining checkpoints: none.
+- Final status: `GOAL-12_COMPLETE_WITH_EXTERNAL_LIVE_GATES`.
