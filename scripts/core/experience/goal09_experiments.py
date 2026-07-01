@@ -50,6 +50,15 @@ REQUIRED_PROPOSED_EXPERIENCE_FIELDS = frozenset(
         "failure_conditions",
     }
 )
+INFERRED_PREFERENCE_EVIDENCE_KINDS = frozenset(
+    {
+        "production_manual_edit",
+        "production_approval",
+        "production_rejection",
+        "production_publication_capture",
+        "goal09_experiment_result",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -271,6 +280,41 @@ class ExperienceRevisionProposalPublishResult:
     replayed: bool = False
 
 
+@dataclass(frozen=True)
+class InferredPreferenceCandidateCommand:
+    profile_id: str
+    actor: str
+    idempotency_key: str
+    preference_payload: dict[str, Any]
+    evidence_refs: tuple[VersionRef, ...]
+    inference_basis: str
+    calibrated: bool = False
+    auto_publish: bool = False
+    base_revision_id: str | None = None
+    correlation_id: str | None = None
+    causation_id: str | None = None
+
+    def request_payload(self) -> dict[str, Any]:
+        return {
+            "profile_id": self.profile_id,
+            "preference_payload": self.preference_payload,
+            "evidence_refs": [ref.as_payload() for ref in self.evidence_refs],
+            "inference_basis": self.inference_basis,
+            "calibrated": self.calibrated,
+            "auto_publish": self.auto_publish,
+            "base_revision_id": self.base_revision_id,
+        }
+
+
+@dataclass(frozen=True)
+class InferredPreferenceCandidateResult:
+    revision_id: str
+    receipt_id: str
+    audit_id: str | None
+    outbox_id: str | None
+    replayed: bool = False
+
+
 class ExperimentMaterializer:
     def __init__(self, store: PersistenceStore):
         self.store = store
@@ -448,6 +492,63 @@ class ExperimentMaterializer:
                 outbox_id,
             )
 
+    def record_inferred_preference_candidate(
+        self,
+        command: InferredPreferenceCandidateCommand,
+    ) -> InferredPreferenceCandidateResult:
+        self._validate_inferred_preference_command(command)
+        existing = self._existing_inferred_preference_result(command)
+        if existing is not None:
+            return existing
+        with self.conn:
+            revision_id = self.store.append_preference_revision(
+                command.profile_id,
+                status="candidate",
+                preference_payload={
+                    **command.preference_payload,
+                    "inference_basis": command.inference_basis,
+                    "calibrated": command.calibrated,
+                },
+                evidence_refs=[ref.as_payload() for ref in command.evidence_refs],
+                origin="inferred_preference_candidate",
+                base_revision_id=command.base_revision_id,
+            )
+            result_payload = {"revision_id": revision_id}
+            receipt_id = self.store.record_command(
+                command_scope="goal09.inferred_preference_candidate",
+                idempotency_key=command.idempotency_key,
+                request_payload=command.request_payload(),
+                result_payload=result_payload,
+                correlation_id=command.correlation_id or revision_id,
+                causation_id=command.causation_id,
+                status="succeeded",
+            )
+            audit_id = self.store.record_audit(
+                event_type="goal09.inferred_preference_candidate.recorded",
+                actor=command.actor,
+                object_kind="content_preference_revision",
+                object_id=revision_id,
+                payload={
+                    "receipt_id": receipt_id,
+                    "origin": "inferred_preference_candidate",
+                    "calibrated": command.calibrated,
+                    "evidence_count": len(command.evidence_refs),
+                },
+                correlation_id=command.correlation_id or revision_id,
+                causation_id=command.causation_id,
+            )
+            outbox_id = self.store.enqueue_outbox(
+                topic="goal09.inferred_preference_candidate.recorded",
+                payload={
+                    "profile_id": command.profile_id,
+                    "revision_id": revision_id,
+                    "calibrated": command.calibrated,
+                },
+                correlation_id=command.correlation_id or revision_id,
+                causation_id=audit_id,
+            )
+            return InferredPreferenceCandidateResult(revision_id, receipt_id, audit_id, outbox_id)
+
     def _existing_result(self, command: ExperimentResultCommand) -> ExperimentResult | None:
         row = self.conn.execute(
             """
@@ -494,6 +595,31 @@ class ExperimentMaterializer:
             root_id=str(result["root_id"]),
             version_id=str(result["version_id"]),
             proposal_hash=str(result["proposal_hash"]),
+            receipt_id=str(row["receipt_id"]),
+            audit_id=None,
+            outbox_id=None,
+            replayed=True,
+        )
+
+    def _existing_inferred_preference_result(
+        self,
+        command: InferredPreferenceCandidateCommand,
+    ) -> InferredPreferenceCandidateResult | None:
+        row = self.conn.execute(
+            """
+            SELECT receipt_id, request_hash, result_json
+              FROM command_receipt
+             WHERE command_scope=? AND idempotency_key=?
+            """,
+            ("goal09.inferred_preference_candidate", command.idempotency_key),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["request_hash"] != content_hash(command.request_payload()):
+            raise IdempotencyConflict("idempotency key reused with different request")
+        result = json.loads(row["result_json"])
+        return InferredPreferenceCandidateResult(
+            revision_id=str(result["revision_id"]),
             receipt_id=str(row["receipt_id"]),
             audit_id=None,
             outbox_id=None,
@@ -548,6 +674,26 @@ class ExperimentMaterializer:
         if command.skill_run_ref:
             _validate_version_ref(command.skill_run_ref)
         validate_experience_revision_proposal_output(command.output, command.trigger)
+
+    def _validate_inferred_preference_command(self, command: InferredPreferenceCandidateCommand) -> None:
+        if not command.profile_id:
+            raise ExperimentError("profile_id is required")
+        if not command.actor:
+            raise ExperimentError("actor is required")
+        if not command.idempotency_key:
+            raise ExperimentError("idempotency_key is required")
+        if not command.preference_payload:
+            raise ExperimentError("preference_payload is required")
+        if not command.inference_basis:
+            raise ExperimentError("inference_basis is required")
+        if command.auto_publish:
+            raise ExperimentError("inferred preference candidates cannot auto-publish")
+        if not command.evidence_refs:
+            raise ExperimentError("evidence_refs are required")
+        for ref in command.evidence_refs:
+            _validate_version_ref(ref)
+            if ref.target_object_kind not in INFERRED_PREFERENCE_EVIDENCE_KINDS:
+                raise ExperimentError("inferred preference evidence must stay separate from CR-002 tactics")
 
     def _assert_base_versions_are_current(self, refs: tuple[VersionRef, ...]) -> None:
         for ref in refs:

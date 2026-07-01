@@ -13,6 +13,7 @@ from scripts.core.experience.goal09_experiments import (  # noqa: E402
     ExperienceRevisionProposalOutput,
     ExperienceRevisionProposalPublishCommand,
     ExperienceStateInput,
+    InferredPreferenceCandidateCommand,
     ExperimentMaterializer,
     ExperimentResultCommand,
     PPlusMetricInput,
@@ -624,6 +625,131 @@ def test_experience_revision_proposal_rejects_stale_base_and_duplicate_hash() ->
     print("PASS GOAL-09 proposal publication rejects duplicate hash and stale base")
 
 
+def make_inferred_preference_command(
+    store: PersistenceStore,
+    profile_id: str,
+    *,
+    idempotency_key: str = "goal09-inferred-pref",
+    evidence_refs: tuple[VersionRef, ...] | None = None,
+    auto_publish: bool = False,
+    calibrated: bool = False,
+) -> InferredPreferenceCandidateCommand:
+    refs = evidence_refs or (
+        create_version_ref(
+            store,
+            "production_manual_edit",
+            "inferred_from_manual_edit",
+            {"from": "draft wording", "to": "human wording"},
+        ),
+        create_version_ref(
+            store,
+            "production_publication_capture",
+            "inferred_from_publication_capture",
+            {"text": "published wording"},
+        ),
+        create_version_ref(
+            store,
+            "goal09_experiment_result",
+            "inferred_from_pplus_result",
+            {"signal": "supported", "eligible": True},
+        ),
+    )
+    return InferredPreferenceCandidateCommand(
+        profile_id=profile_id,
+        actor="preference-curator",
+        idempotency_key=idempotency_key,
+        preference_payload={"style_signal": "prefer concise oral phrasing"},
+        evidence_refs=refs,
+        inference_basis="repeated aligned edits plus publication/P+ evidence",
+        calibrated=calibrated,
+        auto_publish=auto_publish,
+    )
+
+
+def test_inferred_preference_candidate_stays_unpublished_with_evidence_refs() -> None:
+    store = make_store()
+    profile_id = store.create_preference_profile("account", "account-9")
+    command = make_inferred_preference_command(store, profile_id)
+    materializer = ExperimentMaterializer(store)
+    result = materializer.record_inferred_preference_candidate(command)
+    replay = materializer.record_inferred_preference_candidate(command)
+
+    assert replay.replayed
+    assert replay.revision_id == result.revision_id
+    row = store.conn.execute(
+        "SELECT status, origin, preference_payload, evidence_refs FROM content_preference_revision WHERE revision_id=?",
+        (result.revision_id,),
+    ).fetchone()
+    assert row["status"] == "candidate"
+    assert row["origin"] == "inferred_preference_candidate"
+    assert "goal09_experiment_result" in row["evidence_refs"]
+    assert "production_publication_capture" in row["evidence_refs"]
+    assert "inference_basis" in row["preference_payload"]
+    current = store.conn.execute(
+        "SELECT current_revision_id FROM content_preference_profile WHERE profile_id=?",
+        (profile_id,),
+    ).fetchone()["current_revision_id"]
+    assert current is None
+    print("PASS GOAL-09 inferred preference candidate stays unpublished with evidence refs")
+
+
+def test_inferred_preference_candidate_rejects_cr002_tactic_and_proposal_evidence() -> None:
+    store = make_store()
+    profile_id = store.create_preference_profile("account", "account-10")
+    tactic_ref = create_version_ref(
+        store,
+        "tactic_version",
+        "bad_cr002_tactic_evidence",
+        {"mechanism": "not preference evidence"},
+    )
+    proposal_ref = create_version_ref(
+        store,
+        "goal09_experience_revision_proposal",
+        "bad_cr002_proposal_evidence",
+        {"proposal_type": "revise"},
+    )
+
+    for suffix, refs in (("tactic", (tactic_ref,)), ("proposal", (proposal_ref,))):
+        command = make_inferred_preference_command(
+            store,
+            profile_id,
+            idempotency_key=f"goal09-inferred-pref-bad-{suffix}",
+            evidence_refs=refs,
+        )
+        try:
+            ExperimentMaterializer(store).record_inferred_preference_candidate(command)
+        except Exception as exc:  # noqa: BLE001 - exact boundary exception text is asserted.
+            assert "separate from CR-002 tactics" in str(exc)
+        else:
+            raise AssertionError("expected CR-002 evidence rejection")
+    print("PASS GOAL-09 inferred preference gate rejects CR-002 tactic/proposal evidence")
+
+
+def test_inferred_preference_candidate_rejects_auto_publish_even_when_calibrated() -> None:
+    store = make_store()
+    profile_id = store.create_preference_profile("account", "account-11")
+    command = make_inferred_preference_command(
+        store,
+        profile_id,
+        idempotency_key="goal09-inferred-pref-auto-publish",
+        auto_publish=True,
+        calibrated=True,
+    )
+
+    try:
+        ExperimentMaterializer(store).record_inferred_preference_candidate(command)
+    except Exception as exc:  # noqa: BLE001 - exact boundary exception text is asserted.
+        assert "cannot auto-publish" in str(exc)
+    else:
+        raise AssertionError("expected auto-publish rejection")
+    current = store.conn.execute(
+        "SELECT current_revision_id FROM content_preference_profile WHERE profile_id=?",
+        (profile_id,),
+    ).fetchone()["current_revision_id"]
+    assert current is None
+    print("PASS GOAL-09 inferred preference gate rejects auto-publish even when calibrated")
+
+
 def main() -> None:
     test_formal_primary_used_p_plus_materializes_supported_signal()
     test_ineligible_when_primary_not_used_even_with_high_p_plus()
@@ -637,6 +763,9 @@ def main() -> None:
     test_experience_revision_proposal_output_gate_and_publication_path()
     test_experience_revision_proposal_rejects_host_fields_and_no_proposal_publication()
     test_experience_revision_proposal_rejects_stale_base_and_duplicate_hash()
+    test_inferred_preference_candidate_stays_unpublished_with_evidence_refs()
+    test_inferred_preference_candidate_rejects_cr002_tactic_and_proposal_evidence()
+    test_inferred_preference_candidate_rejects_auto_publish_even_when_calibrated()
     print("GOAL-09 experiment metric verification passed")
 
 

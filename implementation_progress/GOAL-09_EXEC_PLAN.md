@@ -37,11 +37,12 @@ This ExecPlan is restored from V0.6.2 GOAL-09 paragraphs 2269-2285 plus direct C
    - Reject proposal outputs containing tactic IDs, version IDs, proposal IDs or transaction commands.
    - Publish only after base version and proposal hash checks.
 6. Inferred preference candidate gate.
-   - Status: next.
+   - Status: complete.
    - Keep inferred preference candidates separate from CR-002 tactics.
    - Keep inferred candidates unpublished until calibrated.
    - Preserve evidence links to edits, approvals/rejections, publication captures and P+.
 7. Closeout gates.
+   - Status: next.
    - Run focused fixture/replay/fault/Clean-room tests.
    - Generate GOAL-09 validation report and clean-room proof.
    - Stop at approval gate and do not enter GOAL-10.

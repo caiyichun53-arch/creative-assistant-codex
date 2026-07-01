@@ -66,15 +66,20 @@ GOAL-08_inherited_commit:
   - Proposal publication checks base versions are still current.
   - Published proposal hashes cannot be consumed twice.
   - Published proposals are immutable trace versions with base/evidence/skill-run refs, command receipt, audit and outbox.
+- Checkpoint 6 complete: added inferred content preference candidate gate separated from CR-002 tactics.
+  - Inferred preferences are recorded only as `content_preference_revision` candidates.
+  - Inferred candidates preserve evidence refs to manual edits, approvals/rejections, publication captures and P+ experiment results.
+  - CR-002 tactic/proposal evidence is rejected for inferred preference candidates.
+  - Auto-publish is rejected even when the inferred signal is marked calibrated.
+  - Current preference pointers are not updated by inferred candidate creation.
 
 ## Remaining Checkpoints
 
-- Checkpoint 6: Add inferred content preference candidate gate separated from CR-002 tactics.
 - Checkpoint 7: Add fault/replay/clean-room validation and closeout report.
 
 ## Current Resume Point
 
-- Continue with Checkpoint 6.
+- Continue with Checkpoint 7.
 
 ## Modified Files
 
@@ -93,7 +98,7 @@ GOAL-08_inherited_commit:
 
 - `python scripts/core/experience/verify_goal_09.py`
   - exit_code: 0
-  - tests: 12
+  - tests: 15
   - real_external_credentials_used: no
   - external_side_effects: none
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'goal09_pycache'; python -m py_compile scripts/core/experience/__init__.py scripts/core/experience/goal09_experiments.py scripts/core/experience/verify_goal_09.py`
@@ -116,10 +121,11 @@ GOAL-08_inherited_commit:
 - `7c79939` - feat(goal-09): add experiment review boundary
 - This round checkpoint commit subject: `feat(goal-09): add cr002 experience triggers`
 - This round checkpoint commit subject: `feat(goal-09): add experience proposal gate`
+- This round checkpoint commit subject: `feat(goal-09): add inferred preference gate`
 
 ## Next First Unfinished Checkpoint
 
-- Checkpoint 6: Add inferred content preference candidate gate separated from CR-002 tactics.
+- Checkpoint 7: Add fault/replay/clean-room validation and closeout report.
 
 ## GOAL-10 Permission
 
