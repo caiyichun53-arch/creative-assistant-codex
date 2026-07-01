@@ -14,6 +14,7 @@ from scripts.core.correction.goal10_corrections import (  # noqa: E402
     CorrectionMaterializer,
     CorrectionPropagationCommand,
     CorrectionRegistrationCommand,
+    CorrectionReportCommand,
     CorrectionResumeCommand,
 )
 from scripts.core.persistence.goal01_store import (  # noqa: E402
@@ -516,6 +517,198 @@ def test_job_retry_recovers_processing_impact_without_duplicate_replacement() ->
     print("PASS GOAL-10 job retry resumes processing impact without duplicate replacement")
 
 
+def test_correction_report_is_immutable_and_replays_without_duplicate_side_effects() -> None:
+    store = make_store()
+    target_ref = create_version(store, "research_claim", {"claim": "old"})
+    changed_ref = create_version(
+        store,
+        "content_plan",
+        {"claim": "old", "outline": "uses corrected fact"},
+        business_payload={"claim": "old", "outline": "uses corrected fact"},
+    )
+    unchanged_ref = create_version(
+        store,
+        "content_plan",
+        {"outline": "uses source by reference only"},
+        business_payload={"outline": "uses source by reference only"},
+    )
+    record_ref(store, changed_ref, target_ref, "evidence_ref")
+    record_ref(store, unchanged_ref, target_ref, "evidence_ref")
+    materializer = CorrectionMaterializer(store)
+    registration = materializer.register_correction(make_command(store, target_ref, idempotency_key="goal10-report"))
+    for impact in registration.impacts:
+        materializer.process_impact(
+            CorrectionPropagationCommand(
+                actor="propagation-worker",
+                idempotency_key=f"goal10-report-process-{impact.root_id}",
+                impact_root_id=impact.root_id,
+                expected_basis_hash=impact.expected_basis_hash,
+                correlation_id=registration.version_id,
+                causation_id=impact.version_id,
+            )
+        )
+
+    command = CorrectionReportCommand(
+        actor="report-worker",
+        idempotency_key="goal10-report-create",
+        correction_version_id=registration.version_id,
+        correlation_id=registration.version_id,
+        causation_id=registration.version_id,
+    )
+    first = materializer.create_report(command)
+    replay = materializer.create_report(command)
+    report_payload = payload_for(store, first.version_id)
+
+    assert replay.replayed
+    assert replay.root_id == first.root_id
+    assert replay.version_id == first.version_id
+    assert report_payload["correction_version_id"] == registration.version_id
+    assert report_payload["impact_count"] == 2
+    assert len(report_payload["affected_objects"]) == 1
+    assert len(report_payload["no_impact_objects"]) == 1
+    assert report_payload["failures"] == []
+    assert store.conn.execute(
+        "SELECT count(*) FROM trace_root WHERE object_kind='goal10_correction_report'"
+    ).fetchone()[0] == 1
+    assert store.conn.execute(
+        "SELECT count(*) FROM outbox_message WHERE topic='goal10.correction.report.created'"
+    ).fetchone()[0] == 1
+    try:
+        store.conn.execute(
+            "UPDATE trace_version SET payload_json='{}' WHERE version_id=?",
+            (first.version_id,),
+        )
+    except sqlite3.IntegrityError as exc:
+        assert "trace_version is immutable" in str(exc)
+    else:
+        raise AssertionError("expected immutable correction_report version")
+    print("PASS GOAL-10 correction report is immutable and idempotent")
+
+
+def test_correction_report_fault_rolls_back_without_partial_report() -> None:
+    store = make_store()
+    target_ref = create_version(store, "research_claim", {"claim": "old"})
+    consumer_ref = create_version(
+        store,
+        "content_plan",
+        {"outline": "uses source by reference only"},
+        business_payload={"outline": "uses source by reference only"},
+    )
+    record_ref(store, consumer_ref, target_ref, "evidence_ref")
+    materializer = CorrectionMaterializer(store)
+    registration = materializer.register_correction(make_command(store, target_ref, idempotency_key="goal10-report-fault"))
+    impact = registration.impacts[0]
+    materializer.process_impact(
+        CorrectionPropagationCommand(
+            actor="propagation-worker",
+            idempotency_key="goal10-report-fault-process",
+            impact_root_id=impact.root_id,
+            expected_basis_hash=impact.expected_basis_hash,
+            correlation_id=registration.version_id,
+            causation_id=impact.version_id,
+        )
+    )
+    try:
+        materializer.create_report(
+            CorrectionReportCommand(
+                actor="report-worker",
+                idempotency_key="goal10-report-fault-create",
+                correction_version_id=registration.version_id,
+                correlation_id=registration.version_id,
+                causation_id=registration.version_id,
+                inject_fault_after_version=True,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - fixture verifies transaction rollback.
+        assert "injected fault" in str(exc)
+    else:
+        raise AssertionError("expected injected report fault")
+    assert store.conn.execute(
+        "SELECT count(*) FROM trace_root WHERE object_kind='goal10_correction_report'"
+    ).fetchone()[0] == 0
+    assert store.conn.execute(
+        "SELECT count(*) FROM command_receipt WHERE command_scope='goal10.correction.create_report'"
+    ).fetchone()[0] == 0
+
+    recovered = materializer.create_report(
+        CorrectionReportCommand(
+            actor="report-worker",
+            idempotency_key="goal10-report-fault-create",
+            correction_version_id=registration.version_id,
+            correlation_id=registration.version_id,
+            causation_id=registration.version_id,
+        )
+    )
+    assert recovered.version_id
+    assert store.conn.execute(
+        "SELECT count(*) FROM trace_root WHERE object_kind='goal10_correction_report'"
+    ).fetchone()[0] == 1
+    print("PASS GOAL-10 correction report fault rolls back and recovers cleanly")
+
+
+def test_clean_room_proof_uses_only_local_artifacts_without_goal11_bindings() -> None:
+    store = make_store()
+    target_ref = create_version(store, "research_claim", {"claim": "old"})
+    consumer_ref = create_version(
+        store,
+        "content_plan",
+        {"claim": "old", "outline": "uses corrected fact"},
+        business_payload={"claim": "old", "outline": "uses corrected fact"},
+    )
+    record_ref(store, consumer_ref, target_ref, "evidence_ref")
+    materializer = CorrectionMaterializer(store)
+    registration = materializer.register_correction(make_command(store, target_ref, idempotency_key="goal10-clean"))
+    impact = registration.impacts[0]
+    materializer.process_impact(
+        CorrectionPropagationCommand(
+            actor="propagation-worker",
+            idempotency_key="goal10-clean-process",
+            impact_root_id=impact.root_id,
+            expected_basis_hash=impact.expected_basis_hash,
+            correlation_id=registration.version_id,
+            causation_id=impact.version_id,
+        )
+    )
+    report = materializer.create_report(
+        CorrectionReportCommand(
+            actor="report-worker",
+            idempotency_key="goal10-clean-report",
+            correction_version_id=registration.version_id,
+            correlation_id=registration.version_id,
+            causation_id=registration.version_id,
+        )
+    )
+    report_payload = payload_for(store, report.version_id)
+    external_topics = store.conn.execute(
+        """
+        SELECT count(*)
+          FROM outbox_message
+         WHERE topic LIKE 'hermes.%'
+            OR topic LIKE 'feishu.%'
+            OR topic LIKE 'goal11.%'
+        """
+    ).fetchone()[0]
+    goal11_objects = store.conn.execute(
+        "SELECT count(*) FROM trace_root WHERE object_kind LIKE 'goal11_%'"
+    ).fetchone()[0]
+    assert external_topics == 0
+    assert goal11_objects == 0
+    assert report_payload["impact_results"]
+    assert report_payload["affected_objects"]
+    assert store.conn.execute(
+        """
+        SELECT count(*)
+          FROM command_receipt
+         WHERE command_scope IN (
+             'goal10.correction.register',
+             'goal10.correction.process_impact',
+             'goal10.correction.create_report'
+         )
+        """
+    ).fetchone()[0] == 3
+    print("PASS GOAL-10 clean-room proof uses local artifacts without GOAL-11 bindings")
+
+
 def main() -> None:
     test_correction_record_is_immutable_and_preserves_original_history()
     test_identical_correction_replays_without_duplicate_side_effects()
@@ -525,6 +718,9 @@ def main() -> None:
     test_propagation_creates_replacement_version_when_business_hash_changes()
     test_blocked_and_resume_recovery_have_audit_correlation_and_causation()
     test_job_retry_recovers_processing_impact_without_duplicate_replacement()
+    test_correction_report_is_immutable_and_replays_without_duplicate_side_effects()
+    test_correction_report_fault_rolls_back_without_partial_report()
+    test_clean_room_proof_uses_only_local_artifacts_without_goal11_bindings()
     print("GOAL-10 correction contract verification passed")
 
 

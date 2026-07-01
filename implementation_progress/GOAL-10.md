@@ -2,7 +2,7 @@
 
 goal: GOAL-10 Correction Propagation
 
-status: `GOAL-10_IN_PROGRESS`
+status: `GOAL-10_COMPLETE_WAITING_USER_APPROVAL`
 
 source_commit: `9c5427107dbb63d28743f3d1c7173beff79f48c4`
 
@@ -66,20 +66,27 @@ starting_head:
   - A failed attempt after durable `processing` status can retry from that impact position.
   - Retried processing does not create duplicate replacement versions or duplicate completed side effects.
   - Blocked and resumed impacts append immutable status versions and record audit events with `correlation_id` and `causation_id`.
+- Checkpoint 6 complete: added reporting, fault, replay and clean-room closeout.
+  - `correction_report` is created as an immutable trace version through `CorrectionMaterializer`.
+  - Report creation is idempotent and replays without duplicate reports or outbox side effects.
+  - Injected report failure rolls back without partial report roots or command receipts.
+  - Clean-room proof verifies local-only artifacts and no GOAL-11/Hermes/Feishu bindings.
 
 ## Remaining Checkpoints
 
-- Checkpoint 6: add reporting, fault, replay and clean-room closeout.
+- None.
 
 ## Current Resume Point
 
-- Continue with checkpoint 6: reporting, fault, replay and clean-room closeout.
+- Stop for user approval. Do not enter GOAL-11.
 
 ## Modified Files
 
 - `goals/GOAL-10.md`
 - `implementation_progress/GOAL-10.md`
 - `implementation_progress/GOAL-10_EXEC_PLAN.md`
+- `GOAL-10_VALIDATION_REPORT.md`
+- `GOAL-10_CLEAN_ROOM_PROOF.md`
 - `scripts/core/correction/__init__.py`
 - `scripts/core/correction/goal10_corrections.py`
 - `scripts/core/correction/verify_goal_10.py`
@@ -90,6 +97,19 @@ starting_head:
 
 ## Test Commands
 
+- `git diff --check`
+  - exit_code: 0
+- `python scripts/core/correction/verify_goal_10.py`
+  - exit_code: 0
+  - tests: 11
+  - real_external_credentials_used: no
+  - external_side_effects: none
+- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'goal10_pycache'; python -m py_compile scripts/core/correction/__init__.py scripts/core/correction/goal10_corrections.py scripts/core/correction/verify_goal_10.py`
+  - exit_code: 0
+- `python scripts/core/persistence/verify_goal_01_replay.py`
+  - exit_code: 0
+- `python scripts/core/scheduler/verify_goal_03.py`
+  - exit_code: 0
 - `git diff --check`
   - exit_code: 0
 - `python scripts/core/correction/verify_goal_10.py`
@@ -126,13 +146,16 @@ starting_head:
   - propagation convergence
   - replacement version creation
   - blocked/resume audit correlation and causation
+  - immutable/idempotent correction report
+  - clean-room local artifact proof
 - Replay coverage started:
   - repeated correction command returns the original result without duplicate side effects.
   - repeated impact propagation returns the original result without duplicate outbox or replacement side effects.
   - job retry resumes a partially processed impact without duplicate replacement versions.
+  - repeated report creation returns the original result without duplicate report/outbox side effects.
 - Fault coverage:
   - Checkpoint 5 covers injected failure after durable impact `processing` status.
-  - Checkpoint 6 remains the scoped final fault/replay/clean-room closeout.
+  - Checkpoint 6 covers injected report failure rollback and recovery.
 
 ## PostgreSQL Gate
 
@@ -152,10 +175,11 @@ starting_head:
 - Pending checkpoint 2/3 commit subject: `feat(goal-10): add correction registration contracts`
 - Checkpoint 4 commit: `4997e8c feat(goal-10): add propagation convergence`
 - Checkpoint 5 commit subject: `feat(goal-10): add blocked resume recovery`
+- Checkpoint 6 commit subject: `feat(goal-10): add final correction report closeout`
 
 ## Next First Unfinished Checkpoint
 
-- Checkpoint 6: add reporting, fault, replay and clean-room closeout.
+- None.
 
 ## GOAL-11 Permission
 

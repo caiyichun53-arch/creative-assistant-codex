@@ -133,6 +133,21 @@ class CorrectionResumeCommand:
 
 
 @dataclass(frozen=True)
+class CorrectionReportCommand:
+    actor: str
+    idempotency_key: str
+    correction_version_id: str
+    correlation_id: str | None = None
+    causation_id: str | None = None
+    inject_fault_after_version: bool = False
+
+    def request_payload(self) -> dict[str, Any]:
+        return {
+            "correction_version_id": self.correction_version_id,
+        }
+
+
+@dataclass(frozen=True)
 class CorrectionPropagationResult:
     impact_root_id: str
     impact_version_id: str
@@ -149,6 +164,16 @@ class CorrectionPropagationResult:
 class CorrectionJobEnqueueResult:
     impact_root_id: str
     job_id: str
+    replayed: bool = False
+
+
+@dataclass(frozen=True)
+class CorrectionReportResult:
+    root_id: str
+    version_id: str
+    receipt_id: str
+    audit_id: str | None
+    outbox_id: str | None
     replayed: bool = False
 
 
@@ -523,6 +548,117 @@ class CorrectionMaterializer:
                 break
         return tuple(results)
 
+    def create_report(self, command: CorrectionReportCommand) -> CorrectionReportResult:
+        if not command.actor:
+            raise CorrectionError("actor is required")
+        if not command.idempotency_key:
+            raise CorrectionError("idempotency_key is required")
+        if not command.correction_version_id:
+            raise CorrectionError("correction_version_id is required")
+        existing = self._existing_report_result(command)
+        if existing is not None:
+            return existing
+        correction_payload = self._correction_payload(command.correction_version_id)
+        summary = self._report_summary(command.correction_version_id)
+        unfinished = [
+            item
+            for item in summary["impacts"]
+            if item["processing_status"] in {"planned", "processing"}
+        ]
+        if unfinished:
+            raise CorrectionError("cannot create correction_report with unfinished impacts")
+
+        correlation_id = command.correlation_id or command.correction_version_id
+        causation_id = command.causation_id or command.correction_version_id
+        with self.conn:
+            root_id = self.store.create_root("goal10_correction_report")
+            payload = {
+                "goal": "GOAL-10",
+                "correction_version_id": command.correction_version_id,
+                "target_ref": correction_payload["target_ref"],
+                "old_content_hash": correction_payload["old_content_hash"],
+                "corrected_payload_hash": correction_payload["corrected_payload_hash"],
+                "affected_objects": summary["affected_objects"],
+                "no_impact_objects": summary["no_impact_objects"],
+                "stop_points": summary["stop_points"],
+                "failures": summary["failures"],
+                "user_confirmations": summary["user_confirmations"],
+                "human_attention": summary["human_attention"],
+                "impact_count": len(summary["impacts"]),
+                "impact_results": summary["impacts"],
+            }
+            version_id = self.store.append_version(
+                root_id,
+                payload,
+                projection_version="goal10.correction_report.v1",
+                business_payload={
+                    "correction_version_id": command.correction_version_id,
+                    "affected_count": len(summary["affected_objects"]),
+                    "no_impact_count": len(summary["no_impact_objects"]),
+                    "failure_count": len(summary["failures"]),
+                    "human_attention_count": len(summary["human_attention"]),
+                    "impact_count": len(summary["impacts"]),
+                },
+            )
+            self.store.set_current_version(root_id, version_id)
+            self.store.record_object_reference(
+                source_version_id=version_id,
+                relation_role="reports_correction_record",
+                target_object_kind="goal10_correction_record",
+                target_stable_id=command.correction_version_id,
+                target_version_id=command.correction_version_id,
+                target_content_hash=None,
+                locator={"version_id": command.correction_version_id},
+            )
+            for impact in summary["impacts"]:
+                self.store.record_object_reference(
+                    source_version_id=version_id,
+                    relation_role="reports_correction_impact",
+                    target_object_kind="goal10_correction_impact",
+                    target_stable_id=impact["impact_root_id"],
+                    target_version_id=impact["impact_version_id"],
+                    target_content_hash=None,
+                    locator={"impact_root_id": impact["impact_root_id"]},
+                )
+            if command.inject_fault_after_version:
+                raise CorrectionError("injected fault after report version")
+            result_payload = {"root_id": root_id, "version_id": version_id}
+            receipt_id = self.store.record_command(
+                command_scope="goal10.correction.create_report",
+                idempotency_key=command.idempotency_key,
+                request_payload=command.request_payload(),
+                result_payload=result_payload,
+                correlation_id=correlation_id,
+                causation_id=causation_id,
+                status="succeeded",
+            )
+            audit_id = self.store.record_audit(
+                event_type="goal10.correction.report.created",
+                actor=command.actor,
+                object_kind="goal10_correction_report",
+                object_id=root_id,
+                version_id=version_id,
+                payload={
+                    "receipt_id": receipt_id,
+                    "correction_version_id": command.correction_version_id,
+                    "impact_count": len(summary["impacts"]),
+                },
+                correlation_id=correlation_id,
+                causation_id=causation_id,
+            )
+            outbox_id = self.store.enqueue_outbox(
+                topic="goal10.correction.report.created",
+                payload={
+                    "root_id": root_id,
+                    "version_id": version_id,
+                    "correction_version_id": command.correction_version_id,
+                    "impact_count": len(summary["impacts"]),
+                },
+                correlation_id=correlation_id,
+                causation_id=audit_id,
+            )
+        return CorrectionReportResult(root_id, version_id, receipt_id, audit_id, outbox_id)
+
     def _record_dependency_index(self, correction_version_id: str, edge: DependencyEdge) -> str:
         root_id = self.store.create_root("goal10_dependency_index")
         payload = {
@@ -853,6 +989,107 @@ class CorrectionMaterializer:
             receipt_id=row["receipt_id"],
             replayed=True,
         )
+
+    def _existing_report_result(self, command: CorrectionReportCommand) -> CorrectionReportResult | None:
+        row = self.conn.execute(
+            """
+            SELECT receipt_id, request_hash, result_json
+              FROM command_receipt
+             WHERE command_scope=? AND idempotency_key=?
+            """,
+            ("goal10.correction.create_report", command.idempotency_key),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["request_hash"] != content_hash(command.request_payload()):
+            raise IdempotencyConflict("idempotency key reused with different request")
+        payload = json.loads(row["result_json"])
+        return CorrectionReportResult(
+            root_id=str(payload["root_id"]),
+            version_id=str(payload["version_id"]),
+            receipt_id=str(row["receipt_id"]),
+            audit_id=None,
+            outbox_id=None,
+            replayed=True,
+        )
+
+    def _report_summary(self, correction_version_id: str) -> dict[str, Any]:
+        rows = self.conn.execute(
+            """
+            SELECT tr.root_id, tv.version_id, tv.payload_json
+              FROM trace_root tr
+              JOIN trace_version tv ON tv.version_id=tr.current_version_id
+             WHERE tr.object_kind='goal10_correction_impact'
+             ORDER BY tr.created_at, tr.root_id
+            """
+        ).fetchall()
+        impacts: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            if payload["correction_version_id"] != correction_version_id:
+                continue
+            result = payload.get("result") or {}
+            impacts.append(
+                {
+                    "impact_root_id": row["root_id"],
+                    "impact_version_id": row["version_id"],
+                    "target_version_id": payload["target_version_id"],
+                    "action_kind": payload["action_kind"],
+                    "processing_status": payload["processing_status"],
+                    "stop_reason": payload["stop_reason"],
+                    "result": result,
+                    "human_attention": payload.get("human_attention"),
+                    "before_hash": result.get("business_hash_before"),
+                    "after_hash": result.get("business_hash_after"),
+                    "replacement_version_id": result.get("replacement_version_id"),
+                }
+            )
+        affected = [
+            item
+            for item in impacts
+            if item["replacement_version_id"] or item["stop_reason"] == "human_action_recorded"
+        ]
+        no_impact = [
+            item
+            for item in impacts
+            if item["processing_status"] == "completed"
+            and item["stop_reason"] in {"business_equivalent_refs_unchanged", "no_action"}
+        ]
+        failures = [
+            item
+            for item in impacts
+            if item["processing_status"] not in {"completed", "blocked", "planned", "processing"}
+        ]
+        confirmations = [
+            {
+                "impact_root_id": item["impact_root_id"],
+                "human_action": (item["result"] or {}).get("human_action"),
+            }
+            for item in impacts
+            if (item["result"] or {}).get("human_action")
+        ]
+        human_attention = [
+            item
+            for item in impacts
+            if item["processing_status"] == "blocked" or item["human_attention"]
+        ]
+        return {
+            "impacts": impacts,
+            "affected_objects": affected,
+            "no_impact_objects": no_impact,
+            "stop_points": [
+                {
+                    "impact_root_id": item["impact_root_id"],
+                    "processing_status": item["processing_status"],
+                    "stop_reason": item["stop_reason"],
+                }
+                for item in impacts
+                if item["stop_reason"]
+            ],
+            "failures": failures,
+            "user_confirmations": confirmations,
+            "human_attention": human_attention,
+        }
 
     def _copy_refs(self, source_version_id: str, replacement_version_id: str) -> None:
         rows = self.conn.execute(

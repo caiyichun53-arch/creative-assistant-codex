@@ -125,4 +125,9 @@ Start from the first unfinished checkpoint in `implementation_progress/GOAL-10.m
   - partial failure after durable `processing` status resumes from that impact position;
   - blocked and resumed impacts retain audit `correlation_id` and `causation_id`;
   - repeated recovery does not duplicate replacement versions.
-- No migration changes yet.
+- Checkpoint 6 added reporting, fault, replay and clean-room closeout:
+  - immutable `correction_report` is created through `CorrectionMaterializer`;
+  - report creation replays without duplicate reports or outbox side effects;
+  - injected report failure rolls back without partial roots or receipts;
+  - `GOAL-10_VALIDATION_REPORT.md` and `GOAL-10_CLEAN_ROOM_PROOF.md` record final evidence.
+- No migration changes.
