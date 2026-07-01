@@ -129,7 +129,7 @@ GOAL-07_validated_code_commit:
 
 - `b9cf4d16364616fc9bc15ba7a7c57ce4a37700fe` - docs(goal-08): record formal definition blocker
 - `d4e496034e43b934584bc7ec21cc594ccb7de39b` - docs(goal-08): restore formal task definition
-- Pending: feat(goal-08): add production version chain materializer
+- `af4ecddfc1e08428036d434b824c56ec0c8fbc82` - feat(goal-08): add production version chain materializer
 
 ## Next First Unfinished Checkpoint
 
