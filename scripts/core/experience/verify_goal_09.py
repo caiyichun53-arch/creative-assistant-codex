@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -481,6 +482,9 @@ def make_proposal_publish_command(
     *,
     idempotency_key: str = "goal09-proposal-publish",
     output: ExperienceRevisionProposalOutput | None = None,
+    validation_gate_results: dict[str, bool] | None = None,
+    validation_gate_refs: tuple[VersionRef, ...] | None = None,
+    skill_run_object_kind: str = "model_run_envelope",
 ) -> tuple[ExperienceRevisionProposalPublishCommand, VersionRef]:
     base_ref = create_version_ref(
         store,
@@ -497,9 +501,18 @@ def make_proposal_publish_command(
         )
         for evidence_id in ("failure-1", "failure-2", "failure-3")
     )
+    gates = validation_gate_refs or tuple(
+        create_version_ref(
+            store,
+            "goal09_validation_gate",
+            f"passed_{gate}_gate",
+            {"gate": gate, "passed": True},
+        )
+        for gate in ("regression", "ablation", "compatibility", "provenance")
+    )
     skill_run_ref = create_version_ref(
         store,
-        "model_run_envelope",
+        skill_run_object_kind,
         "proposed_by_skill_run",
         {"skill_name": "experience_revision_propose", "status": "succeeded"},
     )
@@ -511,6 +524,14 @@ def make_proposal_publish_command(
             trigger=make_proposal_trigger(),
             base_version_refs=(base_ref,),
             evidence_refs=evidence_refs,
+            validation_gate_refs=gates,
+            validation_gate_results=validation_gate_results
+            or {
+                "regression": True,
+                "ablation": True,
+                "compatibility": True,
+                "provenance": True,
+            },
             skill_run_ref=skill_run_ref,
         ),
         base_ref,
@@ -538,6 +559,10 @@ def test_experience_revision_proposal_output_gate_and_publication_path() -> None
     assert {row["relation_role"] for row in refs} == {
         "base_tactic_version",
         "proposal_trigger_evidence",
+        "passed_regression_gate",
+        "passed_ablation_gate",
+        "passed_compatibility_gate",
+        "passed_provenance_gate",
         "proposed_by_skill_run",
     }
     assert store.conn.execute(
@@ -581,6 +606,40 @@ def test_experience_revision_proposal_rejects_host_fields_and_no_proposal_public
         else:
             raise AssertionError("expected proposal gate rejection")
     print("PASS GOAL-09 proposal output gate rejects host fields and no_proposal publication")
+
+
+def test_experience_revision_proposal_requires_publication_gates_and_skill_separation() -> None:
+    store = make_store()
+    failed_gate_command, _base_ref = make_proposal_publish_command(
+        store,
+        idempotency_key="goal09-proposal-failed-gate",
+        validation_gate_results={
+            "regression": True,
+            "ablation": False,
+            "compatibility": True,
+            "provenance": True,
+        },
+    )
+    skill_command, _base_ref2 = make_proposal_publish_command(
+        store,
+        idempotency_key="goal09-proposal-skill-ref",
+        skill_run_object_kind="candidate_skill",
+    )
+
+    for command, expected in (
+        (failed_gate_command, "publication gates failed"),
+        (skill_command, "cannot publish or mutate Skill"),
+    ):
+        try:
+            ExperimentMaterializer(store).publish_experience_revision_proposal(command)
+        except Exception as exc:  # noqa: BLE001 - exact boundary exception text is asserted.
+            assert expected in str(exc)
+        else:
+            raise AssertionError("expected proposal publication gate rejection")
+    assert store.conn.execute(
+        "SELECT count(*) FROM trace_root WHERE object_kind='formal_skill'"
+    ).fetchone()[0] == 0
+    print("PASS GOAL-09 proposal publication requires gates and preserves Skill separation")
 
 
 def test_experience_revision_proposal_rejects_stale_base_and_duplicate_hash() -> None:
@@ -750,6 +809,126 @@ def test_inferred_preference_candidate_rejects_auto_publish_even_when_calibrated
     print("PASS GOAL-09 inferred preference gate rejects auto-publish even when calibrated")
 
 
+def test_fault_injection_rolls_back_proposal_publication_without_partial_side_effects() -> None:
+    store = make_store()
+    command, _base_ref = make_proposal_publish_command(
+        store,
+        idempotency_key="goal09-proposal-injected-failure",
+    )
+    before = {
+        "proposal_roots": store.conn.execute(
+            "SELECT count(*) FROM trace_root WHERE object_kind='goal09_experience_revision_proposal'"
+        ).fetchone()[0],
+        "proposal_versions": store.conn.execute(
+            """
+            SELECT count(*)
+              FROM trace_version v
+              JOIN trace_root r ON r.root_id=v.root_id
+             WHERE r.object_kind='goal09_experience_revision_proposal'
+            """
+        ).fetchone()[0],
+        "refs": store.conn.execute("SELECT count(*) FROM object_reference").fetchone()[0],
+        "outbox": store.conn.execute(
+            "SELECT count(*) FROM outbox_message WHERE topic='goal09.experience_revision_proposal.published'"
+        ).fetchone()[0],
+    }
+    store.conn.execute(
+        """
+        CREATE TEMP TRIGGER fail_goal09_proposal_receipt
+        BEFORE INSERT ON command_receipt
+        WHEN NEW.command_scope='goal09.experience_revision_proposal.publish'
+         AND NEW.idempotency_key='goal09-proposal-injected-failure'
+        BEGIN
+            SELECT RAISE(ABORT, 'injected goal09 proposal receipt failure');
+        END
+        """
+    )
+    try:
+        ExperimentMaterializer(store).publish_experience_revision_proposal(command)
+    except sqlite3.IntegrityError as exc:
+        assert "injected goal09 proposal receipt failure" in str(exc)
+    else:
+        raise AssertionError("expected injected proposal receipt failure")
+    finally:
+        try:
+            store.conn.execute("DROP TRIGGER fail_goal09_proposal_receipt")
+        except sqlite3.OperationalError:
+            pass
+    after = {
+        "proposal_roots": store.conn.execute(
+            "SELECT count(*) FROM trace_root WHERE object_kind='goal09_experience_revision_proposal'"
+        ).fetchone()[0],
+        "proposal_versions": store.conn.execute(
+            """
+            SELECT count(*)
+              FROM trace_version v
+              JOIN trace_root r ON r.root_id=v.root_id
+             WHERE r.object_kind='goal09_experience_revision_proposal'
+            """
+        ).fetchone()[0],
+        "refs": store.conn.execute("SELECT count(*) FROM object_reference").fetchone()[0],
+        "outbox": store.conn.execute(
+            "SELECT count(*) FROM outbox_message WHERE topic='goal09.experience_revision_proposal.published'"
+        ).fetchone()[0],
+    }
+    assert after == before
+    assert store.conn.execute(
+        "SELECT count(*) FROM command_receipt WHERE idempotency_key='goal09-proposal-injected-failure'"
+    ).fetchone()[0] == 0
+    print("PASS GOAL-09 fault injection rolls back proposal publication side effects")
+
+
+def test_clean_room_boundaries_preserve_skill_and_preference_separation() -> None:
+    store = make_store()
+    profile_id = store.create_preference_profile("account", "account-clean-room")
+    materializer = ExperimentMaterializer(store)
+    experiment = materializer.record_experiment_result(
+        make_experiment_command(store, idempotency_key="goal09-clean-room-experiment")
+    )
+    proposal_command, _base_ref = make_proposal_publish_command(
+        store,
+        idempotency_key="goal09-clean-room-proposal",
+    )
+    proposal = materializer.publish_experience_revision_proposal(proposal_command)
+    inferred = materializer.record_inferred_preference_candidate(
+        make_inferred_preference_command(
+            store,
+            profile_id,
+            idempotency_key="goal09-clean-room-inferred-pref",
+        )
+    )
+
+    assert experiment.version_id and proposal.version_id and inferred.revision_id
+    assert store.conn.execute(
+        "SELECT count(*) FROM trace_root WHERE object_kind IN ('formal_skill', 'candidate_skill')"
+    ).fetchone()[0] == 0
+    assert store.conn.execute(
+        "SELECT current_revision_id FROM content_preference_profile WHERE profile_id=?",
+        (profile_id,),
+    ).fetchone()["current_revision_id"] is None
+    assert store.conn.execute(
+        "SELECT status FROM content_preference_revision WHERE revision_id=?",
+        (inferred.revision_id,),
+    ).fetchone()["status"] == "candidate"
+    receipt_scopes = {
+        row["command_scope"]
+        for row in store.conn.execute("SELECT command_scope FROM command_receipt").fetchall()
+    }
+    assert {
+        "goal09.experiment_result",
+        "goal09.experience_revision_proposal.publish",
+        "goal09.inferred_preference_candidate",
+    }.issubset(receipt_scopes)
+    assert store.conn.execute(
+        "SELECT count(*) FROM audit_event WHERE event_type LIKE 'goal09.%'"
+    ).fetchone()[0] >= 3
+    assert store.conn.execute(
+        "SELECT count(*) FROM object_reference WHERE source_version_id IN (?, ?)",
+        (experiment.version_id, proposal.version_id),
+    ).fetchone()[0] >= 2
+    print("PASS GOAL-09 clean-room boundaries preserve Skill and preference separation")
+
+
 def main() -> None:
     test_formal_primary_used_p_plus_materializes_supported_signal()
     test_ineligible_when_primary_not_used_even_with_high_p_plus()
@@ -762,10 +941,13 @@ def main() -> None:
     test_cr002_manual_lock_and_deprecated_are_not_silently_overridden()
     test_experience_revision_proposal_output_gate_and_publication_path()
     test_experience_revision_proposal_rejects_host_fields_and_no_proposal_publication()
+    test_experience_revision_proposal_requires_publication_gates_and_skill_separation()
     test_experience_revision_proposal_rejects_stale_base_and_duplicate_hash()
     test_inferred_preference_candidate_stays_unpublished_with_evidence_refs()
     test_inferred_preference_candidate_rejects_cr002_tactic_and_proposal_evidence()
     test_inferred_preference_candidate_rejects_auto_publish_even_when_calibrated()
+    test_fault_injection_rolls_back_proposal_publication_without_partial_side_effects()
+    test_clean_room_boundaries_preserve_skill_and_preference_separation()
     print("GOAL-09 experiment metric verification passed")
 
 

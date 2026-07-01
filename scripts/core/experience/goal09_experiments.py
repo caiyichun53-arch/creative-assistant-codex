@@ -59,6 +59,8 @@ INFERRED_PREFERENCE_EVIDENCE_KINDS = frozenset(
         "goal09_experiment_result",
     }
 )
+PROPOSAL_PUBLICATION_GATES = frozenset({"regression", "ablation", "compatibility", "provenance"})
+SKILL_OBJECT_KINDS = frozenset({"formal_skill", "candidate_skill"})
 
 
 @dataclass(frozen=True)
@@ -255,6 +257,8 @@ class ExperienceRevisionProposalPublishCommand:
     trigger: ProposalTrigger
     base_version_refs: tuple[VersionRef, ...]
     evidence_refs: tuple[VersionRef, ...]
+    validation_gate_refs: tuple[VersionRef, ...]
+    validation_gate_results: dict[str, bool]
     skill_run_ref: VersionRef | None = None
     correlation_id: str | None = None
     causation_id: str | None = None
@@ -265,6 +269,8 @@ class ExperienceRevisionProposalPublishCommand:
             "trigger": self.trigger.as_payload(),
             "base_version_refs": [ref.as_payload() for ref in self.base_version_refs],
             "evidence_refs": [ref.as_payload() for ref in self.evidence_refs],
+            "validation_gate_refs": [ref.as_payload() for ref in self.validation_gate_refs],
+            "validation_gate_results": self.validation_gate_results,
             "skill_run_ref": self.skill_run_ref.as_payload() if self.skill_run_ref else None,
         }
 
@@ -428,6 +434,8 @@ class ExperimentMaterializer:
                 "trigger": command.trigger.as_payload(),
                 "base_version_refs": [ref.as_payload() for ref in command.base_version_refs],
                 "evidence_refs": [ref.as_payload() for ref in command.evidence_refs],
+                "validation_gate_refs": [ref.as_payload() for ref in command.validation_gate_refs],
+                "validation_gate_results": command.validation_gate_results,
                 "skill_run_ref": command.skill_run_ref.as_payload() if command.skill_run_ref else None,
             }
             version_id = self.store.append_version(
@@ -442,7 +450,7 @@ class ExperimentMaterializer:
                 },
             )
             self.store.set_current_version(root_id, version_id)
-            for ref in (*command.base_version_refs, *command.evidence_refs):
+            for ref in (*command.base_version_refs, *command.evidence_refs, *command.validation_gate_refs):
                 self._record_ref(version_id, ref)
             if command.skill_run_ref:
                 self._record_ref(version_id, command.skill_run_ref)
@@ -669,11 +677,18 @@ class ExperimentMaterializer:
             raise ExperimentError("base_version_refs are required")
         if not command.evidence_refs:
             raise ExperimentError("evidence_refs are required")
-        for ref in (*command.base_version_refs, *command.evidence_refs):
+        if not command.validation_gate_refs:
+            raise ExperimentError("validation_gate_refs are required")
+        for ref in (*command.base_version_refs, *command.evidence_refs, *command.validation_gate_refs):
             _validate_version_ref(ref)
         if command.skill_run_ref:
             _validate_version_ref(command.skill_run_ref)
         validate_experience_revision_proposal_output(command.output, command.trigger)
+        _validate_proposal_publication_gates(command.validation_gate_results)
+        _validate_formal_candidate_skill_separation(
+            (*command.base_version_refs, *command.evidence_refs, *command.validation_gate_refs)
+            + ((command.skill_run_ref,) if command.skill_run_ref else ())
+        )
 
     def _validate_inferred_preference_command(self, command: InferredPreferenceCandidateCommand) -> None:
         if not command.profile_id:
@@ -852,6 +867,20 @@ def _reject_forbidden_proposal_keys(value: Any) -> None:
     elif isinstance(value, (list, tuple)):
         for item in value:
             _reject_forbidden_proposal_keys(item)
+
+
+def _validate_proposal_publication_gates(results: dict[str, bool]) -> None:
+    if set(results) != PROPOSAL_PUBLICATION_GATES:
+        raise ExperimentError("proposal publication requires regression, ablation, compatibility and provenance gates")
+    failed = [gate for gate, passed in results.items() if passed is not True]
+    if failed:
+        raise ExperimentError(f"proposal publication gates failed: {failed}")
+
+
+def _validate_formal_candidate_skill_separation(refs: tuple[VersionRef, ...]) -> None:
+    for ref in refs:
+        if ref.target_object_kind in SKILL_OBJECT_KINDS:
+            raise ExperimentError("proposal publication cannot publish or mutate Skill repositories")
 
 
 def _validate_experience_state_input(command: ExperienceStateInput) -> None:
