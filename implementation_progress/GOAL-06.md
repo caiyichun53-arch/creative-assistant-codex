@@ -2,7 +2,7 @@
 
 goal: GOAL-06 Formal Research Port and Materialization Baseline
 
-status: `GOAL-06_IN_PROGRESS`
+status: `GOAL-06_COMPLETE_WAITING_USER_APPROVAL`
 
 source_commit: `b4766ce1ca48e65018d7ef8e87f4556dbdfcd9d1`
 
@@ -35,11 +35,17 @@ branch: `codex/goal-05-v0.6.2`
   - materializes traceable research plan/source/fetch/evidence/artifact records;
   - rejects video-platform/video/audio/ASR/comment sources before materialization;
   - proves repeated runs append history without in-place overwrite.
+- Added topic-first research workflow enqueueing on top of the GOAL-05 orchestrator:
+  - `start_topic_first_research_workflow(...)` creates a single formal research workflow step.
+  - `make_formal_research_runtime_handler(...)` runs the formal research service through a local runtime handler.
+  - The handler persists formal research output through `FormalResearchMaterializer`, not through an adapter-owned state write.
+- Verified topic-first research workflow enqueue, idempotent replay and GOAL-04 runtime dispatch.
+- Created `GOAL-06_VALIDATION_REPORT.md`.
 
 ## Remaining Checkpoints
 
-- Add topic-first research workflow enqueueing only after the formal research materialization contract is stable.
-- Add GOAL-06 closeout report after all local GOAL-06 gates pass.
+- None inside the current GOAL-06 local scope.
+- Future real provider/site live or shadow tests are external gates only and are not required for the local core closeout.
 
 ## Modified Files
 
@@ -48,6 +54,7 @@ branch: `codex/goal-05-v0.6.2`
 - `scripts/core/research/__init__.py`
 - `scripts/core/research/goal06_formal_research.py`
 - `scripts/core/research/verify_goal_06.py`
+- `GOAL-06_VALIDATION_REPORT.md`
 
 ## Migration Changes
 
@@ -61,22 +68,27 @@ branch: `codex/goal-05-v0.6.2`
   - exit_code: 0
 - `git diff --check`
   - exit_code: 0
+- `git diff --cached --check`
+  - exit_code: 0
 
 ## Test Results
 
 - PASS fake formal research materializes traceable artifacts.
 - PASS video platform source rejected before materialization.
 - PASS repeated research runs append history without overwrite.
+- PASS topic-first research workflow enqueue and runtime dispatch.
 - GOAL-06 verification passed.
 
 ## Fixture/Replay Coverage
 
 - Covered by fake search provider, replay fetcher and fixture extractor in `scripts/core/research/verify_goal_06.py`.
 - No real website, search provider, model, credential, video, audio, ASR, comment or video-analysis artifact was used.
+- Workflow coverage uses in-memory GOAL-03 scheduler and GOAL-04 runtime host.
 
 ## External Live Gate
 
-- Real search providers, websites and credentials remain external live gates only.
+- None required for local GOAL-06 closeout.
+- Future real search provider/site live or shadow tests must be recorded separately and must not be treated as local core blockers.
 
 ## Real Blockers
 
@@ -84,12 +96,13 @@ branch: `codex/goal-05-v0.6.2`
 
 ## Next Resume Point
 
-- Continue with checkpoint 3: topic-first research workflow enqueueing on top of the GOAL-06 materialization contract.
+- Await user approval before any GOAL-07 work.
 
 ## Checkpoint Commit
 
 - This round checkpoint commit subject: `Start GOAL-06 formal research ports`
+- This round checkpoint commit subject: `Close GOAL-06 formal research baseline`
 
 ## GOAL-07 Permission
 
-- Not allowed. GOAL-06 is still in progress.
+- Not allowed until the user approves GOAL-06.

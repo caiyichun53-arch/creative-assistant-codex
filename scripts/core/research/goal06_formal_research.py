@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from scripts.core.persistence.goal01_store import PersistenceStore, content_hash
+from scripts.core.workflow.goal05_workflow import Goal05WorkflowOrchestrator, WorkflowStartResult, WorkflowStepSpec
 
 
 class ResearchBoundaryError(RuntimeError):
@@ -12,6 +13,8 @@ class ResearchBoundaryError(RuntimeError):
 
 BLOCKED_SOURCE_TYPES = frozenset({"video", "audio", "asr", "comment", "video_analysis"})
 BLOCKED_PLATFORMS = frozenset({"douyin", "tiktok", "bilibili", "xiaohongshu", "kuaishou"})
+GOAL06_TOPIC_FIRST_JOB_KIND = "research.formal.topic_first"
+GOAL06_TOPIC_FIRST_WORKFLOW = "research.formal.topic_first"
 
 
 @dataclass(frozen=True)
@@ -320,3 +323,49 @@ class FormalResearchService:
             documents=documents,
             evidence=evidence,
         )
+
+
+def start_topic_first_research_workflow(
+    *,
+    orchestrator: Goal05WorkflowOrchestrator,
+    topic_id: str,
+    query: str,
+    idempotency_key: str,
+    priority: int = 0,
+) -> WorkflowStartResult:
+    if not topic_id:
+        raise ResearchBoundaryError("topic_id is required")
+    if not query:
+        raise ResearchBoundaryError("query is required")
+    if not idempotency_key:
+        raise ResearchBoundaryError("idempotency_key is required")
+    return orchestrator.start_workflow(
+        workflow_name=GOAL06_TOPIC_FIRST_WORKFLOW,
+        steps=(
+            WorkflowStepSpec(
+                step_key="formal_research",
+                job_kind=GOAL06_TOPIC_FIRST_JOB_KIND,
+                payload={"topic_id": topic_id, "query": query, "purpose": "formal_topic_research"},
+                priority=priority,
+                max_attempts=3,
+            ),
+        ),
+        idempotency_key=idempotency_key,
+    )
+
+
+def make_formal_research_runtime_handler(service: FormalResearchService):
+    def handle(payload: dict[str, object]) -> dict[str, object]:
+        topic_id = str(payload.get("topic_id") or "")
+        query = str(payload.get("query") or "")
+        purpose = str(payload.get("purpose") or "formal_topic_research")
+        run = service.run(ResearchQuery(topic_id=topic_id, query=query, purpose=purpose))
+        return {
+            "plan_version_id": run.plan_version_id,
+            "artifact_version_id": run.artifact_version_id,
+            "source_count": len(run.source_version_ids),
+            "fetch_count": len(run.fetch_version_ids),
+            "evidence_count": len(run.evidence_version_ids),
+        }
+
+    return handle

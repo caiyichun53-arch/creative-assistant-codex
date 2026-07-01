@@ -8,15 +8,21 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.core.persistence.goal01_store import PersistenceStore, UUIDv7Generator
+from scripts.core.runtime.goal04_runtime_host import RuntimeHandlerContract, RuntimeHost
+from scripts.core.scheduler.goal03_scheduler import Goal03Scheduler
 from scripts.core.research.goal06_formal_research import (
     ExtractedEvidence,
     FetchedDocument,
     FormalResearchMaterializer,
     FormalResearchService,
+    GOAL06_TOPIC_FIRST_JOB_KIND,
     ResearchBoundaryError,
     ResearchQuery,
     SearchResult,
+    make_formal_research_runtime_handler,
+    start_topic_first_research_workflow,
 )
+from scripts.core.workflow.goal05_workflow import Goal05WorkflowOrchestrator
 
 
 class FakeSearchProvider:
@@ -176,10 +182,73 @@ def test_repeated_runs_append_history_without_overwrite() -> None:
     print("PASS repeated research runs append history without overwrite")
 
 
+def test_topic_first_workflow_enqueue_and_dispatch() -> None:
+    generator = UUIDv7Generator(now_ms=lambda: 1_770_000_000_000, randbits=lambda bits: 42)
+    scheduler = Goal03Scheduler.in_memory(id_factory=generator.new, now_ms=lambda: 1_770_000_000_000)
+    orchestrator = Goal05WorkflowOrchestrator(scheduler)
+    host = RuntimeHost(scheduler, worker_id="goal06-research-worker")
+
+    result = SearchResult(
+        result_id="source-1",
+        title="Workflow formal source",
+        url="https://example.org/workflow-formal-source",
+        provider="fixture",
+    )
+    document = FetchedDocument(
+        result_id="source-1",
+        url=result.url,
+        title=result.title,
+        text="Workflow replayed non-video source.",
+        fetched_at="2026-07-01T00:00:00Z",
+        fetcher="replay-fetcher",
+    )
+    service = FormalResearchService(
+        provider=FakeSearchProvider([result]),
+        fetcher=ReplayFetcher({"source-1": document}),
+        extractor=FixtureExtractor(),
+        materializer=FormalResearchMaterializer(scheduler.store),
+    )
+    host.register_handler(
+        GOAL06_TOPIC_FIRST_JOB_KIND,
+        make_formal_research_runtime_handler(service),
+        contract=RuntimeHandlerContract(
+            job_kind=GOAL06_TOPIC_FIRST_JOB_KIND,
+            required_payload_keys=("topic_id", "query", "purpose"),
+            required_result_keys=("plan_version_id", "artifact_version_id", "evidence_count"),
+        ),
+    )
+
+    started = start_topic_first_research_workflow(
+        orchestrator=orchestrator,
+        topic_id="topic-4",
+        query="workflow fixture",
+        idempotency_key="goal06-topic-4",
+    )
+    replay = start_topic_first_research_workflow(
+        orchestrator=orchestrator,
+        topic_id="topic-4",
+        query="workflow fixture",
+        idempotency_key="goal06-topic-4",
+    )
+    assert started.workflow_id == replay.workflow_id
+    assert started.job_ids == replay.job_ids
+    assert replay.replayed
+
+    runtime_result = host.run_once()
+    assert runtime_result.status == "succeeded"
+    job = scheduler.get_job(started.job_ids[0])
+    assert job["status"] == "succeeded"
+    assert scheduler.store.conn.execute(
+        "SELECT count(*) FROM trace_root WHERE object_kind='research_artifact'"
+    ).fetchone()[0] == 1
+    print("PASS topic-first research workflow enqueue and runtime dispatch")
+
+
 def main() -> None:
     test_fake_research_materializes_traceable_artifacts()
     test_video_sources_rejected_before_materialization()
     test_repeated_runs_append_history_without_overwrite()
+    test_topic_first_workflow_enqueue_and_dispatch()
     print("GOAL-06 verification passed")
 
 
