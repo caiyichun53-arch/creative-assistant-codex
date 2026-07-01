@@ -11,6 +11,12 @@ branch: `codex/goal-07-v0.6.2`
 GOAL-06_inherited_commit:
   `89e0f028553b78dc870e25dd9b5bd15120ac1208`
 
+validated_code_commit:
+  `6cd1a93f0bfcfb57b8b06f96b8fffcbf20f71bc1`
+
+goal_status:
+  `GOAL-07_COMPLETE_WAITING_USER_APPROVAL`
+
 ## Starting Checks
 
 - User approved GOAL-06 and allowed GOAL-07.
@@ -48,6 +54,11 @@ GOAL-06_inherited_commit:
   - Runner invokes ModelGateway and does not receive a persistence store;
   - the integrated path writes only `model_run_envelope` through `ModelRunMaterializer`;
   - no command receipt, outbox, binding manifest or preference state is written.
+- Final closeout added explicit local gates for:
+  - correlation id traceability in Run Envelope payloads;
+  - provider timeout failure envelopes;
+  - Portable Skill immutability/no publish method;
+  - repeated execution appending envelopes without duplicate formal business side effects.
 
 ## Remaining Checkpoints
 
@@ -61,6 +72,7 @@ GOAL-06_inherited_commit:
 - `scripts/core/model_gateway/goal07_model_gateway.py`
 - `scripts/core/model_gateway/goal07_skill_runner.py`
 - `scripts/core/model_gateway/verify_goal_07.py`
+- `GOAL-07_VALIDATION_REPORT.md`
 
 ## Migration Changes
 
@@ -70,24 +82,43 @@ GOAL-06_inherited_commit:
 
 - `python scripts/core/model_gateway/verify_goal_07.py`
   - exit_code: 0
+  - tests: 9
+  - failures: 0
+  - real_external_credentials_used: no
+  - external_side_effects: none
 - `python -m py_compile scripts/core/model_gateway/__init__.py scripts/core/model_gateway/goal07_model_gateway.py scripts/core/model_gateway/goal07_skill_runner.py scripts/core/model_gateway/verify_goal_07.py`
   - exit_code: 1
   - result: local `__pycache__` write denied on Windows; not a code compile error.
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'goal07_pycache'; python -m py_compile scripts/core/model_gateway/__init__.py scripts/core/model_gateway/goal07_model_gateway.py scripts/core/model_gateway/goal07_skill_runner.py scripts/core/model_gateway/verify_goal_07.py`
   - exit_code: 0
+  - files_checked: 4
+  - failures: 0
+  - real_external_credentials_used: no
+  - external_side_effects: none
 - `git diff --check`
   - exit_code: 0
+  - failures: 0
+  - real_external_credentials_used: no
+  - external_side_effects: none
 
 ## Test Results
 
 - PASS fake provider records traceable run envelope.
 - PASS unknown route rejected before provider execution.
 - PASS provider failure records failed run envelope.
+- PASS provider timeout records failed run envelope.
 - PASS portable skill clean-room rejects host/database leaks.
+- PASS portable skill clean-room rejects host/database leaks and self-modification.
 - PASS host binding maps inputs without leaking host identity.
 - PASS runner executes portable skill through ModelGateway contract.
 - PASS integration only writes run envelope through Materializer.
+- PASS repeated execution appends envelopes without formal side effects.
 - GOAL-07 ModelGateway verification passed.
+
+## External Live Gate
+
+- None required for local GOAL-07 closeout.
+- Real model provider live or shadow tests are external gates only and are not local core blockers.
 
 ## Real Blockers
 
@@ -102,3 +133,8 @@ GOAL-06_inherited_commit:
 - This round checkpoint commit subject: `Start GOAL-07 formal model gateway`
 - This round checkpoint commit subject: `Add GOAL-07 portable skill runner contract`
 - This round checkpoint commit subject: `Close GOAL-07 model gateway boundary`
+- This round checkpoint commit subject: `test(goal-07): cover timeout and repeat gates`
+
+## GOAL-08 Permission
+
+- `false`; waiting for user approval.
