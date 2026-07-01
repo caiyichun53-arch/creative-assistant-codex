@@ -69,16 +69,19 @@ GOAL-07_validated_code_commit:
   - Review artifacts must point to the exact script or approved draft version being reviewed.
   - Rejection artifacts must point to the exact script or approved draft version being rejected.
   - Rejection evidence refs are recorded on the rejection artifact without mutating the reviewed content version.
+- Checkpoint 4 complete: fault and replay gates.
+  - Repeated idempotency keys replay without duplicate formal side effects.
+  - Changed payloads under the same idempotency key are rejected.
+  - Injected publication capture failures roll back formal versions, refs, receipts and outbox state.
 
 ## Remaining Checkpoints
 
-- Fault and replay gates for changed idempotency payloads and injected failures.
 - GOAL-08 validation report.
 - GOAL-08 clean-room proof.
 
 ## Current Resume Point
 
-- Resume at GOAL-08 ExecPlan checkpoint 4: fault and replay gates.
+- Resume at GOAL-08 ExecPlan checkpoint 5: GOAL-08 closeout.
 
 ## Modified Files
 
@@ -100,7 +103,7 @@ GOAL-07_validated_code_commit:
   - exit_code: 0
 - `python scripts/core/production/verify_goal_08.py`
   - exit_code: 0
-  - tests: 3
+  - tests: 4
   - real_external_credentials_used: no
   - external_side_effects: none
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'goal08_pycache'; python -m py_compile scripts/core/production/__init__.py scripts/core/production/goal08_production_chain.py scripts/core/production/verify_goal_08.py`
@@ -115,6 +118,8 @@ GOAL-07_validated_code_commit:
 - Manual edit creates a candidate preference revision without publishing it as current preference.
 - Review and rejection artifacts point to concrete reviewed version IDs.
 - Rejection provenance does not mutate the reviewed content version.
+- Changed idempotency payloads are rejected with `IdempotencyConflict`.
+- Injected publication capture receipt failure leaves no partial formal publication state.
 
 ## PostgreSQL Gate
 
@@ -135,10 +140,11 @@ GOAL-07_validated_code_commit:
 - `b9cf4d16364616fc9bc15ba7a7c57ce4a37700fe` - docs(goal-08): record formal definition blocker
 - `d4e496034e43b934584bc7ec21cc594ccb7de39b` - docs(goal-08): restore formal task definition
 - `af4ecddfc1e08428036d434b824c56ec0c8fbc82` - feat(goal-08): add production version chain materializer
+- `d99326e7283c92472f72ba9ba44a0d18c6e50f6d` - feat(goal-08): add review rejection provenance
 
 ## Next First Unfinished Checkpoint
 
-- Fault and replay gates.
+- GOAL-08 closeout.
 
 ## GOAL-09 Permission
 

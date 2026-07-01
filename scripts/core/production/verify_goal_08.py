@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -17,7 +18,12 @@ from scripts.core.model_gateway.goal07_model_gateway import (  # noqa: E402
     ModelUsage,
 )
 from scripts.core.model_gateway.goal07_skill_runner import PortableSkillRunner, PortableSkillSpec  # noqa: E402
-from scripts.core.persistence.goal01_store import PersistenceStore, UUIDv7Generator, content_hash  # noqa: E402
+from scripts.core.persistence.goal01_store import (  # noqa: E402
+    IdempotencyConflict,
+    PersistenceStore,
+    UUIDv7Generator,
+    content_hash,
+)
 from scripts.core.production.goal08_production_chain import (  # noqa: E402
     PreferenceCandidateCommand,
     ProductionArtifactCommand,
@@ -415,10 +421,144 @@ def test_review_and_rejection_point_to_exact_reviewed_versions() -> None:
     print("PASS GOAL-08 review/rejection provenance points to exact reviewed versions")
 
 
+def test_fault_and_replay_gates_reject_conflicts_and_rollback_failures() -> None:
+    store = make_store()
+    materializer = ProductionVersionChainMaterializer(store)
+    _evidence_root, _evidence_version, evidence_ref = create_evidence(store)
+
+    command = ProductionArtifactCommand(
+        artifact_kind="script",
+        topic_id="topic-11",
+        actor="writer",
+        idempotency_key="topic-11-script-v1",
+        content_payload={"text": "stable script"},
+        evidence_refs=(evidence_ref,),
+    )
+    script = materializer.materialize_artifact(command)
+    replay = materializer.materialize_artifact(command)
+    assert replay.replayed
+    assert replay.version_id == script.version_id
+    assert store.conn.execute(
+        "SELECT count(*) FROM command_receipt WHERE idempotency_key='topic-11-script-v1'"
+    ).fetchone()[0] == 1
+
+    try:
+        materializer.materialize_artifact(
+            ProductionArtifactCommand(
+                artifact_kind="script",
+                topic_id="topic-11",
+                actor="writer",
+                idempotency_key="topic-11-script-v1",
+                content_payload={"text": "changed under same key"},
+                evidence_refs=(evidence_ref,),
+            )
+        )
+    except IdempotencyConflict:
+        pass
+    else:
+        raise AssertionError("expected changed idempotency payload rejection")
+
+    approved_draft = materializer.materialize_artifact(
+        ProductionArtifactCommand(
+            artifact_kind="approved_draft",
+            topic_id="topic-11",
+            actor="editor",
+            idempotency_key="topic-11-approved-draft-v1",
+            content_payload={"text": "approved publication text"},
+            evidence_refs=(
+                VersionRef(
+                    relation_role="approved_script_version",
+                    target_object_kind="production_script",
+                    target_stable_id=script.root_id,
+                    target_version_id=script.version_id,
+                    locator={"topic_id": "topic-11"},
+                ),
+            ),
+        )
+    )
+    before = {
+        "roots": store.conn.execute(
+            "SELECT count(*) FROM trace_root WHERE object_kind='production_publication_capture'"
+        ).fetchone()[0],
+        "versions": store.conn.execute(
+            """
+            SELECT count(*)
+              FROM trace_version v
+              JOIN trace_root r ON r.root_id=v.root_id
+             WHERE r.object_kind='production_publication_capture'
+            """
+        ).fetchone()[0],
+        "refs": store.conn.execute("SELECT count(*) FROM object_reference").fetchone()[0],
+        "outbox": store.conn.execute(
+            "SELECT count(*) FROM outbox_message WHERE topic='goal08.production_artifact.materialized'"
+        ).fetchone()[0],
+    }
+    store.conn.execute(
+        """
+        CREATE TEMP TRIGGER fail_goal08_publication_receipt
+        BEFORE INSERT ON command_receipt
+        WHEN NEW.command_scope='goal08.production_chain'
+         AND NEW.idempotency_key='topic-11-publication-fail'
+        BEGIN
+            SELECT RAISE(ABORT, 'injected receipt failure');
+        END
+        """
+    )
+    try:
+        materializer.materialize_artifact(
+            ProductionArtifactCommand(
+                artifact_kind="publication_capture",
+                topic_id="topic-11",
+                actor="publisher",
+                idempotency_key="topic-11-publication-fail",
+                content_payload={"text": "publication text that must rollback"},
+                evidence_refs=(
+                    VersionRef(
+                        relation_role="published_from_approved_draft",
+                        target_object_kind="production_approved_draft",
+                        target_stable_id=approved_draft.root_id,
+                        target_version_id=approved_draft.version_id,
+                        locator={"topic_id": "topic-11", "platform": "fixture"},
+                    ),
+                ),
+            )
+        )
+    except sqlite3.IntegrityError as exc:
+        assert "injected receipt failure" in str(exc)
+    else:
+        raise AssertionError("expected injected failure")
+    finally:
+        store.conn.execute("DROP TRIGGER fail_goal08_publication_receipt")
+
+    after = {
+        "roots": store.conn.execute(
+            "SELECT count(*) FROM trace_root WHERE object_kind='production_publication_capture'"
+        ).fetchone()[0],
+        "versions": store.conn.execute(
+            """
+            SELECT count(*)
+              FROM trace_version v
+              JOIN trace_root r ON r.root_id=v.root_id
+             WHERE r.object_kind='production_publication_capture'
+            """
+        ).fetchone()[0],
+        "refs": store.conn.execute("SELECT count(*) FROM object_reference").fetchone()[0],
+        "outbox": store.conn.execute(
+            "SELECT count(*) FROM outbox_message WHERE topic='goal08.production_artifact.materialized'"
+        ).fetchone()[0],
+    }
+    assert after == before
+    assert store.conn.execute(
+        "SELECT count(*) FROM command_receipt WHERE idempotency_key='topic-11-publication-fail'"
+    ).fetchone()[0] == 0
+    print("PASS GOAL-08 fault/replay gates reject conflicts and rollback injected publication failures")
+
+
 def main() -> None:
     test_content_versions_are_immutable_and_replay_safe()
     test_approval_publication_and_preference_candidate_are_separate()
     test_review_and_rejection_point_to_exact_reviewed_versions()
+    test_fault_and_replay_gates_reject_conflicts_and_rollback_failures()
     print("GOAL-08 production chain verification passed")
 
 
