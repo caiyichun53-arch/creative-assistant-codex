@@ -1,0 +1,54 @@
+goal: GOAL-BUSINESS-SKILL-CONTENT-RELATION-JUDGE-01
+status: COMPLETED
+formal_skill_id: content_relation_judge
+logical_route: business.content_relation_judgement
+provider_type: hermes
+actual_model: xiaomi/mimo-v2.5-pro
+model_gateway_used: true
+live_model_port_used: true
+actual_call_count: 1
+dry_run_fallback: false
+fake_port_fallback: false
+schema_validation: passed
+relation_type: contains
+relation_direction: left_contains_right
+confidence: high
+provider_request_id_status: available
+usage_status: available
+prompt_tokens: 497
+completion_tokens: 192
+total_tokens: 689
+cost_status: not_reported
+latency_ms: 4874
+retry_count: 0
+max_retries: 0
+idempotent_replay: true
+idempotent_replay_second_live_call: false
+worker_second_run_status: idle
+formal_result_count: 1
+outbox_success_event_count: 1
+feishu_dispatched: false
+preflight:
+  preflight: passed
+  gate_id: GATE-MODEL-PROVIDER
+  provider: hermes
+  billing_mode: subscription
+  monetary_cost_cap: not_applicable
+  live_call_limit: 1
+  max_retries: 0
+  timeout_ms: 30000
+  gate_max_output_tokens: 128
+  required_fields:
+  - MODEL_PROVIDER_API_KEY
+  - MODEL_PROVIDER_BASE_URL
+  - MODEL_PROVIDER_MODEL
+  optional_fields:
+  - MODEL_PROVIDER_PROJECT_ID
+  - MODEL_PROVIDER_COST_CAP
+job_id: 019f24d5-537f-7cde-b481-96157121b1b9
+correlation_id: 019f24d5-537e-76dd-b565-f6f8facbe58c
+model_run_envelope_version_id: 019f24d5-668a-7c7d-871b-d7293682820b
+clean_room_formal_db:
+  table_count: 20
+  total_rows: 0
+direct_cli_model_call_in_runtime_path: false

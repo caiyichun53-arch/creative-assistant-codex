@@ -1,0 +1,59 @@
+type: object
+required:
+  - request_id
+  - correlation_id
+  - left_content
+  - right_content
+  - left_evidence_items
+  - right_evidence_items
+  - domain_context
+  - relation_scope
+  - schema_version
+properties:
+  request_id:
+    type: string
+    minLength: 1
+    maxLength: 80
+  correlation_id:
+    type: string
+    minLength: 1
+    maxLength: 80
+  left_content:
+    type: string
+    maxLength: 1200
+  right_content:
+    type: string
+    maxLength: 1200
+  left_evidence_items:
+    type: array
+    minItems: 0
+    maxItems: 8
+    items:
+      type: string
+      minLength: 1
+      maxLength: 240
+  right_evidence_items:
+    type: array
+    minItems: 0
+    maxItems: 8
+    items:
+      type: string
+      minLength: 1
+      maxLength: 240
+  domain_context:
+    type: string
+    enum:
+      - fan_kepu_social_life
+      - music_entertainment
+      - third_domain_neutral
+      - cross_domain
+      - unknown
+  relation_scope:
+    type: string
+    enum:
+      - content_object
+      - evidence_unit
+  schema_version:
+    type: string
+    const: content_relation_judge.input.v1
+additional_properties: false

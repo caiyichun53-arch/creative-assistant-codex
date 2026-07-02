@@ -3,9 +3,10 @@
 status: `COMPLETED`
 
 ## Registry
-- formal_business_llm_node_count: `10`
+- formal_business_llm_node_count: `11`
 - logical_routes:
   - `business.ai_flavor_judge`
+  - `business.content_relation_judgement`
   - `business.creation_draft`
   - `business.creation_hook`
   - `business.creation_outline`
@@ -52,8 +53,8 @@ status: `COMPLETED`
 - file_or_terminal_side_effects_disabled: `True`
 
 ## Fixture Route Tests
-- tested_node_count: `10`
-- fixture_provider_call_count: `10`
+- tested_node_count: `11`
+- fixture_provider_call_count: `11`
 - outbox_count: `0`
 
 ## Clean Room

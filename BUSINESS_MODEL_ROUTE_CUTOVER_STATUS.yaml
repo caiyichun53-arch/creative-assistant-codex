@@ -1,9 +1,10 @@
 goal: GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01
 status: COMPLETED
 registry:
-  node_count: 10
+  node_count: 11
   logical_routes:
   - business.ai_flavor_judge
+  - business.content_relation_judgement
   - business.creation_draft
   - business.creation_hook
   - business.creation_outline
@@ -17,6 +18,10 @@ fixture_route_tests:
   tested_nodes:
   - node_id: topic_judgement
     logical_route: business.topic_judgement
+    provider_name: hermes
+    schema_validation: passed
+  - node_id: content_relation_judgement
+    logical_route: business.content_relation_judgement
     provider_name: hermes
     schema_validation: passed
   - node_id: research_synthesis
@@ -55,7 +60,7 @@ fixture_route_tests:
     logical_route: business.ai_flavor_judge
     provider_name: hermes
     schema_validation: passed
-  fixture_provider_call_count: 10
+  fixture_provider_call_count: 11
   outbox_count: 0
 direct_model_call_scan:
   formal_production_direct_model_call_count: 0

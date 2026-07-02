@@ -62,6 +62,46 @@ nodes:
         schema_version: string
       additional_properties: false
 
+  - node_id: content_relation_judgement
+    logical_route: business.content_relation_judgement
+    capability_tier: fast_reasoning
+    source_evidence:
+      - GOAL-BUSINESS-SKILL-CONTENT-RELATION-JUDGE-01 semantic ruling: content_relation_judge v1 formal relation taxonomy and directionality.
+      - AGENTS.md: LLM allowed only in generated judgement nodes inside fixed routes.
+    timeout_ms: 30000
+    retry:
+      max_attempts: 1
+      retry_on: []
+    token_context_budget:
+      max_input_tokens: 2400
+      max_output_tokens: 900
+    allowed_provider_policy:
+      inherit: provider_policy_defaults
+    fallback_policy:
+      inherit: provider_policy_defaults.fallback_policy
+    input_schema:
+      type: object
+      required: [fixture_id, left_content, right_content, left_evidence_refs, right_evidence_refs, relation_types]
+      properties:
+        fixture_id: string
+        left_content: string
+        right_content: string
+        left_evidence_refs: array
+        right_evidence_refs: array
+        relation_types: array
+      additional_properties: false
+    output_schema:
+      type: object
+      required: [relation_type, relation_direction, confidence, evidence_from_left, evidence_from_right, schema_version]
+      properties:
+        relation_type: string
+        relation_direction: string
+        confidence: string
+        evidence_from_left: array
+        evidence_from_right: array
+        schema_version: string
+      additional_properties: false
+
   - node_id: research_synthesis
     logical_route: business.research_synthesis
     capability_tier: deep_reasoning

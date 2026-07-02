@@ -44,6 +44,8 @@ FORMAL_MAPPING_PATH = ROOT / "FORMAL_SKILL_ROUTE_MAPPING.yaml"
 FIRST_CONTRACT_PATH = ROOT / "FIRST_FORMAL_SKILL_CONTRACT.yaml"
 CONTENT_CLASSIFY_CONTRACT_PATH = ROOT / "CONTENT_CLASSIFY_BUSINESS_CONTRACT.yaml"
 CONTENT_CLASSIFY_FIXTURES_PATH = ROOT / "runtime_skills" / "content_classify" / "fixtures.yaml"
+CONTENT_RELATION_JUDGE_CONTRACT_PATH = ROOT / "CONTENT_RELATION_JUDGE_BUSINESS_CONTRACT.yaml"
+CONTENT_RELATION_JUDGE_FIXTURES_PATH = ROOT / "runtime_skills" / "content_relation_judge" / "fixtures.yaml"
 STATUS_PATH = ROOT / "CONTENT_CLASSIFY_STATUS.yaml"
 REPORT_PATH = ROOT / f"{GOAL_ID}_VALIDATION_REPORT.md"
 PROGRESS_PATH = ROOT / "implementation_progress" / f"{GOAL_ID}.md"
@@ -53,6 +55,8 @@ SCHEMA_PATH = Path(__file__).with_name("formal_skill_adapter_schema.sqlite.sql")
 FORMAL_SKILL_JOB_KIND = "formal_skill.execute"
 FORMAL_SKILL_RESULT_SCHEMA_VERSION = "formal_business_skill_result.v1"
 CONTENT_CLASSIFY_OUTPUT_SCHEMA_VERSION = "content_classify.output.v1"
+CONTENT_RELATION_JUDGE_GOAL_ID = "GOAL-BUSINESS-SKILL-CONTENT-RELATION-JUDGE-01"
+CONTENT_RELATION_JUDGE_OUTPUT_SCHEMA_VERSION = "content_relation_judge.output.v1"
 
 BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "skill_id",
@@ -82,6 +86,45 @@ BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "test_cases",
     "completion_definition",
 }
+RELATION_BUSINESS_CONTRACT_REQUIRED_KEYS = {
+    "skill_id",
+    "skill_version",
+    "source_documents",
+    "source_sections",
+    "responsibility",
+    "non_responsibilities",
+    "relation_subject_definition",
+    "allowed_inputs",
+    "forbidden_inputs",
+    "relation_taxonomy",
+    "relation_directionality",
+    "symmetric_relations",
+    "asymmetric_relations",
+    "order_sensitivity",
+    "same_item_semantics",
+    "insufficient_evidence_semantics",
+    "no_relation_semantics",
+    "uncertainty_semantics",
+    "multiple_relation_policy",
+    "primary_relation_policy",
+    "evidence_requirements",
+    "rationale_requirements",
+    "confidence_policy",
+    "domain_scope",
+    "cross_domain_behavior",
+    "third_domain_behavior",
+    "input_length_limits",
+    "context_budget",
+    "token_budget",
+    "timeout",
+    "retry",
+    "idempotency",
+    "error_contract",
+    "technical_failure_contract",
+    "materialization_contract",
+    "fixture_cases",
+    "completion_definition",
+}
 CONCRETE_LABELS = {
     "fan_kepu_social_life",
     "music_entertainment",
@@ -90,6 +133,48 @@ CONCRETE_LABELS = {
     "not_classifiable",
 }
 PROHIBITED_RATIONALE_TERMS = ("quality", "viral", "strategy", "writing suggestion", "爆款", "质量", "创作建议")
+RELATION_TYPES = {
+    "same_item",
+    "equivalent",
+    "contains",
+    "contained_by",
+    "complementary",
+    "contradicts",
+    "related_distinct",
+    "no_relation",
+    "insufficient_evidence",
+}
+SYMMETRIC_RELATIONS = {
+    "same_item",
+    "equivalent",
+    "complementary",
+    "contradicts",
+    "related_distinct",
+    "no_relation",
+    "insufficient_evidence",
+}
+RELATION_DIRECTIONS = {
+    "same_item": "symmetric",
+    "equivalent": "symmetric",
+    "contains": "left_contains_right",
+    "contained_by": "left_contained_by_right",
+    "complementary": "symmetric",
+    "contradicts": "symmetric",
+    "related_distinct": "symmetric",
+    "no_relation": "symmetric",
+    "insufficient_evidence": "not_applicable",
+}
+RELATION_SWAP = {
+    "same_item": "same_item",
+    "equivalent": "equivalent",
+    "contains": "contained_by",
+    "contained_by": "contains",
+    "complementary": "complementary",
+    "contradicts": "contradicts",
+    "related_distinct": "related_distinct",
+    "no_relation": "no_relation",
+    "insufficient_evidence": "insufficient_evidence",
+}
 
 
 class FormalSkillAdapterError(RuntimeError):
@@ -166,6 +251,8 @@ class FormalSkillContract:
         validate_schema_definition(self.model_output_schema, "model_output_schema")
         if self.formal_skill_id == "content_classify":
             validate_content_classify_business_contract(load_content_classify_business_contract())
+        if self.formal_skill_id == "content_relation_judge":
+            validate_content_relation_judge_business_contract(load_content_relation_judge_business_contract())
 
     @property
     def skill_hash(self) -> str:
@@ -221,7 +308,7 @@ class FormalBusinessSkillAdapter:
 
     def run(self, input_payload: dict[str, Any]) -> FormalSkillRunResult:
         validate_payload(input_payload, self.contract.input_schema)
-        preprocessed = preprocess_content_classify_input(input_payload) if self.contract.formal_skill_id == "content_classify" else {}
+        preprocessed = preprocess_formal_skill_input(self.contract.formal_skill_id, input_payload)
         model_input = apply_binding(self.contract.input_map, input_payload, {}, preprocessed)
         validate_payload(model_input, self.contract.model_input_schema)
         if self.contract.route_name not in self.gateway.routes:
@@ -248,11 +335,15 @@ class FormalBusinessSkillAdapter:
         model_output = parse_model_json(model_run.output_text)
         if self.contract.formal_skill_id == "content_classify":
             model_output = normalize_content_classify_model_output(model_output)
+        elif self.contract.formal_skill_id == "content_relation_judge":
+            model_output = normalize_content_relation_judge_model_output(model_output)
         validate_payload(model_output, self.contract.model_output_schema)
         output_payload = apply_binding(self.contract.output_map, input_payload, model_output, preprocessed)
         validate_payload(output_payload, self.contract.output_schema)
         if self.contract.formal_skill_id == "content_classify":
             validate_content_classify_output_semantics(input_payload, output_payload)
+        elif self.contract.formal_skill_id == "content_relation_judge":
+            validate_content_relation_judge_output_semantics(input_payload, output_payload)
         return FormalSkillRunResult(
             formal_skill_id=self.contract.formal_skill_id,
             output_payload=output_payload,
@@ -299,7 +390,30 @@ def preprocess_content_classify_input(input_payload: dict[str, Any]) -> dict[str
     }
 
 
+def preprocess_content_relation_judge_input(input_payload: dict[str, Any]) -> dict[str, Any]:
+    left = " ".join(str(input_payload.get("left_content", "")).split())
+    right = " ".join(str(input_payload.get("right_content", "")).split())
+    return {
+        "left_text": left,
+        "right_text": right,
+        "left_length": len(left),
+        "right_length": len(right),
+    }
+
+
+def preprocess_formal_skill_input(formal_skill_id: str, input_payload: dict[str, Any]) -> dict[str, Any]:
+    if formal_skill_id == "content_classify":
+        return preprocess_content_classify_input(input_payload)
+    if formal_skill_id == "content_relation_judge":
+        return preprocess_content_relation_judge_input(input_payload)
+    return {}
+
+
 def load_content_classify_business_contract(path: Path = CONTENT_CLASSIFY_CONTRACT_PATH) -> dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def load_content_relation_judge_business_contract(path: Path = CONTENT_RELATION_JUDGE_CONTRACT_PATH) -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
@@ -312,6 +426,22 @@ def load_content_classify_fixtures(path: Path = CONTENT_CLASSIFY_FIXTURES_PATH) 
         input_payload = dict(item.get("input") or {})
         if input_payload.get("body") == "PLACEHOLDER_OVERLONG_BODY":
             input_payload["body"] = "超长文本" * 320
+        item["input"] = input_payload
+        expanded.append(item)
+    return expanded
+
+
+def load_content_relation_judge_fixtures(path: Path = CONTENT_RELATION_JUDGE_FIXTURES_PATH) -> list[dict[str, Any]]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    fixtures = data.get("fixtures") or []
+    expanded: list[dict[str, Any]] = []
+    for fixture in fixtures:
+        item = dict(fixture)
+        input_payload = dict(item.get("input") or {})
+        if input_payload.get("left_content") == "PLACEHOLDER_OVERLONG_CONTENT":
+            input_payload["left_content"] = "超长关系输入" * 260
+        if input_payload.get("right_content") == "PLACEHOLDER_OVERLONG_CONTENT":
+            input_payload["right_content"] = "超长关系输入" * 260
         item["input"] = input_payload
         expanded.append(item)
     return expanded
@@ -336,6 +466,50 @@ def validate_content_classify_business_contract(data: dict[str, Any]) -> dict[st
         "skill_version": data["skill_version"],
         "source_document_count": len(data.get("source_documents") or []),
         "missing_requirement_count": len(data.get("missing_requirements") or []),
+    }
+
+
+def validate_content_relation_judge_business_contract(data: dict[str, Any]) -> dict[str, Any]:
+    missing = sorted(RELATION_BUSINESS_CONTRACT_REQUIRED_KEYS - set(data))
+    if missing:
+        raise FormalSkillValidationError(f"content_relation_judge business contract missing keys: {missing}")
+    if data.get("schema_version") != "content_relation_judge.business_contract.v1":
+        raise FormalSkillValidationError("unexpected content_relation_judge business contract schema_version")
+    if data.get("missing_requirements"):
+        raise FormalSkillValidationError("content_relation_judge business contract has missing_requirement entries")
+    if data.get("skill_id") != "content_relation_judge":
+        raise FormalSkillValidationError("content_relation_judge business contract skill_id mismatch")
+    relation_types = set((data.get("relation_taxonomy") or {}).get("relation_types") or {})
+    if relation_types != RELATION_TYPES:
+        raise FormalSkillValidationError("content_relation_judge relation taxonomy mismatch")
+    symmetric = set(data.get("symmetric_relations") or [])
+    asymmetric = set(data.get("asymmetric_relations") or [])
+    if symmetric != SYMMETRIC_RELATIONS:
+        raise FormalSkillValidationError("content_relation_judge symmetric relation set mismatch")
+    if asymmetric != {"contains", "contained_by"}:
+        raise FormalSkillValidationError("content_relation_judge asymmetric relation set mismatch")
+    priority = (data.get("primary_relation_policy") or {}).get("priority_order") or []
+    if priority != [
+        "same_item",
+        "equivalent",
+        "contradicts",
+        "contains_or_contained_by",
+        "complementary",
+        "related_distinct",
+        "no_relation",
+    ]:
+        raise FormalSkillValidationError("content_relation_judge primary relation policy mismatch")
+    allowed_nodes = data.get("allowed_model_nodes") or []
+    if allowed_nodes != ["business.content_relation_judgement"]:
+        raise FormalSkillValidationError("content_relation_judge must use only business.content_relation_judgement")
+    return {
+        "skill_id": data["skill_id"],
+        "skill_version": data["skill_version"],
+        "source_document_count": len(data.get("source_documents") or []),
+        "missing_requirement_count": len(data.get("missing_requirements") or []),
+        "relation_type_count": len(relation_types),
+        "symmetric_relation_count": len(symmetric),
+        "asymmetric_relation_count": len(asymmetric),
     }
 
 
@@ -387,6 +561,57 @@ def validate_content_classify_output_semantics(input_payload: dict[str, Any], ou
             raise FormalSkillValidationError("uncertain output must not use confidence high")
     else:
         raise FormalSkillValidationError(f"unsupported classification_status: {status}")
+
+
+def validate_content_relation_judge_output_semantics(
+    input_payload: dict[str, Any], output_payload: dict[str, Any]
+) -> None:
+    relation_type = output_payload["relation_type"]
+    direction = output_payload["relation_direction"]
+    confidence = output_payload["confidence"]
+    left_evidence = output_payload["evidence_from_left"]
+    right_evidence = output_payload["evidence_from_right"]
+    compared_dimensions = output_payload["compared_dimensions"]
+    missing_evidence = output_payload["missing_evidence"]
+    if relation_type not in RELATION_TYPES:
+        raise FormalSkillValidationError(f"unsupported relation_type: {relation_type}")
+    expected_direction = RELATION_DIRECTIONS[relation_type]
+    if direction != expected_direction:
+        raise FormalSkillValidationError(f"{relation_type} must use relation_direction {expected_direction}")
+    if not set(left_evidence).issubset(set(input_payload["left_evidence_items"])):
+        raise FormalSkillValidationError("evidence_from_left must be selected from left_evidence_items")
+    if not set(right_evidence).issubset(set(input_payload["right_evidence_items"])):
+        raise FormalSkillValidationError("evidence_from_right must be selected from right_evidence_items")
+    rationale = str(output_payload["rationale"]).lower()
+    for term in PROHIBITED_RATIONALE_TERMS:
+        if term.lower() in rationale:
+            raise FormalSkillValidationError(f"rationale contains prohibited non-relation term: {term}")
+    if "technical_failure" in rationale or relation_type == "technical_failure":
+        raise FormalSkillValidationError("technical_failure must not be materialized as a relation")
+    if relation_type == "insufficient_evidence":
+        if confidence not in {"high", "medium"}:
+            raise FormalSkillValidationError("insufficient_evidence must use high or medium confidence")
+        if not missing_evidence:
+            raise FormalSkillValidationError("insufficient_evidence must include missing_evidence")
+        return
+    if confidence == "low":
+        raise FormalSkillValidationError("low confidence must be represented as insufficient_evidence")
+    if relation_type == "no_relation":
+        if not compared_dimensions:
+            raise FormalSkillValidationError("no_relation must include compared_dimensions")
+        if missing_evidence:
+            raise FormalSkillValidationError("no_relation must not include missing_evidence")
+        return
+    if missing_evidence:
+        raise FormalSkillValidationError("concrete relation output must not include missing_evidence")
+    if not left_evidence or not right_evidence:
+        raise FormalSkillValidationError("concrete relation output requires evidence from both sides")
+    if relation_type == "same_item" and (
+        input_payload.get("left_content") != input_payload.get("right_content")
+        and input_payload.get("left_content", "").strip() != input_payload.get("right_content", "").strip()
+    ):
+        if "same public object" not in rationale:
+            raise FormalSkillValidationError("same_item requires exact normalized text or explicit same public object rationale")
 
 
 def parse_model_json(output_text: str) -> dict[str, Any]:
@@ -441,6 +666,29 @@ def normalize_content_classify_model_output(model_output: dict[str, Any]) -> dic
         and normalized.get("primary_label") in CONCRETE_LABELS
     ):
         normalized["candidate_labels"] = [normalized["primary_label"]]
+    return normalized
+
+
+def normalize_content_relation_judge_model_output(model_output: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(model_output)
+    for key in ("evidence_from_left", "evidence_from_right", "compared_dimensions", "missing_evidence"):
+        if normalized.get(key) is None:
+            normalized[key] = []
+        elif isinstance(normalized.get(key), str):
+            normalized[key] = [normalized[key]]
+    confidence = normalized.get("confidence")
+    if isinstance(confidence, (int, float)):
+        if confidence >= 0.75:
+            normalized["confidence"] = "high"
+        elif confidence >= 0.45:
+            normalized["confidence"] = "medium"
+        else:
+            normalized["confidence"] = "low"
+    elif isinstance(confidence, str):
+        normalized["confidence"] = confidence.strip().lower()
+    relation_type = normalized.get("relation_type")
+    if relation_type in RELATION_DIRECTIONS and not normalized.get("relation_direction"):
+        normalized["relation_direction"] = RELATION_DIRECTIONS[str(relation_type)]
     return normalized
 
 
@@ -738,6 +986,154 @@ class DeterministicContentClassifyModelPort:
         )
 
 
+class DeterministicContentRelationJudgeModelPort:
+    provider_name = "formal_business_skill_test_port"
+
+    def __init__(self, *, behavior: str = "success"):
+        self.behavior = behavior
+        self.call_count = 0
+
+    def complete(self, request: ModelRequest, route: ModelRoute) -> ModelProviderResult:
+        self.call_count += 1
+        behavior = self.behavior
+        if behavior == "fail_once" and self.call_count == 1:
+            raise RuntimeError("synthetic relation model port failure")
+        if behavior == "failure":
+            raise RuntimeError("synthetic relation model port failure")
+        if behavior == "empty":
+            return self._result("", request)
+        if behavior == "not_json":
+            return self._result("not-json", request)
+        if behavior == "illegal_relation_enum":
+            return self._result(json.dumps({"relation_type": "similar"}), request)
+        if behavior == "invalid_direction":
+            return self._result(
+                json.dumps(self._payload("contains", "symmetric", "high", request), ensure_ascii=False, sort_keys=True),
+                request,
+            )
+        if behavior == "evidence_not_in_input":
+            payload = self._payload("equivalent", "symmetric", "high", request)
+            payload["evidence_from_left"] = ["unseen left evidence"]
+            return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+        if behavior == "missing_field":
+            payload = self._payload("equivalent", "symmetric", "high", request)
+            payload.pop("rationale", None)
+            return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+
+        left = str(request.input_payload.get("left_content", ""))
+        right = str(request.input_payload.get("right_content", ""))
+        left_evidence = list(request.input_payload.get("left_evidence_refs") or [])
+        right_evidence = list(request.input_payload.get("right_evidence_refs") or [])
+        combined = f"{left}\n{right}".lower()
+        if not left.strip() or not right.strip() or (len(left.strip()) < 8 and len(right.strip()) < 8):
+            payload = self._payload(
+                "insufficient_evidence",
+                "not_applicable",
+                "high",
+                request,
+                left_evidence=[],
+                right_evidence=[],
+                compared=[],
+                missing=["missing_body_or_comparison_context"],
+                rationale="Input lacks enough content or comparison evidence for a reliable relation judgement.",
+            )
+        elif left.strip() == right.strip():
+            payload = self._payload("same_item", "symmetric", "high", request)
+        elif "并不是演唱会之后" in right or "不能同时成立" in combined or "之前已经完成" in right:
+            payload = self._payload(
+                "contradicts",
+                "symmetric",
+                "high",
+                request,
+                compared=["specific proposition about timing or factual claim"],
+                rationale="Both sides address the same concrete proposition and give incompatible conclusions.",
+            )
+        elif "维保停梯影响" in left and "维保停梯影响" not in right:
+            payload = self._payload("contains", "left_contains_right", "high", request)
+        elif "维保停梯影响" in right and "维保停梯影响" not in left:
+            payload = self._payload("contained_by", "left_contained_by_right", "high", request)
+        elif any(token in combined for token in ("第一波关注", "个人记忆", "临时访客", "观众合唱", "改编")):
+            payload = self._payload("complementary", "symmetric", "medium", request)
+        elif any(token in combined for token in ("上车位置", "换乘节奏")):
+            payload = self._payload("related_distinct", "symmetric", "medium", request)
+        elif self._looks_unrelated(left, right):
+            payload = self._payload(
+                "no_relation",
+                "symmetric",
+                "high",
+                request,
+                compared=["topic", "core proposition"],
+                rationale="The supplied evidence is sufficient to compare topic and proposition, and no direct content relation is present.",
+            )
+        else:
+            payload = self._payload("equivalent", "symmetric", "high", request)
+        return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+
+    @staticmethod
+    def _looks_unrelated(left: str, right: str) -> bool:
+        unrelated_pairs = (
+            ("电梯", "专辑"),
+            ("停车位", "老歌"),
+            ("砧板", "电梯"),
+            ("厨房", "电梯"),
+        )
+        return any((a in left and b in right) or (b in left and a in right) for a, b in unrelated_pairs)
+
+    @staticmethod
+    def _payload(
+        relation_type: str,
+        direction: str,
+        confidence: str,
+        request: ModelRequest,
+        *,
+        left_evidence: list[str] | None = None,
+        right_evidence: list[str] | None = None,
+        compared: list[str] | None = None,
+        missing: list[str] | None = None,
+        rationale: str | None = None,
+    ) -> dict[str, Any]:
+        left_refs = list(request.input_payload.get("left_evidence_refs") or [])
+        right_refs = list(request.input_payload.get("right_evidence_refs") or [])
+        if left_evidence is None:
+            left_evidence = left_refs[:1]
+        if right_evidence is None:
+            right_evidence = right_refs[:1]
+        if compared is None:
+            compared = ["core facts", "main information"]
+        if missing is None:
+            missing = []
+        if rationale is None:
+            rationale = f"Input evidence supports the formal {relation_type} relation."
+        return {
+            "relation_type": relation_type,
+            "relation_direction": direction,
+            "confidence": confidence,
+            "evidence_from_left": left_evidence,
+            "evidence_from_right": right_evidence,
+            "compared_dimensions": compared,
+            "missing_evidence": missing,
+            "rationale": rationale,
+            "schema_version": CONTENT_RELATION_JUDGE_OUTPUT_SCHEMA_VERSION,
+        }
+
+    @staticmethod
+    def _result(output_text: str, request: ModelRequest) -> ModelProviderResult:
+        return ModelProviderResult(
+            output_text=output_text,
+            usage=ModelUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            cost={"test": 0},
+            provider_request_id=f"fake-{request.input_payload.get('fixture_id', 'missing')}",
+            metadata={
+                "fixture": True,
+                "tools_enabled": False,
+                "memory_enabled": False,
+                "messaging_enabled": False,
+                "nested_job_orchestration_enabled": False,
+                "file_or_terminal_side_effects_enabled": False,
+            },
+        )
+
+
 class FormalBusinessSkillMaterializer:
     def __init__(self, store: PersistenceStore, *, id_factory: Callable[[], str] = uuid7):
         self.store = store
@@ -803,7 +1199,8 @@ class FormalBusinessSkillMaterializer:
         input_payload = frozen_payload["input"]
         input_hash = content_hash(input_payload, f"{contract.formal_skill_id}.input.v1")
         model_input_hash = content_hash(run_result.model_input_payload, f"{contract.formal_skill_id}.model_input.v1")
-        output_hash = content_hash(run_result.output_payload, CONTENT_CLASSIFY_OUTPUT_SCHEMA_VERSION)
+        output_schema_version = str(run_result.output_payload.get("schema_version") or f"{contract.formal_skill_id}.output.v1")
+        output_hash = content_hash(run_result.output_payload, output_schema_version)
         skill_run_id = self.id_factory()
         with self.conn:
             self.conn.execute(
@@ -838,7 +1235,7 @@ class FormalBusinessSkillMaterializer:
             )
             root_id = self.store.create_root("formal_business_skill_result")
             payload = {
-                "goal": GOAL_ID,
+                "goal": goal_for_formal_skill(contract.formal_skill_id),
                 "formal_skill_id": contract.formal_skill_id,
                 "request_id": input_payload["request_id"],
                 "correlation_id": input_payload["correlation_id"],
@@ -1120,10 +1517,16 @@ class FormalBusinessSkillHarness:
     materializer: FormalBusinessSkillMaterializer
     adapter: FormalBusinessSkillAdapter
     contract: FormalSkillContract
-    provider: DeterministicContentClassifyModelPort
+    provider: ModelProvider
 
     def close(self) -> None:
         self.store.conn.close()
+
+
+def goal_for_formal_skill(formal_skill_id: str) -> str:
+    if formal_skill_id == "content_relation_judge":
+        return CONTENT_RELATION_JUDGE_GOAL_ID
+    return GOAL_ID
 
 
 def make_content_classify_harness(
@@ -1176,6 +1579,56 @@ def make_content_classify_harness(
     )
 
 
+def make_content_relation_judge_harness(
+    *,
+    id_factory: Callable[[], str] = uuid7,
+    now_ms: Callable[[], int] | None = None,
+    monotonic_ms: Callable[[], int] | None = None,
+    provider: ModelProvider | None = None,
+    route: ModelRoute | None = None,
+) -> FormalBusinessSkillHarness:
+    contract = FormalSkillContract.from_yaml(CONTENT_RELATION_JUDGE_CONTRACT_PATH)
+    store = PersistenceStore.in_memory(id_factory=id_factory)
+    scheduler = Goal03Scheduler(store, id_factory=id_factory, now_ms=now_ms)
+    materializer = FormalBusinessSkillMaterializer(store, id_factory=id_factory)
+    provider = provider or DeterministicContentRelationJudgeModelPort()
+    if route is None:
+        route = ModelRoute(
+            route_name=contract.route_name,
+            provider_name=provider.provider_name,
+            model_name="deterministic-content-relation-judge",
+            config_version=f"{CONTENT_RELATION_JUDGE_GOAL_ID}.test.v1",
+            config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
+            timeout_ms=1000,
+        )
+    gateway = ModelGateway(
+        routes={route.route_name: route},
+        providers={route.provider_name: provider},
+        materializer=ModelRunMaterializer(store),
+        monotonic_ms=monotonic_ms,
+    )
+    adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
+    worker = FormalBusinessSkillWorker(
+        scheduler=scheduler,
+        adapter=adapter,
+        materializer=materializer,
+        contract=contract,
+        worker_id="formal-business-skill-worker",
+    )
+    api = FormalBusinessSkillCoreAPI(scheduler, contract)
+    return FormalBusinessSkillHarness(
+        store=store,
+        scheduler=scheduler,
+        api=api,
+        worker=worker,
+        gateway=gateway,
+        materializer=materializer,
+        adapter=adapter,
+        contract=contract,
+        provider=provider,
+    )
+
+
 def sample_content_classify_input(**overrides: Any) -> dict[str, Any]:
     payload = {
         "request_id": "content-classify-001",
@@ -1186,6 +1639,22 @@ def sample_content_classify_input(**overrides: Any) -> dict[str, Any]:
         "evidence_items": ["社区电梯早高峰拥堵", "通勤时间和楼层分布是解释依据"],
         "language_hint": "zh",
         "domain_hint": "fan_kepu_social_life",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def sample_content_relation_judge_input(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "request_id": "content-relation-001",
+        "correlation_id": "content-relation-correlation-001",
+        "left_content": "社区电梯早高峰拥堵来自通勤集中、楼层分布不均，还受维保停梯影响。",
+        "right_content": "社区电梯早高峰拥堵来自通勤集中和楼层分布不均。",
+        "left_evidence_items": ["通勤集中", "楼层分布不均", "维保停梯影响"],
+        "right_evidence_items": ["通勤集中", "楼层分布不均"],
+        "domain_context": "fan_kepu_social_life",
+        "relation_scope": "content_object",
+        "schema_version": "content_relation_judge.input.v1",
     }
     payload.update(overrides)
     return payload
@@ -1215,13 +1684,21 @@ def validate_formal_mapping(mapping: dict[str, Any]) -> dict[str, Any]:
     if unknown_skills:
         raise FormalSkillValidationError(f"business nodes map to unknown formal Skills: {unknown_skills}")
     first = next(item for item in formal_skills if item["formal_skill_id"] == "content_classify")
+    relation = next(item for item in formal_skills if item["formal_skill_id"] == "content_relation_judge")
     if first["status"] != "active_formal_business_skill":
         raise FormalSkillValidationError("content_classify must be the active formal business Skill")
+    if relation["status"] != "active_formal_business_skill":
+        raise FormalSkillValidationError("content_relation_judge must be an active formal business Skill")
+    if relation.get("allowed_model_nodes") != ["business.content_relation_judgement"]:
+        raise FormalSkillValidationError("content_relation_judge must map to business.content_relation_judgement")
     return {
         "formal_skill_count": len(formal_skills),
         "business_node_count": len(nodes),
         "planned_skill_count": len([item for item in formal_skills if item["formal_skill_id"] != "content_classify"]),
         "active_formal_business_skill": "content_classify",
+        "active_formal_business_skills": [
+            item["formal_skill_id"] for item in formal_skills if item["status"] == "active_formal_business_skill"
+        ],
         "unmapped_existing_business_nodes": [],
     }
 

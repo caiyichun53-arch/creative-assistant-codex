@@ -12,10 +12,14 @@ import yaml
 
 from scripts.core.model_gateway.goal07_model_gateway import ModelProviderResult, ModelUsage
 import scripts.core.model_gateway.run_content_classify_live_gate as content_live_gate
+import scripts.core.model_gateway.run_content_relation_judge_live_gate as relation_live_gate
 from scripts.core.model_gateway.business_route_registry import load_registry, scan_direct_model_calls
 from scripts.core.model_gateway.formal_skill_adapter import (
     CONTENT_CLASSIFY_OUTPUT_SCHEMA_VERSION,
+    CONTENT_RELATION_JUDGE_CONTRACT_PATH,
+    CONTENT_RELATION_JUDGE_OUTPUT_SCHEMA_VERSION,
     DeterministicContentClassifyModelPort,
+    DeterministicContentRelationJudgeModelPort,
     FormalBusinessSkillAdapter,
     FormalBusinessSkillMaterializer,
     FormalBusinessSkillWorker,
@@ -25,13 +29,20 @@ from scripts.core.model_gateway.formal_skill_adapter import (
     clean_room_status,
     load_content_classify_business_contract,
     load_content_classify_fixtures,
+    load_content_relation_judge_business_contract,
+    load_content_relation_judge_fixtures,
     load_formal_mapping,
     make_content_classify_harness,
+    make_content_relation_judge_harness,
     preprocess_content_classify_input,
+    preprocess_content_relation_judge_input,
     run_verification,
     sample_content_classify_input,
+    sample_content_relation_judge_input,
     validate_content_classify_business_contract,
     validate_content_classify_output_semantics,
+    validate_content_relation_judge_business_contract,
+    validate_content_relation_judge_output_semantics,
     validate_formal_mapping,
     validate_payload,
 )
@@ -52,6 +63,7 @@ class FormalSkillRouteMappingTests(unittest.TestCase):
         result = validate_formal_mapping(load_formal_mapping())
         self.assertEqual(result["formal_skill_count"], 12)
         self.assertEqual(result["active_formal_business_skill"], "content_classify")
+        self.assertIn("content_relation_judge", result["active_formal_business_skills"])
         self.assertEqual(result["unmapped_existing_business_nodes"], [])
 
     def test_every_existing_business_node_has_exactly_one_owner(self) -> None:
@@ -139,6 +151,101 @@ class ContentClassifyBusinessContractTests(unittest.TestCase):
         self.assertNotIn("source_refs", model_input)
 
 
+class ContentRelationJudgeBusinessContractTests(unittest.TestCase):
+    def test_business_contract_has_formal_relation_semantics(self) -> None:
+        result = validate_content_relation_judge_business_contract(load_content_relation_judge_business_contract())
+        self.assertEqual(result["skill_id"], "content_relation_judge")
+        self.assertEqual(result["skill_version"], "1.0.0")
+        self.assertEqual(result["missing_requirement_count"], 0)
+        self.assertEqual(result["relation_type_count"], 9)
+        self.assertEqual(result["asymmetric_relation_count"], 2)
+
+    def test_contract_loads_dedicated_relation_route(self) -> None:
+        contract = FormalSkillContract.from_yaml(CONTENT_RELATION_JUDGE_CONTRACT_PATH)
+        contract.validate_contract()
+        self.assertEqual(contract.formal_skill_id, "content_relation_judge")
+        self.assertEqual(contract.version, "1.0.0")
+        self.assertEqual(contract.route_name, "business.content_relation_judgement")
+        self.assertEqual(contract.allowed_model_nodes, ("business.content_relation_judgement",))
+
+    def test_formal_input_schema_accepts_only_public_relation_shape(self) -> None:
+        contract = FormalSkillContract.from_yaml(CONTENT_RELATION_JUDGE_CONTRACT_PATH)
+        validate_payload(sample_content_relation_judge_input(), contract.input_schema)
+        for key in (
+            "request_id",
+            "correlation_id",
+            "left_content",
+            "right_content",
+            "left_evidence_items",
+            "right_evidence_items",
+            "domain_context",
+            "relation_scope",
+            "schema_version",
+        ):
+            with self.subTest(missing=key):
+                invalid = sample_content_relation_judge_input()
+                invalid.pop(key)
+                with self.assertRaises(FormalSkillValidationError):
+                    validate_payload(invalid, contract.input_schema)
+        with self.assertRaises(FormalSkillValidationError):
+            validate_payload(sample_content_relation_judge_input(database_connection="forbidden"), contract.input_schema)
+        with self.assertRaises(FormalSkillValidationError):
+            validate_payload(sample_content_relation_judge_input(domain_context="legacy_domain"), contract.input_schema)
+        with self.assertRaises(FormalSkillValidationError):
+            validate_payload(sample_content_relation_judge_input(schema_version="legacy"), contract.input_schema)
+
+    def test_formal_output_semantics_reject_bad_relation_results(self) -> None:
+        contract = FormalSkillContract.from_yaml(CONTENT_RELATION_JUDGE_CONTRACT_PATH)
+        good = {
+            "relation_type": "contains",
+            "relation_direction": "left_contains_right",
+            "confidence": "high",
+            "evidence_from_left": ["通勤集中"],
+            "evidence_from_right": ["通勤集中"],
+            "compared_dimensions": ["core facts"],
+            "missing_evidence": [],
+            "rationale": "Input evidence supports the formal contains relation.",
+            "schema_version": CONTENT_RELATION_JUDGE_OUTPUT_SCHEMA_VERSION,
+        }
+        validate_payload(good, contract.output_schema)
+        validate_content_relation_judge_output_semantics(sample_content_relation_judge_input(), good)
+        bad_cases = (
+            good | {"relation_type": "similar"},
+            good | {"relation_direction": "symmetric"},
+            good | {"confidence": "low"},
+            good | {"evidence_from_left": ["unseen evidence"]},
+            good | {"relation_type": "no_relation", "relation_direction": "symmetric", "compared_dimensions": []},
+            good
+            | {
+                "relation_type": "insufficient_evidence",
+                "relation_direction": "not_applicable",
+                "missing_evidence": [],
+            },
+            good | {"rationale": "This has viral strategy."},
+        )
+        for bad in bad_cases:
+            with self.subTest(bad=bad):
+                with self.assertRaises(FormalSkillValidationError):
+                    validate_payload(bad, contract.output_schema)
+                    validate_content_relation_judge_output_semantics(sample_content_relation_judge_input(), bad)
+
+    def test_binding_uses_relation_preprocessing_and_no_old_fields(self) -> None:
+        contract = FormalSkillContract.from_yaml(CONTENT_RELATION_JUDGE_CONTRACT_PATH)
+        input_payload = sample_content_relation_judge_input()
+        model_input = apply_binding(
+            contract.input_map,
+            input_payload,
+            {},
+            preprocess_content_relation_judge_input(input_payload),
+        )
+        self.assertEqual(model_input["fixture_id"], input_payload["request_id"])
+        self.assertIn("社区电梯", model_input["left_content"])
+        self.assertEqual(model_input["left_evidence_refs"], input_payload["left_evidence_items"])
+        self.assertIn("contains", model_input["relation_types"])
+        self.assertNotIn("database_id", model_input)
+        self.assertNotIn("source_refs", model_input)
+
+
 class ContentClassifyFixtureTests(HarnessMixin, unittest.TestCase):
     def test_required_fixture_matrix_matches_expected_business_outcomes(self) -> None:
         harness = self.make_harness()
@@ -184,6 +291,65 @@ class ContentClassifyFixtureTests(HarnessMixin, unittest.TestCase):
         self.assertEqual(result.output_payload["no_result_reason"], "model_empty_result")
 
 
+class ContentRelationJudgeHarnessMixin:
+    def make_relation_harness(self, **kwargs):
+        harness = make_content_relation_judge_harness(**kwargs)
+        self.addCleanup(harness.close)
+        return harness
+
+
+class ContentRelationJudgeFixtureTests(ContentRelationJudgeHarnessMixin, unittest.TestCase):
+    def test_required_fixture_matrix_matches_expected_relation_outcomes(self) -> None:
+        fixtures = load_content_relation_judge_fixtures()
+        fixture_ids = {fixture["fixture_id"] for fixture in fixtures}
+        required = set(load_content_relation_judge_business_contract()["fixture_cases"]["required_fixture_ids"])
+        self.assertTrue(required.issubset(fixture_ids))
+        for fixture in fixtures:
+            with self.subTest(fixture=fixture["fixture_id"]):
+                provider = DeterministicContentRelationJudgeModelPort(behavior=fixture.get("provider_behavior", "success"))
+                harness = self.make_relation_harness(provider=provider)
+                if fixture.get("expected_error"):
+                    with self.assertRaises(FormalSkillValidationError):
+                        harness.adapter.run(fixture["input"])
+                    continue
+                result = harness.adapter.run(fixture["input"])
+                expected = fixture["expected"]
+                self.assertEqual(result.output_payload["relation_type"], expected["relation_type"])
+                self.assertEqual(result.output_payload["relation_direction"], expected["relation_direction"])
+                validate_content_relation_judge_output_semantics(fixture["input"], result.output_payload)
+
+    def test_same_fixture_repeats_without_structural_drift(self) -> None:
+        harness = self.make_relation_harness()
+        payload = sample_content_relation_judge_input(request_id="relation-repeatable")
+        first = harness.adapter.run(payload).output_payload
+        second = harness.adapter.run(payload).output_payload
+        self.assertEqual(first, second)
+
+    def test_model_output_failures_are_closed(self) -> None:
+        for behavior in ("empty", "not_json", "illegal_relation_enum", "invalid_direction", "evidence_not_in_input", "missing_field"):
+            with self.subTest(behavior=behavior):
+                harness = self.make_relation_harness(provider=DeterministicContentRelationJudgeModelPort(behavior=behavior))
+                with self.assertRaises(FormalSkillValidationError):
+                    harness.adapter.run(sample_content_relation_judge_input(request_id=f"relation-case-{behavior}"))
+
+    def test_left_right_swap_reverses_asymmetric_relation(self) -> None:
+        harness = self.make_relation_harness()
+        left_fuller = sample_content_relation_judge_input(request_id="relation-swap-a")
+        right_fuller = sample_content_relation_judge_input(
+            request_id="relation-swap-b",
+            left_content=left_fuller["right_content"],
+            right_content=left_fuller["left_content"],
+            left_evidence_items=left_fuller["right_evidence_items"],
+            right_evidence_items=left_fuller["left_evidence_items"],
+        )
+        first = harness.adapter.run(left_fuller).output_payload
+        second = harness.adapter.run(right_fuller).output_payload
+        self.assertEqual(first["relation_type"], "contains")
+        self.assertEqual(second["relation_type"], "contained_by")
+        self.assertEqual(first["evidence_from_left"], second["evidence_from_right"][: len(first["evidence_from_left"])])
+        self.assertEqual(first["evidence_from_right"], second["evidence_from_left"][: len(first["evidence_from_right"])])
+
+
 class FormalSkillAdapterTests(HarnessMixin, unittest.TestCase):
     def test_adapter_runs_through_approved_model_gateway_route(self) -> None:
         harness = self.make_harness()
@@ -211,6 +377,26 @@ class FormalSkillAdapterTests(HarnessMixin, unittest.TestCase):
         adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
         with self.assertRaises(FormalSkillValidationError):
             adapter.run(sample_content_classify_input())
+
+
+class ContentRelationJudgeAdapterTests(ContentRelationJudgeHarnessMixin, unittest.TestCase):
+    def test_adapter_runs_through_approved_relation_model_gateway_route(self) -> None:
+        harness = self.make_relation_harness()
+        result = harness.adapter.run(sample_content_relation_judge_input())
+        self.assertEqual(result.output_payload["relation_type"], "contains")
+        self.assertEqual(result.model_route, "business.content_relation_judgement")
+        self.assertEqual(harness.provider.call_count, 1)
+
+    def test_adapter_core_has_no_runtime_store_or_scheduler_attributes(self) -> None:
+        harness = self.make_relation_harness()
+        forbidden_attrs = {"store", "conn", "scheduler", "materializer"}
+        self.assertTrue(forbidden_attrs.isdisjoint(set(vars(harness.adapter))))
+
+    def test_adapter_rejects_unapproved_relation_route_contract(self) -> None:
+        contract = FormalSkillContract.from_yaml(CONTENT_RELATION_JUDGE_CONTRACT_PATH)
+        bad_contract = replace(contract, route_name="business.topic_judgement")
+        with self.assertRaises(FormalSkillValidationError):
+            bad_contract.validate_contract()
 
 
 class FormalSkillRuntimeTests(HarnessMixin, unittest.TestCase):
@@ -307,6 +493,81 @@ class FormalSkillRuntimeTests(HarnessMixin, unittest.TestCase):
             )
 
 
+class ContentRelationJudgeRuntimeTests(ContentRelationJudgeHarnessMixin, unittest.TestCase):
+    def test_e2e_success_materializes_relation_result_and_outbox_once(self) -> None:
+        harness = self.make_relation_harness()
+        created = harness.api.create_formal_skill_job(sample_content_relation_judge_input())
+        step = harness.worker.run_once()
+        result = harness.api.get_result(created.job_id)
+        outbox = harness.api.list_outbox()
+        self.assertEqual(step.status, "succeeded")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["output"]["relation_type"], "contains")
+        self.assertEqual(result["model_route"], "business.content_relation_judgement")
+        self.assertEqual(len(outbox), 1)
+        self.assertEqual(harness.provider.call_count, 1)
+
+    def test_failed_relation_schema_run_has_no_result_or_outbox(self) -> None:
+        harness = self.make_relation_harness()
+        invalid = sample_content_relation_judge_input(request_id="relation-invalid-input")
+        invalid["schema_version"] = "legacy"
+        created = harness.api.create_formal_skill_job(invalid, max_attempts=1)
+        step = harness.worker.run_once()
+        self.assertEqual(step.status, "failed")
+        self.assertEqual(step.reason, "dead")
+        self.assertIsNone(harness.api.get_result(created.job_id))
+        self.assertEqual(harness.api.list_outbox(), [])
+
+    def test_relation_provider_failure_retries_then_succeeds_without_duplicate_outbox(self) -> None:
+        harness = self.make_relation_harness(provider=DeterministicContentRelationJudgeModelPort(behavior="fail_once"))
+        created = harness.api.create_formal_skill_job(
+            sample_content_relation_judge_input(request_id="relation-retry-once"),
+            max_attempts=2,
+        )
+        first = harness.worker.run_once()
+        second = harness.worker.run_once()
+        self.assertEqual(first.status, "failed")
+        self.assertEqual(first.reason, "queued")
+        self.assertEqual(second.status, "succeeded")
+        self.assertEqual(len(harness.api.list_outbox()), 1)
+        self.assertEqual(harness.provider.call_count, 2)
+
+    def test_relation_job_enqueue_is_idempotent(self) -> None:
+        harness = self.make_relation_harness()
+        payload = sample_content_relation_judge_input(request_id="relation-idempotent-case")
+        first = harness.api.create_formal_skill_job(payload)
+        second = harness.api.create_formal_skill_job(payload)
+        self.assertEqual(first.job_id, second.job_id)
+        self.assertFalse(first.replayed)
+        self.assertTrue(second.replayed)
+        self.assertEqual(harness.worker.run_once().status, "succeeded")
+        self.assertEqual(len(harness.api.list_outbox()), 1)
+
+    def test_relation_materializer_failure_does_not_create_success_result_or_outbox(self) -> None:
+        harness = self.make_relation_harness()
+
+        class FailingMaterializer(FormalBusinessSkillMaterializer):
+            def materialize_success(self, **kwargs):  # type: ignore[no-untyped-def]
+                raise FormalSkillValidationError("injected materializer failure before write")
+
+        materializer = FailingMaterializer(harness.store)
+        worker = FormalBusinessSkillWorker(
+            scheduler=harness.scheduler,
+            adapter=harness.adapter,
+            materializer=materializer,
+            contract=harness.contract,
+            worker_id="relation-failing-materializer-worker",
+        )
+        created = harness.api.create_formal_skill_job(
+            sample_content_relation_judge_input(request_id="relation-materializer-failure"),
+            max_attempts=1,
+        )
+        step = worker.run_once()
+        self.assertEqual(step.status, "failed")
+        self.assertIsNone(harness.api.get_result(created.job_id))
+        self.assertEqual(harness.api.list_outbox(), [])
+
+
 class FormalSkillGateTests(unittest.TestCase):
     def test_full_verification_status_is_completed(self) -> None:
         status = run_verification()
@@ -394,6 +655,75 @@ class FormalSkillGateTests(unittest.TestCase):
         self.assertFalse(status["dry_run_fallback"])
         self.assertFalse(status["fake_port_fallback"])
         self.assertEqual(status["classification_status"], "classified")
+
+    def test_relation_live_gate_uses_model_gateway_and_no_fake_fallback(self) -> None:
+        class FakeHermesAdapter:
+            provider_name = "hermes"
+
+            def __init__(self, config):  # type: ignore[no-untyped-def]
+                self.config = config
+
+            def complete(self, request, route):  # type: ignore[no-untyped-def]
+                output = {
+                    "relation_type": "contains",
+                    "relation_direction": "left_contains_right",
+                    "confidence": "high",
+                    "evidence_from_left": ["通勤集中"],
+                    "evidence_from_right": ["通勤集中"],
+                    "compared_dimensions": ["core facts"],
+                    "missing_evidence": [],
+                    "rationale": "Input evidence supports the formal contains relation.",
+                    "schema_version": CONTENT_RELATION_JUDGE_OUTPUT_SCHEMA_VERSION,
+                }
+                return ModelProviderResult(
+                    output_text=json.dumps(output, ensure_ascii=False, sort_keys=True),
+                    usage=ModelUsage(prompt_tokens=17, completion_tokens=19, total_tokens=36),
+                    cost={"status": "not_reported", "billing_mode": "subscription"},
+                    provider_request_id="fake-live-provider-request",
+                    metadata={
+                        "cost_status": "not_reported",
+                        "usage_status": "available",
+                        "provider_request_id_status": "available",
+                        "retry_count": 0,
+                        "max_retries": 0,
+                        "tools_enabled": False,
+                        "memory_enabled": False,
+                        "messaging_enabled": False,
+                    },
+                )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            config_data = yaml.safe_load((Path("config") / "live_gates.example.yaml").read_text(encoding="utf-8"))
+            config_data["allow_live_calls"] = True
+            config_data["shadow_only"] = True
+            config_data["env_file"] = str(tmp / ".env.live-gates")
+            config_data["evidence_root"] = str(tmp / "evidence")
+            config_data["status_file"] = str(tmp / "status.yaml")
+            for gate in config_data["gates"]:
+                if gate["gate_id"] == "GATE-MODEL-PROVIDER":
+                    gate["live_enabled"] = True
+            config_path = tmp / "live_gates.yaml"
+            config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+            (tmp / ".env.live-gates").write_text(
+                "\n".join(
+                    [
+                        "MODEL_PROVIDER_API_KEY=test-model-key",
+                        "MODEL_PROVIDER_BASE_URL=https://example.invalid/v1",
+                        "MODEL_PROVIDER_MODEL=test-live-model",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config = relation_live_gate.LiveGateConfig(config_path, env_path=tmp / ".env.live-gates")
+            with mock.patch.object(relation_live_gate, "HermesModelProviderAdapter", FakeHermesAdapter):
+                status = relation_live_gate.run_gate(config)
+        self.assertEqual(status["status"], "COMPLETED")
+        self.assertEqual(status["actual_call_count"], 1)
+        self.assertTrue(status["model_gateway_used"])
+        self.assertFalse(status["dry_run_fallback"])
+        self.assertFalse(status["fake_port_fallback"])
+        self.assertEqual(status["relation_type"], "contains")
 
 
 if __name__ == "__main__":

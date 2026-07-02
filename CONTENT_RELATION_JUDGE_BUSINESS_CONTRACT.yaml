@@ -1,21 +1,23 @@
 schema_version: content_relation_judge.business_contract.v1
 goal: GOAL-BUSINESS-SKILL-CONTENT-RELATION-JUDGE-01
-status: blocked_missing_requirement
+status: active_formal_business_contract
 skill_id: content_relation_judge
-skill_version: 1.0.0-blocked
+skill_version: 1.0.0
 source_documents:
   - C:\Users\15891\.codex\attachments\dfa88726-2b0d-46c7-9442-9b2d3d1597f6\pasted-text-1.txt
+  - C:\Users\15891\.codex\attachments\8bc14600-1b16-4784-9233-ca0761ef57c1\pasted-text-1.txt
   - AGENTS.md
   - BUILD_PLAN.md
   - FORMAL_SKILL_ROUTE_MAPPING.yaml
   - BUSINESS_RULE_CATALOG.yaml
   - REQUIREMENT_CODE_TRACEABILITY.yaml
 source_sections:
-  - pasted goal: sections 2-20
+  - original pasted goal: sections 2-20
+  - semantic ruling pasted goal: sections 1-8
   - FORMAL_SKILL_ROUTE_MAPPING.yaml: formal_skills.content_relation_judge
   - BUSINESS_RULE_CATALOG.yaml: BR-REL-001
   - REQUIREMENT_CODE_TRACEABILITY.yaml: BR-REL-001
-responsibility: Judge the formal relation between two already provided public content objects or evidence units, once the formal relation taxonomy and direction semantics exist.
+responsibility: Judge the formal content relation between two already provided public content objects or evidence units.
 non_responsibilities:
   - content_classify
   - viral_or_hit_judgement
@@ -39,7 +41,7 @@ relation_subject_definition:
   right: public, portable content object or evidence unit supplied by the caller
   boundary: The Skill may only judge the relation between the supplied left and right inputs; it must not fetch, infer, or look up missing context.
 allowed_inputs:
-  required_public_shape:
+  required_fields:
     - request_id
     - correlation_id
     - left_content
@@ -49,7 +51,7 @@ allowed_inputs:
     - domain_context
     - relation_scope
     - schema_version
-  allowed_optional_public_fields:
+  optional_public_fields:
     - left_title
     - right_title
     - left_local_ref
@@ -69,45 +71,127 @@ forbidden_inputs:
   - url_that_skill_must_fetch
   - implicit_field_requiring_core_or_database_lookup
 relation_taxonomy:
-  status: missing_requirement
-  allowed_relation_types: []
-  missing_reason: Latest formal sources require an explicit relation artifact but do not define the formal relation enum values.
+  relation_types:
+    same_item:
+      definition: Normalized content is exactly the same, or both inputs explicitly refer to the same public content object.
+      direction: symmetric
+      boundary: Same title alone is insufficient.
+    equivalent:
+      definition: Wording, order, or examples may differ, but core facts, core viewpoint, and main information are materially the same.
+      direction: symmetric
+      boundary: If one side has material new information, use contains, contained_by, or complementary.
+    contains:
+      definition: Left fully covers the core content of right and has additional valid information.
+      direction: left_contains_right
+      swapped_relation: contained_by
+    contained_by:
+      definition: Left core content is fully covered by right and right has additional valid information.
+      direction: left_contained_by_right
+      swapped_relation: contains
+    complementary:
+      definition: Both sides address the same specific topic or question, do not materially conflict, and provide different facts, evidence, angles, or explanations that can be combined.
+      direction: symmetric
+      boundary: Same broad domain alone is insufficient.
+    contradicts:
+      definition: Both sides address the same specific question, fact, or proposition and provide substantive conclusions that cannot both be true.
+      direction: symmetric
+      requirement: The conflicting proposition must be identified.
+    related_distinct:
+      definition: Both sides belong to the same specific topic, but core information or discussion angles are independent and none of the stronger relations apply.
+      direction: symmetric
+      purpose: Marks a concrete topic relation without merging the contents.
+    no_relation:
+      definition: Input evidence is sufficient and confirms no meaningful direct content relation.
+      direction: symmetric
+      requirement: Must not be used when evidence is insufficient.
+    insufficient_evidence:
+      definition: Missing, too short, noisy, ambiguous, or unclear input prevents a reliable relation judgement.
+      direction: symmetric
+      requirement: Must state the missing or insufficient evidence type.
 relation_directionality:
-  status: missing_requirement
-  missing_reason: Latest formal sources do not define which relation types are symmetric, asymmetric, reversible, or order-sensitive.
+  symmetric:
+    - same_item
+    - equivalent
+    - complementary
+    - contradicts
+    - related_distinct
+    - no_relation
+    - insufficient_evidence
+  asymmetric:
+    - contains
+    - contained_by
+  swap_rules:
+    same_item: same_item
+    equivalent: equivalent
+    contains: contained_by
+    contained_by: contains
+    complementary: complementary
+    contradicts: contradicts
+    related_distinct: related_distinct
+    no_relation: no_relation
+    insufficient_evidence: insufficient_evidence
 symmetric_relations:
-  status: missing_requirement
-  relation_types: []
+  - same_item
+  - equivalent
+  - complementary
+  - contradicts
+  - related_distinct
+  - no_relation
+  - insufficient_evidence
 asymmetric_relations:
-  status: missing_requirement
-  relation_types: []
+  - contains
+  - contained_by
 order_sensitivity:
-  status: missing_requirement
-  rule: Cannot be implemented without a formal relation taxonomy and reversal rules.
+  asymmetric_relations_must_reverse_on_swap: true
+  evidence_fields_must_swap: true
+  rationale_must_remain_semantically_consistent: true
 same_item_semantics:
-  status: missing_requirement
-  missing_reason: Latest formal sources mention same-item fixture coverage but do not define the formal output for same-item inputs.
+  relation_type: same_item
+  allowed_when:
+    - normalized_content_exactly_same
+    - explicit_same_public_content_object_reference
+  forbidden_when:
+    - title_only_same
 insufficient_evidence_semantics:
-  status: missing_requirement
-  distinction_required: Must be distinct from no_relation and technical_failure.
-  missing_reason: Latest formal sources require the distinction but do not define the output enum/state.
+  relation_type: insufficient_evidence
+  business_result: true
+  requires_missing_evidence: true
+  distinct_from_no_relation: true
+  distinct_from_technical_failure: true
 no_relation_semantics:
-  status: missing_requirement
-  distinction_required: Must be distinct from insufficient_evidence and technical_failure.
-  missing_reason: Latest formal sources require the distinction but do not define the output enum/state.
+  relation_type: no_relation
+  business_result: true
+  requires_sufficient_comparison: true
+  distinct_from_insufficient_evidence: true
+  distinct_from_technical_failure: true
 uncertainty_semantics:
-  status: missing_requirement
-  missing_reason: Latest formal sources do not define whether uncertainty is a relation_type, a status, or a separate field.
+  low_confidence_relation_judgement: insufficient_evidence
+  no_extra_uncertain_relation_type: true
 multiple_relation_policy:
-  status: missing_requirement
-  missing_reason: Latest formal sources require a primary relation policy but do not define it.
+  secondary_relations_allowed: false
+  output_one_primary_relation: true
 primary_relation_policy:
-  status: missing_requirement
-  missing_reason: Latest formal sources do not define priority ordering among possible relations.
+  priority_order:
+    - same_item
+    - equivalent
+    - contradicts
+    - contains_or_contained_by
+    - complementary
+    - related_distinct
+    - no_relation
+  insufficient_evidence_policy: If evidence is insufficient for reliable judgement, return insufficient_evidence instead of applying priority order.
+  special_rules:
+    - Explicit substantive conflict takes priority over contains and complementary.
+    - Contains or contained_by requires full coverage of core content.
+    - Partial overlap with independent valid information and no conflict is complementary.
+    - Same broad domain alone is insufficient for related_distinct.
 evidence_requirements:
+  non_technical_failure_requires_structured_evidence: true
+  content_relations_require_left_evidence: true
+  content_relations_require_right_evidence: true
+  no_relation_requires_compared_dimensions: true
+  insufficient_evidence_requires_missing_evidence: true
   output_evidence_must_reference_input: true
-  evidence_from_left_required_when_available: true
-  evidence_from_right_required_when_available: true
   rationale_must_not_add_unseen_facts: true
 rationale_requirements:
   structured_rationale_required: true
@@ -115,31 +199,44 @@ rationale_requirements:
   must_not_expose_prompt_or_internal_model_config: true
   must_not_emit_topic_creation_or_strategy_advice: true
 confidence_policy:
-  status: missing_requirement
-  missing_reason: Latest formal sources mention confidence but do not define enum, numeric range, or threshold semantics.
+  allowed_values:
+    - high
+    - medium
+    - low
+  low_confidence_business_relation_must_be_insufficient_evidence: true
+  no_relation_requires_high_or_medium: true
+  strong_relations_require_high_or_medium:
+    - same_item
+    - equivalent
+    - contains
+    - contained_by
+    - contradicts
+  insufficient_evidence_allowed_confidence:
+    - high
+    - medium
+  no_numeric_thresholds: true
 domain_scope:
   current_named_domains:
     - fan_kepu_social_life
     - music_entertainment
   extensibility_required: true
 cross_domain_behavior:
-  status: missing_requirement
-  missing_reason: Latest formal sources require cross-domain fixture coverage but do not define cross-domain relation semantics.
+  allowed: true
+  rule: Judge content relation from supplied evidence; do not hardcode current named domains.
 third_domain_behavior:
   fixture_limit: Third-domain fixture may only prove the Skill is not hardcoded to current two named domains.
   must_not_claim_business_quality_passed: true
 input_length_limits:
-  status: missing_requirement
-  conservative_placeholder:
-    request_id_max: 80
-    correlation_id_max: 80
-    title_max: 120
-    content_max: 1200
-    evidence_items_max: 8
+  request_id_max: 80
+  correlation_id_max: 80
+  title_max: 120
+  content_max: 1200
+  evidence_item_max: 240
+  evidence_items_max: 8
 context_budget:
-  max_input_tokens: 2000
+  max_input_tokens: 2400
 token_budget:
-  max_output_tokens: 700
+  max_output_tokens: 900
 timeout:
   milliseconds: 30000
 retry:
@@ -147,7 +244,6 @@ retry:
   scheduler_max_attempts: 3
   retry_on:
     - provider_error
-    - model_empty_result
     - output_schema_error
 idempotency:
   key: content_relation_judge:{request_id}
@@ -156,9 +252,16 @@ idempotency:
 error_contract:
   validation_error: fail_without_formal_result
   provider_error: fail_attempt_and_retry_if_attempts_remain
-  model_empty_result: fail_without_formal_result_until_no_result_semantics_are_defined
+  model_empty_result: technical_failure_without_formal_result
+  non_json_output: technical_failure_without_formal_result
   schema_error: fail_without_formal_result
   materializer_error: fail_without_success_outbox
+technical_failure_contract:
+  not_a_relation_type: true
+  no_formal_relation_result: true
+  no_success_outbox_event: true
+  retry_allowed_by_policy: true
+  sanitized_trace_required: true
 materialization_contract:
   object_kind: formal_business_skill_result
   projection_version: formal_business_skill_result.v1
@@ -167,21 +270,21 @@ materialization_contract:
   failed_runs_record_attempt: true
   failed_runs_create_formal_result: false
 fixture_cases:
-  status: blocked_until_relation_taxonomy_defined
-  required_semantic_scenarios_from_goal:
-    - same_content
-    - high_semantic_similarity
-    - left_contains_right_or_right_contains_left
-    - one_side_supplements_other
-    - explicit_conflict
-    - related_topic_without_direct_relation
-    - unrelated
-    - insufficient_evidence
-    - swapped_left_right
-    - similar_title_different_body
-    - different_title_related_body
+  required_fixture_ids:
+    - same_item_exact
+    - same_title_different_body
+    - equivalent_reworded
+    - contains_left_fuller
+    - contained_by_right_fuller
+    - complementary_same_question
+    - contradicts_specific_claim
+    - related_distinct_same_topic
+    - same_domain_not_related
+    - no_relation
+    - insufficient_evidence_short
+    - swapped_contains
     - noisy_input
-    - cross_domain
+    - cross_domain_content
     - fan_kepu_social_life
     - music_entertainment
     - third_domain_neutral
@@ -198,31 +301,315 @@ completion_definition:
   - relation_taxonomy_defined_by_formal_source
   - directionality_defined_by_formal_source
   - no_relation_and_insufficient_evidence_distinguished_by_formal_source
+  - technical_failure_distinguished_from_business_results
   - primary_relation_policy_defined_by_formal_source
   - formal_skill_package_active
   - fake_fixture_matrix_passed
+  - left_right_swap_tests_passed
   - minimal_live_provider_call_passed
   - postgresql_end_to_end_gate_passed
   - content_classify_regression_passed
   - clean_room_formal_db_all_zero
   - formal_production_direct_cli_model_calls_zero
-missing_requirements:
-  - id: relation_taxonomy
-    severity: blocking
-    detail: No latest formal source defines the allowed relation_type enum values.
-  - id: relation_directionality
-    severity: blocking
-    detail: No latest formal source defines symmetric/asymmetric relation types or left/right swap reversal rules.
-  - id: no_relation_vs_insufficient_evidence
-    severity: blocking
-    detail: Formal sources require the distinction but do not define concrete output states.
-  - id: primary_relation_policy
-    severity: blocking
-    detail: No latest formal source defines how to select a primary relation when multiple relations may apply.
-  - id: confidence_policy
-    severity: blocking
-    detail: No latest formal source defines confidence enum, numeric range, or threshold semantics.
-allowed_model_nodes: []
+missing_requirements: []
+allowed_model_nodes:
+  - business.content_relation_judgement
 whether_model_is_required: true
 target_runner: FormalBusinessSkillAdapter
 materializer_contract: formal_business_skill_result.v1
+model_binding:
+  route_name: business.content_relation_judgement
+  binding_name: content_relation_judge_public_input_to_relation_judgement
+  binding_version: 1.0.0
+  input_map:
+    fixture_id:
+      source: input
+      key: request_id
+    left_content:
+      source: preprocessed
+      key: left_text
+    right_content:
+      source: preprocessed
+      key: right_text
+    left_evidence_refs:
+      source: input
+      key: left_evidence_items
+    right_evidence_refs:
+      source: input
+      key: right_evidence_items
+    relation_types:
+      source: literal
+      value:
+        - same_item
+        - equivalent
+        - contains
+        - contained_by
+        - complementary
+        - contradicts
+        - related_distinct
+        - no_relation
+        - insufficient_evidence
+  model_input_schema:
+    type: object
+    required:
+      - fixture_id
+      - left_content
+      - right_content
+      - left_evidence_refs
+      - right_evidence_refs
+      - relation_types
+    properties:
+      fixture_id: string
+      left_content: string
+      right_content: string
+      left_evidence_refs: array
+      right_evidence_refs: array
+      relation_types: array
+    additional_properties: false
+  prompt_template: >-
+    Return only JSON with keys relation_type, relation_direction, confidence,
+    evidence_from_left, evidence_from_right, compared_dimensions, missing_evidence,
+    rationale, schema_version. Judge only the formal relation between left_content
+    and right_content. Allowed relation_type values: same_item, equivalent,
+    contains, contained_by, complementary, contradicts, related_distinct,
+    no_relation, insufficient_evidence. technical_failure is not a relation_type.
+    If confidence for a concrete relation would be low, return insufficient_evidence.
+    Evidence fields must contain only items from the provided evidence refs.
+    Use schema_version content_relation_judge.output.v1.
+    left_content={left_content}; right_content={right_content};
+    left_evidence_refs={left_evidence_refs}; right_evidence_refs={right_evidence_refs};
+    relation_types={relation_types}
+  model_output_schema:
+    type: object
+    required:
+      - relation_type
+      - relation_direction
+      - confidence
+      - evidence_from_left
+      - evidence_from_right
+      - compared_dimensions
+      - missing_evidence
+      - rationale
+      - schema_version
+    properties:
+      relation_type:
+        type: string
+        enum:
+          - same_item
+          - equivalent
+          - contains
+          - contained_by
+          - complementary
+          - contradicts
+          - related_distinct
+          - no_relation
+          - insufficient_evidence
+      relation_direction:
+        type: string
+        enum:
+          - symmetric
+          - left_contains_right
+          - left_contained_by_right
+          - not_applicable
+      confidence:
+        type: string
+        enum:
+          - high
+          - medium
+          - low
+      evidence_from_left:
+        type: array
+        minItems: 0
+        maxItems: 8
+        items:
+          type: string
+      evidence_from_right:
+        type: array
+        minItems: 0
+        maxItems: 8
+        items:
+          type: string
+      compared_dimensions:
+        type: array
+        minItems: 0
+        maxItems: 8
+        items:
+          type: string
+      missing_evidence:
+        type: array
+        minItems: 0
+        maxItems: 8
+        items:
+          type: string
+      rationale:
+        type: string
+        minLength: 1
+        maxLength: 600
+      schema_version:
+        type: string
+        const: content_relation_judge.output.v1
+    additional_properties: false
+  output_map:
+    relation_type:
+      source: model_output
+      key: relation_type
+    relation_direction:
+      source: model_output
+      key: relation_direction
+    confidence:
+      source: model_output
+      key: confidence
+    evidence_from_left:
+      source: model_output
+      key: evidence_from_left
+    evidence_from_right:
+      source: model_output
+      key: evidence_from_right
+    compared_dimensions:
+      source: model_output
+      key: compared_dimensions
+    missing_evidence:
+      source: model_output
+      key: missing_evidence
+    rationale:
+      source: model_output
+      key: rationale
+    schema_version:
+      source: model_output
+      key: schema_version
+  deterministic_output_normalization:
+    nullable_empty_arrays:
+      - evidence_from_left
+      - evidence_from_right
+      - compared_dimensions
+      - missing_evidence
+input_schema:
+  type: object
+  required:
+    - request_id
+    - correlation_id
+    - left_content
+    - right_content
+    - left_evidence_items
+    - right_evidence_items
+    - domain_context
+    - relation_scope
+    - schema_version
+  properties:
+    request_id:
+      type: string
+      minLength: 1
+      maxLength: 80
+    correlation_id:
+      type: string
+      minLength: 1
+      maxLength: 80
+    left_content:
+      type: string
+      maxLength: 1200
+    right_content:
+      type: string
+      maxLength: 1200
+    left_evidence_items:
+      type: array
+      minItems: 0
+      maxItems: 8
+      items:
+        type: string
+        minLength: 1
+        maxLength: 240
+    right_evidence_items:
+      type: array
+      minItems: 0
+      maxItems: 8
+      items:
+        type: string
+        minLength: 1
+        maxLength: 240
+    domain_context:
+      type: string
+      enum:
+        - fan_kepu_social_life
+        - music_entertainment
+        - third_domain_neutral
+        - cross_domain
+        - unknown
+    relation_scope:
+      type: string
+      enum:
+        - content_object
+        - evidence_unit
+    schema_version:
+      type: string
+      const: content_relation_judge.input.v1
+  additional_properties: false
+output_schema:
+  type: object
+  required:
+    - relation_type
+    - relation_direction
+    - confidence
+    - evidence_from_left
+    - evidence_from_right
+    - compared_dimensions
+    - missing_evidence
+    - rationale
+    - schema_version
+  properties:
+    relation_type:
+      type: string
+      enum:
+        - same_item
+        - equivalent
+        - contains
+        - contained_by
+        - complementary
+        - contradicts
+        - related_distinct
+        - no_relation
+        - insufficient_evidence
+    relation_direction:
+      type: string
+      enum:
+        - symmetric
+        - left_contains_right
+        - left_contained_by_right
+        - not_applicable
+    confidence:
+      type: string
+      enum:
+        - high
+        - medium
+        - low
+    evidence_from_left:
+      type: array
+      minItems: 0
+      maxItems: 8
+      items:
+        type: string
+    evidence_from_right:
+      type: array
+      minItems: 0
+      maxItems: 8
+      items:
+        type: string
+    compared_dimensions:
+      type: array
+      minItems: 0
+      maxItems: 8
+      items:
+        type: string
+    missing_evidence:
+      type: array
+      minItems: 0
+      maxItems: 8
+      items:
+        type: string
+    rationale:
+      type: string
+      minLength: 1
+      maxLength: 600
+    schema_version:
+      type: string
+      const: content_relation_judge.output.v1
+  additional_properties: false
