@@ -49,8 +49,8 @@ status: COMPLETED
 ## Git
 - Branch: `validation/goal-runtime-postgres-gate-01-v0.6.2`
 - Base commit: `6b329c6`
-- Validated code commit: pending
-- Final HEAD/status: pending final commit
+- Validated code commit: `739c075`
+- Final closeout commit: pending
 
 ## Next goal
 Recommended next goal: wait for user approval before starting any successor goal.

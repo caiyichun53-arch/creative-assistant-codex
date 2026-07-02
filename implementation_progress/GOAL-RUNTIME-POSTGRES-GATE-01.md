@@ -23,7 +23,7 @@ base_commit: 6b329c6
 - [x] Verify clean-room formal database remains empty.
 - [x] Run local regression checks.
 - [x] Write validation report and final status.
-- [ ] Commit independent Git checkpoint.
+- [x] Commit independent Git checkpoint.
 
 ## Validation summary
 - PostgreSQL gate: passed.
@@ -41,3 +41,4 @@ base_commit: 6b329c6
 - Local unit tests: `python -m unittest tests.core.test_runtime_vertical_slice` passed, 12 tests.
 - Compile check: `python -m py_compile scripts\core\runtime\goal_runtime_vertical_slice.py scripts\core\persistence\goal01_store.py` passed.
 - Clean-room formal database check: 20 tables, 0 total rows.
+- Validated code commit: `739c075`.
