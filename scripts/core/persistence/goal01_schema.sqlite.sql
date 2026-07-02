@@ -95,6 +95,10 @@ CREATE TABLE IF NOT EXISTS outbox_message (
     updated_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS unique_outbox_topic_causation
+ON outbox_message(topic, causation_id)
+WHERE causation_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS content_preference_profile (
     profile_id          TEXT PRIMARY KEY,
     scope_type          TEXT NOT NULL CHECK(scope_type IN ('global', 'domain', 'account')),
