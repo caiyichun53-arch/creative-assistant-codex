@@ -1,22 +1,22 @@
 status: DRY_RUN_PASSED
-updated_at: '2026-07-02T00:48:09Z'
+updated_at: '2026-07-02T08:58:17Z'
 gates:
   GATE-HERMES-REAL-HOST:
     status: LIVE_PASSED
     latest_result:
       gate_id: GATE-HERMES-REAL-HOST
-      started_at: '2026-07-02T00:48:07Z'
-      finished_at: '2026-07-02T00:48:09Z'
+      started_at: '2026-07-02T08:58:14Z'
+      finished_at: '2026-07-02T08:58:17Z'
       environment: validation
       adapter: HermesCoreBridge
       request_hash: 0711de23eed094969ecc9a29650681fb24bf9a7d98ba6fe7f8c0ae86768df2c1
       response_hash: 65a46caff718248eb368b8b3a70c03ed1f0fc0e5e0ef04c8790a885b954b516e
-      correlation_id: GATE-HERMES-REAL-HOST.run.2026-07-02T00:48:07Z
+      correlation_id: GATE-HERMES-REAL-HOST.run.2026-07-02T08:58:14Z
       exit_code: 0
       status: LIVE_PASSED
       external_side_effect: true
       failure_reason: ''
-      evidence_location: validation_evidence\GATE-HERMES-REAL-HOST\20260702T004807
+      evidence_location: validation_evidence\GATE-HERMES-REAL-HOST\20260702T085814
       mode: run
   GATE-FEISHU-THIN-BINDING:
     status: DRY_RUN_PASSED
