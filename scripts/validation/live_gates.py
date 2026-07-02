@@ -12,6 +12,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 import yaml
 
@@ -356,6 +359,8 @@ class BaseHarness:
 
 class HermesHostHarness(BaseHarness):
     adapter_name = "HermesCoreBridge"
+    expected_output = "HERMES_HOST_GATE_OK"
+    timeout_seconds = 30
 
     def dry_run(self) -> dict[str, Any]:
         from scripts.core.hermes.goal11_host_binding import FeishuBindingEvent, FeishuResponseDispatcher, FeishuThinBinding, HermesCoreBridge
@@ -397,6 +402,115 @@ class HermesHostHarness(BaseHarness):
         }
         core.store.conn.close()
         return response
+
+    def run_live(self) -> dict[str, Any]:
+        host_url = _required_env_value(self.config, "HERMES_TEST_HOST_URL").rstrip("/")
+        token = _required_env_value(self.config, "HERMES_TEST_TOKEN")
+        actor_id = _required_env_value(self.config, "HERMES_TEST_ACTOR_ID")
+        if not _valid_base_url(host_url):
+            raise MissingTestEnvironment("HERMES_TEST_HOST_URL must be an http(s) URL")
+
+        health_status, health = self._request_json("GET", host_url, "/health")
+        health_detailed_status, health_detailed = self._request_json("GET", host_url, "/health/detailed")
+        models_status, models = self._request_json("GET", host_url, "/v1/models", token=token, actor_id=actor_id)
+        model_name = self._select_model(models)
+        prompt = f"Return exactly {self.expected_output} and nothing else."
+        chat_status, chat = self._request_json(
+            "POST",
+            host_url,
+            "/v1/chat/completions",
+            token=token,
+            actor_id=actor_id,
+            body={
+                "model": model_name,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
+                "max_tokens": 16,
+                "stream": False,
+            },
+            timeout=120,
+        )
+        output_text = self._chat_output(chat)
+        expected_output_match = output_text.strip() == self.expected_output
+        if not expected_output_match:
+            raise LiveGateError("Hermes host output did not match expected HERMES_HOST_GATE_OK marker")
+        return {
+            "provider": "hermes",
+            "interface_type": "openai-compatible-api-server",
+            "host": self._sanitized_host(host_url),
+            "health_status": health_status,
+            "health_detailed_status": health_detailed_status,
+            "models_status": models_status,
+            "chat_status": chat_status,
+            "health_json": isinstance(health, dict),
+            "health_detailed_json": isinstance(health_detailed, dict),
+            "models_count": len(models.get("data", [])) if isinstance(models, dict) else 0,
+            "model": model_name,
+            "status": "succeeded",
+            "expected_output_match": expected_output_match,
+            "visible_output_status": "available" if output_text else "empty",
+            "input_hash": stable_hash({"actor_id": actor_id, "prompt": prompt}),
+            "output_hash": stable_hash(output_text),
+            "usage_status": "available" if isinstance(chat, dict) and chat.get("usage") else "not_available",
+            "response_id_status": "available" if isinstance(chat, dict) and chat.get("id") else "not_available",
+            "actual_call_count": 1,
+            "retry_count": 0,
+            "dry_run_fallback": False,
+            "authenticated": True,
+            "correlation_id": f"{self.gate_id}.live",
+            "external_side_effect": True,
+        }
+
+    def _request_json(
+        self,
+        method: str,
+        host_url: str,
+        path: str,
+        *,
+        token: str | None = None,
+        actor_id: str | None = None,
+        body: dict[str, Any] | None = None,
+        timeout: int | None = None,
+    ) -> tuple[int, Any]:
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        if actor_id:
+            headers["X-Hermes-Session-Key"] = actor_id
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        request = Request(f"{host_url}{path}", data=data, headers=headers, method=method)
+        try:
+            with urlopen(request, timeout=timeout or self.timeout_seconds) as response:  # noqa: S310 - explicit validation host URL.
+                raw = response.read().decode("utf-8", errors="replace")
+                return int(response.status), json.loads(raw)
+        except HTTPError as exc:
+            raise LiveGateError(f"Hermes host HTTP {exc.code} for {path}") from exc
+        except (OSError, URLError, json.JSONDecodeError) as exc:
+            raise LiveGateError(f"Hermes host request failed for {path}: {exc}") from exc
+
+    def _select_model(self, models: Any) -> str:
+        if isinstance(models, dict):
+            data = models.get("data")
+            if isinstance(data, list) and data:
+                first = data[0]
+                if isinstance(first, dict) and first.get("id"):
+                    return str(first["id"])
+        return "hermes-agent"
+
+    def _chat_output(self, chat: Any) -> str:
+        if not isinstance(chat, dict):
+            return ""
+        try:
+            return str(chat["choices"][0]["message"]["content"])
+        except (KeyError, IndexError, TypeError):
+            return ""
+
+    def _sanitized_host(self, host_url: str) -> str:
+        parsed = urlparse(host_url)
+        netloc = parsed.hostname or "unknown"
+        if parsed.port:
+            netloc = f"{netloc}:{parsed.port}"
+        return f"{parsed.scheme}://{netloc}"
 
 
 class FeishuBindingHarness(BaseHarness):

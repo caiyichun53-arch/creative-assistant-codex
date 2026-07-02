@@ -35,14 +35,17 @@ class LiveGateHarnessTests(unittest.TestCase):
         *,
         env_values: dict[str, str] | None = None,
         live_model_gate: bool = False,
+        live_host_gate: bool = False,
     ) -> LiveGateConfig:
         source = yaml.safe_load((ROOT / "config" / "live_gates.example.yaml").read_text(encoding="utf-8"))
         source["evidence_root"] = str(tmp / "evidence")
         source["status_file"] = str(tmp / "status.yaml")
-        if live_model_gate:
+        if live_model_gate or live_host_gate:
             source["allow_live_calls"] = True
             for gate in source["gates"]:
-                if gate["gate_id"] == "GATE-MODEL-PROVIDER":
+                if live_model_gate and gate["gate_id"] == "GATE-MODEL-PROVIDER":
+                    gate["live_enabled"] = True
+                if live_host_gate and gate["gate_id"] == "GATE-HERMES-REAL-HOST":
                     gate["live_enabled"] = True
         config_path = tmp / "live_gates.yaml"
         config_path.write_text(yaml.safe_dump(source, allow_unicode=True, sort_keys=False), encoding="utf-8")
@@ -396,6 +399,76 @@ class LiveGateHarnessTests(unittest.TestCase):
                 status_path=tmp / "status.yaml",
             )
             self.assertEqual(result.status, "DRY_RUN_PASSED")
+
+    def test_hermes_host_live_path_calls_authenticated_api_server(self) -> None:
+        class FakeResponse:
+            def __init__(self, status: int, payload: dict):
+                self.status = status
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self) -> bytes:
+                import json
+
+                return json.dumps(self.payload).encode("utf-8")
+
+        calls = []
+
+        def fake_urlopen(request, timeout=0):
+            calls.append((request.full_url, dict(request.header_items()), timeout))
+            if request.full_url.endswith("/health"):
+                return FakeResponse(200, {"status": "ok"})
+            if request.full_url.endswith("/health/detailed"):
+                return FakeResponse(200, {"gateway_state": "running"})
+            if request.full_url.endswith("/v1/models"):
+                return FakeResponse(200, {"data": [{"id": "hermes-agent"}]})
+            if request.full_url.endswith("/v1/chat/completions"):
+                return FakeResponse(
+                    200,
+                    {
+                        "id": "chatcmpl-test",
+                        "choices": [{"message": {"content": "HERMES_HOST_GATE_OK"}}],
+                        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                    },
+                )
+            raise AssertionError(request.full_url)
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            config = self.make_config(
+                tmp,
+                live_host_gate=True,
+                env_values={
+                    "HERMES_TEST_HOST_URL": "http://127.0.0.1:8642",
+                    "HERMES_TEST_TOKEN": "test-host-token",
+                    "HERMES_TEST_ACTOR_ID": "gate-test-local",
+                },
+            )
+            with mock.patch("scripts.validation.live_gates.urlopen", fake_urlopen):
+                result = run_gate_mode(
+                    config=config,
+                    gate_id="GATE-HERMES-REAL-HOST",
+                    mode="run",
+                    live_confirm=True,
+                    status_path=tmp / "status.yaml",
+                )
+            self.assertEqual(result.status, "LIVE_PASSED")
+            manifest = yaml.safe_load((self.manifest_path(result) / "run_manifest.yaml").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["response"]["interface_type"], "openai-compatible-api-server")
+            self.assertEqual(manifest["response"]["host"], "http://127.0.0.1:8642")
+            self.assertTrue(manifest["response"]["expected_output_match"])
+            self.assertEqual(manifest["response"]["actual_call_count"], 1)
+            self.assertFalse(manifest["response"]["dry_run_fallback"])
+            self.assertNotIn("test-host-token", (self.manifest_path(result) / "run_manifest.yaml").read_text(encoding="utf-8"))
+            self.assertTrue(any(url.endswith("/v1/chat/completions") for url, _, _ in calls))
+            auth_calls = [headers for url, headers, _ in calls if "/v1/" in url]
+            self.assertTrue(all(headers.get("Authorization") == "Bearer test-host-token" for headers in auth_calls))
+            self.assertTrue(all(headers.get("X-hermes-session-key") == "gate-test-local" for headers in auth_calls))
 
     def test_live_run_requires_explicit_authorization(self) -> None:
         with tempfile.TemporaryDirectory() as td:
