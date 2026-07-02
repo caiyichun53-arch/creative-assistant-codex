@@ -1,0 +1,1347 @@
+schema_version: 1
+goal: GOAL-ALIGNMENT-01
+allowed_alignment_statuses:
+- exact_match
+- naming_only
+- conflict
+- missing_in_code
+- undocumented_legacy
+- unknown
+supported_difference_types:
+- narrowed
+- expanded
+- default_changed
+- threshold_changed
+- timing_changed
+- ordering_changed
+- state_changed
+- side_effect_changed
+- ownership_changed
+- removed
+- added
+- ambiguous
+traceability:
+- requirement_id: BR-COLLECT-001
+  legacy_files:
+  - scripts/collect/crawl_competitors.py
+  - scripts/collect/common.py
+  - scripts/reverse/fetch_comments.py
+  legacy_functions:
+  - crawl_account
+  - store_hit_comments
+  - fetch_fresh_aweme
+  observed_legacy_behavior: 'First crawl is a stock snapshot: existing videos become
+    baseline material and must not enter the watching observation pool.'
+  target_component: CollectorAdapter + Core materializer
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - 'fixture: first_seen_at - publish_time gap'
+  - register idempotency test
+  evidence:
+    source_section: 竞品数据侧/注册存量视频
+    defaults:
+      first_crawl_status: archived
+    thresholds:
+      observe_days: 7
+- requirement_id: BR-COLLECT-002
+  legacy_files:
+  - scripts/collect/crawl_competitors.py
+  - scripts/collect/common.py
+  - scripts/reverse/fetch_comments.py
+  legacy_functions:
+  - crawl_account
+  - store_hit_comments
+  - fetch_fresh_aweme
+  observed_legacy_behavior: Only daily incremental newly published videos within the
+    observation window enter watching.
+  target_component: CollectorAdapter + Core materializer
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - watching subset replay
+  evidence:
+    source_section: 竞品数据侧/日常增量观察池
+    defaults:
+      daily_max_notes: config crawler.daily_max_notes
+    thresholds:
+      observe_days: 7
+- requirement_id: BR-COLLECT-003
+  legacy_files:
+  - scripts/collect/crawl_competitors.py
+  - scripts/collect/common.py
+  - scripts/reverse/fetch_comments.py
+  legacy_functions:
+  - crawl_account
+  - store_hit_comments
+  - fetch_fresh_aweme
+  observed_legacy_behavior: Video identity is platform item id scoped to competitor/source;
+    duplicate discoveries update metrics and must not create duplicate business objects.
+  target_component: CollectorAdapter + Core materializer
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - duplicate fixture or synthetic target fixture
+  evidence:
+    source_section: 竞品数据侧/视频去重
+    defaults:
+      dedupe_key:
+      - competitor_id
+      - platform_item_id
+    thresholds: {}
+- requirement_id: BR-COLLECT-004
+  legacy_files:
+  - scripts/collect/crawl_competitors.py
+  - scripts/collect/common.py
+  - scripts/reverse/fetch_comments.py
+  legacy_functions:
+  - crawl_account
+  - store_hit_comments
+  - fetch_fresh_aweme
+  observed_legacy_behavior: Watching videos are refreshed during T+1..T+7 and each
+    check records a metric snapshot.
+  target_component: CollectorAdapter + Core materializer
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - video_checks count and age fixture
+  evidence:
+    source_section: 竞品数据侧/T+1至T+7复查
+    defaults:
+      check_count_initial: 0
+    thresholds:
+      max_observe_days: 7
+- requirement_id: BR-COLLECT-005
+  legacy_files:
+  - scripts/collect/crawl_competitors.py
+  - scripts/collect/common.py
+  - scripts/reverse/fetch_comments.py
+  legacy_functions:
+  - crawl_account
+  - store_hit_comments
+  - fetch_fresh_aweme
+  observed_legacy_behavior: Comments for hit analysis are collected as reverse-prep
+    evidence, not formal research evidence.
+  target_component: CollectorAdapter + Core materializer
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - comment fixture with/without comments
+  evidence:
+    source_section: 逆向备料/评论采集阶段
+    defaults:
+      comment_stage: reverse_prep
+    thresholds:
+      top_comments: 60
+- requirement_id: BR-COLLECT-006
+  legacy_files:
+  - scripts/collect/crawl_competitors.py
+  - scripts/collect/common.py
+  - scripts/reverse/fetch_comments.py
+  legacy_functions:
+  - crawl_account
+  - store_hit_comments
+  - fetch_fresh_aweme
+  observed_legacy_behavior: Keep high-signal comments after deterministic noise filtering
+    and idempotent comment_id insertion.
+  target_component: CollectorAdapter + Core materializer
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - comment_filter unit fixture
+  evidence:
+    source_section: 逆向备料/评论过滤去重
+    defaults:
+      min_comment_len: 5
+    thresholds:
+      top_comments: 60
+- requirement_id: BR-COLLECT-007
+  legacy_files:
+  - scripts/collect/crawl_competitors.py
+  - scripts/collect/common.py
+  - scripts/reverse/fetch_comments.py
+  legacy_functions:
+  - crawl_account
+  - store_hit_comments
+  - fetch_fresh_aweme
+  observed_legacy_behavior: Collection, ranking, storage, retrieval, tracking and
+    dedupe are deterministic code paths with no LLM calls.
+  target_component: CollectorAdapter + Core materializer
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - static import scan for call_llm in collect
+  evidence:
+    source_section: 采集边界/确定性执行
+    defaults:
+      llm_allowed: false
+    thresholds: {}
+- requirement_id: BR-BASELINE-001
+  legacy_files:
+  - scripts/analyze/judge_hits.py
+  - scripts/db/schema.sql
+  legacy_functions:
+  - get_sample
+  - judge_account
+  - expire_watching
+  observed_legacy_behavior: Baseline is account-relative and computed from settled
+    videos, using median and P90 as threshold ingredients.
+  target_component: HitObservationService
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - baseline fixture
+  evidence:
+    source_section: 账号正式基线
+    defaults:
+      metric: like_count
+      baseline_window_days: 90
+    thresholds:
+      baseline_min_samples: 30
+- requirement_id: BR-BASELINE-002
+  legacy_files:
+  - scripts/analyze/judge_hits.py
+  - scripts/db/schema.sql
+  legacy_functions:
+  - get_sample
+  - judge_account
+  - expire_watching
+  observed_legacy_behavior: Videos that leave the observation window become baseline
+    material; stock snapshots are conservative historical baseline seeds.
+  target_component: HitObservationService
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - archived-to-baseline replay
+  evidence:
+    source_section: 历史基线与Day7口径
+    defaults:
+      stock_status: archived
+    thresholds:
+      observe_days: 7
+- requirement_id: BR-BASELINE-003
+  legacy_files:
+  - scripts/analyze/judge_hits.py
+  - scripts/db/schema.sql
+  legacy_functions:
+  - get_sample
+  - judge_account
+  - expire_watching
+  observed_legacy_behavior: If there is not enough valid sample, hit judgement must
+    be skipped or marked not enough evidence; legacy supplement behavior is a conflict
+    needing decision.
+  target_component: HitObservationService
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: conflict
+  difference_type:
+  - threshold_changed
+  - ambiguous
+  migration_action: Decide whether legacy supplement-to-30 remains valid or target
+    should skip underpowered accounts.
+  test_ids:
+  - synthetic sparse-account fixture required
+  evidence:
+    source_section: 基线样本不足
+    defaults:
+      legacy_supplement: true
+    thresholds:
+      minimum_sample_count: 30
+- requirement_id: BR-HIT-001
+  legacy_files:
+  - scripts/analyze/judge_hits.py
+  - scripts/db/schema.sql
+  legacy_functions:
+  - get_sample
+  - judge_account
+  - expire_watching
+  observed_legacy_behavior: 'A hit requires performance over an account-relative threshold:
+    like_count >= max(median * excess_threshold, P90 when enabled).'
+  target_component: HitObservationService
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - golden high/normal/low fixture
+  evidence:
+    source_section: 爆款判定
+    defaults:
+      p90_required: true
+    thresholds:
+      excess_threshold: 3.0
+- requirement_id: BR-HIT-002
+  legacy_files:
+  - scripts/analyze/judge_hits.py
+  - scripts/db/schema.sql
+  legacy_functions:
+  - get_sample
+  - judge_account
+  - expire_watching
+  observed_legacy_behavior: Migration must preserve normal and low performer examples
+    to prove hit math has contrast cases.
+  target_component: HitObservationService
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - 'fixture: high/normal/low videos'
+  evidence:
+    source_section: 普通/低表现对照
+    defaults:
+      control_groups:
+      - normal
+      - low
+    thresholds: {}
+- requirement_id: BR-HIT-003
+  legacy_files:
+  - scripts/analyze/judge_hits.py
+  - scripts/db/schema.sql
+  legacy_functions:
+  - get_sample
+  - judge_account
+  - expire_watching
+  observed_legacy_behavior: Promoting the same source video twice must be idempotent
+    and must not duplicate hit artifacts.
+  target_component: HitObservationService
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - rejudge idempotency test
+  evidence:
+    source_section: 爆款状态推进幂等
+    defaults:
+      idempotency_key: platform_item_id or source observation
+    thresholds: {}
+- requirement_id: BR-HIT-004
+  legacy_files:
+  - scripts/analyze/judge_hits.py
+  - scripts/db/schema.sql
+  legacy_functions:
+  - get_sample
+  - judge_account
+  - expire_watching
+  observed_legacy_behavior: share_comment_ratio is derived evidence for ranking/analysis,
+    not a standalone promotion threshold unless formally specified.
+  target_component: HitObservationService
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - ratio edge fixture
+  evidence:
+    source_section: 分享评论比
+    defaults:
+      ratio_when_comment_zero: guarded
+    thresholds: {}
+- requirement_id: BR-ASR-001
+  legacy_files:
+  - tools/asr/transcribe.py
+  - tools/asr/reverse_prep_worker.py
+  legacy_functions:
+  - transcribe_hit
+  - fetch_fresh_aweme
+  observed_legacy_behavior: ASR is local deterministic/ML runtime used to produce
+    transcript artifacts; it must not call LLM.
+  target_component: ASRAdapter + transcript materializer
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - GATE-ASR evidence
+  - transcript hash fixture
+  evidence:
+    source_section: 本地ASR备料
+    defaults:
+      provider: local SenseVoice
+    thresholds: {}
+- requirement_id: BR-ASR-002
+  legacy_files:
+  - tools/asr/transcribe.py
+  - tools/asr/reverse_prep_worker.py
+  legacy_functions:
+  - transcribe_hit
+  - fetch_fresh_aweme
+  observed_legacy_behavior: Signed platform download URLs are ephemeral and must be
+    fetched fresh when needed; they are not durable source truth.
+  target_component: ASRAdapter + transcript materializer
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - raw_json scrub check
+  evidence:
+    source_section: 下载链接时效
+    defaults:
+      persist_download_url: false
+    thresholds: {}
+- requirement_id: BR-DNA-001
+  legacy_files:
+  - scripts/reverse/dna.py
+  - scripts/reverse/reduce.py
+  - scripts/reverse/comment_filter.py
+  legacy_functions:
+  - run_one
+  - _eligible
+  - run_batch
+  - run_dim
+  observed_legacy_behavior: DNA analysis is per-hit map work and must not batch multiple
+    hits into one note.
+  target_component: ReverseAnalysisSkill + ModelGateway
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - one-hit shadow fixture
+  evidence:
+    source_section: 单条DNA拆解
+    defaults:
+      batch_unit: single_hit
+    thresholds: {}
+- requirement_id: BR-DNA-002
+  legacy_files:
+  - scripts/reverse/dna.py
+  - scripts/reverse/reduce.py
+  - scripts/reverse/comment_filter.py
+  legacy_functions:
+  - run_one
+  - _eligible
+  - run_batch
+  - run_dim
+  observed_legacy_behavior: Only representative or unique hits are eligible for batch
+    DNA to avoid washing/duplicate tactics.
+  target_component: ReverseAnalysisSkill + ModelGateway
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - representative and ordinary fixture
+  evidence:
+    source_section: 代表作去重
+    defaults:
+      eligible_cluster: cluster_id is null or cluster_id=id
+    thresholds: {}
+- requirement_id: BR-DNA-003
+  legacy_files:
+  - scripts/reverse/dna.py
+  - scripts/reverse/reduce.py
+  - scripts/reverse/comment_filter.py
+  legacy_functions:
+  - run_one
+  - _eligible
+  - run_batch
+  - run_dim
+  observed_legacy_behavior: Do not continue the remaining DNA batch until formal ModelGateway,
+    persistence and Skill boundaries exist.
+  target_component: ReverseAnalysisSkill + ModelGateway
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: exact_match
+  difference_type: []
+  migration_action: Maintain freeze; no implementation action.
+  test_ids:
+  - git/db mtime check
+  evidence:
+    source_section: DNA队列冻结
+    defaults:
+      current_pending: 14
+    thresholds: {}
+- requirement_id: BR-DNA-004
+  legacy_files:
+  - scripts/reverse/dna.py
+  - scripts/reverse/reduce.py
+  - scripts/reverse/comment_filter.py
+  legacy_functions:
+  - run_one
+  - _eligible
+  - run_batch
+  - run_dim
+  observed_legacy_behavior: Reduce produces domain-level examples and method route
+    tables; it must not become global prompt rules.
+  target_component: ReverseAnalysisSkill + ModelGateway
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - reduce artifact hash fixture
+  evidence:
+    source_section: Reduce经验提取
+    defaults:
+      reduce_scope: domain
+    thresholds:
+      max_per_play: 3
+      section_cap: 1200
+- requirement_id: BR-RESEARCH-001
+  legacy_files:
+  - scripts/research/research.py
+  - scripts/core/research/goal06_formal_research.py
+  legacy_functions:
+  - run
+  - FormalResearchService.run
+  observed_legacy_behavior: Formal research structurally has no video platform search/read/download/ASR/comment/MediaCrawler
+    path.
+  target_component: FormalResearchService
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: conflict
+  difference_type:
+  - removed
+  - ownership_changed
+  migration_action: Disable legacy direct WebSearch/video-adjacent paths in formal
+    research.
+  test_ids:
+  - formal research blocked platform test
+  evidence:
+    source_section: 正式资料研究无视频平台能力
+    defaults:
+      video_platform_allowed: false
+    thresholds: {}
+- requirement_id: BR-RESEARCH-002
+  legacy_files:
+  - scripts/research/research.py
+  - scripts/core/research/goal06_formal_research.py
+  legacy_functions:
+  - run
+  - FormalResearchService.run
+  observed_legacy_behavior: Video learning/reverse evidence and formal research evidence
+    are separate tracks with separate provenance.
+  target_component: FormalResearchService
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - provenance split fixture
+  evidence:
+    source_section: 视频学习与正式研究分离
+    defaults:
+      provenance_required: true
+    thresholds: {}
+- requirement_id: BR-RESEARCH-003
+  legacy_files:
+  - scripts/research/research.py
+  - scripts/core/research/goal06_formal_research.py
+  legacy_functions:
+  - run
+  - FormalResearchService.run
+  observed_legacy_behavior: Live search/fetch providers require explicit gate opening;
+    dry-run or fake provider otherwise.
+  target_component: FormalResearchService
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - GATE-SEARCH-PROVIDER preflight
+  evidence:
+    source_section: 搜索Provider门禁
+    defaults:
+      live_enabled: false
+    thresholds: {}
+- requirement_id: BR-TOPIC-001
+  legacy_files:
+  - scripts/topics/daily_topics.py
+  - scripts/topics/new_topic.py
+  - scripts/topics/spinoff.py
+  legacy_functions:
+  - spawn_from_hits
+  - recompute_candidates
+  - push_daily
+  observed_legacy_behavior: Daily recommendations group new hit-derived ideas and
+    warmed candidates; sources rank independently rather than one merged opaque rank.
+  target_component: TopicPlanningService
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - golden ranking fixture
+  evidence:
+    source_section: 每日选题排序
+    defaults:
+      top_new: 10
+      top_candidates: 8
+    thresholds:
+      cluster_boost: 0.3
+- requirement_id: BR-TOPIC-002
+  legacy_files:
+  - scripts/topics/daily_topics.py
+  - scripts/topics/new_topic.py
+  - scripts/topics/spinoff.py
+  legacy_functions:
+  - spawn_from_hits
+  - recompute_candidates
+  - push_daily
+  observed_legacy_behavior: Unselected topics become candidates, decay over time and
+    can be reheated by related fresh hits.
+  target_component: TopicPlanningService
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - candidate decay fixture
+  evidence:
+    source_section: 候选池衰减回温
+    defaults:
+      half_life_days: 7
+      reheat_boost: 0.5
+    thresholds:
+      expire_heat: 0.1
+- requirement_id: BR-TOPIC-003
+  legacy_files:
+  - scripts/topics/daily_topics.py
+  - scripts/topics/new_topic.py
+  - scripts/topics/spinoff.py
+  legacy_functions:
+  - spawn_from_hits
+  - recompute_candidates
+  - push_daily
+  observed_legacy_behavior: Formal target must support topic-first preparation; legacy
+    is hit-anchored and this is a missing behavior relative to current direction.
+  target_component: TopicPlanningService
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: missing_in_code
+  difference_type:
+  - added
+  migration_action: Design topic-first prep path before migration.
+  test_ids:
+  - target topic-first fixture required
+  evidence:
+    source_section: 原创题目优先缺口
+    defaults:
+      legacy_source_type: hit
+    thresholds: {}
+- requirement_id: BR-TOPIC-004
+  legacy_files:
+  - scripts/topics/daily_topics.py
+  - scripts/topics/new_topic.py
+  - scripts/topics/spinoff.py
+  legacy_functions:
+  - spawn_from_hits
+  - recompute_candidates
+  - push_daily
+  observed_legacy_behavior: A topic must not silently become production content or
+    publishable state without user confirmation.
+  target_component: TopicPlanningService
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - Hermes/Core confirmation test
+  evidence:
+    source_section: 选题人工确认
+    defaults:
+      autonomy: human_in_loop
+    thresholds: {}
+- requirement_id: BR-CONTENT-001
+  legacy_files:
+  - scripts/content/check_banned.py
+  - scripts/content/diff_draft.py
+  - scripts/content/save_draft.py
+  legacy_functions:
+  - check_text
+  - diff_draft
+  - save_draft
+  observed_legacy_behavior: Banned/risk word constraints are deterministic post-generation
+    checks and must not bloat generation prompts.
+  target_component: ContentWorkflow/ContentGuard
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - banned checker fixtures
+  evidence:
+    source_section: 禁令进代码
+    defaults:
+      checker: scripts/content/check_banned.py
+    thresholds: {}
+- requirement_id: BR-CONTENT-002
+  legacy_files:
+  - scripts/content/check_banned.py
+  - scripts/content/diff_draft.py
+  - scripts/content/save_draft.py
+  legacy_functions:
+  - check_text
+  - diff_draft
+  - save_draft
+  observed_legacy_behavior: Examples are retrieved selectively by relevance and strength;
+    never inject the whole library.
+  target_component: ContentWorkflow/ContentGuard
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - context selection test
+  evidence:
+    source_section: 范例少而厚
+    defaults:
+      selection: relevance * strength
+    thresholds:
+      example_count: small bounded set
+- requirement_id: BR-CONTENT-003
+  legacy_files:
+  - scripts/content/check_banned.py
+  - scripts/content/diff_draft.py
+  - scripts/content/save_draft.py
+  legacy_functions:
+  - check_text
+  - diff_draft
+  - save_draft
+  observed_legacy_behavior: Human edits create diff evidence and candidate examples;
+    promotion to style examples requires repeated patterns or explicit approval.
+  target_component: ContentWorkflow/ContentGuard
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - diff fixture
+  evidence:
+    source_section: 改稿diff经验捕获
+    defaults:
+      single_diff_status: captured
+    thresholds: {}
+- requirement_id: BR-EXPERIENCE-001
+  legacy_files: []
+  legacy_functions: []
+  observed_legacy_behavior: Experience lives in one shared Obsidian/example system
+    with domain/account metadata, not scattered agent memories.
+  target_component: ExperienceEngine
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - projection hash check
+  evidence:
+    source_section: 经验共享库
+    defaults:
+      truth_source: formal artifact + Obsidian projection
+    thresholds: {}
+- requirement_id: BR-EXPERIENCE-002
+  legacy_files: []
+  legacy_functions: []
+  observed_legacy_behavior: Self-account Day7 performance is long-cycle validation
+    for topic/structure experience, not immediate prompt mutation.
+  target_component: ExperienceEngine
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - tracking fixture later
+  evidence:
+    source_section: Day7长期盖章
+    defaults:
+      tracking_window: Day7
+    thresholds: {}
+- requirement_id: BR-EXPERIENCE-003
+  legacy_files: []
+  legacy_functions: []
+  observed_legacy_behavior: AI flavor correction is driven by positive human examples
+    and deterministic guards, not by accumulating prohibitions.
+  target_component: ExperienceEngine
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - humanizer fixture later
+  evidence:
+    source_section: AI味正向范例驱动
+    defaults:
+      ban_prompt_bloat: true
+    thresholds: {}
+- requirement_id: BR-ARCH-001
+  legacy_files:
+  - scripts/core/**
+  - scripts/validation/live_gates.py
+  legacy_functions:
+  - ModelGateway.complete
+  - RuntimeHost.run_batch
+  - HermesCoreBridge.dispatch
+  - run_gate_mode
+  observed_legacy_behavior: Hermes is production host entry; it maps messages into
+    Core commands and must not be bypassed by direct Feishu scripts.
+  target_component: Core/Runtime/ModelGateway
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: exact_match
+  difference_type: []
+  migration_action: Hermes/Core bridge exists; external host gate passed.
+  test_ids:
+  - GATE-HERMES-REAL-HOST
+  evidence:
+    source_section: Hermes生产Host职责
+    defaults:
+      production_host: Hermes
+    thresholds: {}
+- requirement_id: BR-ARCH-002
+  legacy_files:
+  - scripts/core/**
+  - scripts/validation/live_gates.py
+  legacy_functions:
+  - ModelGateway.complete
+  - RuntimeHost.run_batch
+  - HermesCoreBridge.dispatch
+  - run_gate_mode
+  observed_legacy_behavior: Core/Materializer owns state writes, versions, receipts
+    and audit; adapters return payloads only.
+  target_component: Core/Runtime/ModelGateway
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  - state_changed
+  migration_action: Move legacy writes behind Core.
+  test_ids:
+  - state idempotency tests
+  evidence:
+    source_section: Core状态推进
+    defaults:
+      state_owner: Core
+    thresholds: {}
+- requirement_id: BR-ARCH-003
+  legacy_files:
+  - scripts/core/**
+  - scripts/validation/live_gates.py
+  legacy_functions:
+  - ModelGateway.complete
+  - RuntimeHost.run_batch
+  - HermesCoreBridge.dispatch
+  - run_gate_mode
+  observed_legacy_behavior: RuntimeHost/Runner executes allowlisted handlers with
+    declared input/output contracts; failures are recorded and retriable.
+  target_component: Core/Runtime/ModelGateway
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: exact_match
+  difference_type: []
+  migration_action: RuntimeHost exists; migrate handlers later.
+  test_ids:
+  - continuous fault gate
+  evidence:
+    source_section: Runner执行边界
+    defaults:
+      external_io_allowed_by_adapter: true
+    thresholds: {}
+- requirement_id: BR-ARCH-004
+  legacy_files:
+  - scripts/core/**
+  - scripts/validation/live_gates.py
+  legacy_functions:
+  - ModelGateway.complete
+  - RuntimeHost.run_batch
+  - HermesCoreBridge.dispatch
+  - run_gate_mode
+  observed_legacy_behavior: All cloud/local model calls go through ModelGateway and
+    record provider/model/envelope/hash/usage/cost/correlation.
+  target_component: Core/Runtime/ModelGateway
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: exact_match
+  difference_type: []
+  migration_action: ModelGateway exists; legacy model shim is replacement target.
+  test_ids:
+  - GATE-MODEL-PROVIDER
+  - fake provider tests
+  evidence:
+    source_section: ModelGateway统一调用
+    defaults:
+      direct_vendor_sdk_in_business: false
+    thresholds: {}
+- requirement_id: BR-ARCH-005
+  legacy_files:
+  - scripts/core/**
+  - scripts/validation/live_gates.py
+  legacy_functions:
+  - ModelGateway.complete
+  - RuntimeHost.run_batch
+  - HermesCoreBridge.dispatch
+  - run_gate_mode
+  observed_legacy_behavior: Adapters may pass provider-specific features; target must
+    not reduce all engines to a lowest common denominator.
+  target_component: Core/Runtime/ModelGateway
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: exact_match
+  difference_type: []
+  migration_action: Keep gate caps separated from production profiles.
+  test_ids:
+  - config separation test
+  evidence:
+    source_section: Provider特性透传
+    defaults:
+      profile_specific_params: true
+    thresholds: {}
+- requirement_id: BR-ARCH-006
+  legacy_files:
+  - scripts/core/**
+  - scripts/validation/live_gates.py
+  legacy_functions:
+  - ModelGateway.complete
+  - RuntimeHost.run_batch
+  - HermesCoreBridge.dispatch
+  - run_gate_mode
+  observed_legacy_behavior: Token and cost metadata are recorded; daily/domain/Skill
+    budgets can defer low-priority work.
+  target_component: Core/Runtime/ModelGateway
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - model gate evidence
+  evidence:
+    source_section: 成本Token边界
+    defaults:
+      billing_modes:
+      - subscription
+      - metered
+    thresholds:
+      cost_cap_unit: USD when metered
+- requirement_id: BR-ARCH-007
+  legacy_files:
+  - scripts/core/**
+  - scripts/validation/live_gates.py
+  legacy_functions:
+  - ModelGateway.complete
+  - RuntimeHost.run_batch
+  - HermesCoreBridge.dispatch
+  - run_gate_mode
+  observed_legacy_behavior: Formal Skills require schema, version/hash, declared side
+    effects and standalone/boundary/fault validation.
+  target_component: Core/Runtime/ModelGateway
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - skill standalone fixture
+  evidence:
+    source_section: 正式Skill治理
+    defaults:
+      candidate_skill_status: not formal
+    thresholds: {}
+- requirement_id: BR-ARCH-008
+  legacy_files:
+  - scripts/core/**
+  - scripts/validation/live_gates.py
+  legacy_functions:
+  - ModelGateway.complete
+  - RuntimeHost.run_batch
+  - HermesCoreBridge.dispatch
+  - run_gate_mode
+  observed_legacy_behavior: Local Skills can guide operators but do not become production
+    authority until formalized.
+  target_component: Core/Runtime/ModelGateway
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - skill scan
+  evidence:
+    source_section: 候选Skill与本地说明隔离
+    defaults:
+      operator_docs_allowed: true
+    thresholds: {}
+- requirement_id: BR-ARCH-009
+  legacy_files:
+  - scripts/core/**
+  - scripts/validation/live_gates.py
+  legacy_functions:
+  - ModelGateway.complete
+  - RuntimeHost.run_batch
+  - HermesCoreBridge.dispatch
+  - run_gate_mode
+  observed_legacy_behavior: Business outputs and state changes need version, source
+    hash, actor, correlation/causation and audit evidence.
+  target_component: Core/Runtime/ModelGateway
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - migration rehearsal hash check
+  evidence:
+    source_section: 审计与版本不可变
+    defaults:
+      immutable_versions: true
+    thresholds: {}
+- requirement_id: BR-DOMAIN-001
+  legacy_files:
+  - config/domains/*.yaml
+  - config/accounts/*.yaml
+  - scripts/setup/create_domain_account.py
+  legacy_functions:
+  - create_domain_account
+  observed_legacy_behavior: Adding a domain/account is config/data plus empty example
+    buckets; pipeline code remains shared.
+  target_component: DomainAccountConfig
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - third-domain fixture
+  evidence:
+    source_section: 领域是数据不是代码
+    defaults:
+      domain_code_fork: false
+    thresholds: {}
+- requirement_id: BR-DOMAIN-002
+  legacy_files:
+  - config/domains/*.yaml
+  - config/accounts/*.yaml
+  - scripts/setup/create_domain_account.py
+  legacy_functions:
+  - create_domain_account
+  observed_legacy_behavior: Migration must prove a third domain can exist without
+    code changes and without copying another domain's examples.
+  target_component: DomainAccountConfig
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: missing_in_code
+  difference_type:
+  - added
+  migration_action: Add third-domain validation fixture.
+  test_ids:
+  - third-domain config test
+  evidence:
+    source_section: 第三领域约束
+    defaults:
+      third_domain_required_for_gate: true
+    thresholds: {}
+- requirement_id: BR-REL-001
+  legacy_files: []
+  legacy_functions: []
+  observed_legacy_behavior: Classification and relation judgement must be explicit
+    artifacts; deterministic tags/clusters remain separate from LLM interpretation.
+  target_component: ContentRelationService
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - classification fixture
+  evidence:
+    source_section: 内容分类与关系判断
+    defaults:
+      deterministic_first: true
+    thresholds: {}
+- requirement_id: BR-REL-002
+  legacy_files: []
+  legacy_functions: []
+  observed_legacy_behavior: Source hit may inform tactics; final content must use
+    research and original angle controls to avoid copying source wording.
+  target_component: ContentRelationService
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: Preserve business semantics while moving state/external side effects
+    to formal Core/Adapter boundaries.
+  test_ids:
+  - brief source separation test
+  evidence:
+    source_section: 洗稿/二创边界
+    defaults:
+      source_text_copy: forbidden
+    thresholds: {}
+- requirement_id: BR-GATE-001
+  legacy_files:
+  - scripts/core/**
+  - scripts/validation/live_gates.py
+  legacy_functions:
+  - ModelGateway.complete
+  - RuntimeHost.run_batch
+  - HermesCoreBridge.dispatch
+  - run_gate_mode
+  observed_legacy_behavior: Only one external dependency is opened at a time with
+    preflight, explicit authorization and evidence.
+  target_component: ExternalLiveGateHarness
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: exact_match
+  difference_type: []
+  migration_action: Live gate harness supports single-gate guarded runs.
+  test_ids:
+  - live_gates tests
+  evidence:
+    source_section: 外部门禁单Gate执行
+    defaults:
+      run_all_live: false
+    thresholds: {}
+- requirement_id: BR-GATE-002
+  legacy_files:
+  - scripts/core/**
+  - scripts/validation/live_gates.py
+  legacy_functions:
+  - ModelGateway.complete
+  - RuntimeHost.run_batch
+  - HermesCoreBridge.dispatch
+  - run_gate_mode
+  observed_legacy_behavior: Evidence stores hashes/metadata and redacts secrets; no
+    API keys, Authorization headers or cookies in reports.
+  target_component: ExternalLiveGateHarness
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: exact_match
+  difference_type: []
+  migration_action: Harness redaction/static leak tests exist.
+  test_ids:
+  - secret leakage static check
+  evidence:
+    source_section: 证据防泄漏
+    defaults:
+      redaction_required: true
+    thresholds: {}
+- requirement_id: BR-GATE-003
+  legacy_files:
+  - scripts/core/**
+  - scripts/validation/live_gates.py
+  legacy_functions:
+  - ModelGateway.complete
+  - RuntimeHost.run_batch
+  - HermesCoreBridge.dispatch
+  - run_gate_mode
+  observed_legacy_behavior: Validation uses isolated DB/workspace and shadow-only
+    sinks unless a dedicated test external endpoint is explicitly configured.
+  target_component: ExternalLiveGateHarness
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: exact_match
+  difference_type: []
+  migration_action: Config carries shadow_only and isolated roots.
+  test_ids:
+  - config/live_gates lint
+  evidence:
+    source_section: Shadow-only验证
+    defaults:
+      shadow_only: true
+    thresholds: {}
+- requirement_id: BR-GATE-004
+  legacy_files:
+  - scripts/core/**
+  - scripts/validation/live_gates.py
+  legacy_functions:
+  - ModelGateway.complete
+  - RuntimeHost.run_batch
+  - HermesCoreBridge.dispatch
+  - run_gate_mode
+  observed_legacy_behavior: Gate-specific small output caps constrain only the single
+    validation request and must not change production task/Profile/Skill budgets.
+  target_component: ExternalLiveGateHarness
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: exact_match
+  difference_type: []
+  migration_action: Model gate max output tokens scoped to harness.
+  test_ids:
+  - model gate max token test
+  evidence:
+    source_section: Gate参数非生产默认
+    defaults:
+      MODEL_PROVIDER_GATE_MAX_OUTPUT_TOKENS: 128
+    thresholds:
+      live_call_limit: 1
+      max_retries: 0
+      timeout_ms: 30000
+- requirement_id: BR-LEGACY-001
+  legacy_files:
+  - scripts/llm/call.py
+  - data/creation.db
+  - scripts/**/*.py
+  legacy_functions:
+  - call_llm
+  - legacy direct SQL writes
+  observed_legacy_behavior: Legacy call_llm implementation is evidence of old behavior
+    but cannot be reused as formal production model authority.
+  target_component: Migration boundary
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: conflict
+  difference_type:
+  - ownership_changed
+  - removed
+  migration_action: Replace live use with ModelGateway.
+  test_ids:
+  - static import scan
+  evidence:
+    source_section: 旧LLM调用只能作证据
+    defaults:
+      legacy_allowed: read-only evidence
+    thresholds: {}
+- requirement_id: BR-LEGACY-002
+  legacy_files:
+  - scripts/llm/call.py
+  - data/creation.db
+  - scripts/**/*.py
+  legacy_functions:
+  - call_llm
+  - legacy direct SQL writes
+  observed_legacy_behavior: The legacy SQLite DB is read-only source during alignment;
+    target migration must use copied rehearsal DB.
+  target_component: Migration boundary
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: exact_match
+  difference_type: []
+  migration_action: Audit uses read-only source DB.
+  test_ids:
+  - DB hash check
+  evidence:
+    source_section: 旧DB只读源
+    defaults:
+      source_db_mode: read-only
+    thresholds: {}
+- requirement_id: BR-LEGACY-003
+  legacy_files:
+  - scripts/llm/call.py
+  - data/creation.db
+  - scripts/**/*.py
+  legacy_functions:
+  - call_llm
+  - legacy direct SQL writes
+  observed_legacy_behavior: Undocumented legacy behavior with business value is listed
+    for decision, not silently retained or discarded.
+  target_component: Migration boundary
+  current_implementation_status: legacy behavior observed; target formalization pending
+    unless noted exact_match
+  alignment_status: undocumented_legacy
+  difference_type:
+  - ambiguous
+  migration_action: Resolve decision backlog before coding.
+  test_ids:
+  - UNDOCUMENTED_LEGACY_BEHAVIOR.md
+  evidence:
+    source_section: 未成文旧行为待裁决
+    defaults:
+      decision_policy: document then decide
+    thresholds: {}

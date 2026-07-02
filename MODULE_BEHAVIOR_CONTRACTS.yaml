@@ -1,0 +1,1172 @@
+schema_version: 1
+goal: GOAL-ALIGNMENT-01
+contracts:
+- module: vendor/MediaCrawler; scripts/collect/common.py; scripts/collect/crawl_competitors.py;
+    scripts/language_fuel/collect_mediacrawler.py; scripts/reverse/fetch_comments.py
+  decision: wrap
+  preserved_behavior:
+  - Starts MediaCrawler subprocesses, parses output, archives raw files and upserts
+    legacy SQLite records.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: collector_adapter
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-COLLECT-001
+  - BR-COLLECT-002
+  - BR-COLLECT-003
+  - BR-COLLECT-004
+  - BR-COLLECT-005
+  - BR-COLLECT-006
+  - BR-COLLECT-007
+  - BR-BASELINE-001
+  migration_tests:
+  - Replay saved JSONL fixture
+  - Assert normalized output and no state write before Materializer
+  unresolved_conflicts:
+  - Direct DB writes
+  - No adapter result contract
+- module: tools/asr/transcribe.py; tools/asr/reverse_prep_worker.py
+  decision: wrap
+  preserved_behavior:
+  - Extracts audio, runs local ASR/VAD, writes transcript paths and reverse_status
+    to legacy SQLite.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: asr_adapter
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-COLLECT-001
+  - BR-COLLECT-002
+  - BR-COLLECT-003
+  - BR-COLLECT-004
+  - BR-COLLECT-005
+  - BR-COLLECT-006
+  - BR-COLLECT-007
+  - BR-BASELINE-001
+  migration_tests:
+  - Isolated DB ASR gate
+  - Transcript hash and no full sensitive transcript in evidence
+  unresolved_conflicts:
+  - Valuable runtime but state mutation bypasses Core
+  - Worker launch outside formal scheduler
+- module: scripts/feishu/client.py; scripts/feishu/push.py
+  decision: wrap
+  preserved_behavior:
+  - Contains real HTTP client behavior and token handling conventions.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: external_message_adapter
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-COLLECT-001
+  - BR-COLLECT-002
+  - BR-COLLECT-003
+  - BR-COLLECT-004
+  - BR-COLLECT-005
+  - BR-COLLECT-006
+  - BR-COLLECT-007
+  - BR-BASELINE-001
+  migration_tests:
+  - Mock token/send paths
+  - Live send gate only with test chat and approval
+  unresolved_conflicts:
+  - Cannot be called directly by business scripts
+  - Must not expose credentials or duplicate sends
+- module: scripts/music/**; scripts/language_fuel/douban/**; scripts/language_fuel/collect_douban.py
+  decision: wrap
+  preserved_behavior:
+  - Fetches platform data, parses comments/reviews/topics and stores legacy fuel records.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: language_fuel_adapter
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-COLLECT-001
+  - BR-COLLECT-002
+  - BR-COLLECT-003
+  - BR-COLLECT-004
+  - BR-COLLECT-005
+  - BR-COLLECT-006
+  - BR-COLLECT-007
+  - BR-BASELINE-001
+  migration_tests:
+  - Fixture replay for each source kind
+  - No live request without source gate
+  unresolved_conflicts:
+  - Direct persistence
+  - No source capability/version manifest
+- module: config/accounts/**; config/domains/**; scripts/setup/create_domain_account.py
+  decision: adapt
+  preserved_behavior:
+  - Stores YAML and can upsert accounts into SQLite.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: domain_account_config
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-ARCH-002
+  - BR-ARCH-009
+  migration_tests:
+  - Import seed into isolated DB
+  - Prove no hardcoded account dependency
+  unresolved_conflicts:
+  - No versioned account/domain record
+  - Script writes config and DB directly
+- module: scripts/collect/register_competitor.py; scripts/collect/register_full.py;
+    scripts/collect/register_seeds.py
+  decision: adapt
+  preserved_behavior:
+  - Normalizes competitor input, writes competitor rows and may trigger full crawl.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: competitor_registration
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-COLLECT-001
+  - BR-COLLECT-002
+  - BR-COLLECT-003
+  - BR-COLLECT-004
+  - BR-COLLECT-005
+  - BR-COLLECT-006
+  - BR-COLLECT-007
+  - BR-BASELINE-001
+  migration_tests:
+  - Register same competitor twice and prove idempotent result
+  unresolved_conflicts:
+  - Registration can start collection and mutate state outside Core
+- module: scripts/db/schema.sql; scripts/collect/crawl_competitors.py; scripts/analyze/judge_hits.py
+  decision: adapt
+  preserved_behavior:
+  - Implements D0-D7 observation, rolling baselines, hit promotion and video_checks
+    snapshots.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: hit_observation_model
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-COLLECT-001
+  - BR-COLLECT-002
+  - BR-COLLECT-003
+  - BR-COLLECT-004
+  - BR-COLLECT-005
+  - BR-COLLECT-006
+  - BR-COLLECT-007
+  - BR-BASELINE-001
+  migration_tests:
+  - Golden fixture for baseline to hit promotion
+  - Idempotent rejudge checks
+  unresolved_conflicts:
+  - Direct writes and SQLite-specific shape
+- module: scripts/topics/daily_topics.py; scripts/topics/new_topic.py; scripts/topics/spinoff.py
+  decision: adapt
+  preserved_behavior:
+  - Updates topic status/heat, inserts candidates, groups recommendations and can
+    push cards to Feishu.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: topic_planning
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-COLLECT-001
+  - BR-COLLECT-002
+  - BR-COLLECT-003
+  - BR-COLLECT-004
+  - BR-COLLECT-005
+  - BR-COLLECT-006
+  - BR-COLLECT-007
+  - BR-BASELINE-001
+  migration_tests:
+  - Golden ranking fixture
+  - No external send in planner unit tests
+  unresolved_conflicts:
+  - Combines ranking, state mutation and external view push
+- module: scripts/reverse/dna.py; scripts/reverse/reduce.py; scripts/reverse/upgrade_examples.py;
+    data/爆款拆解/**
+  decision: adapt
+  preserved_behavior:
+  - Loads Claude skill prompts, calls legacy LLM shim, writes notes and updates hit
+    status; current read-only status is 81/95 done.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: reverse_analysis_skill
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-COLLECT-001
+  - BR-COLLECT-002
+  - BR-COLLECT-003
+  - BR-COLLECT-004
+  - BR-COLLECT-005
+  - BR-COLLECT-006
+  - BR-COLLECT-007
+  - BR-BASELINE-001
+  migration_tests:
+  - One isolated shadow DNA fixture
+  - Envelope and artifact hash checks
+  unresolved_conflicts:
+  - Model and persistence paths bypass formal runtime
+  - Batch writes must not continue before migration
+- module: scripts/research/research.py; scripts/core/research/**
+  decision: adapt
+  preserved_behavior:
+  - Legacy research calls call_llm with WebSearch; formal GOAL-06 service exists under
+    Core.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: formal_research
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-COLLECT-001
+  - BR-COLLECT-002
+  - BR-COLLECT-003
+  - BR-COLLECT-004
+  - BR-COLLECT-005
+  - BR-COLLECT-006
+  - BR-COLLECT-007
+  - BR-BASELINE-001
+  migration_tests:
+  - Fake search/provider replay
+  - No live search until gate opened
+  unresolved_conflicts:
+  - Legacy research is not formally materialized
+- module: scripts/language_fuel/extract_*.py; scripts/humanize/**
+  decision: adapt
+  preserved_behavior:
+  - Reads local corpora/comments, calls legacy LLM shim, writes observations/insights
+    and Obsidian notes.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: experience_engine
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-ARCH-002
+  - BR-ARCH-009
+  migration_tests:
+  - Small corpus fixture with immutable output artifact
+  - No rule injection
+  unresolved_conflicts:
+  - LLM and persistence are not formalized
+  - Risk of prompt bloat if migrated as rules instead of examples
+- module: scripts/content/check_banned.py; config/banned_words.yaml
+  decision: adapt
+  preserved_behavior:
+  - Runs local regex/config checks against drafts or files.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: content_guard
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-COLLECT-001
+  - BR-COLLECT-002
+  - BR-COLLECT-003
+  - BR-COLLECT-004
+  - BR-COLLECT-005
+  - BR-COLLECT-006
+  - BR-COLLECT-007
+  - BR-BASELINE-001
+  migration_tests:
+  - Fixtures for RED/WARN/HINT/PASS
+  - No LLM use
+  unresolved_conflicts:
+  - Needs formal result schema for workflow gating
+- module: scripts/content/build_writer_dispatch.py; scripts/content/save_draft.py;
+    scripts/content/diff_draft.py; templates/**
+  decision: adapt
+  preserved_behavior:
+  - Builds task cards, inserts draft/diff rows and records changed character counts.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: content_workflow
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-COLLECT-001
+  - BR-COLLECT-002
+  - BR-COLLECT-003
+  - BR-COLLECT-004
+  - BR-COLLECT-005
+  - BR-COLLECT-006
+  - BR-COLLECT-007
+  - BR-BASELINE-001
+  migration_tests:
+  - Draft version fixture with immutable history
+  - Diff artifact hash
+  unresolved_conflicts:
+  - Draft/diff registration bypasses Core and immutable versioning
+- module: vault symlink; Obsidian writers in legacy scripts
+  decision: adapt
+  preserved_behavior:
+  - Stores/retrieves examples, notes and knowledge artifacts outside SQLite.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: knowledge_projection
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-ARCH-002
+  - BR-ARCH-009
+  migration_tests:
+  - Projection replay from formal artifact produces same note path/hash
+  unresolved_conflicts:
+  - Projection writes can become hidden state if not tied to Core versions
+- module: .agents/skills/**; .claude/skills/**; .codex/agents/**
+  decision: adapt
+  preserved_behavior:
+  - Useful operating contracts; many read/write local files or call scripts; most
+    are not formal portable Skill schemas.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: formal_skill_catalog
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-COLLECT-001
+  - BR-COLLECT-002
+  - BR-COLLECT-003
+  - BR-COLLECT-004
+  - BR-COLLECT-005
+  - BR-COLLECT-006
+  - BR-COLLECT-007
+  - BR-BASELINE-001
+  migration_tests:
+  - Standalone Skill fixture with schema, version hash and no hidden DB write
+  unresolved_conflicts:
+  - Host-bound paths and prose-only I/O
+  - Some Skills advance business state indirectly
+- module: scripts/run_daily.py; 启动*.bat; Windows scheduled-task docs
+  decision: adapt
+  preserved_behavior:
+  - Starts daily collect/analyze/topic flow, background ASR worker and listener-like
+    processes.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: scheduler_runtime
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-ARCH-002
+  - BR-ARCH-009
+  migration_tests:
+  - Interrupted job resume
+  - No duplicate outbox emission
+  unresolved_conflicts:
+  - Process launch is outside formal scheduler/job lease/runtime host
+- module: config/settings.yaml; config/settings.example.yaml; config/live_gates.yaml;
+    .env.example; .env.live-gates.example
+  decision: adapt
+  preserved_behavior:
+  - Settings include old Codex route aliases; live-gate config controls opened external
+    gates and ignored env fields.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: configuration
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-COLLECT-001
+  - BR-COLLECT-002
+  - BR-COLLECT-003
+  - BR-COLLECT-004
+  - BR-COLLECT-005
+  - BR-COLLECT-006
+  - BR-COLLECT-007
+  - BR-BASELINE-001
+  migration_tests:
+  - Config lint for no secrets in examples
+  - No gate max token applied globally
+  unresolved_conflicts:
+  - Old production route config is not wired into ModelGateway
+  - Validation config must not become production defaults
+- module: scripts/project_check.py
+  decision: adapt
+  preserved_behavior:
+  - Checks files, Codex CLI, DB readability, ASR venv, lark SDK, MediaCrawler and
+    uv/cache.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: diagnostics
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-ARCH-002
+  - BR-ARCH-009
+  migration_tests:
+  - Run project_check read-only before local development changes
+  unresolved_conflicts:
+  - Not a formal production readiness gate
+- module: data/creation.db; data/** historical artifacts; logs/**; outputs/**
+  decision: adapt
+  preserved_behavior:
+  - SQLite contains current history; files contain notes, transcripts, drafts, collection
+    outputs and logs.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: migration_source_data
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-COLLECT-001
+  - BR-COLLECT-002
+  - BR-COLLECT-003
+  - BR-COLLECT-004
+  - BR-COLLECT-005
+  - BR-COLLECT-006
+  - BR-COLLECT-007
+  - BR-BASELINE-001
+  migration_tests:
+  - No source DB writes during audit
+  - Pre/post migration hash and count reports on copied DB only
+  unresolved_conflicts:
+  - Historical files are not all immutable/versioned
+  - Generated data must not be silently rewritten
+- module: README.md; BUILD_PLAN.md; CLAUDE.md; AGENTS.md; GOAL-* reports
+  decision: adapt
+  preserved_behavior:
+  - Contains build route, legacy status and RC validation reports; some details are
+    historical rather than production authority.
+  - Preserve user-visible business result and deterministic thresholds/defaults unless
+    traceability marks a conflict.
+  removed_behavior:
+  - Direct production state writes
+  - Direct production external sends
+  - Unrecorded model calls
+  changed_behavior:
+  - Inputs/outputs become explicit contract payloads
+  - State changes move to Core/Materializer
+  - Artifacts gain source hashes and correlation ids
+  target_layer: documentation
+  input_contract:
+    required:
+    - source_ref or command envelope
+    - domain/account context when applicable
+    forbidden:
+    - raw production secret
+    - implicit current working directory as business input
+  output_contract:
+    required:
+    - normalized payload or artifact reference
+    - content/source hash when file/text is produced
+    - status/verdict
+    forbidden:
+    - hidden DB mutation as output
+  state_contract:
+    owner: Core/Materializer
+    legacy_state: read-only migration evidence
+    idempotency_key: source-specific stable key or command id
+  idempotency: Replaying the same source/command must not create duplicate business
+    objects, sends or model artifacts.
+  side_effect_contract:
+    allowed:
+    - declared adapter I/O for wrap modules
+    - local projection after formal artifact exists
+    forbidden:
+    - production DB write
+    - production message send
+    - batch DNA generation during alignment
+  error_contract: Failure returns typed error/receipt; partial adapter output is rejected
+    before state advancement.
+  related_requirement_ids:
+  - BR-ARCH-002
+  - BR-ARCH-009
+  migration_tests:
+  - Markdown artifact presence
+  - Diff review
+  unresolved_conflicts:
+  - Some docs still reference disabled legacy entrypoints
+  - Historical GOAL-00 progress had stale HEAD before this pass

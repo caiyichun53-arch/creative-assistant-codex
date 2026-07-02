@@ -1,0 +1,171 @@
+schema_version: 1
+goal: GOAL-ALIGNMENT-01
+mappings:
+- legacy_table: accounts
+  legacy_fields:
+  - id
+  - name
+  - domain
+  - platform
+  legacy_semantics: self-operated account config/state seed
+  target_object: account_profile_version
+  conversion_rule: preserve ids as source_refs; create versioned account/domain record
+  recompute: false
+  archive_only: false
+  forbidden_migration: []
+- legacy_table: competitor_accounts
+  legacy_fields:
+  - id
+  - name
+  - domain
+  - platform
+  - platform_uid
+  - last_crawled_at
+  legacy_semantics: competitor source identity and crawl watermark
+  target_object: competitor_source_version
+  conversion_rule: platform_uid becomes external_source_id; crawl watermark is operational
+    state not business evidence
+  recompute: false
+  archive_only: false
+  forbidden_migration:
+  - copy message credentials
+- legacy_table: competitor_videos
+  legacy_fields:
+  - platform_item_id
+  - publish_time
+  - first_seen_at
+  - status
+  - raw_json
+  legacy_semantics: all discovered competitor videos; watching is observation subset
+  target_object: source_video_version + observation_state
+  conversion_rule: preserve publish/discovery distinction; status maps through STATE_SEMANTICS_MAPPING
+  recompute: false
+  archive_only: false
+  forbidden_migration:
+  - ephemeral signed download URLs as canonical fields
+- legacy_table: video_checks
+  legacy_fields:
+  - video_id
+  - checked_at
+  - age_hours
+  - like_count
+  - comment_count
+  - share_count
+  legacy_semantics: T+1..T+7 metric snapshots
+  target_object: video_metric_snapshot
+  conversion_rule: link by legacy video source_ref; preserve checked_at/age_hours
+    as evidence
+  recompute: false
+  archive_only: false
+  forbidden_migration: []
+- legacy_table: baselines
+  legacy_fields:
+  - competitor_id
+  - window_days
+  - sample_count
+  - median_value
+  - p90_value
+  legacy_semantics: account-relative threshold evidence
+  target_object: baseline_version
+  conversion_rule: preserve computed values and method; mark legacy supplement when
+    window_days=0
+  recompute: only in target rehearsal for comparison
+  archive_only: false
+  forbidden_migration:
+  - use as global baseline
+- legacy_table: hits
+  legacy_fields:
+  - platform_item_id
+  - excess_ratio
+  - share_comment_ratio
+  - reverse_status
+  - transcript_path
+  - dna_note_path
+  - cluster_id
+  legacy_semantics: promoted hit plus reverse-prep/analysis state
+  target_object: hit_version + reverse_analysis_state
+  conversion_rule: split source hit, derived metrics, transcript artifact and DNA
+    artifact references
+  recompute: derived metrics may be recomputed and compared
+  archive_only: false
+  forbidden_migration:
+  - advance pending DNA during import
+- legacy_table: hit_comments
+  legacy_fields:
+  - hit_id
+  - comment_id
+  - content
+  - like_count
+  legacy_semantics: reverse-prep comment evidence after filtering
+  target_object: reverse_comment_evidence
+  conversion_rule: store content hash and optional text only in controlled artifact;
+    dedupe by hit/source comment id
+  recompute: false
+  archive_only: false
+  forbidden_migration:
+  - formal research source
+- legacy_table: topics
+  legacy_fields:
+  - source_type
+  - source_hit_id
+  - initial_heat
+  - current_heat
+  - status
+  legacy_semantics: daily recommendations and candidate pool
+  target_object: topic_state_version
+  conversion_rule: source hit references remain provenance; heat/status are state
+    projections with history
+  recompute: heat can be recomputed for validation
+  archive_only: false
+  forbidden_migration:
+  - assume source_type is always hit in target
+- legacy_table: drafts
+  legacy_fields:
+  - topic_id
+  - author
+  - version
+  - status
+  - path
+  legacy_semantics: draft artifact registration
+  target_object: content_artifact_version
+  conversion_rule: path becomes source artifact ref with hash; status maps to formal
+    review state
+  recompute: false
+  archive_only: false
+  forbidden_migration:
+  - overwrite draft versions
+- legacy_table: diffs
+  legacy_fields:
+  - draft_id
+  - changed_chars
+  - total_chars
+  - edit_ratio
+  legacy_semantics: human edit evidence
+  target_object: revision_diff_artifact
+  conversion_rule: preserve ratios and diff hash; do not auto-promote to rule
+  recompute: optional comparison from source files
+  archive_only: false
+  forbidden_migration: []
+- legacy_table: language_fuel_*
+  legacy_fields:
+  - items
+  - comments
+  - insights
+  legacy_semantics: language texture source/candidate insights
+  target_object: experience_source_artifact
+  conversion_rule: import as historical candidate evidence with source capability
+    metadata
+  recompute: false
+  archive_only: false
+  forbidden_migration:
+  - hidden prompt rule
+- legacy_table: tracking
+  legacy_fields:
+  - topic/account/publication metrics
+  legacy_semantics: self-account performance feedback when available
+  target_object: publication_tracking_artifact
+  conversion_rule: preserve as long-cycle validation evidence; no automatic prompt
+    mutation
+  recompute: false
+  archive_only: false
+  forbidden_migration: []

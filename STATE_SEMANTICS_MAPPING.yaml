@@ -1,0 +1,82 @@
+schema_version: 1
+goal: GOAL-ALIGNMENT-01
+states:
+- legacy_location: competitor_videos.status
+  legacy_value: watching
+  true_semantics: daily incremental video inside observation window
+  target_state: observing
+  conversion_rule: only if first_seen came from non-first crawl and age <= observe_days
+  forbidden_interpretation: all young videos
+- legacy_location: competitor_videos.status
+  legacy_value: archived
+  true_semantics: stock snapshot or observation-complete baseline material
+  target_state: baseline_material
+  conversion_rule: preserve reason when inferable from first crawl/gap
+  forbidden_interpretation: discarded
+- legacy_location: competitor_videos.status
+  legacy_value: promoted
+  true_semantics: source video has a hit record
+  target_state: hit_promoted_source
+  conversion_rule: link to hit_version by platform_item_id/source_ref
+  forbidden_interpretation: video no longer baseline evidence
+- legacy_location: hits.reverse_status
+  legacy_value: none
+  true_semantics: not yet prepped/analyzed or legacy default
+  target_state: reverse_not_started
+  conversion_rule: derive from transcript_path/dna_note_path if inconsistent
+  forbidden_interpretation: failed
+- legacy_location: hits.reverse_status
+  legacy_value: transcribed
+  true_semantics: transcript exists, DNA not complete
+  target_state: transcript_ready
+  conversion_rule: require transcript_path hash
+  forbidden_interpretation: analysis done
+- legacy_location: hits.reverse_status
+  legacy_value: done
+  true_semantics: DNA note path written
+  target_state: dna_done
+  conversion_rule: require dna_note_path exists or mark legacy_inconsistent
+  forbidden_interpretation: formal Skill validated
+- legacy_location: topics.status
+  legacy_value: pushed
+  true_semantics: shown to user as daily recommendation
+  target_state: recommended
+  conversion_rule: preserve pushed_at as view/outbox projection time
+  forbidden_interpretation: selected
+- legacy_location: topics.status
+  legacy_value: candidate
+  true_semantics: unselected carried forward with decay/reheat
+  target_state: candidate_pool
+  conversion_rule: preserve heat fields
+  forbidden_interpretation: user rejected
+- legacy_location: topics.status
+  legacy_value: selected
+  true_semantics: user chose topic for preparation/creation
+  target_state: selected_by_actor
+  conversion_rule: requires actor/receipt in target; legacy may lack actor
+  forbidden_interpretation: ready to publish
+- legacy_location: topics.status
+  legacy_value: expired/rejected
+  true_semantics: removed from active candidate flow
+  target_state: closed_candidate
+  conversion_rule: preserve reason if available
+  forbidden_interpretation: delete source evidence
+- legacy_location: drafts.status
+  legacy_value: draft
+  true_semantics: generated or saved draft not approved
+  target_state: draft_artifact
+  conversion_rule: import path+hash
+  forbidden_interpretation: approved
+- legacy_location: drafts.status
+  legacy_value: approved
+  true_semantics: human accepted version
+  target_state: human_approved
+  conversion_rule: requires confirmation receipt in target; legacy approval imported
+    as historical
+  forbidden_interpretation: published
+- legacy_location: scheduler job status
+  legacy_value: claimed/running/succeeded/failed
+  true_semantics: formal runtime execution state
+  target_state: job_attempt_state
+  conversion_rule: already formal in scripts/core; no legacy DB import
+  forbidden_interpretation: business result

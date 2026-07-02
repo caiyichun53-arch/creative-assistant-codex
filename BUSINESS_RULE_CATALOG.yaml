@@ -1,0 +1,1488 @@
+schema_version: 1
+goal: GOAL-ALIGNMENT-01
+source_scope:
+- 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+- AGENTS.md
+- BUILD_PLAN.md
+- MIGRATION_EXECUTION_PLAN.md
+- MODULE_REUSE_MATRIX.yaml
+- legacy scripts/config/data read-only audit
+rules:
+- requirement_id: BR-COLLECT-001
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 竞品数据侧/注册存量视频
+  priority: P0
+  domain_scope: all domains
+  trigger: register competitor account
+  inputs:
+  - competitor profile url or sec_uid
+  - domain
+  expected_behavior: 'First crawl is a stock snapshot: existing videos become baseline
+    material and must not enter the watching observation pool.'
+  defaults:
+    first_crawl_status: archived
+  thresholds:
+    observe_days: 7
+  timing_semantics: first_seen_at is discovery time; publish_time remains original
+    platform publish time.
+  state_effects:
+  - competitor_videos.status=archived
+  allowed_side_effects:
+  - collector raw archive
+  - SQLite/source record in legacy only
+  forbidden_behavior:
+  - treat young stock videos as watching
+  - send external message during registration
+  edge_cases:
+  - missing publish_time
+  - private/deleted video
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - 'fixture: first_seen_at - publish_time gap'
+  - register idempotency test
+- requirement_id: BR-COLLECT-002
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 竞品数据侧/日常增量观察池
+  priority: P0
+  domain_scope: all domains
+  trigger: daily competitor crawl
+  inputs:
+  - newly discovered platform item
+  - last_crawled_at
+  expected_behavior: Only daily incremental newly published videos within the observation
+    window enter watching.
+  defaults:
+    daily_max_notes: config crawler.daily_max_notes
+  thresholds:
+    observe_days: 7
+  timing_semantics: T+0 starts from publish_time for age, but first_seen_at records
+    actual discovery.
+  state_effects:
+  - competitor_videos.status=watching
+  - video_checks snapshot
+  allowed_side_effects:
+  - collector raw archive
+  forbidden_behavior:
+  - reclassify stock snapshot as watching
+  - LLM decision for watching membership
+  edge_cases:
+  - publish_time absent uses discovery time only as fallback flag
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - watching subset replay
+- requirement_id: BR-COLLECT-003
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 竞品数据侧/视频去重
+  priority: P0
+  domain_scope: all domains
+  trigger: upsert video
+  inputs:
+  - competitor_id
+  - platform_item_id
+  expected_behavior: Video identity is platform item id scoped to competitor/source;
+    duplicate discoveries update metrics and must not create duplicate business objects.
+  defaults:
+    dedupe_key:
+    - competitor_id
+    - platform_item_id
+  thresholds: {}
+  timing_semantics: Duplicate check happens before state advancement.
+  state_effects:
+  - same logical video keeps source reference
+  allowed_side_effects:
+  - metric refresh
+  forbidden_behavior:
+  - duplicate hits/topics for same source video
+  edge_cases:
+  - same platform id under migrated account aliases
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - duplicate fixture or synthetic target fixture
+- requirement_id: BR-COLLECT-004
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 竞品数据侧/T+1至T+7复查
+  priority: P0
+  domain_scope: all domains
+  trigger: scheduled daily refresh
+  inputs:
+  - watching video
+  - video_checks
+  expected_behavior: Watching videos are refreshed during T+1..T+7 and each check
+    records a metric snapshot.
+  defaults:
+    check_count_initial: 0
+  thresholds:
+    max_observe_days: 7
+  timing_semantics: T+n is measured by publish_time age; each refresh has checked_at.
+  state_effects:
+  - video_checks append
+  - last_checked_at update
+  - check_count increment
+  allowed_side_effects:
+  - platform read
+  - snapshot insert
+  forbidden_behavior:
+  - skip snapshot while mutating latest counts
+  - LLM scoring
+  edge_cases:
+  - platform unavailable
+  - deleted video
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - video_checks count and age fixture
+- requirement_id: BR-COLLECT-005
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 逆向备料/评论采集阶段
+  priority: P0
+  domain_scope: all domains
+  trigger: hit promoted or prep worker runs
+  inputs:
+  - hit platform_item_id
+  - raw comments
+  expected_behavior: Comments for hit analysis are collected as reverse-prep evidence,
+    not formal research evidence.
+  defaults:
+    comment_stage: reverse_prep
+  thresholds:
+    top_comments: 60
+  timing_semantics: Prefer collecting comments in the same fresh detail crawl used
+    for download URLs.
+  state_effects:
+  - hit_comments append
+  allowed_side_effects:
+  - comments.json projection
+  - raw detail archive
+  forbidden_behavior:
+  - use comments inside formal research path
+  - send platform messages
+  edge_cases:
+  - no comments available
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - comment fixture with/without comments
+- requirement_id: BR-COLLECT-006
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 逆向备料/评论过滤去重
+  priority: P1
+  domain_scope: all domains
+  trigger: store hit comments
+  inputs:
+  - comment_id
+  - content
+  - like_count
+  expected_behavior: Keep high-signal comments after deterministic noise filtering
+    and idempotent comment_id insertion.
+  defaults:
+    min_comment_len: 5
+  thresholds:
+    top_comments: 60
+  timing_semantics: Filtering happens before DNA input assembly.
+  state_effects:
+  - hit_comments INSERT OR IGNORE
+  allowed_side_effects:
+  - filtered comment projection
+  forbidden_behavior:
+  - LLM decides noise filter
+  - duplicate comment rows
+  edge_cases:
+  - missing comment_id falls back to content hash in target
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - comment_filter unit fixture
+- requirement_id: BR-COLLECT-007
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 采集边界/确定性执行
+  priority: P0
+  domain_scope: all domains
+  trigger: collector job
+  inputs:
+  - platform output
+  expected_behavior: Collection, ranking, storage, retrieval, tracking and dedupe
+    are deterministic code paths with no LLM calls.
+  defaults:
+    llm_allowed: false
+  thresholds: {}
+  timing_semantics: LLM may only run after data is materialized as a generation/analysis
+    node.
+  state_effects: []
+  allowed_side_effects:
+  - platform read
+  - raw archive
+  forbidden_behavior:
+  - LLM deciding crawl scope
+  - LLM mutating source truth
+  edge_cases:
+  - platform schema drift
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - static import scan for call_llm in collect
+- requirement_id: BR-BASELINE-001
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 账号正式基线
+  priority: P0
+  domain_scope: all domains
+  trigger: judge hits for account
+  inputs:
+  - settled videos
+  - like_count
+  expected_behavior: Baseline is account-relative and computed from settled videos,
+    using median and P90 as threshold ingredients.
+  defaults:
+    metric: like_count
+    baseline_window_days: 90
+  thresholds:
+    baseline_min_samples: 30
+  timing_semantics: Prefer recent settled window; legacy supplements to minimum sample
+    count when recent sample is short.
+  state_effects:
+  - baselines insert
+  allowed_side_effects:
+  - read source videos
+  forbidden_behavior:
+  - global baseline across accounts
+  - cross-domain baseline
+  edge_cases:
+  - new account with sparse stock
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - baseline fixture
+- requirement_id: BR-BASELINE-002
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 历史基线与Day7口径
+  priority: P0
+  domain_scope: all domains
+  trigger: video leaves observation window
+  inputs:
+  - video final metrics
+  expected_behavior: Videos that leave the observation window become baseline material;
+    stock snapshots are conservative historical baseline seeds.
+  defaults:
+    stock_status: archived
+  thresholds:
+    observe_days: 7
+  timing_semantics: Observation samples approximate Day7; stock samples may be final-count
+    and more conservative.
+  state_effects:
+  - competitor_videos.status=archived
+  allowed_side_effects:
+  - baseline recomputation
+  forbidden_behavior:
+  - periodic full re-crawl as baseline truth
+  edge_cases:
+  - viral video keeps growing after T+7
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - archived-to-baseline replay
+- requirement_id: BR-BASELINE-003
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 基线样本不足
+  priority: P0
+  domain_scope: all domains
+  trigger: baseline sample under minimum
+  inputs:
+  - sample_count
+  expected_behavior: If there is not enough valid sample, hit judgement must be skipped
+    or marked not enough evidence; legacy supplement behavior is a conflict needing
+    decision.
+  defaults:
+    legacy_supplement: true
+  thresholds:
+    minimum_sample_count: 30
+  timing_semantics: Do not silently compare against tiny sample without evidence flag.
+  state_effects:
+  - baseline gap marker in target
+  allowed_side_effects: []
+  forbidden_behavior:
+  - promote hit from underpowered baseline without flag
+  edge_cases:
+  - <20 and =20 sample fixtures absent in current DB
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - synthetic sparse-account fixture required
+- requirement_id: BR-HIT-001
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 爆款判定
+  priority: P0
+  domain_scope: all domains
+  trigger: judge candidate video
+  inputs:
+  - like_count
+  - baseline median
+  - baseline p90
+  expected_behavior: 'A hit requires performance over an account-relative threshold:
+    like_count >= max(median * excess_threshold, P90 when enabled).'
+  defaults:
+    p90_required: true
+  thresholds:
+    excess_threshold: 3.0
+  timing_semantics: Judgement runs after collection/refresh; promotion time is separate
+    from publish time.
+  state_effects:
+  - hits insert/update
+  - competitor_videos.status=promoted
+  allowed_side_effects:
+  - hit artifact creation
+  forbidden_behavior:
+  - absolute-like-count only judgement
+  - LLM hit judgement
+  edge_cases:
+  - zero median
+  - missing p90
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - golden high/normal/low fixture
+- requirement_id: BR-HIT-002
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 普通/低表现对照
+  priority: P1
+  domain_scope: all domains
+  trigger: analysis fixture selection
+  inputs:
+  - non-hit videos
+  expected_behavior: Migration must preserve normal and low performer examples to
+    prove hit math has contrast cases.
+  defaults:
+    control_groups:
+    - normal
+    - low
+  thresholds: {}
+  timing_semantics: Controls are read-only evidence and must not be promoted.
+  state_effects: []
+  allowed_side_effects: []
+  forbidden_behavior:
+  - discard controls during migration
+  edge_cases:
+  - low count from young watching videos may be immature
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - 'fixture: high/normal/low videos'
+- requirement_id: BR-HIT-003
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 爆款状态推进幂等
+  priority: P0
+  domain_scope: all domains
+  trigger: rejudge same video
+  inputs:
+  - platform_item_id
+  - observation_id
+  expected_behavior: Promoting the same source video twice must be idempotent and
+    must not duplicate hit artifacts.
+  defaults:
+    idempotency_key: platform_item_id or source observation
+  thresholds: {}
+  timing_semantics: Repeated daily judgement may update evidence but not duplicate
+    business state.
+  state_effects:
+  - single hit logical object
+  allowed_side_effects:
+  - metric refresh
+  forbidden_behavior:
+  - duplicate hit rows in target
+  edge_cases:
+  - legacy rows may lack unique target key
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - rejudge idempotency test
+- requirement_id: BR-HIT-004
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 分享评论比
+  priority: P2
+  domain_scope: all domains
+  trigger: hit promotion
+  inputs:
+  - share_count
+  - comment_count
+  expected_behavior: share_comment_ratio is derived evidence for ranking/analysis,
+    not a standalone promotion threshold unless formally specified.
+  defaults:
+    ratio_when_comment_zero: guarded
+  thresholds: {}
+  timing_semantics: Compute at promotion or materialization time.
+  state_effects:
+  - hit metadata
+  allowed_side_effects: []
+  forbidden_behavior:
+  - promote solely by ratio
+  edge_cases:
+  - comment_count zero
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - ratio edge fixture
+- requirement_id: BR-ASR-001
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 本地ASR备料
+  priority: P0
+  domain_scope: all domains
+  trigger: hit needs transcript
+  inputs:
+  - fresh download url
+  - ASR model path
+  expected_behavior: ASR is local deterministic/ML runtime used to produce transcript
+    artifacts; it must not call LLM.
+  defaults:
+    provider: local SenseVoice
+  thresholds: {}
+  timing_semantics: Transcript generation happens before DNA analysis.
+  state_effects:
+  - transcript artifact reference
+  - reverse_status may advance in legacy
+  allowed_side_effects:
+  - local temp audio
+  - transcript file
+  forbidden_behavior:
+  - LLM transcript correction in formal path without ModelGateway
+  - persist ephemeral download URL
+  edge_cases:
+  - download URL expired
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - GATE-ASR evidence
+  - transcript hash fixture
+- requirement_id: BR-ASR-002
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 下载链接时效
+  priority: P1
+  domain_scope: all domains
+  trigger: ASR download
+  inputs:
+  - platform item url
+  expected_behavior: Signed platform download URLs are ephemeral and must be fetched
+    fresh when needed; they are not durable source truth.
+  defaults:
+    persist_download_url: false
+  thresholds: {}
+  timing_semantics: Fetch immediately before download/transcode.
+  state_effects:
+  - no target field for signed URL
+  allowed_side_effects:
+  - raw detail evidence without secret URL
+  forbidden_behavior:
+  - migrate expired signed URLs as canonical fields
+  edge_cases:
+  - CDN redirect failure
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - raw_json scrub check
+- requirement_id: BR-DNA-001
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 单条DNA拆解
+  priority: P0
+  domain_scope: all domains
+  trigger: reverse analysis requested for one hit
+  inputs:
+  - transcript
+  - hit metrics
+  - comments
+  expected_behavior: DNA analysis is per-hit map work and must not batch multiple
+    hits into one note.
+  defaults:
+    batch_unit: single_hit
+  thresholds: {}
+  timing_semantics: Runs after transcript exists; comments enrich but missing comments
+    do not block.
+  state_effects:
+  - DNA artifact
+  - reverse_status=done after successful persistence
+  allowed_side_effects:
+  - model call through gateway in target
+  forbidden_behavior:
+  - multi-hit prompt for map step
+  - legacy direct DB write in target
+  edge_cases:
+  - no comments
+  - transcript missing
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - one-hit shadow fixture
+- requirement_id: BR-DNA-002
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 代表作去重
+  priority: P0
+  domain_scope: all domains
+  trigger: DNA queue selection
+  inputs:
+  - cluster_id
+  - reverse_priority
+  expected_behavior: Only representative or unique hits are eligible for batch DNA
+    to avoid washing/duplicate tactics.
+  defaults:
+    eligible_cluster: cluster_id is null or cluster_id=id
+  thresholds: {}
+  timing_semantics: Eligibility checked before queue order.
+  state_effects:
+  - non-representative remains source evidence
+  allowed_side_effects: []
+  forbidden_behavior:
+  - analyze every washed duplicate by default
+  edge_cases:
+  - cluster_id absent before clustering
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - representative and ordinary fixture
+- requirement_id: BR-DNA-003
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: DNA队列冻结
+  priority: P0
+  domain_scope: all domains
+  trigger: migration planning
+  inputs:
+  - pending DNA count
+  expected_behavior: Do not continue the remaining DNA batch until formal ModelGateway,
+    persistence and Skill boundaries exist.
+  defaults:
+    current_pending: 14
+  thresholds: {}
+  timing_semantics: Freeze applies before GOAL-MIGRATION-01.
+  state_effects: []
+  allowed_side_effects: []
+  forbidden_behavior:
+  - run scripts/reverse/dna.py --batch
+  - write production DNA notes during audit
+  edge_cases:
+  - manual user explicitly opens future Goal
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - git/db mtime check
+- requirement_id: BR-DNA-004
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: Reduce经验提取
+  priority: P1
+  domain_scope: domain layer
+  trigger: enough DNA notes exist
+  inputs:
+  - DNA notes
+  - domain
+  expected_behavior: Reduce produces domain-level examples and method route tables;
+    it must not become global prompt rules.
+  defaults:
+    reduce_scope: domain
+  thresholds:
+    max_per_play: 3
+    section_cap: 1200
+  timing_semantics: Runs after multiple single-hit DNA artifacts exist.
+  state_effects:
+  - knowledge/example projection
+  allowed_side_effects:
+  - Obsidian note projection
+  forbidden_behavior:
+  - write all lessons into prompts
+  - cross-domain pollution
+  edge_cases:
+  - only one domain available
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - reduce artifact hash fixture
+- requirement_id: BR-RESEARCH-001
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 正式资料研究无视频平台能力
+  priority: P0
+  domain_scope: all domains
+  trigger: formal research run
+  inputs:
+  - query
+  - provider results
+  expected_behavior: Formal research structurally has no video platform search/read/download/ASR/comment/MediaCrawler
+    path.
+  defaults:
+    video_platform_allowed: false
+  thresholds: {}
+  timing_semantics: Boundary is structural, not default-disabled.
+  state_effects:
+  - formal evidence artifact only from allowed sources
+  allowed_side_effects:
+  - search provider read
+  forbidden_behavior:
+  - temporarily enable Douyin/video in formal research
+  - use comments as formal evidence
+  edge_cases:
+  - hard-to-research topic
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - formal research blocked platform test
+- requirement_id: BR-RESEARCH-002
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 视频学习与正式研究分离
+  priority: P0
+  domain_scope: all domains
+  trigger: topic preparation
+  inputs:
+  - source hit
+  - research query
+  expected_behavior: Video learning/reverse evidence and formal research evidence
+    are separate tracks with separate provenance.
+  defaults:
+    provenance_required: true
+  thresholds: {}
+  timing_semantics: Source hit DNA may inform creative angle; formal claims need formal
+    research provenance.
+  state_effects:
+  - separate artifact references
+  allowed_side_effects:
+  - read DNA artifacts
+  forbidden_behavior:
+  - mix video comment as factual claim source
+  edge_cases:
+  - same topic has both source hit and formal article
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - provenance split fixture
+- requirement_id: BR-RESEARCH-003
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 搜索Provider门禁
+  priority: P1
+  domain_scope: all domains
+  trigger: live search provider use
+  inputs:
+  - SEARCH_PROVIDER_*
+  expected_behavior: Live search/fetch providers require explicit gate opening; dry-run
+    or fake provider otherwise.
+  defaults:
+    live_enabled: false
+  thresholds: {}
+  timing_semantics: One external dependency per gate.
+  state_effects:
+  - live gate evidence only
+  allowed_side_effects:
+  - test query file
+  forbidden_behavior:
+  - live search during audit
+  edge_cases:
+  - missing credential
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - GATE-SEARCH-PROVIDER preflight
+- requirement_id: BR-TOPIC-001
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 每日选题排序
+  priority: P1
+  domain_scope: domain layer
+  trigger: daily topic flow
+  inputs:
+  - new hits
+  - candidate pool
+  expected_behavior: Daily recommendations group new hit-derived ideas and warmed
+    candidates; sources rank independently rather than one merged opaque rank.
+  defaults:
+    top_new: 10
+    top_candidates: 8
+  thresholds:
+    cluster_boost: 0.3
+  timing_semantics: Runs after collect and hit judgement.
+  state_effects:
+  - topics insert/update
+  allowed_side_effects:
+  - outbox/view projection
+  forbidden_behavior:
+  - direct Feishu send from target planner
+  edge_cases:
+  - no new hits
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - golden ranking fixture
+- requirement_id: BR-TOPIC-002
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 候选池衰减回温
+  priority: P1
+  domain_scope: domain layer
+  trigger: daily topic flow
+  inputs:
+  - pushed-but-unselected topics
+  - fresh hit tags
+  expected_behavior: Unselected topics become candidates, decay over time and can
+    be reheated by related fresh hits.
+  defaults:
+    half_life_days: 7
+    reheat_boost: 0.5
+  thresholds:
+    expire_heat: 0.1
+  timing_semantics: Decay uses age since pushed_at/created_at.
+  state_effects:
+  - topic status/current_heat/reheat_count
+  allowed_side_effects: []
+  forbidden_behavior:
+  - drop all unselected topics
+  - LLM-only candidate memory
+  edge_cases:
+  - missing tags
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - candidate decay fixture
+- requirement_id: BR-TOPIC-003
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 原创题目优先缺口
+  priority: P1
+  domain_scope: domain layer
+  trigger: topic-first flow
+  inputs:
+  - topic text without source hit
+  expected_behavior: Formal target must support topic-first preparation; legacy is
+    hit-anchored and this is a missing behavior relative to current direction.
+  defaults:
+    legacy_source_type: hit
+  thresholds: {}
+  timing_semantics: Topic-first research starts without source_hit_id.
+  state_effects:
+  - topic source_type != hit in target
+  allowed_side_effects: []
+  forbidden_behavior:
+  - force every topic to source hit
+  edge_cases:
+  - original topic selected manually
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - target topic-first fixture required
+- requirement_id: BR-TOPIC-004
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 选题人工确认
+  priority: P0
+  domain_scope: all domains
+  trigger: topic selected for creation
+  inputs:
+  - topic id
+  - actor
+  expected_behavior: A topic must not silently become production content or publishable
+    state without user confirmation.
+  defaults:
+    autonomy: human_in_loop
+  thresholds: {}
+  timing_semantics: Confirmation gates selection/ready-to-publish transitions.
+  state_effects:
+  - selected_at or review state only after actor command
+  allowed_side_effects:
+  - prepare topic material
+  forbidden_behavior:
+  - silent publish
+  - auto-ready-to-publish
+  edge_cases:
+  - shadow-only run
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - Hermes/Core confirmation test
+- requirement_id: BR-CONTENT-001
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 禁令进代码
+  priority: P0
+  domain_scope: all domains
+  trigger: draft review
+  inputs:
+  - draft text
+  - banned_words config
+  expected_behavior: Banned/risk word constraints are deterministic post-generation
+    checks and must not bloat generation prompts.
+  defaults:
+    checker: scripts/content/check_banned.py
+  thresholds: {}
+  timing_semantics: Runs after draft generation and before approval.
+  state_effects:
+  - review verdict RED/WARN/HINT/PASS
+  allowed_side_effects: []
+  forbidden_behavior:
+  - inject full ban list into prompt
+  - LLM-only banned check
+  edge_cases:
+  - false positive requiring human review
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - banned checker fixtures
+- requirement_id: BR-CONTENT-002
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 范例少而厚
+  priority: P1
+  domain_scope: all domains
+  trigger: prompt/context assembly
+  inputs:
+  - examples
+  - topic
+  expected_behavior: Examples are retrieved selectively by relevance and strength;
+    never inject the whole library.
+  defaults:
+    selection: relevance * strength
+  thresholds:
+    example_count: small bounded set
+  timing_semantics: Context assembly happens per task/profile.
+  state_effects: []
+  allowed_side_effects: []
+  forbidden_behavior:
+  - dump full Obsidian library into prompt
+  edge_cases:
+  - empty example bucket
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - context selection test
+- requirement_id: BR-CONTENT-003
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 改稿diff经验捕获
+  priority: P1
+  domain_scope: account/domain layer
+  trigger: human edited draft saved
+  inputs:
+  - AI draft
+  - human draft
+  expected_behavior: Human edits create diff evidence and candidate examples; promotion
+    to style examples requires repeated patterns or explicit approval.
+  defaults:
+    single_diff_status: captured
+  thresholds: {}
+  timing_semantics: Short-cycle capture is immediate; style promotion is later.
+  state_effects:
+  - diff artifact
+  - example candidate
+  allowed_side_effects:
+  - Obsidian projection
+  forbidden_behavior:
+  - single edit becomes global rule automatically
+  edge_cases:
+  - large rewrite not alignable
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - diff fixture
+- requirement_id: BR-EXPERIENCE-001
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 经验共享库
+  priority: P0
+  domain_scope: all domains
+  trigger: experience capture
+  inputs:
+  - DNA
+  - diff
+  - Day7 result
+  expected_behavior: Experience lives in one shared Obsidian/example system with domain/account
+    metadata, not scattered agent memories.
+  defaults:
+    truth_source: formal artifact + Obsidian projection
+  thresholds: {}
+  timing_semantics: Capture at stage; promotion after result.
+  state_effects:
+  - experience artifact/projection
+  allowed_side_effects:
+  - note write with hash
+  forbidden_behavior:
+  - hidden per-agent rules
+  edge_cases:
+  - projection missing
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - projection hash check
+- requirement_id: BR-EXPERIENCE-002
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: Day7长期盖章
+  priority: P1
+  domain_scope: account/domain layer
+  trigger: own publication tracking
+  inputs:
+  - Day7 metrics
+  expected_behavior: Self-account Day7 performance is long-cycle validation for topic/structure
+    experience, not immediate prompt mutation.
+  defaults:
+    tracking_window: Day7
+  thresholds: {}
+  timing_semantics: Only after enough publication metrics.
+  state_effects:
+  - tracking/evaluation artifact
+  allowed_side_effects: []
+  forbidden_behavior:
+  - auto rewrite prompt from early data
+  edge_cases:
+  - no self publications yet
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - tracking fixture later
+- requirement_id: BR-EXPERIENCE-003
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: AI味正向范例驱动
+  priority: P1
+  domain_scope: all domains
+  trigger: humanizer/polish
+  inputs:
+  - positive examples
+  - draft
+  expected_behavior: AI flavor correction is driven by positive human examples and
+    deterministic guards, not by accumulating prohibitions.
+  defaults:
+    ban_prompt_bloat: true
+  thresholds: {}
+  timing_semantics: Applies during review/polish, after content exists.
+  state_effects:
+  - review notes
+  allowed_side_effects: []
+  forbidden_behavior:
+  - convert every failure into prompt rule
+  edge_cases:
+  - domain-specific style conflict
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - humanizer fixture later
+- requirement_id: BR-ARCH-001
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: Hermes生产Host职责
+  priority: P0
+  domain_scope: all domains
+  trigger: external command
+  inputs:
+  - host message
+  - actor
+  expected_behavior: Hermes is production host entry; it maps messages into Core commands
+    and must not be bypassed by direct Feishu scripts.
+  defaults:
+    production_host: Hermes
+  thresholds: {}
+  timing_semantics: Host receipt before state advancement.
+  state_effects:
+  - host receipt
+  - command envelope
+  allowed_side_effects:
+  - test API server gate
+  forbidden_behavior:
+  - Feishu listener as production authority
+  edge_cases:
+  - test-only API server
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - GATE-HERMES-REAL-HOST
+- requirement_id: BR-ARCH-002
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: Core状态推进
+  priority: P0
+  domain_scope: all domains
+  trigger: business command
+  inputs:
+  - command envelope
+  expected_behavior: Core/Materializer owns state writes, versions, receipts and audit;
+    adapters return payloads only.
+  defaults:
+    state_owner: Core
+  thresholds: {}
+  timing_semantics: Validate command then materialize; no hidden writes.
+  state_effects:
+  - trace/version/state rows
+  allowed_side_effects: []
+  forbidden_behavior:
+  - adapter direct DB write in target
+  edge_cases:
+  - legacy import rehearsal
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - state idempotency tests
+- requirement_id: BR-ARCH-003
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: Runner执行边界
+  priority: P0
+  domain_scope: all domains
+  trigger: job execution
+  inputs:
+  - scheduled job
+  - handler contract
+  expected_behavior: RuntimeHost/Runner executes allowlisted handlers with declared
+    input/output contracts; failures are recorded and retriable.
+  defaults:
+    external_io_allowed_by_adapter: true
+  thresholds: {}
+  timing_semantics: Claim lease before execute; record result after handler returns.
+  state_effects:
+  - job attempt state
+  allowed_side_effects:
+  - adapter call if allowlisted
+  forbidden_behavior:
+  - arbitrary shell as production state path
+  edge_cases:
+  - worker interrupted
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - continuous fault gate
+- requirement_id: BR-ARCH-004
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: ModelGateway统一调用
+  priority: P0
+  domain_scope: all domains
+  trigger: LLM/model node
+  inputs:
+  - prompt/request
+  - route/profile
+  expected_behavior: All cloud/local model calls go through ModelGateway and record
+    provider/model/envelope/hash/usage/cost/correlation.
+  defaults:
+    direct_vendor_sdk_in_business: false
+  thresholds: {}
+  timing_semantics: Model call after input artifact is assembled; output persisted
+    only through Materializer.
+  state_effects:
+  - model run envelope
+  allowed_side_effects:
+  - provider network call if live gate opened
+  forbidden_behavior:
+  - scripts/llm/call.py formal path
+  - uncapped hidden LLM call
+  edge_cases:
+  - provider failure
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - GATE-MODEL-PROVIDER
+  - fake provider tests
+- requirement_id: BR-ARCH-005
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: Provider特性透传
+  priority: P1
+  domain_scope: all domains
+  trigger: model route selection
+  inputs:
+  - provider
+  - model
+  - profile
+  expected_behavior: Adapters may pass provider-specific features; target must not
+    reduce all engines to a lowest common denominator.
+  defaults:
+    profile_specific_params: true
+  thresholds: {}
+  timing_semantics: Params come from task/profile/Skill, not gate defaults.
+  state_effects: []
+  allowed_side_effects: []
+  forbidden_behavior:
+  - global max_output_tokens copied from gate
+  edge_cases:
+  - provider lacks token usage
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - config separation test
+- requirement_id: BR-ARCH-006
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 成本Token边界
+  priority: P0
+  domain_scope: all domains
+  trigger: model call
+  inputs:
+  - usage
+  - cost cap
+  expected_behavior: Token and cost metadata are recorded; daily/domain/Skill budgets
+    can defer low-priority work.
+  defaults:
+    billing_modes:
+    - subscription
+    - metered
+  thresholds:
+    cost_cap_unit: USD when metered
+  timing_semantics: Budget check before or immediately after metered call; subscription
+    monetary cap may be not applicable.
+  state_effects:
+  - usage/cost metadata
+  allowed_side_effects: []
+  forbidden_behavior:
+  - hide usage/cost
+  - treat gate cost cap as production budget
+  edge_cases:
+  - provider returns no usage
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - model gate evidence
+- requirement_id: BR-ARCH-007
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 正式Skill治理
+  priority: P0
+  domain_scope: all domains
+  trigger: promote local Skill
+  inputs:
+  - skill contract
+  expected_behavior: Formal Skills require schema, version/hash, declared side effects
+    and standalone/boundary/fault validation.
+  defaults:
+    candidate_skill_status: not formal
+  thresholds: {}
+  timing_semantics: Promote one Skill at a time.
+  state_effects:
+  - skill catalog version
+  allowed_side_effects: []
+  forbidden_behavior:
+  - run prose-only Skill as production runtime
+  edge_cases:
+  - local operator docs useful but host-bound
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - skill standalone fixture
+- requirement_id: BR-ARCH-008
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 候选Skill与本地说明隔离
+  priority: P1
+  domain_scope: all domains
+  trigger: operator workflow
+  inputs:
+  - .agents skills
+  - .claude manuals
+  expected_behavior: Local Skills can guide operators but do not become production
+    authority until formalized.
+  defaults:
+    operator_docs_allowed: true
+  thresholds: {}
+  timing_semantics: No state transition solely from local doc text.
+  state_effects: []
+  allowed_side_effects: []
+  forbidden_behavior:
+  - hidden business write from local Skill
+  edge_cases:
+  - manual Codex session
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - skill scan
+- requirement_id: BR-ARCH-009
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 审计与版本不可变
+  priority: P0
+  domain_scope: all domains
+  trigger: artifact/state write
+  inputs:
+  - source artifact
+  - actor
+  - command
+  expected_behavior: Business outputs and state changes need version, source hash,
+    actor, correlation/causation and audit evidence.
+  defaults:
+    immutable_versions: true
+  thresholds: {}
+  timing_semantics: Every materialized output has source references before current-state
+    projection.
+  state_effects:
+  - artifact version
+  - current pointer
+  allowed_side_effects: []
+  forbidden_behavior:
+  - overwrite historical artifact silently
+  edge_cases:
+  - legacy files without hashes
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - migration rehearsal hash check
+- requirement_id: BR-DOMAIN-001
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 领域是数据不是代码
+  priority: P0
+  domain_scope: all domains
+  trigger: new domain/account
+  inputs:
+  - domain config
+  - account config
+  expected_behavior: Adding a domain/account is config/data plus empty example buckets;
+    pipeline code remains shared.
+  defaults:
+    domain_code_fork: false
+  thresholds: {}
+  timing_semantics: Config import before pipeline run.
+  state_effects:
+  - domain/account version
+  allowed_side_effects:
+  - empty projection dirs
+  forbidden_behavior:
+  - hardcode 泛科普 in core logic
+  edge_cases:
+  - domain missing examples
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - third-domain fixture
+- requirement_id: BR-DOMAIN-002
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 第三领域约束
+  priority: P1
+  domain_scope: all domains
+  trigger: migration validation
+  inputs:
+  - third domain placeholder
+  expected_behavior: Migration must prove a third domain can exist without code changes
+    and without copying another domain's examples.
+  defaults:
+    third_domain_required_for_gate: true
+  thresholds: {}
+  timing_semantics: Placeholder fixture can be synthetic/config-only until real data
+    exists.
+  state_effects:
+  - domain config fixture
+  allowed_side_effects: []
+  forbidden_behavior:
+  - assume one-domain MVP semantics in target
+  edge_cases:
+  - current DB has only one real domain
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - third-domain config test
+- requirement_id: BR-REL-001
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 内容分类与关系判断
+  priority: P1
+  domain_scope: domain layer
+  trigger: topic/research/content assembly
+  inputs:
+  - tags
+  - clusters
+  - source relations
+  expected_behavior: Classification and relation judgement must be explicit artifacts;
+    deterministic tags/clusters remain separate from LLM interpretation.
+  defaults:
+    deterministic_first: true
+  thresholds: {}
+  timing_semantics: Classify before reduce/reheat when deterministic evidence exists.
+  state_effects:
+  - relation artifact or tag set
+  allowed_side_effects: []
+  forbidden_behavior:
+  - implicit prompt-only relation state
+  edge_cases:
+  - ambiguous tag
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - classification fixture
+- requirement_id: BR-REL-002
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 洗稿/二创边界
+  priority: P0
+  domain_scope: all domains
+  trigger: source-hit-based creation
+  inputs:
+  - source hit
+  - DNA
+  - research
+  expected_behavior: Source hit may inform tactics; final content must use research
+    and original angle controls to avoid copying source wording.
+  defaults:
+    source_text_copy: forbidden
+  thresholds: {}
+  timing_semantics: DNA before creation; formal research before factual claims.
+  state_effects:
+  - source attribution in material pack
+  allowed_side_effects: []
+  forbidden_behavior:
+  - copy source transcript as draft
+  - use video comments as factual proof
+  edge_cases:
+  - 二创 mode explicitly selected
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - brief source separation test
+- requirement_id: BR-GATE-001
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 外部门禁单Gate执行
+  priority: P0
+  domain_scope: validation
+  trigger: external live validation
+  inputs:
+  - gate_id
+  - live_confirm
+  expected_behavior: Only one external dependency is opened at a time with preflight,
+    explicit authorization and evidence.
+  defaults:
+    run_all_live: false
+  thresholds: {}
+  timing_semantics: Preflight before live; no unrelated gate live execution.
+  state_effects:
+  - gate status/evidence
+  allowed_side_effects:
+  - one external call family
+  forbidden_behavior:
+  - run all live gates
+  edge_cases:
+  - missing credentials
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - live_gates tests
+- requirement_id: BR-GATE-002
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 证据防泄漏
+  priority: P0
+  domain_scope: validation
+  trigger: gate evidence write
+  inputs:
+  - request
+  - response
+  - headers
+  expected_behavior: Evidence stores hashes/metadata and redacts secrets; no API keys,
+    Authorization headers or cookies in reports.
+  defaults:
+    redaction_required: true
+  thresholds: {}
+  timing_semantics: Redact before writing evidence/report.
+  state_effects:
+  - request_hash
+  - response_hash
+  allowed_side_effects:
+  - sanitized metadata
+  forbidden_behavior:
+  - write secret raw value
+  edge_cases:
+  - provider error includes secret
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - secret leakage static check
+- requirement_id: BR-GATE-003
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: Shadow-only验证
+  priority: P0
+  domain_scope: validation
+  trigger: gate run
+  inputs:
+  - shadow_only
+  - allow_live_calls
+  expected_behavior: Validation uses isolated DB/workspace and shadow-only sinks unless
+    a dedicated test external endpoint is explicitly configured.
+  defaults:
+    shadow_only: true
+  thresholds: {}
+  timing_semantics: Live gate still must avoid production state/sends unless gate
+    scope says otherwise.
+  state_effects:
+  - isolated evidence
+  allowed_side_effects:
+  - test endpoint
+  forbidden_behavior:
+  - mutate production DB
+  - send production Feishu message
+  edge_cases:
+  - test Host API server
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - config/live_gates lint
+- requirement_id: BR-GATE-004
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: Gate参数非生产默认
+  priority: P0
+  domain_scope: validation/model
+  trigger: model gate request
+  inputs:
+  - gate_max_output_tokens
+  expected_behavior: Gate-specific small output caps constrain only the single validation
+    request and must not change production task/Profile/Skill budgets.
+  defaults:
+    MODEL_PROVIDER_GATE_MAX_OUTPUT_TOKENS: 128
+  thresholds:
+    live_call_limit: 1
+    max_retries: 0
+    timeout_ms: 30000
+  timing_semantics: Gate request only.
+  state_effects: []
+  allowed_side_effects: []
+  forbidden_behavior:
+  - set production global max_output_tokens to 128
+  edge_cases:
+  - future long-form generation
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - model gate max token test
+- requirement_id: BR-LEGACY-001
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 旧LLM调用只能作证据
+  priority: P0
+  domain_scope: all domains
+  trigger: legacy model node found
+  inputs:
+  - scripts/llm/call.py
+  expected_behavior: Legacy call_llm implementation is evidence of old behavior but
+    cannot be reused as formal production model authority.
+  defaults:
+    legacy_allowed: read-only evidence
+  thresholds: {}
+  timing_semantics: Before migration implementation.
+  state_effects: []
+  allowed_side_effects: []
+  forbidden_behavior:
+  - formal code imports old call_llm live path
+  edge_cases:
+  - prompt text useful as source
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - static import scan
+- requirement_id: BR-LEGACY-002
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 旧DB只读源
+  priority: P0
+  domain_scope: migration
+  trigger: audit/migration planning
+  inputs:
+  - data/creation.db
+  expected_behavior: The legacy SQLite DB is read-only source during alignment; target
+    migration must use copied rehearsal DB.
+  defaults:
+    source_db_mode: read-only
+  thresholds: {}
+  timing_semantics: Hash before/after audit.
+  state_effects: []
+  allowed_side_effects:
+  - read-only SQL queries
+  forbidden_behavior:
+  - in-place migration/write
+  edge_cases:
+  - SQLite WAL/shm exist
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - DB hash check
+- requirement_id: BR-LEGACY-003
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 未成文旧行为待裁决
+  priority: P1
+  domain_scope: all domains
+  trigger: reverse audit finds behavior not in formal doc
+  inputs:
+  - legacy branch/threshold/default
+  expected_behavior: Undocumented legacy behavior with business value is listed for
+    decision, not silently retained or discarded.
+  defaults:
+    decision_policy: document then decide
+  thresholds: {}
+  timing_semantics: Before coding migration.
+  state_effects:
+  - decision backlog
+  allowed_side_effects: []
+  forbidden_behavior:
+  - preserve because old code ran
+  - drop because migration easier
+  edge_cases:
+  - technical-only differences ignored
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - UNDOCUMENTED_LEGACY_BEHAVIOR.md
