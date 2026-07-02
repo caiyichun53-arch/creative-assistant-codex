@@ -1,185 +1,134 @@
-# LEGACY_CODE_AUDIT
+# Legacy Code Audit - GOAL-00
 
-Status: `STATIC_AUDIT_COMPLETE_RUNTIME_LIMITED`
+status: `AUDIT_COMPLETE_CURRENT_BASELINE`
 
-This audit covers GOAL-00 only. It does not start GOAL-01 and does not modify formal business code.
+This audit classifies the current repository against the V0.6.2 target architecture. It intentionally does not modify business code, production config, database content, prompts, Skills, external credentials, or live account state.
 
-## Baseline Authority
+## Scope
 
-Priority order used:
-1. Current user instruction for GOAL-00.
-2. `I:\爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx`.
-3. Current repository code and legacy documents as old-system facts only.
+Audited surfaces:
 
-Frozen V0.6.2 facts applied:
-- Hermes is production Host.
-- OpenClaw is only a fallback Host candidate.
-- Codex is development/audit/migration/validation only.
-- No independent Agent Runtime should be developed.
-- Feishu must not bypass Hermes to drive business state.
-- Core API is the formal state-change entry.
-- Materializer owns formal persistence, versioning, pointers, audit, outbox and idempotency.
-- Portable Skill, Host Binding, Runner, ModelGateway, Core and Materializer must remain separate.
-- Adapter, Skill, Hermes, Feishu and Codex must not directly operate the formal DB/ORM/state machine.
-- Obsidian is only derived view/knowledge projection, not business-state truth.
-- Formal research must not mix in video-platform search, ASR, comments or video analysis.
-- Drafts, research, experience, evidence, config and prompts must keep immutable versions, not in-place overwrite.
-- Approved script and actual published script must be separated.
-- Formal Skill must not silently modify itself or directly publish.
+- Python, PowerShell, BAT, YAML, Markdown and local Skill files under the repository.
+- Legacy MVP scripts under `scripts/**` and `tools/**`.
+- Formal V0.6.2 Core implementation under `scripts/core/**`.
+- External live gate harness and evidence.
+- Read-only SQLite data counts and DNA status.
 
-## Architecture Diagnosis
+Not executed: real business DNA batch, Feishu listener/push, MediaCrawler live collection, DB migration against `data/creation.db`, or any model call outside already completed gate evidence.
 
-The repository is a working legacy MVP, not a V0.6.2 production architecture. Its useful assets are real: MediaCrawler integration, ASR pipeline, baseline/hit formulas, local database, comments, language fuel, reverse-DNA artifacts, deterministic banned-word checker, writer dispatch lessons and operational logs.
+## Executive Result
 
-The dominant architectural conflict is authority boundary: old scripts directly mutate SQLite and files. V0.6.2 requires formal state changes through Core API and persistence through Materializer, with Hermes as production host and adapters/skills unable to write business state directly.
+The repository now contains two layers:
 
-## Required Module Coverage
+1. Formal V0.6.2 Core and live-gate code, which should be kept as the target runtime.
+2. Legacy MVP scripts and local workflow Skills, which contain valuable collection, ASR, reverse-analysis, research, content and platform knowledge but do not conform to V0.6.2 authority boundaries.
 
-The full module classification is in `MODULE_REUSE_MATRIX.yaml`.
+The correct migration approach is selective reuse: keep formal Core, wrap real adapters, adapt deterministic algorithms and content workflow data, and replace legacy authority paths that mutate state or call models/platforms directly.
 
-Coverage mapping:
-- Core API, business services, state changes, DB access: `core_api_state_materializer`
-- Account/domain/account-domain binding: `account_domain_binding`
-- Video/snapshot/discovery/publish/D0-D7/P+ model: `video_snapshot_time_model`
-- MediaCrawler collection: `mediacrawler_collection`
-- NetEase Cloud collection: `netease_music_collection`
-- Douban/Zhihu/Bilibili/XHS and other language/material collection: `douban_zhihu_bilibili_xhs_language_fuel`
-- ASR/audio/transcription: `asr_audio_transcription`
-- Comment collection/early/final/filtering: `comment_collection_filtering`
-- Baseline/hit/candidate/clustering: `baseline_hit_candidate_clustering`
-- Formal research SearchProvider/Fetcher: `formal_research_search_provider_fetcher`
-- Topic/research/content plan/brief/draft/review: `topic_plan_brief_draft_review`
-- Prompt/Skill/Binding/config/model routing: `prompt_skill_binding_model_routes`
-- Experience/evidence/content atoms/preferences/P+/experiments/correction: `experience_evidence_atoms_preferences`
-- ModelGateway and model call entrypoints: `model_gateway`
-- Feishu/Hermes/OpenClaw/Codex interfaces: `feishu_hermes_openclaw_codex_interfaces`
-- Scheduler/Job/Worker/retry/recovery/idempotency: `scheduler_job_worker_retry_idempotency`
-- Obsidian and file projections: `obsidian_file_projection`
-- DB migrations and historical migration: `database_migrations_history_migration`
-- Tests/fixture/replay/FakeClock/fault injection: `tests_fixtures_replay_fakeclock_faults`
-- Docker/WSL2/Windows scripts/ops: `docker_wsl_windows_ops_tools`
-- Deterministic banned-word checker: `banned_words_deterministic_checker`
-- Existing runtime data/artifacts: `existing_runtime_data_and_artifacts`
+## High-Risk Findings
 
-## Forbidden Item Check
+### Direct State Writes
 
-Each item is classified as `found`, `not_found`, or `uncertain`.
+Legacy scripts write SQLite state directly. Examples include:
 
-| Check | Status | Evidence | Risk | Migration decision |
-| --- | --- | --- | --- | --- |
-| Feishu directly replaces/bypasses Hermes | found | `scripts/feishu/listener.py:66-82`, `scripts/feishu/listener.py:93-118`, `scripts/feishu/listener.py:194-200`; V0.6.2 requires `飞书 -> Hermes -> Core API` at `V0.6.2:3484-3512` | High: Feishu can mutate topics/hits and start workers without Hermes/Core boundary | replace production listener with Hermes Host Binding; keep Feishu client/card code as adapter reference |
-| Self-built generic Agent Runtime | not_found | No local runtime comparable to Hermes/OpenClaw found; `.codex/agents/*.toml` and `.claude/agents/写手.md` are host-bound agent configs | Medium: old creation command still assumes subagent orchestration | do not build runtime; migrate only thin Host Binding and Portable Skill Runner |
-| Codex or Claude treated as production host | found | `AGENTS.md:6`, `.claude/commands/创作.md:8-31`, `.codex/agents/写手.toml:6-15`, `scripts/llm/call.py:111-114`; V0.6.2 says Codex development-only at `V0.6.2:6240-6243` | High: production content path inherits engineering host context | replace host-bound production path with Core Runner/ModelGateway and Hermes thin host |
-| Adapter directly writes database | found | `scripts/music/collect_netease.py:288-358`, `scripts/language_fuel/collect_mediacrawler.py:300-348`, `scripts/language_fuel/douban/common.py:278-343`, `tools/asr/transcribe.py:166-172` | High: external adapters own formal state | wrap adapters; Materializer owns persistence |
-| Skill directly operates ORM/SQLite/state machine/business tables | found | `scripts/reverse/dna.py:102`, `scripts/reverse/reduce.py:153-258`, `scripts/language_fuel/store_atoms.py:115-146`; `.claude` skills are prompt sources but script runners write state | High: generation/reverse skills can become state authorities | adapt skill logic into Portable Skills; Core/Materializer owns state writes |
-| Hermes or Feishu entry directly writes business state | found for Feishu, not applicable for Hermes | `scripts/feishu/listener.py:73`, `scripts/feishu/listener.py:96`, `scripts/feishu/listener.py:112`; no Hermes implementation present | High | replace Feishu listener; implement Hermes thin tool allowlist |
-| subprocess/local CLI used as ModelGateway | found | `scripts/llm/call.py:111-114`, `scripts/project_check.py:96-104` | High: no gateway manifest, budget, cache, audit or provider boundary | replace with formal ModelGateway; keep route vocabulary |
-| Formal Skill can silently modify or directly publish | found/uncertain | `scripts/reverse/upgrade_examples.py:144` writes upgraded examples; `.agents/skills/*` are editable local files; no production loader allowlist found | High: candidate/formal Skill separation absent | formal Skill repository must be read-only to production; candidate workspace isolated |
-| Formal research reads video/ASR/comment/video-analysis artifacts | uncertain/found by design coupling | `scripts/topics/prepare_topic.py:136-140` requires source_hit/DNA; `scripts/research/research.py:24-44` uses topic/hit context; V0.6.2 forbids formal research mixing video chain at `V0.6.2:7009` | High: research and reverse material can blend | build formal SearchProvider/Fetcher with explicit evidence boundaries |
-| Drafts overwritten in place | found | `scripts/topics/prepare_topic.py:123-130` writes `brief_full.md` and `brief.md`; `scripts/content/build_writer_dispatch.py:368-370` writes dispatch files; `scripts/content/save_draft.py:33-46` uses latest `draft_v*.md` convention | High: script_version immutability missing | create immutable `script_version` chain; no in-place formal overwrites |
-| Research results overwritten in place | found | `scripts/research/research.py:42-44` writes `research.md`; `scripts/topics/prepare_topic.py` reruns can overwrite brief/research artifacts | High | create immutable research_plan/claim/evidence versions |
-| Prompt/config/Skill/experience overwritten in place | found | `scripts/reverse/upgrade_examples.py:144`, `scripts/reverse/reduce.py:231-258`, `scripts/language_fuel/obsidian.py:144`, `config/settings.yaml` unversioned local runtime config | High | formal version roots and projection-only vault writes |
-| Only references `current` object, no frozen version | found | `scripts/db/schema.sql:132-135` current_heat/status; `scripts/db/schema.sql:147-158` drafts without immutable root/pointer; V0.6.2 requires version/current pointer at `V0.6.2:4544-4599` | High | introduce roots/revisions/current pointers with audit |
-| Approved script and actual published script mixed | found | `scripts/db/schema.sql:147-158` draft status has draft/approved/published only; no publication_capture model; V0.6.2 requires separation at `V0.6.2:3671-3673` | High | add approved vs publication capture script versions |
-| Missing traceability for model/prompt/skill/binding/config/input/output/human edits | found | `scripts/llm/call.py` returns raw text only; `scripts/content/diff_draft.py:112-113` records diff path and edit counts but no component manifest | High | ModelGateway/Runner must emit input_hash/output_hash/component_manifest |
-| Missing command receipt/audit/outbox/correlation_id/causation_id/idempotency | found | No `correlation_id`, `causation_id`, `outbox`, `command receipt` hits in repo code; V0.6.2 requires these at `V0.6.2:5284-5287`, `V0.6.2:6568` | High | implement command receipt, audit_event, outbox, idempotency |
-| Tests use different business logic from production | uncertain | No comprehensive tests found; `scripts/project_check.py` is environment/readiness check, not business replay; vendor tests cover MediaCrawler internals | Medium | build fake/replay tests through same Core handlers |
-| Production cannot start after deleting fixtures/test assets | uncertain | No first-class fixture/replay directories found; production currently depends on local `data/`, `.venv`, `vendor`, `.env`; no clean-room deletion test exists | Medium | add clean-room startup validation and fixture deletion safety |
-| Code changes V0.6.2 boundary to preserve legacy | not_found | No GOAL-01 changes performed; audit uses V0.6.2 as authority | Low | keep audit-only discipline |
-| Unnecessary Redis/Celery/Temporal/vector DB/message queue/multi-agent system | not_found for infra; found for host-bound subagent workflow | No Redis/Celery/Temporal/vector DB dependencies found; `.claude/commands/创作.md:24-31` assumes writer subagent workflow | Medium | do not add infra; migrate writing to Portable Skill/Runner |
-| Domain differences hardcoded in core code | found | `scripts/content/build_writer_dispatch.py:311-346` hardcodes `张芝士` and `泛科普`; `scripts/collect/register_competitor.py:55` default `泛科普`; `scripts/collect/register_full.py:67` default `泛科普` | Medium | convert domain/account to data inputs; remove core hardcoding |
-| Historical data migration/file reference migration omitted | found | No migration manifest; direct SQLite DB and many file paths under `data/`, `vault`, logs; migrations have no ledger | High | create read-only extraction, file reference scan, migration manifest |
+- `scripts/collect/crawl_competitors.py`: upserts competitor videos, video checks and crawl timestamps.
+- `scripts/analyze/judge_hits.py`: inserts baselines/hits and updates video status.
+- `scripts/topics/daily_topics.py`: mutates topic pool status and heat.
+- `scripts/topics/new_topic.py`, `scripts/topics/spinoff.py`: insert topics and trigger preparation.
+- `scripts/reverse/dna.py`: writes DNA notes and updates hit reverse status.
+- `scripts/content/save_draft.py`, `scripts/content/diff_draft.py`: insert drafts/diffs.
+- `tools/asr/transcribe.py`: updates transcript fields and reverse status.
 
-## Key Findings
+Conflict: V0.6.2 requires state transitions through Core command envelopes, Materializer persistence, command receipts, audit events, idempotency and outbox boundaries.
 
-1. Highest-risk conflict: there is no Core API/Materializer boundary.
-   Evidence: direct writes in `scripts/analyze/judge_hits.py:81-104`, `scripts/topics/daily_topics.py:42-73`, `scripts/feishu/listener.py:73-112`, `scripts/reverse/dna.py:102`.
+### Direct External Sends
 
-2. Feishu is currently a production control surface, contrary to V0.6.2.
-   Evidence: `scripts/feishu/listener.py` directly sets topic state, writes transcript path/reverse status and starts local workers. V0.6.2 freezes Hermes as production host and Feishu as a Hermes-mediated interface.
+Legacy scripts send to Feishu directly or depend on a live listener:
 
-3. ModelGateway is absent as a formal boundary.
-   Evidence: `scripts/llm/call.py:111-114` shells out to `claude -p`; `config/settings.yaml:14-35` declares Codex routes, but the call implementation still maps Claude aliases and does not record provider/model/input/output manifests.
+- `scripts/feishu/push.py` directly calls Feishu OpenAPI.
+- `scripts/feishu/listener.py` consumes Feishu events through `lark-cli` and starts background subprocesses.
+- `scripts/run_daily.py`, `scripts/topics/daily_topics.py`, `scripts/topics/prepare_topic.py`, `tools/asr/transcribe.py` call push helpers for notifications.
 
-4. Existing collection and ASR capabilities are valuable but must be wrapped.
-   Evidence: MediaCrawler and ASR scripts contain real Windows/runtime fixes and normalization, but they directly write SQLite, files and states.
+Conflict: V0.6.2 treats Feishu as a thin binding/view, not the source of truth or direct runtime authority. Sends must go through Hermes/Core/outbox/receipt handling.
 
-5. Immutable versions are mostly absent.
-   Evidence: drafts, research, brief files, Obsidian methods/examples and config are file/path oriented, with only lightweight draft version numbers. V0.6.2 requires immutable roots/revisions/pointers and published/actual separation.
+### Legacy Model Routing Break
 
-6. Validation foundation is too weak for migration.
-   Evidence: `project_check.py` passes environment readiness, but no fake Core/Host/ModelGateway, replay fixture, FakeClock, migration ledger or clean-room deletion suite exists.
+Current tree has no `scripts/reverse/call.py`. The legacy model call surface is `scripts/llm/call.py`.
 
-## Two-Round Review
+Observed behavior:
 
-### Round 1: Prevent Over-Rewrite
+- `config/settings.yaml` declares `llm.provider: codex` and semantic routes such as `reverse_dna: codex-mid`.
+- `scripts/llm/call.py` maps only Claude aliases specially and shells out to `claude -p --model <route-or-alias>`.
+- Consumers include `scripts/reverse/dna.py`, `scripts/reverse/reduce.py`, `scripts/research/research.py`, `scripts/humanize/**`, and `scripts/language_fuel/**`.
+- The path does not record ModelGateway envelopes, provider/model metadata, input/output hashes, usage, cost, retries, or correlation IDs.
 
-Checked all `replace` decisions:
+Conflict: V0.6.2 model calls must go through `scripts/core/model_gateway/goal07_model_gateway.py` and provider adapters such as `scripts/core/model_gateway/hermes_model_provider.py`.
 
-- `core_api_state_materializer`: replace retained. There is no existing Core/Materializer implementation to keep/adapt/wrap. Direct-write scripts cannot be wrapped without preserving wrong state authority.
-- `model_gateway`: replace retained. The old CLI subprocess pattern can inspire provider adapters, but as a gateway it lacks required audit, budget, cache and manifests.
-- `feishu_hermes_openclaw_codex_interfaces`: replace retained for production entrypoint. Feishu push/card code can be reused as adapter reference, but direct listener state writes cannot remain.
-- `database_migrations_history_migration`: replace retained for target migration system. Existing SQLite schema/data are migration inputs, not the formal persistence architecture.
+### Skill Portability Gap
 
-No replace decision is based merely on code style or technology taste. Each is rooted in production authority boundary conflict.
+Local `.agents/skills/**` are useful but not yet formal portable Skills for production use.
 
-### Round 2: Prevent Wrong Reuse and Over-Design
+Observed behavior:
 
-Checked all `keep`/`adapt`/`wrap` decisions:
+- 23 local Skill folders were found.
+- Many encode workflow instructions around `.claude/skills/**`, task-card files, local scripts, and local DB-backed outputs.
+- Several mention or call scripts that write business state: `creation-save-draft`, `creation-prepare-topic`, `creation-workflow`, `create-domain-account`, `register-competitor-account`, `analyze-hit-dna`.
+- Most short atomic creation skills lack explicit machine-checkable public input/output schema sections, though their prose describes inputs/outputs.
 
-- `keep` is used only for deterministic banned-word checker logic, with added requirement to record config version/hash in the formal pipeline.
-- `wrap` modules are external abilities: MediaCrawler, NetEase, ASR and Obsidian projection. Wrap does not grant DB/state authority.
-- `adapt` modules keep algorithms, field knowledge, workflow lessons and data, but require Core/Materializer, immutable versions and replay validation before production use.
-- No recommendation adds Redis, Celery, Temporal, vector DB, message queue, multi-agent runtime or new business states outside V0.6.2.
-- Domain-specific hardcoding is explicitly marked for removal, not preserved.
-- Formal research is explicitly separated from video/ASR/comment material.
+Conflict: V0.6.2 formal Skills must be portable, single-purpose, versioned, schema-bound, and invoked through the runtime boundary, not by host-local side effects.
 
-## Reuse Decision Summary
+### Migration Scripts Are Unsafe As Runtime
 
-Counts from `MODULE_REUSE_MATRIX.yaml`:
-- keep: 1
-- adapt: 13
-- wrap: 4
-- replace: 4
+Legacy migration scripts under `scripts/db/migrate_*.py` use top-level or direct SQLite mutation patterns and target `data/creation.db`.
 
-High-risk migration areas:
-- Core API / Materializer
-- Feishu/Hermes binding
-- ModelGateway
-- SQLite to PostgreSQL and migration history
-- MediaCrawler/ASR/comment adapters
-- immutable content/research/experience versioning
-- validation/replay foundation
+Conflict: They are migration inventory only. Production migration needs planned, reversible, validated migration jobs and backup/restore checks.
 
-Directly reusable:
-- `scripts/content/check_banned.py` logic and `config/banned_words.yaml`, after version/hash integration.
+## Reuse Policy
 
-Reusable with adapt:
-- baseline/hit formulas
-- D0-D7 observation concepts
-- candidate decay/reheat
-- topic/brief lessons
-- diff-based human edit learning
-- reduce dimensions and example material
-- account/domain seed data
-- existing runtime data as migration input
+- Keep: formal V0.6.2 Core modules and external live gate harness.
+- Wrap: real platform/runtime adapters with valuable working code: ASR, MediaCrawler, Feishu client, Douban/NetEase/language collectors.
+- Adapt: deterministic domain logic and content workflow data: hit detection, observation windows, candidate pool, topic/draft/check logic, prompt/manual content, Skill contracts.
+- Replace: authority paths that directly mutate state, call models, send messages, or perform production scheduling outside Core.
 
-Reusable with wrap:
-- MediaCrawler execution capability
-- NetEase collection
-- ASR pipeline
-- Obsidian projection templates
+## Forbidden In Production Until Migrated
 
-Must replace as production authority:
-- Core/API/Materializer absence and direct writes
-- local CLI subprocess as ModelGateway
-- Feishu direct listener as production host
-- SQLite migration system as formal persistence
+- Running `scripts/run_daily.py` as production scheduler.
+- Running `scripts/feishu/listener.py` as production command source.
+- Running `scripts/llm/call.py` for formal model generation.
+- Running `scripts/reverse/dna.py --batch` before model routing and persistence boundaries are migrated.
+- Running DB migrations directly against `data/creation.db` as part of V0.6.2 production migration.
+- Letting Skills advance business state except through Core/Materializer commands.
 
-## GOAL-01 Gate
+## Current Formal Gate Status
 
-GOAL-01 is not allowed to start automatically.
+- ModelGateway exists and was live-validated through Hermes provider: `GATE-MODEL-PROVIDER LIVE_PASSED`, one call, no retry, visible output matched `MODEL_GATE_OK`.
+- Hermes Host API exists and was live-validated: `GATE-HERMES-REAL-HOST LIVE_PASSED`, authenticated chat request, no dry-run fallback.
+- ASR local runtime was live-validated: `GATE-ASR LIVE_PASSED`, external network call false.
 
-Reason:
-- V0.6.2 says GOAL-00 has a user approval gate for the reuse matrix.
-- Several high-risk migration items require explicit confirmation before implementation.
+Remaining gap: legacy business consumers still bypass these formal surfaces.
+
+## Audit Conclusion
+
+The repository is viable for staged V0.6.2 migration, but only if legacy business paths remain disabled until each path is moved behind Core, ModelGateway, Hermes Host binding, formal Scheduler/outbox and validated adapters. The next implementation work should not be another live DNA run; it should isolate legacy writes and route the next model-dependent legacy node through the formal gateway in shadow/test mode first.
+
+## Formal Skill Mapping Addendum
+
+Current repo does not contain a production formal Skill repository populated with all business Skills. The formal portable Skill runtime primitives exist in `scripts/core/model_gateway/goal07_skill_runner.py` (`PortableSkillSpec`, `PortableSkillRunner`) and are validated by GOAL-07/GOAL-12 tests, but local `.agents/skills/**` remain candidate/operator workflow assets until individually promoted.
+
+Current mapping:
+
+- `analyze-hit-dna` -> legacy `scripts/reverse/dna.py`; gap: no portable input/output schema, direct legacy model shim, direct DB/file write.
+- DNA commonality/tactic extraction -> legacy `scripts/reverse/reduce.py`; gap: no formal Skill package and outputs are not Materializer-owned.
+- `creation-prepare-topic` -> `scripts/topics/prepare_topic.py`; gap: directly orchestrates DNA/research/material package and can notify Feishu.
+- `creation-banned-check` -> `scripts/content/check_banned.py`; lowest-risk candidate because it is deterministic and LLM-free, but needs machine-readable formal result schema.
+- `creation-save-draft` -> `scripts/content/save_draft.py`; gap: direct draft DB insert.
+- `register-competitor-account` -> `scripts/collect/register_competitor.py`; gap: direct SQLite write.
+- `create-domain-account` -> `scripts/setup/create_domain_account.py`; gap: writes YAML/persona/SQLite directly.
+- writing/review/polish workflow Skills -> `.claude/skills/**` manuals and local files; gap: host-bound paths, prose I/O, no standalone runtime package.
+- `research-collector` and `topic-planner` -> richer local Skill docs with scripts; gap: not yet bound to formal Core/Materializer as production Skills.
+
+Validation required before any Skill is considered formal: explicit public input schema, public output schema, version/hash, standalone fixture, no direct DB dependency, no state advancement except through Core command, no hidden call to another Skill, and ModelGateway/Runner envelope when LLM is used.
+
+## Exhaustive Risk Classes Checked
+
+Static scans covered Python, BAT, PowerShell-like scripts, YAML, Markdown, local Skill files, model calls, database writes, file/Vault writes, Feishu sends, subprocess launches, hardcoded route aliases, direct provider calls and formal Core bypasses. The detailed per-module result is in `MODULE_REUSE_MATRIX.yaml`.

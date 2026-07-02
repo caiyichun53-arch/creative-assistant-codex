@@ -1,505 +1,275 @@
-schema_version: 1
+schema_version: 2
 goal: GOAL-00
-design_baseline: "V0.6.2"
-source_commit: "a8787a439fd281b2d8cec7a7ffe2606426bebab4"
-audit_branch: "audit/goal-00-v0.6.2"
-status: STATIC_AUDIT_COMPLETE_RUNTIME_LIMITED
-notes:
-  - "Classification is based on real code search, entrypoints, database writes, file writes, subprocess calls, external calls and safe validation."
-  - "V0.6.2 is the authority. Legacy AGENTS/BUILD_PLAN/CLAUDE/README are treated as old-system facts only."
-  - "No business code was changed during GOAL-00."
-
-modules:
-  - module_id: core_api_state_materializer
-    path: "absent; legacy state writes scattered across scripts/**/*.py"
-    current_responsibility: "No formal Core API or Materializer exists. State transitions are performed directly by scripts against SQLite."
-    entrypoints: ["scripts/collect/crawl_competitors.py", "scripts/analyze/judge_hits.py", "scripts/topics/daily_topics.py", "scripts/feishu/listener.py", "scripts/reverse/dna.py", "scripts/content/*.py"]
-    main_dependencies: ["sqlite3", "scripts/collect/common.py"]
-    side_effects: ["direct SQLite INSERT/UPDATE/DELETE", "file writes under data/vault/logs"]
-    direct_database_write: true
-    direct_state_change: true
-    file_or_history_write: true
-    external_platform_call: false
-    starts_subprocess: false
-    conforms_to_v0_6_2_boundary: false
-    decision: replace
-    reusable_parts: ["domain object names", "existing state vocabulary", "current SQLite data as migration input"]
-    conflicts: ["No Core Command Envelope", "No Materializer transaction boundary", "No command receipt/audit/outbox/idempotency", "Scripts directly mutate business state"]
-    classification_basis: ["scripts/feishu/listener.py:73", "scripts/analyze/judge_hits.py:81", "scripts/topics/daily_topics.py:43", "scripts/reverse/dna.py:102", "V0.6.2:3484-3512", "V0.6.2:6558-6568"]
-    migration_actions: ["Build Core API and Materializer first in GOAL-01/02", "Treat current direct-write scripts as legacy command prototypes only", "Migrate existing DB data through reviewed migration, not live script reuse"]
-    dependencies: ["PostgreSQL target schema", "Core command envelope", "Materializer", "audit/outbox/idempotency"]
-    validation: "Fake Core command tests plus DB transaction/idempotency replay tests."
-    risk_level: high
-    design_refs: ["V0.6.2:3484-3512", "V0.6.2:6558-6568", "V0.6.2:6794-6801"]
-
-  - module_id: account_domain_binding
-    path: "config/accounts/*.yaml; config/domains/*.yaml; scripts/setup/create_domain_account.py; scripts/db/schema.sql"
-    current_responsibility: "Stores one local account/domain and competitor seeds as YAML plus SQLite rows."
-    entrypoints: ["scripts/setup/create_domain_account.py", "scripts/db/seed_mvp.py", "scripts/collect/register_competitor.py"]
-    main_dependencies: ["yaml files", "sqlite3"]
-    side_effects: ["writes config YAML", "writes vault persona", "upserts accounts table"]
-    direct_database_write: true
-    direct_state_change: true
-    file_or_history_write: true
-    external_platform_call: false
-    starts_subprocess: false
-    conforms_to_v0_6_2_boundary: partially
-    decision: adapt
-    reusable_parts: ["YAML data-as-config pattern", "seed account/domain content", "safe-name validation"]
-    conflicts: ["SQLite is formal state", "no immutable config revisions", "domain/account binding is not through Core", "some downstream scripts hardcode 张芝士/泛科普"]
-    classification_basis: ["scripts/setup/create_domain_account.py:116-129", "config/accounts/张芝士.yaml:2-7", "config/domains/泛科普.yaml:2-17", "scripts/content/build_writer_dispatch.py:311-346"]
-    migration_actions: ["Convert account/domain config to versioned Core-managed records", "Remove hardcoded account/domain from writer dispatch", "Keep YAML seeds as import fixtures"]
-    dependencies: ["Core account/domain model", "config revision policy"]
-    validation: "Import same YAML into test DB and prove account/domain lookup does not depend on hardcoded names."
-    risk_level: medium
-    design_refs: ["V0.6.2:381", "V0.6.2:6561"]
-
-  - module_id: video_snapshot_time_model
-    path: "scripts/db/schema.sql; scripts/collect/crawl_competitors.py; scripts/analyze/judge_hits.py"
-    current_responsibility: "Stores competitor videos, observation_pool view, video_checks, basic publish/discover/age fields and rolling watch/archive state."
-    entrypoints: ["python scripts/collect/crawl_competitors.py", "python scripts/analyze/judge_hits.py"]
-    main_dependencies: ["MediaCrawler JSONL", "SQLite"]
-    side_effects: ["upserts competitor_videos", "inserts video_checks", "updates account crawl timestamps", "archives raw JSONL"]
-    direct_database_write: true
-    direct_state_change: true
-    file_or_history_write: true
-    external_platform_call: true
-    starts_subprocess: true
-    conforms_to_v0_6_2_boundary: partially
-    decision: adapt
-    reusable_parts: ["D0-D7 observation idea", "watching/promoted/archived distinction", "snapshot table", "ephemeral download URL stripping"]
-    conflicts: ["no formal D/P job model", "no CollectorAdapter capability registry", "direct state writes", "SQLite instead of PostgreSQL"]
-    classification_basis: ["scripts/db/schema.sql:40-68", "scripts/db/schema.sql:68-81", "scripts/collect/crawl_competitors.py:128-176", "scripts/analyze/judge_hits.py:101-105", "V0.6.2:427-541"]
-    migration_actions: ["Port time model into Core video/source schema", "Keep snapshot derivation logic", "Move crawler output ingestion behind CollectorAdapter and Materializer"]
-    dependencies: ["CollectorAdapter", "Core Job/Scheduler", "PostgreSQL schema"]
-    validation: "Replay saved MediaCrawler JSONL into fake DB and assert D/P snapshots and statuses."
-    risk_level: high
-    design_refs: ["V0.6.2:427-541", "V0.6.2:532"]
-
-  - module_id: mediacrawler_collection
-    path: "vendor/MediaCrawler; scripts/collect/common.py; scripts/collect/crawl_competitors.py; scripts/language_fuel/collect_mediacrawler.py; scripts/reverse/fetch_comments.py"
-    current_responsibility: "Runs MediaCrawler through uv/subprocess for Douyin account/video/detail/comment and platform language fuel collection."
-    entrypoints: ["crawl_competitors.py", "fetch_fresh_aweme()", "collect_mediacrawler.py", "fetch_comments.py"]
-    main_dependencies: ["vendor/MediaCrawler", "uv", "browser login state", "JSONL output"]
-    side_effects: ["starts crawler/browser subprocess", "kills leftover browser", "writes lock files", "moves raw JSONL", "may call external platforms"]
-    direct_database_write: true
-    direct_state_change: true
-    file_or_history_write: true
-    external_platform_call: true
-    starts_subprocess: true
-    conforms_to_v0_6_2_boundary: false
-    decision: wrap
-    reusable_parts: ["local vendor checkout", "field normalization", "login/runtime workarounds", "detail+comment capability", "lock handling"]
-    conflicts: ["crawler scripts currently own DB writes", "MediaCrawler used in formal and language-fuel paths without Core port separation", "no adapter capability version registry"]
-    classification_basis: ["scripts/collect/common.py:158-194", "scripts/collect/crawl_competitors.py:60-78", "scripts/language_fuel/collect_mediacrawler.py:224-282", "scripts/reverse/fetch_comments.py:29-34", "V0.6.2:6272"]
-    migration_actions: ["Keep MediaCrawler only behind CollectorAdapter/Port", "Adapter returns normalized raw objects, never writes business DB", "Register capability/version and unavailable fields"]
-    dependencies: ["MediaCrawler legal/runtime gate", "CollectorAdapter contract", "fake/replay JSONL fixtures"]
-    validation: "Run no-network replay from archived JSONL; live smoke remains external gate."
-    risk_level: high
-    design_refs: ["V0.6.2:212", "V0.6.2:532", "V0.6.2:6272"]
-
-  - module_id: netease_music_collection
-    path: "scripts/music/collect_netease.py; scripts/db/migrate_004_music_sources.py"
-    current_responsibility: "Collects NetEase track metadata/comments, writes SQLite music tables, data files and Obsidian notes."
-    entrypoints: ["python scripts/music/collect_netease.py --song-id/--query/--url"]
-    main_dependencies: ["urllib", "SQLite", "config/settings.yaml"]
-    side_effects: ["calls NetEase APIs", "inserts music_tracks/music_comments/music_comment_batches", "writes data/music and vault notes"]
-    direct_database_write: true
-    direct_state_change: true
-    file_or_history_write: true
-    external_platform_call: true
-    starts_subprocess: false
-    conforms_to_v0_6_2_boundary: partially
-    decision: wrap
-    reusable_parts: ["NetEase request/normalization code", "comment filters", "track material file format"]
-    conflicts: ["collector writes DB and files directly", "no SearchProvider/Fetcher contract", "music material can mix with formal research if not gated"]
-    classification_basis: ["scripts/music/collect_netease.py:85-96", "scripts/music/collect_netease.py:288-358", "scripts/music/collect_netease.py:365-385", "V0.6.2:3419", "V0.6.2:6810"]
-    migration_actions: ["Wrap as MusicSourceAdapter", "Separate material collection from formal research claims", "Store immutable fetched artifacts through Materializer"]
-    dependencies: ["source adapter contract", "research evidence model"]
-    validation: "Fixture HTTP responses for track/detail/comments; no live account required."
-    risk_level: medium
-    design_refs: ["V0.6.2:3419", "V0.6.2:6810"]
-
-  - module_id: douban_zhihu_bilibili_xhs_language_fuel
-    path: "scripts/language_fuel/**/*; config/settings.yaml"
-    current_responsibility: "Collects or normalizes language-fuel material from MediaCrawler-supported platforms and Douban, then stores SQLite/files/Obsidian notes."
-    entrypoints: ["collect_mediacrawler.py", "collect_douban.py", "douban/collect.py", "backfill_comments.py", "store_atoms.py"]
-    main_dependencies: ["MediaCrawler", "Playwright", "urllib", "SQLite", "config/settings.yaml"]
-    side_effects: ["external HTTP/browser collection", "SQLite writes", "data file writes", "Obsidian note writes"]
-    direct_database_write: true
-    direct_state_change: true
-    file_or_history_write: true
-    external_platform_call: true
-    starts_subprocess: true
-    conforms_to_v0_6_2_boundary: partially
-    decision: adapt
-    reusable_parts: ["platform-specific normalization", "privacy redaction", "language fuel tables", "Douban target-gated approach"]
-    conflicts: ["formal research and language fuel boundaries are not enforced by Core", "collectors write state directly", "domain differences partly encoded in scripts/config mixtures"]
-    classification_basis: ["scripts/language_fuel/collect_mediacrawler.py:108-114", "scripts/language_fuel/collect_mediacrawler.py:282-348", "scripts/language_fuel/douban/common.py:75-81", "scripts/language_fuel/douban/common.py:278-362", "scripts/language_fuel/douban/README.md:1-35"]
-    migration_actions: ["Keep as non-formal language-fuel ingestion with Port boundary", "Prevent formal research from consuming video/ASR/comment artifacts unless explicitly allowed by design", "Add replay fixtures"]
-    dependencies: ["LanguageFuelAdapter", "Research boundary policy", "fixture corpus"]
-    validation: "Run normalization on saved sample files and prove no external call in replay mode."
-    risk_level: high
-    design_refs: ["V0.6.2:3419", "V0.6.2:6810", "V0.6.2:7009"]
-
-  - module_id: asr_audio_transcription
-    path: "tools/asr/transcribe.py; tools/asr/reverse_prep_worker.py; tools/asr/asr_test.py"
-    current_responsibility: "Downloads video/audio, extracts WAV via ffmpeg, runs local SenseVoice/FunASR, writes transcript files and updates hits.reverse_status."
-    entrypoints: ["python tools/asr/transcribe.py", "python tools/asr/reverse_prep_worker.py"]
-    main_dependencies: ["tools/asr/.venv", "funasr", "imageio_ffmpeg", "requests", "MediaCrawler detail"]
-    side_effects: ["downloads media", "starts ffmpeg", "writes transcripts", "updates hits", "may push Feishu error text"]
-    direct_database_write: true
-    direct_state_change: true
-    file_or_history_write: true
-    external_platform_call: true
-    starts_subprocess: true
-    conforms_to_v0_6_2_boundary: partially
-    decision: wrap
-    reusable_parts: ["ASR invocation", "download/extract/transcribe pipeline", "quality checks", "local model path config"]
-    conflicts: ["ASR worker writes business state", "uses current hits table directly", "no ASRAdapter result object/version manifest"]
-    classification_basis: ["tools/asr/transcribe.py:56-73", "tools/asr/transcribe.py:101-119", "tools/asr/transcribe.py:159-166", "tools/asr/reverse_prep_worker.py:51", "V0.6.2:541-592"]
-    migration_actions: ["Wrap as ASRAdapter returning immutable ASR artifact", "Materializer owns DB status and file registration", "Keep media download as port-side artifact fetch"]
-    dependencies: ["ASRAdapter contract", "model/version manifest", "safe artifact storage"]
-    validation: "Use local tiny audio fixture to test ASRAdapter; live Douyin download stays external gate."
-    risk_level: high
-    design_refs: ["V0.6.2:541-592", "V0.6.2:1617-1618"]
-
-  - module_id: comment_collection_filtering
-    path: "scripts/reverse/fetch_comments.py; scripts/reverse/comment_filter.py; scripts/language_fuel/extract_hit_comments.py; scripts/db/schema.sql"
-    current_responsibility: "Collects hit comments via MediaCrawler detail, filters noise, stores hit_comments and derivative language-fuel insights."
-    entrypoints: ["python scripts/reverse/fetch_comments.py", "extract_hit_comments.py"]
-    main_dependencies: ["MediaCrawler", "SQLite", "LLM for insight extraction"]
-    side_effects: ["external comment collection", "SQLite insert", "comments.json writes", "Obsidian/insight writes"]
-    direct_database_write: true
-    direct_state_change: true
-    file_or_history_write: true
-    external_platform_call: true
-    starts_subprocess: true
-    conforms_to_v0_6_2_boundary: partially
-    decision: adapt
-    reusable_parts: ["comment_filter.clean_comments", "top-N sampling", "hit_comments schema concepts", "comment materialization path"]
-    conflicts: ["no early vs mature comment batch model", "comment collection not Core-scheduled", "direct DB/file writes"]
-    classification_basis: ["scripts/db/schema.sql:194-212", "scripts/reverse/fetch_comments.py:57-90", "scripts/reverse/comment_filter.py:1", "V0.6.2:723-783"]
-    migration_actions: ["Model comment batches by purpose and observation point", "Move fetching behind CommentAdapter", "Core schedules early/mature batches and Materializer persists"]
-    dependencies: ["comment batch schema", "Collector/CommentAdapter", "replay comment fixtures"]
-    validation: "Filter deterministic sample comments; replay a saved comment batch into fake Materializer."
-    risk_level: high
-    design_refs: ["V0.6.2:723-783", "V0.6.2:1864"]
-
-  - module_id: baseline_hit_candidate_clustering
-    path: "scripts/analyze/judge_hits.py; scripts/analyze/cluster_hits.py; scripts/topics/daily_topics.py"
-    current_responsibility: "Computes rolling account baselines, promotes hits, maintains candidate topics, and clusters hit titles with embeddings."
-    entrypoints: ["judge_hits.py", "cluster_hits.py", "daily_topics.py"]
-    main_dependencies: ["SQLite", "numpy", "sentence-transformers/modelscope", "Feishu push"]
-    side_effects: ["writes baselines/hits/topics", "updates video status", "may load/download embedding model"]
-    direct_database_write: true
-    direct_state_change: true
-    file_or_history_write: false
-    external_platform_call: possible
-    starts_subprocess: false
-    conforms_to_v0_6_2_boundary: partially
-    decision: adapt
-    reusable_parts: ["relative baseline formula", "candidate decay/reheat", "title clustering idea", "sample-window logic"]
-    conflicts: ["no formal D/P baseline object", "direct mutation", "embedding model not behind ModelGateway or deterministic adapter", "rough thresholds not versioned"]
-    classification_basis: ["scripts/analyze/judge_hits.py:52-104", "scripts/analyze/cluster_hits.py:68-81", "scripts/topics/daily_topics.py:42-73", "V0.6.2:624-702"]
-    migration_actions: ["Version baseline rules", "Move promotions to Core state machine", "Keep formulas as deterministic service functions"]
-    dependencies: ["baseline rule version", "Core state transition API", "model/cache gate for clustering"]
-    validation: "Replay fixed video snapshots and assert same baseline/promotions."
-    risk_level: high
-    design_refs: ["V0.6.2:624-702", "V0.6.2:3196"]
-
-  - module_id: formal_research_search_provider_fetcher
-    path: "scripts/research/research.py; .claude/skills/研究/SKILL.md"
-    current_responsibility: "Produces a simplified research note via LLM using hit/topic context; no real SearchProvider/Fetcher implementation."
-    entrypoints: ["python scripts/research/research.py <topic_id>"]
-    main_dependencies: ["scripts/llm/call.py", "SQLite"]
-    side_effects: ["writes data/topics/<id>/research.md", "calls LLM subprocess"]
-    direct_database_write: false
-    direct_state_change: false
-    file_or_history_write: true
-    external_platform_call: false
-    starts_subprocess: true
-    conforms_to_v0_6_2_boundary: false
-    decision: adapt
-    reusable_parts: ["topic/hit context assembly", "research note placement as legacy artifact"]
-    conflicts: ["no SearchProvider", "no Fetcher/Extractor", "no claim/evidence model", "no immutable evidence versions", "LLM can synthesize without sourced fetches"]
-    classification_basis: ["scripts/research/research.py:22-44", "V0.6.2:3419", "V0.6.2:3658-3663", "V0.6.2:7009"]
-    migration_actions: ["Build formal SearchProvider/Fetcher and claim/evidence persistence", "Do not reuse current research output as verified evidence", "Keep as prototype for brief text only"]
-    dependencies: ["SearchProvider", "Fetcher", "research_plan/research_claim/research_evidence"]
-    validation: "Fake provider replay proves formal research does not read video/ASR/comment artifacts."
-    risk_level: high
-    design_refs: ["V0.6.2:3419", "V0.6.2:3658-3663", "V0.6.2:7009"]
-
-  - module_id: topic_plan_brief_draft_review
-    path: "scripts/topics/*.py; scripts/content/*.py; templates/*.md; .codex/agents/写手.toml; .claude/skills/*"
-    current_responsibility: "Creates topics, prepares briefs, builds writer dispatch, saves drafts, diffs human edits and checks banned words."
-    entrypoints: ["new_topic.py", "prepare_topic.py", "spinoff.py", "build_writer_dispatch.py", "save_draft.py", "diff_draft.py", "check_banned.py"]
-    main_dependencies: ["SQLite", "files under data/topics", "vault examples", "Codex/Claude agent instructions"]
-    side_effects: ["writes topics", "writes brief/draft/task-card files", "writes diff examples", "updates drafts/diffs"]
-    direct_database_write: true
-    direct_state_change: true
-    file_or_history_write: true
-    external_platform_call: false
-    starts_subprocess: true
-    conforms_to_v0_6_2_boundary: partially
-    decision: adapt
-    reusable_parts: ["banned-word deterministic checker", "brief splitting insight", "writer dispatch template pieces", "diff extraction idea"]
-    conflicts: ["draft/research/brief files can be overwritten in place", "approved/published split incomplete", "no script_version chain", "host-bound agent workflow"]
-    classification_basis: ["scripts/topics/prepare_topic.py:123-130", "scripts/content/save_draft.py:45-46", "scripts/content/diff_draft.py:63-113", "scripts/content/check_banned.py:89-103", "V0.6.2:1504-1560", "V0.6.2:3616-3673"]
-    migration_actions: ["Move all content changes to immutable script_version/content_plan_version", "Keep banned checker as deterministic precheck", "Turn writer dispatch into Portable Skill input assembly"]
-    dependencies: ["production_task", "content_plan_version", "script_version", "script_review"]
-    validation: "Golden file check for banned words and brief assembly; version-chain tests for draft edits."
-    risk_level: high
-    design_refs: ["V0.6.2:1504-1560", "V0.6.2:3616-3673", "V0.6.2:3942"]
-
-  - module_id: prompt_skill_binding_model_routes
-    path: ".agents/skills; .claude/skills; .codex/agents; config/settings.yaml; scripts/llm/call.py"
-    current_responsibility: "Stores host-bound skills/prompts and routes LLM nodes to local CLI model aliases."
-    entrypoints: ["scripts/llm/call.py", ".codex/agents/写手.toml", ".agents/skills/*/SKILL.md"]
-    main_dependencies: ["Codex app", "Claude legacy prompt files", "config/settings.yaml"]
-    side_effects: ["reads prompt files", "writes cooldown state", "can launch CLI model subprocess"]
-    direct_database_write: false
-    direct_state_change: false
-    file_or_history_write: true
-    external_platform_call: false
-    starts_subprocess: true
-    conforms_to_v0_6_2_boundary: false
-    decision: adapt
-    reusable_parts: ["skill content as source material", "prompt block extraction", "node route names"]
-    conflicts: ["Formal Skill is host-bound", "no Portable Skill contract", "no Binding separation", "no prompt/version hash manifest", "current call path uses local CLI"]
-    classification_basis: ["scripts/llm/call.py:31-49", "scripts/llm/call.py:98-125", ".codex/agents/写手.toml:6-15", ".claude/README_LEGACY.md:7-11", "V0.6.2:3763-3925"]
-    migration_actions: ["Convert selected prompts to Portable Skill packages", "Keep host binding thin", "Record skill/prompt/model versions in Runner/ModelGateway results"]
-    dependencies: ["Portable Skill Runtime", "Binding contracts", "ModelGateway"]
-    validation: "Portable Skill clean-room tests with no host UUID/ORM/table leaks."
-    risk_level: high
-    design_refs: ["V0.6.2:3763-3925", "V0.6.2:5302"]
-
-  - module_id: experience_evidence_atoms_preferences
-    path: "scripts/reverse/reduce.py; scripts/reverse/upgrade_examples.py; scripts/language_fuel/store_atoms.py; scripts/language_fuel/extract_*.py; vault/"
-    current_responsibility: "Creates methods/examples/content atoms/language insights from hits and language fuel; writes SQLite plus Obsidian markdown."
-    entrypoints: ["reverse/reduce.py", "reverse/upgrade_examples.py", "language_fuel/store_atoms.py", "language_fuel/extract_hit_comments.py", "language_fuel/extract_texture_base.py"]
-    main_dependencies: ["SQLite", "LLM CLI", "vault", "data/language_fuel"]
-    side_effects: ["writes vault methods/examples", "writes content_atoms/insights", "writes logs/data JSON"]
-    direct_database_write: true
-    direct_state_change: true
-    file_or_history_write: true
-    external_platform_call: false
-    starts_subprocess: true
-    conforms_to_v0_6_2_boundary: partially
-    decision: adapt
-    reusable_parts: ["reduce dimensions", "evidence snippets", "content atom storage idea", "examples as positive taste material"]
-    conflicts: ["Obsidian can become de facto state", "no immutable tactic_version/evidence model", "no content_preference_profile/revision", "LLM outputs can overwrite notes"]
-    classification_basis: ["scripts/reverse/reduce.py:223-258", "scripts/reverse/upgrade_examples.py:144", "scripts/language_fuel/store_atoms.py:115-146", "V0.6.2:2779-3057", "V0.6.2:5849-5927"]
-    migration_actions: ["Migrate evidence and preference learning into versioned Core objects", "Keep Obsidian only as projection", "Block in-place overwrite of formal experience"]
-    dependencies: ["tactic/tactic_version/evidence schema", "content preference revision", "projection pipeline"]
-    validation: "Version immutability tests; deleting Obsidian projection does not alter Core truth."
-    risk_level: high
-    design_refs: ["V0.6.2:2779-3057", "V0.6.2:5849-5927", "V0.6.2:6690-6693"]
-
-  - module_id: model_gateway
-    path: "scripts/llm/call.py; config/settings.yaml"
-    current_responsibility: "Calls local `claude -p` subprocess, maps route aliases and stores cooldown in data/llm_state.json."
-    entrypoints: ["call_llm(node, prompt, allowed_tools=None)"]
-    main_dependencies: ["claude CLI", "config/settings.yaml", "tempfile"]
-    side_effects: ["spawns model CLI", "writes cooldown state file"]
-    direct_database_write: false
-    direct_state_change: false
-    file_or_history_write: true
-    external_platform_call: false
-    starts_subprocess: true
-    conforms_to_v0_6_2_boundary: false
-    decision: replace
-    reusable_parts: ["cooldown/fail-fast idea", "route alias vocabulary", "prompt loading helper"]
-    conflicts: ["subprocess CLI is acting as ModelGateway", "no provider/model manifest in outputs", "no budget/cache/audit", "config says Codex but code maps only Claude model aliases"]
-    classification_basis: ["scripts/llm/call.py:49-57", "scripts/llm/call.py:98-125", "config/settings.yaml:14-35", "V0.6.2:1562-1584", "V0.6.2:5302"]
-    migration_actions: ["Implement formal ModelGateway", "Use adapters for providers/CLI only beneath gateway", "Record usage, input/output hash and component manifest"]
-    dependencies: ["ModelGateway API", "provider adapters", "budget/cache/audit storage"]
-    validation: "Fake model provider returns deterministic output with usage manifest and input hash."
-    risk_level: high
-    design_refs: ["V0.6.2:1562-1584", "V0.6.2:7128"]
-
-  - module_id: feishu_hermes_openclaw_codex_interfaces
-    path: "scripts/feishu/*.py; tools/start_listener.vbs; .codex/agents; .claude/commands"
-    current_responsibility: "Feishu listener consumes events, parses commands and directly changes topics/hits or starts local scripts. Codex/Claude assets drive development and writing."
-    entrypoints: ["scripts/feishu/listener.py", "scripts/feishu/push.py", "tools/start_listener.vbs", ".codex/agents/*.toml"]
-    main_dependencies: ["lark-cli", "Feishu OpenAPI", "SQLite", "subprocess"]
-    side_effects: ["external Feishu calls", "direct DB state writes", "starts background workers", "writes logs/transcripts"]
-    direct_database_write: true
-    direct_state_change: true
-    file_or_history_write: true
-    external_platform_call: true
-    starts_subprocess: true
-    conforms_to_v0_6_2_boundary: false
-    decision: replace
-    reusable_parts: ["Feishu card/push formatting", "command phrases", "Codex agent prompts as migration references"]
-    conflicts: ["Feishu bypasses Hermes", "listener bypasses Core API", "Codex/Claude assets are host-bound", "no Hermes thin tool allowlist"]
-    classification_basis: ["scripts/feishu/listener.py:66-82", "scripts/feishu/listener.py:93-118", "scripts/feishu/listener.py:194-200", "scripts/feishu/push.py:1-4", "V0.6.2:3484-3574", "V0.6.2:6240-6243"]
-    migration_actions: ["Replace production listener with Hermes Host Binding", "Keep Feishu client/card code only as reference or low-level messaging adapter", "Codex remains development-only"]
-    dependencies: ["Hermes production host", "white-listed Core Tools", "outbox/message recovery"]
-    validation: "Fake Host first: duplicate Feishu events produce one Core command receipt and outbox response."
-    risk_level: high
-    design_refs: ["V0.6.2:3484-3574", "V0.6.2:6240-6243", "V0.6.2:7090-7094"]
-
-  - module_id: scheduler_job_worker_retry_idempotency
-    path: "scripts/run_daily.py; Windows bat/vbs; tools/asr/reverse_prep_worker.py; scripts/collect/common.py"
-    current_responsibility: "Windows task runs daily chain; listener/worker scripts use subprocesses, logs, lock files and simple fail-fast behavior."
-    entrypoints: ["scripts/run_daily.py", "tools/asr/reverse_prep_worker.py", "tools/start_listener.vbs", "启动*.bat"]
-    main_dependencies: ["Windows Task Scheduler", "PowerShell/VBS/BAT", "SQLite", "logs"]
-    side_effects: ["starts subprocesses", "writes logs", "calls Feishu on failure", "runs live collection if invoked"]
-    direct_database_write: indirect
-    direct_state_change: indirect
-    file_or_history_write: true
-    external_platform_call: true
-    starts_subprocess: true
-    conforms_to_v0_6_2_boundary: false
-    decision: adapt
-    reusable_parts: ["daily chain ordering", "reverse prep kick pattern", "lock concept", "failure notification idea"]
-    conflicts: ["no Job table/lease", "no retry attempts/receipt", "no correlation/causation ids", "background Popen has no durable recovery"]
-    classification_basis: ["scripts/run_daily.py:57-88", "tools/asr/reverse_prep_worker.py:42-51", "scripts/collect/common.py:137-145", "V0.6.2:1688", "V0.6.2:5284-5287"]
-    migration_actions: ["Rebuild scheduling as Core Job/Scheduler/Worker", "Keep workflow sequence as job graph input", "Add durable retries, leases and receipts"]
-    dependencies: ["Job schema", "Scheduler/Worker", "outbox"]
-    validation: "Crash/retry replay proves no duplicate side effects."
-    risk_level: high
-    design_refs: ["V0.6.2:5284-5287", "V0.6.2:6958"]
-
-  - module_id: obsidian_file_projection
-    path: "vault junction; scripts/language_fuel/obsidian.py; scripts/reverse/reduce.py; scripts/content/diff_draft.py; scripts/music/collect_netease.py"
-    current_responsibility: "Writes Obsidian markdown notes for examples, language fuel, methods, persona and materials."
-    entrypoints: ["write_language_fuel_note()", "reverse/reduce.py", "diff_draft.py", "collect_netease.py"]
-    main_dependencies: ["vault junction", "markdown files"]
-    side_effects: ["writes/overwrites markdown projections"]
-    direct_database_write: false
-    direct_state_change: false
-    file_or_history_write: true
-    external_platform_call: false
-    starts_subprocess: false
-    conforms_to_v0_6_2_boundary: partially
-    decision: wrap
-    reusable_parts: ["Markdown projection templates", "human-readable vault organization", "persona/example references"]
-    conflicts: ["projection files can be treated as source of truth", "some scripts write vault directly instead of through projection pipeline", "in-place overwrites possible"]
-    classification_basis: ["scripts/language_fuel/obsidian.py:57-144", "scripts/reverse/reduce.py:231-258", "scripts/content/diff_draft.py:88-113", "V0.6.2:6553", "V0.6.2:6864"]
-    migration_actions: ["Keep Obsidian as one-way derived projection", "Materializer emits projection jobs", "Never use vault as business-state truth"]
-    dependencies: ["projection job", "Core immutable source objects"]
-    validation: "Delete/rebuild projection from Core data; production startup remains unaffected if vault is absent."
-    risk_level: medium
-    design_refs: ["V0.6.2:6553", "V0.6.2:6864"]
-
-  - module_id: database_migrations_history_migration
-    path: "scripts/db/*.py; scripts/db/schema.sql; data/creation.db"
-    current_responsibility: "SQLite schema and ad-hoc migrations mutate the live local database."
-    entrypoints: ["init_db.py", "migrate_*.py", "seed_mvp.py"]
-    main_dependencies: ["sqlite3", "data/creation.db"]
-    side_effects: ["creates/modifies real DB", "deletes non-张芝士 accounts in seed_mvp"]
-    direct_database_write: true
-    direct_state_change: true
-    file_or_history_write: true
-    external_platform_call: false
-    starts_subprocess: false
-    conforms_to_v0_6_2_boundary: false
-    decision: replace
-    reusable_parts: ["field inventory", "legacy data", "migration history as evidence"]
-    conflicts: ["SQLite not V0.6.2 target", "no migration ledger", "top-level migrations unsafe on import", "seed deletes data"]
-    classification_basis: ["scripts/db/init_db.py:14-22", "scripts/db/seed_mvp.py:9-16", "scripts/db/migrate_001_videos.py:13-21", "scripts/db/migrate_010_topic_derive_source.py:14-23", "V0.6.2:1993", "V0.6.2:6794-6797"]
-    migration_actions: ["Create reviewed PostgreSQL migration baseline", "Build read-only legacy extraction and explicit data migration", "Never run legacy migrations against production target"]
-    dependencies: ["PostgreSQL schema", "migration ledger", "legacy DB read-only copy"]
-    validation: "Run migration on disposable copy only; compare row counts and hashes."
-    risk_level: high
-    design_refs: ["V0.6.2:1993", "V0.6.2:6794-6797"]
-
-  - module_id: tests_fixtures_replay_fakeclock_faults
-    path: "scripts/project_check.py; vendor/MediaCrawler/tests; logs; outputs"
-    current_responsibility: "Provides environment smoke checks and third-party vendor tests; no first-class product replay suite."
-    entrypoints: ["python scripts/project_check.py"]
-    main_dependencies: ["local env", "real DB read access", "vendor env"]
-    side_effects: ["read-only in default project_check; optional collect smoke can call live platform"]
-    direct_database_write: false
-    direct_state_change: false
-    file_or_history_write: false
-    external_platform_call: optional
-    starts_subprocess: true
-    conforms_to_v0_6_2_boundary: partially
-    decision: adapt
-    reusable_parts: ["project_check readiness checks", "archived logs as evidence", "vendor tests as external component validation"]
-    conflicts: ["no fake Core/Host/ModelGateway", "no replay fixtures", "no FakeClock", "no fault injection", "project_check checks old architecture readiness"]
-    classification_basis: ["scripts/project_check.py:53-181", "V0.6.2:5233-5258", "V0.6.2:6864"]
-    migration_actions: ["Keep project_check as legacy readiness script", "Add V0.6.2 validation package with fake host, fake providers, replay DB and clean-room tests"]
-    dependencies: ["fixtures", "replays", "fake providers", "validation DB"]
-    validation: "GOAL-00 validation report plus future fake/replay tests."
-    risk_level: medium
-    design_refs: ["V0.6.2:5233-5258", "V0.6.2:6864"]
-
-  - module_id: docker_wsl_windows_ops_tools
-    path: "tools/start_listener.vbs; 启动逆向拆DNA.bat; 启动真人写作提炼.bat; scripts/run_daily.py"
-    current_responsibility: "Windows-first local operations for listener, daily chain and manual reverse/humanizer runs."
-    entrypoints: ["*.bat", "tools/start_listener.vbs", "Windows Task Scheduler documented in BUILD_PLAN.md"]
-    main_dependencies: ["Windows", "local Python", "local env paths"]
-    side_effects: ["starts long-running scripts", "writes logs", "may trigger live external operations"]
-    direct_database_write: indirect
-    direct_state_change: indirect
-    file_or_history_write: true
-    external_platform_call: possible
-    starts_subprocess: true
-    conforms_to_v0_6_2_boundary: false
-    decision: adapt
-    reusable_parts: ["Windows local run knowledge", "operator scripts", "log locations"]
-    conflicts: ["no Docker/Compose/WSL production definition", "production host must be Hermes", "ops scripts can bypass Core"]
-    classification_basis: ["tools/start_listener.vbs:1-14", "BUILD_PLAN.md:38", "scripts/run_daily.py:1-3", "V0.6.2:6240-6243"]
-    migration_actions: ["Keep as local dev/operator helpers only", "Do not become production runtime", "Build Hermes/Core deployment separately"]
-    dependencies: ["deployment design", "Hermes host binding", "Core service"]
-    validation: "Dry-run ops scripts in isolated environment; no live credentials."
-    risk_level: medium
-    design_refs: ["V0.6.2:6240-6243", "V0.6.2:7310"]
-
-  - module_id: banned_words_deterministic_checker
-    path: "scripts/content/check_banned.py; config/banned_words.yaml"
-    current_responsibility: "Scans drafts or arbitrary files for red/warn/hint banned/risk terms with line numbers."
-    entrypoints: ["python scripts/content/check_banned.py <topic_id|--file>"]
-    main_dependencies: ["config/banned_words.yaml", "draft files"]
-    side_effects: ["none besides stdout/exit code"]
-    direct_database_write: false
-    direct_state_change: false
-    file_or_history_write: false
-    external_platform_call: false
-    starts_subprocess: false
-    conforms_to_v0_6_2_boundary: true
-    decision: keep
-    reusable_parts: ["entire deterministic checker", "banned words config format", "exit-code gate"]
-    conflicts: ["needs integration into formal script_review/precheck pipeline", "config version/hash should be recorded"]
-    classification_basis: ["scripts/content/check_banned.py:21-103", "config/banned_words.yaml", "AGENTS.md:14", "V0.6.2:3916-3917"]
-    migration_actions: ["Keep logic", "Add config version/hash to review result", "Run only after generated script_version, not inside generation prompt"]
-    dependencies: ["script_review pipeline", "config revision manifest"]
-    validation: "Golden text cases for RED/WARN/HINT and no-hit exit code."
-    risk_level: low
-    design_refs: ["V0.6.2:3916-3917"]
-
-  - module_id: existing_runtime_data_and_artifacts
-    path: "data/**; logs/**; outputs/**; vault junction"
-    current_responsibility: "Contains real local legacy DB, raw captures, transcripts, reverse notes, music/language fuel artifacts, logs and Obsidian projections."
-    entrypoints: ["read by many scripts", "manual inspection"]
-    main_dependencies: ["local filesystem", "SQLite"]
-    side_effects: ["none when read-only; high if legacy scripts mutate"]
-    direct_database_write: false
-    direct_state_change: false
-    file_or_history_write: false
-    external_platform_call: false
-    starts_subprocess: false
-    conforms_to_v0_6_2_boundary: partially
-    decision: adapt
-    reusable_parts: ["legacy data corpus", "field examples", "raw JSONL/reverse/transcript material", "logs for behavior evidence"]
-    conflicts: ["formal vs generated/projection data is mixed by path", "no immutable migration manifest", "unknown privacy/credential sensitivity in local artifacts"]
-    classification_basis: ["CURRENT_REPOSITORY_BASELINE.md data inventory", "read-only DB counts", "V0.6.2:6656", "V0.6.2:6864"]
-    migration_actions: ["Create reviewed data inventory and redaction plan", "Use read-only copy for migration tests", "Do not treat existing files as clean production truth without lineage checks"]
-    dependencies: ["legacy extraction tool", "privacy scan", "migration manifest"]
-    validation: "Row counts, content hashes and file reference checks from read-only copy."
-    risk_level: high
-    design_refs: ["V0.6.2:6656", "V0.6.2:6864"]
-
+status: AUDIT_COMPLETE_CURRENT_BASELINE
+source_head: 63966cbfa7bd3036968517aaa81e01edee68a130
+audit_branch: audit/goal-00-v0.6.2
 summary:
-  keep: 1
-  adapt: 13
+  total: 26
+  keep: 2
+  adapt: 16
   wrap: 4
   replace: 4
-  total_modules: 22
-  high_risk: 16
-  medium_risk: 5
-  low_risk: 1
+notes:
+  - "Required fields per item: module/path, current_role, observed_behavior, target_layer, decision, evidence, conflicts, required_changes, dependencies, validation_required."
+  - "Decision values are limited to keep, adapt, wrap, replace."
+modules:
+  - module/path: "scripts/core/**"
+    current_role: "Formal V0.6.2 Core implementation."
+    observed_behavior: "Implements persistence, state, scheduler, runtime host, workflow, research, ModelGateway, Hermes binding and verifiers."
+    target_layer: "core_runtime"
+    decision: keep
+    evidence: ["scripts/core/persistence/goal01_store.py", "scripts/core/state/goal02_core.py", "scripts/core/model_gateway/goal07_model_gateway.py", "scripts/core/hermes/goal11_host_binding.py"]
+    conflicts: []
+    required_changes: ["Keep as target runtime", "Attach legacy capabilities only through formal adapters/commands"]
+    dependencies: ["PostgreSQL deployment gate", "external gates per adapter"]
+    validation_required: ["Existing GOAL verifiers", "Relevant external live gates"]
+  - module/path: "scripts/validation/live_gates.py; tests/validation/test_live_gates.py"
+    current_role: "External live-gate harness and evidence recorder."
+    observed_behavior: "Records hashes, correlation IDs, provider/model metadata, visible output checks, call counts and dry-run fallback status."
+    target_layer: "validation"
+    decision: keep
+    evidence: ["GATE-ASR LIVE_PASSED", "GATE-MODEL-PROVIDER LIVE_PASSED", "GATE-HERMES-REAL-HOST LIVE_PASSED"]
+    conflicts: ["Top-level EXTERNAL_LIVE_GATE_STATUS.yaml status remains DRY_RUN_PASSED while individual gates are authoritative"]
+    required_changes: ["Preserve per-gate evidence", "Normalize top-level status in a future doc/config cleanup if needed"]
+    dependencies: [".env.live-gates", "per-gate live_enabled controls"]
+    validation_required: ["python -m unittest tests.validation.test_live_gates", "single-gate preflight before live"]
+  - module/path: "absent formal boundary; scattered direct writes in scripts/**/*.py"
+    current_role: "Legacy scripts act as implicit Core API and mutate state directly."
+    observed_behavior: "Collect, analyze, topic, reverse, ASR, content and Feishu scripts execute SQLite writes and file writes directly."
+    target_layer: "core_api_state_materializer"
+    decision: replace
+    evidence: ["scripts/analyze/judge_hits.py", "scripts/topics/daily_topics.py", "scripts/reverse/dna.py", "tools/asr/transcribe.py"]
+    conflicts: ["No command envelope", "No immutable trace version", "No audit/outbox/idempotency boundary"]
+    required_changes: ["Block legacy scripts from owning formal state", "Expose needed operations as Core commands", "Keep old data as migration input only"]
+    dependencies: ["scripts/core/persistence/**", "scripts/core/state/**", "migration mapping"]
+    validation_required: ["Replay same command twice", "Inject failed write and prove no partial state advancement"]
+  - module/path: "scripts/llm/call.py; LLM consumers under scripts/reverse, scripts/research, scripts/humanize, scripts/language_fuel"
+    current_role: "Legacy model shim for generation and analysis nodes."
+    observed_behavior: "Reads config routes but shells out to `claude -p`; does not produce ModelGateway envelopes."
+    target_layer: "model_gateway"
+    decision: replace
+    evidence: ["scripts/llm/call.py", "config/settings.yaml reverse_dna: codex-mid", "scripts/reverse/dna.py call_llm('reverse_dna')"]
+    conflicts: ["Provider/model routing inconsistent with config", "No provider/model/input/output/usage/cost/correlation record"]
+    required_changes: ["Route formal model calls through ModelGateway", "Keep legacy prompt loading only as source material", "Keep gate token caps gate-only"]
+    dependencies: ["scripts/core/model_gateway/goal07_model_gateway.py", "scripts/core/model_gateway/hermes_model_provider.py", "formal Skill metadata"]
+    validation_required: ["Shadow one legacy model node in isolated DB", "Assert envelope, hashes, usage/cost and no legacy cooldown write"]
+  - module/path: "scripts/feishu/listener.py; scripts/feishu/push.py; scripts/feishu/client.py"
+    current_role: "Legacy Feishu listener and direct push channel."
+    observed_behavior: "Consumes lark-cli event stream, starts subprocesses and sends replies through Feishu OpenAPI."
+    target_layer: "host_binding_outbox"
+    decision: replace
+    evidence: ["scripts/feishu/listener.py", "scripts/feishu/push.py", "scripts/run_daily.py push failure path"]
+    conflicts: ["Feishu becomes active runtime authority", "Bypasses Hermes/Core/outbox receipts"]
+    required_changes: ["Keep disabled for production", "Map Feishu events to Hermes/Core envelopes", "Send replies through outbox worker"]
+    dependencies: ["scripts/core/hermes/goal11_host_binding.py", "GATE-FEISHU-THIN-BINDING"]
+    validation_required: ["Duplicate event replay", "Fake send failure retry without duplicate send"]
+  - module/path: "scripts/db/migrate_*.py; scripts/db/init_db.py; scripts/db/schema.sql"
+    current_role: "Legacy SQLite schema and migration inventory."
+    observed_behavior: "Defines historical data model; migration scripts mutate data/creation.db directly."
+    target_layer: "migration_inventory"
+    decision: replace
+    evidence: ["scripts/db/schema.sql dry-run passed", "data/creation.db has 20 tables"]
+    conflicts: ["Direct production DB mutation", "No reversible migration receipts"]
+    required_changes: ["Treat as read-only source schema", "Create rehearsal migrations with backup and rollback checks"]
+    dependencies: ["formal persistence schemas", "migration rehearsal DB"]
+    validation_required: ["Run on copied DB only", "Compare row counts, hashes and samples"]
+  - module/path: "vendor/MediaCrawler; scripts/collect/common.py; scripts/collect/crawl_competitors.py; scripts/language_fuel/collect_mediacrawler.py; scripts/reverse/fetch_comments.py"
+    current_role: "Working collector implementation for Douyin and MediaCrawler-supported platforms."
+    observed_behavior: "Starts MediaCrawler subprocesses, parses output, archives raw files and upserts legacy SQLite records."
+    target_layer: "collector_adapter"
+    decision: wrap
+    evidence: ["project_check MediaCrawler ready", "crawl_competitors.py writes competitor_videos/video_checks"]
+    conflicts: ["Direct DB writes", "No adapter result contract"]
+    required_changes: ["Wrap collector execution", "Return normalized payloads to Core/Materializer", "Preserve raw archive as evidence"]
+    dependencies: ["CollectorAdapter contract", "Scheduler job lease"]
+    validation_required: ["Replay saved JSONL fixture", "Assert normalized output and no state write before Materializer"]
+  - module/path: "tools/asr/transcribe.py; tools/asr/reverse_prep_worker.py"
+    current_role: "Local SenseVoice ASR runtime and reverse-prep worker."
+    observed_behavior: "Extracts audio, runs local ASR/VAD, writes transcript paths and reverse_status to legacy SQLite."
+    target_layer: "asr_adapter"
+    decision: wrap
+    evidence: ["GATE-ASR LIVE_PASSED", "tools/asr/transcribe.py updates hits"]
+    conflicts: ["Valuable runtime but state mutation bypasses Core", "Worker launch outside formal scheduler"]
+    required_changes: ["Wrap ASR command as adapter", "Move hit status updates to Core/Materializer"]
+    dependencies: ["ASR model directory", "Core hit prep command"]
+    validation_required: ["Isolated DB ASR gate", "Transcript hash and no full sensitive transcript in evidence"]
+  - module/path: "scripts/feishu/client.py; scripts/feishu/push.py"
+    current_role: "Low-level Feishu OpenAPI client and push helper."
+    observed_behavior: "Contains real HTTP client behavior and token handling conventions."
+    target_layer: "external_message_adapter"
+    decision: wrap
+    evidence: ["scripts/feishu/client.py", "scripts/feishu/push.py"]
+    conflicts: ["Cannot be called directly by business scripts", "Must not expose credentials or duplicate sends"]
+    required_changes: ["Keep as adapter internals only", "Attach to outbox receipt/idempotency layer"]
+    dependencies: ["Feishu thin binding gate", "outbox dispatch worker"]
+    validation_required: ["Mock token/send paths", "Live send gate only with test chat and approval"]
+  - module/path: "scripts/music/**; scripts/language_fuel/douban/**; scripts/language_fuel/collect_douban.py"
+    current_role: "Platform-specific language-fuel collectors."
+    observed_behavior: "Fetches platform data, parses comments/reviews/topics and stores legacy fuel records."
+    target_layer: "language_fuel_adapter"
+    decision: wrap
+    evidence: ["scripts/music/collect_netease.py", "scripts/language_fuel/douban/common.py"]
+    conflicts: ["Direct persistence", "No source capability/version manifest"]
+    required_changes: ["Wrap fetch/parse as source adapters", "Persist normalized results through Materializer"]
+    dependencies: ["formal research/language-fuel schema", "platform rate-limit policy"]
+    validation_required: ["Fixture replay for each source kind", "No live request without source gate"]
+  - module/path: "config/accounts/**; config/domains/**; scripts/setup/create_domain_account.py"
+    current_role: "Local account/domain config and setup script."
+    observed_behavior: "Stores YAML and can upsert accounts into SQLite."
+    target_layer: "domain_account_config"
+    decision: adapt
+    evidence: ["config/accounts", "config/domains", "scripts/setup/create_domain_account.py"]
+    conflicts: ["No versioned account/domain record", "Script writes config and DB directly"]
+    required_changes: ["Use YAML as import seed", "Represent changes through Core-managed versions"]
+    dependencies: ["Core account/domain schema"]
+    validation_required: ["Import seed into isolated DB", "Prove no hardcoded account dependency"]
+  - module/path: "scripts/collect/register_competitor.py; scripts/collect/register_full.py; scripts/collect/register_seeds.py"
+    current_role: "Competitor account registration and baseline seeding."
+    observed_behavior: "Normalizes competitor input, writes competitor rows and may trigger full crawl."
+    target_layer: "competitor_registration"
+    decision: adapt
+    evidence: ["competitor_accounts=20", "registration scripts call SQLite/crawler subprocesses"]
+    conflicts: ["Registration can start collection and mutate state outside Core"]
+    required_changes: ["Separate pure normalization from command execution", "Make registration a Core command"]
+    dependencies: ["CollectorAdapter", "Core account/source models"]
+    validation_required: ["Register same competitor twice and prove idempotent result"]
+  - module/path: "scripts/db/schema.sql; scripts/collect/crawl_competitors.py; scripts/analyze/judge_hits.py"
+    current_role: "Video snapshot, observation pool, baseline and hit detection model."
+    observed_behavior: "Implements D0-D7 observation, rolling baselines, hit promotion and video_checks snapshots."
+    target_layer: "hit_observation_model"
+    decision: adapt
+    evidence: ["competitor_videos=2307", "video_checks=1226", "baselines=360", "hits=109"]
+    conflicts: ["Direct writes and SQLite-specific shape"]
+    required_changes: ["Port hit math to pure functions/services", "Persist decisions through Core/Materializer"]
+    dependencies: ["formal video/source schema", "collector replay fixtures"]
+    validation_required: ["Golden fixture for baseline to hit promotion", "Idempotent rejudge checks"]
+  - module/path: "scripts/topics/daily_topics.py; scripts/topics/new_topic.py; scripts/topics/spinoff.py"
+    current_role: "Candidate pool, topic creation, reheat/decay and daily topic grouping."
+    observed_behavior: "Updates topic status/heat, inserts candidates, groups recommendations and can push cards to Feishu."
+    target_layer: "topic_planning"
+    decision: adapt
+    evidence: ["topics=106", "daily_topics.py mutates status/current_heat and calls push.send_card"]
+    conflicts: ["Combines ranking, state mutation and external view push"]
+    required_changes: ["Split pure ranking from Core state command", "Remove direct Feishu send from planning logic"]
+    dependencies: ["Core topic state", "outbox/view projection"]
+    validation_required: ["Golden ranking fixture", "No external send in planner unit tests"]
+  - module/path: "scripts/reverse/dna.py; scripts/reverse/reduce.py; scripts/reverse/upgrade_examples.py; data/爆款拆解/**"
+    current_role: "Legacy reverse DNA analysis and example upgrade workflow."
+    observed_behavior: "Loads Claude skill prompts, calls legacy LLM shim, writes notes and updates hit status; current read-only status is 81/95 done."
+    target_layer: "reverse_analysis_skill"
+    decision: adapt
+    evidence: ["scripts/reverse/dna.py calls call_llm", "DNA status 81/95 and 14 remaining"]
+    conflicts: ["Model and persistence paths bypass formal runtime", "Batch writes must not continue before migration"]
+    required_changes: ["Extract prompt/input assembly as portable Skill source", "Run through ModelGateway", "Persist outputs as immutable artifacts"]
+    dependencies: ["ModelGateway", "formal Skill schema", "Core hit reverse state"]
+    validation_required: ["One isolated shadow DNA fixture", "Envelope and artifact hash checks"]
+  - module/path: "scripts/research/research.py; scripts/core/research/**"
+    current_role: "Legacy simple research script plus formal research service."
+    observed_behavior: "Legacy research calls call_llm with WebSearch; formal GOAL-06 service exists under Core."
+    target_layer: "formal_research"
+    decision: adapt
+    evidence: ["scripts/research/research.py", "scripts/core/research/goal06_formal_research.py"]
+    conflicts: ["Legacy research is not formally materialized"]
+    required_changes: ["Move useful prompt semantics to formal query/profile", "Disable legacy direct WebSearch path for production"]
+    dependencies: ["FormalResearchService", "Search provider gate"]
+    validation_required: ["Fake search/provider replay", "No live search until gate opened"]
+  - module/path: "scripts/language_fuel/extract_*.py; scripts/humanize/**"
+    current_role: "Experience extraction, language texture, humanizer and comment-voice analysis."
+    observed_behavior: "Reads local corpora/comments, calls legacy LLM shim, writes observations/insights and Obsidian notes."
+    target_layer: "experience_engine"
+    decision: adapt
+    evidence: ["language_fuel tables populated", "scripts/humanize/extract.py calls human_flavor"]
+    conflicts: ["LLM and persistence are not formalized", "Risk of prompt bloat if migrated as rules instead of examples"]
+    required_changes: ["Keep examples as data", "Route analysis through ModelGateway and Experience Materializer"]
+    dependencies: ["Experience schema", "ModelGateway"]
+    validation_required: ["Small corpus fixture with immutable output artifact", "No rule injection"]
+  - module/path: "scripts/content/check_banned.py; config/banned_words.yaml"
+    current_role: "Deterministic banned-word and risk-word checker."
+    observed_behavior: "Runs local regex/config checks against drafts or files."
+    target_layer: "content_guard"
+    decision: adapt
+    evidence: ["creation-banned-check Skill calls check_banned", "AGENTS says bans in code not prompts"]
+    conflicts: ["Needs formal result schema for workflow gating"]
+    required_changes: ["Keep deterministic checker", "Emit machine-readable verdict and attach to Core review state"]
+    dependencies: ["Core content workflow"]
+    validation_required: ["Fixtures for RED/WARN/HINT/PASS", "No LLM use"]
+  - module/path: "scripts/content/build_writer_dispatch.py; scripts/content/save_draft.py; scripts/content/diff_draft.py; templates/**"
+    current_role: "Writer task card, draft registration and human diff tooling."
+    observed_behavior: "Builds task cards, inserts draft/diff rows and records changed character counts."
+    target_layer: "content_workflow"
+    decision: adapt
+    evidence: ["drafts=1", "save_draft.py and diff_draft.py write SQLite"]
+    conflicts: ["Draft/diff registration bypasses Core and immutable versioning"]
+    required_changes: ["Keep templates/diff logic", "Persist draft versions and review results through Materializer"]
+    dependencies: ["formal content artifact schema"]
+    validation_required: ["Draft version fixture with immutable history", "Diff artifact hash"]
+  - module/path: "vault symlink; Obsidian writers in legacy scripts"
+    current_role: "Obsidian example library and projection surface."
+    observed_behavior: "Stores/retrieves examples, notes and knowledge artifacts outside SQLite."
+    target_layer: "knowledge_projection"
+    decision: adapt
+    evidence: ["vault ready in project_check", "AGENTS says Obsidian is knowledge/example library"]
+    conflicts: ["Projection writes can become hidden state if not tied to Core versions"]
+    required_changes: ["Treat Obsidian as projection/reference", "Attach note paths and hashes to formal artifacts"]
+    dependencies: ["Materializer artifact references"]
+    validation_required: ["Projection replay from formal artifact produces same note path/hash"]
+  - module/path: ".agents/skills/**; .claude/skills/**; .codex/agents/**"
+    current_role: "Local workflow Skills, legacy Claude manuals and Codex agent configs."
+    observed_behavior: "Useful operating contracts; many read/write local files or call scripts; most are not formal portable Skill schemas."
+    target_layer: "formal_skill_catalog"
+    decision: adapt
+    evidence: ["23 local .agents Skill folders found", "several Skills call scripts or reference .claude manuals"]
+    conflicts: ["Host-bound paths and prose-only I/O", "Some Skills advance business state indirectly"]
+    required_changes: ["Promote one Skill at a time into portable schema-bound contract", "Separate local operator docs from runtime Skills"]
+    dependencies: ["PortableSkillRunner", "ModelGateway"]
+    validation_required: ["Standalone Skill fixture with schema, version hash and no hidden DB write"]
+  - module/path: "scripts/run_daily.py; 启动*.bat; Windows scheduled-task docs"
+    current_role: "Legacy local orchestration and launch shortcuts."
+    observed_behavior: "Starts daily collect/analyze/topic flow, background ASR worker and listener-like processes."
+    target_layer: "scheduler_runtime"
+    decision: adapt
+    evidence: ["scripts/run_daily.py", "root BAT launchers exist"]
+    conflicts: ["Process launch is outside formal scheduler/job lease/runtime host"]
+    required_changes: ["Keep as rollback/reference only", "Recreate orchestration as scheduler jobs and runtime host workers"]
+    dependencies: ["scripts/core/scheduler/**", "scripts/core/runtime/**"]
+    validation_required: ["Interrupted job resume", "No duplicate outbox emission"]
+  - module/path: "config/settings.yaml; config/settings.example.yaml; config/live_gates.yaml; .env.example; .env.live-gates.example"
+    current_role: "Runtime and validation configuration examples."
+    observed_behavior: "Settings include old Codex route aliases; live-gate config controls opened external gates and ignored env fields."
+    target_layer: "configuration"
+    decision: adapt
+    evidence: ["config/settings.yaml", "config/live_gates.yaml"]
+    conflicts: ["Old production route config is not wired into ModelGateway", "Validation config must not become production defaults"]
+    required_changes: ["Separate gate-only parameters from production model profiles", "Map production routes into formal ModelGateway config"]
+    dependencies: ["Model profile schema", "secret management policy"]
+    validation_required: ["Config lint for no secrets in examples", "No gate max token applied globally"]
+  - module/path: "scripts/project_check.py"
+    current_role: "Local readiness checker for legacy and current development environment."
+    observed_behavior: "Checks files, Codex CLI, DB readability, ASR venv, lark SDK, MediaCrawler and uv/cache."
+    target_layer: "diagnostics"
+    decision: adapt
+    evidence: ["project_check.py exit 0 in GOAL-00 pass"]
+    conflicts: ["Not a formal production readiness gate"]
+    required_changes: ["Keep as developer diagnostic", "Add formal preflight gates separately"]
+    dependencies: ["External live gate framework"]
+    validation_required: ["Run project_check read-only before local development changes"]
+  - module/path: "data/creation.db; data/** historical artifacts; logs/**; outputs/**"
+    current_role: "Historical local truth/data, generated artifacts, logs and legacy outputs."
+    observed_behavior: "SQLite contains current history; files contain notes, transcripts, drafts, collection outputs and logs."
+    target_layer: "migration_source_data"
+    decision: adapt
+    evidence: ["data/creation.db SHA256 captured", "DNA status 81/95 captured"]
+    conflicts: ["Historical files are not all immutable/versioned", "Generated data must not be silently rewritten"]
+    required_changes: ["Use copies for migration rehearsal", "Record source hashes and row-count checkpoints"]
+    dependencies: ["Migration execution plan", "backup/restore procedure"]
+    validation_required: ["No source DB writes during audit", "Pre/post migration hash and count reports on copied DB only"]
+  - module/path: "README.md; BUILD_PLAN.md; CLAUDE.md; AGENTS.md; GOAL-* reports"
+    current_role: "Repository operating documentation and historical implementation record."
+    observed_behavior: "Contains build route, legacy status and RC validation reports; some details are historical rather than production authority."
+    target_layer: "documentation"
+    decision: adapt
+    evidence: ["AGENTS and BUILD_PLAN read at GOAL-00 start", "RELEASE_CANDIDATE_BASELINE.md records RC freeze"]
+    conflicts: ["Some docs still reference disabled legacy entrypoints", "Historical GOAL-00 progress had stale HEAD before this pass"]
+    required_changes: ["Keep docs as audit trail", "Update progress/baseline facts without business behavior changes"]
+    dependencies: ["GOAL progress discipline"]
+    validation_required: ["Markdown artifact presence", "Diff review"]

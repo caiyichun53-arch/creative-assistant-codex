@@ -1,101 +1,90 @@
 # GOAL-00 Progress
 
-goal: GOAL-00 old-code complete audit
+goal: `GOAL-00 repository freeze, legacy audit and V0.6.2 migration plan`
 
-status: `STATIC_AUDIT_COMPLETE_RUNTIME_VALIDATION_BLOCKED_USER_CONFIRMED`
+status: `COMPLETE_CURRENT_BASELINE_RECONCILED`
 
-source_commit: `a8787a439fd281b2d8cec7a7ffe2606426bebab4`
+branch: `audit/goal-00-v0.6.2`
 
-audit_branch: `audit/goal-00-v0.6.2`
+head: `63966cbfa7bd3036968517aaa81e01edee68a130`
 
-design_baseline: `I:\爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx`
+source_validation_branch: `validation/v0.6.2-live-gates`
 
-## Completed Checkpoints
+## What Changed In This Resume
 
-- Read current user GOAL-00 instructions from attachment.
-- Read repo `AGENTS.md`, `BUILD_PLAN.md`, `CLAUDE.md`, `README.md`.
-- Loaded project review advisor skill; subagent spawn was not used because current tool instructions only allow spawning when the user explicitly asks for subagents. Main agent performed equivalent evidence-first review.
-- Confirmed V0.6.2 DOCX is readable and searchable.
-- Performed read-only Git baseline checks.
-- Created/successfully switched to audit branch `audit/goal-00-v0.6.2`.
-- Inspected repository tree and source modules.
-- Located dependency/config/runtime areas.
-- Confirmed SQLite DB exists and can be read in read-only mode.
-- Confirmed schema executes in in-memory SQLite.
-- Confirmed 10 migration files and identified unsafe top-level migration scripts.
-- Searched direct database writes, file writes, external platform calls, subprocess calls and model call entrypoints.
-- Ran safe project self-check without live collect smoke.
-- Parsed 64 Python files under `scripts/` and `tools/` with AST.
-- Produced module reuse matrix.
-- Produced legacy code audit and forbidden-item findings.
-- Completed two review rounds:
-  - prevent over-rewrite
-  - prevent wrong reuse / over-design
-- Produced validation report.
+- Reused existing branch `audit/goal-00-v0.6.2`; no duplicate GOAL-00 branch was created.
+- Fast-forwarded the stale audit branch to the current validated baseline because it was an ancestor of `validation/v0.6.2-live-gates`.
+- Reconciled old GOAL-00 facts with current live-gate facts:
+  - `GATE-ASR`: `LIVE_PASSED`.
+  - `GATE-MODEL-PROVIDER`: `LIVE_PASSED`.
+  - `GATE-HERMES-REAL-HOST`: `LIVE_PASSED`.
+- Confirmed current DNA status read-only: `81/95` done, `14` remaining.
+- Confirmed current tree has no `scripts/reverse/call.py`; legacy model routing issue is in `scripts/llm/call.py`.
+- Added the missing migration plan artifact.
 
-## Incomplete or Blocked Checkpoints
+## Completed Artifacts
 
-- Full runtime validation against V0.6.2 cannot run because the legacy repo lacks Hermes, Core API, Materializer, PostgreSQL target schema, ModelGateway, fake/replay validation suite and formal outbox/audit/idempotency layer.
-- Live external provider validation was intentionally not run because GOAL-00 forbids using real external credentials/accounts unless safe and necessary.
-- No real DB migrations were run because they would mutate `data/creation.db`.
-- No GOAL-01 implementation was started.
+- `CURRENT_REPOSITORY_BASELINE.md`
+- `LEGACY_CODE_AUDIT.md`
+- `MODULE_REUSE_MATRIX.yaml`
+- `MIGRATION_EXECUTION_PLAN.md`
 
-## Blocked Reasons
+Supporting report retained:
 
-- Runtime validation is blocked by missing V0.6.2 runtime components:
-  - Hermes production host binding
-  - Core API
-  - Materializer
-  - PostgreSQL persistence layer
-  - formal ModelGateway
-  - fake Host/provider replay suite
-  - command receipt/audit/outbox/correlation/causation/idempotency
-- GOAL-01 is blocked by user approval gate on the module reuse matrix.
+- `GOAL-00_VALIDATION_REPORT.md`
 
-## Test Execution Status
+## Completed Checks
 
-Executed:
-- `python scripts/project_check.py`: exit 0.
-- AST parse of 64 Python files under `scripts/` and `tools/`: exit 0.
-- `scripts/db/schema.sql` in memory SQLite: exit 0.
-- `data/creation.db` read-only table/count inspection: exit 0.
-- migration file static order/guard inspection: exit 0.
+Executed safely:
+
+- `python scripts/project_check.py`: passed.
+- AST parse of project Python files under `scripts/` and `tools/`, excluding virtual environments: `105` files, `0` errors.
+- SQLite in-memory schema checks:
+  - `scripts/db/schema.sql`
+  - `scripts/core/persistence/goal01_schema.sqlite.sql`
+  - `scripts/core/persistence/goal02_schema.sqlite.sql`
+  - `scripts/core/persistence/goal03_schema.sqlite.sql`
+- `python scripts/reverse/dna.py --status`: read-only status succeeded.
 
 Not executed:
-- DB init/migrations/seed.
-- live collect/push/listener/ASR/model calls.
-- any command that would mutate real DB or use real external accounts.
+
+- DNA batch or single production DNA write.
+- Business DB migration.
+- Feishu listener or push.
+- MediaCrawler live collection.
+- Production model call.
+- Any other external gate.
+
+## Current Data Freeze
+
+- `data/creation.db` SHA256 observed: `71023BB01D185BA520D21056C35B9882BAA0F06E49EE8F649CC814E8B5549512`.
+- Counts observed read-only: `competitor_accounts=20`, `competitor_videos=2307`, `hits=109`, `topics=106`, `drafts=1`.
+- DNA: `81` done, `14` remaining from the 95 eligible/transcribed set.
 
 ## Module Classification Statistics
 
-- keep: 1
-- adapt: 13
+- keep: 2
+- adapt: 16
 - wrap: 4
 - replace: 4
-- total modules: 22
+- total: 26
 
 ## Current Stop Point
 
-Stop at GOAL-00 audit output. Do not enter GOAL-01.
+Stop at GOAL-00 checkpoint. Do not continue DNA writes, Feishu production linkage, business migrations, legacy refactors or next implementation Goal in this turn.
 
-## Recovery Steps
+## Recommended Next Goal
 
-1. Verify branch and HEAD:
-   - branch: `audit/goal-00-v0.6.2`
-   - HEAD: `a8787a439fd281b2d8cec7a7ffe2606426bebab4`
-2. Read:
-   - `CURRENT_REPOSITORY_BASELINE.md`
-   - `LEGACY_CODE_AUDIT.md`
-   - `MODULE_REUSE_MATRIX.yaml`
-   - `GOAL-00_VALIDATION_REPORT.md`
-   - this file
-3. Confirm `git status --short`.
-4. If continuing to GOAL-01, first obtain user approval for the reuse matrix and high-risk migration decisions.
+`GOAL-MIGRATION-01: ModelGateway shadow bridge for legacy reverse DNA fixture`
 
-## GOAL-01 Allowed?
+Purpose: prove one reverse-DNA-style model request can run through the formal ModelGateway and produce a recorded envelope in an isolated store before any legacy DNA batch resumes.
 
-Yes, after a new explicit GOAL-01 start instruction.
+## Supplemental Coverage Added After Commit
 
-Reason:
-- User confirmed the GOAL-00 audit result and reuse matrix after review.
-- This GOAL-00 turn still does not enter GOAL-01 by itself; GOAL-01 should start only when the user gives the next explicit start instruction.
+After initial checkpoint commit, GOAL-00 artifacts were supplemented with:
+
+- Playwright/Chrome environment observations.
+- Ignored `.env.live-gates` and local gate config governance.
+- Formal Skill mapping from local Skills to current code and gaps.
+- DNA old-result migration strategy and mapping to `sample_deep_analyze` / `tactic_extract` responsibilities.
+- Required gate families and future migration Goal sequence.
