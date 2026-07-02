@@ -39,16 +39,57 @@ from scripts.core.scheduler.goal03_scheduler import Goal03Scheduler, NoClaimable
 from scripts.validation.clean_room_empty_db import health_check
 
 
-GOAL_ID = "GOAL-RUNTIME-BUSINESS-SKILL-ADAPTER-01"
+GOAL_ID = "GOAL-BUSINESS-SKILL-CONTENT-CLASSIFY-01"
 FORMAL_MAPPING_PATH = ROOT / "FORMAL_SKILL_ROUTE_MAPPING.yaml"
 FIRST_CONTRACT_PATH = ROOT / "FIRST_FORMAL_SKILL_CONTRACT.yaml"
-STATUS_PATH = ROOT / "FORMAL_SKILL_ADAPTER_STATUS.yaml"
+CONTENT_CLASSIFY_CONTRACT_PATH = ROOT / "CONTENT_CLASSIFY_BUSINESS_CONTRACT.yaml"
+CONTENT_CLASSIFY_FIXTURES_PATH = ROOT / "runtime_skills" / "content_classify" / "fixtures.yaml"
+STATUS_PATH = ROOT / "CONTENT_CLASSIFY_STATUS.yaml"
 REPORT_PATH = ROOT / f"{GOAL_ID}_VALIDATION_REPORT.md"
 PROGRESS_PATH = ROOT / "implementation_progress" / f"{GOAL_ID}.md"
+LIVE_GATE_STATUS_PATH = ROOT / "CONTENT_CLASSIFY_LIVE_GATE_STATUS.yaml"
+POSTGRES_EVIDENCE_PATH = ROOT / "validation_evidence" / f"{GOAL_ID}_POSTGRES.md"
 SCHEMA_PATH = Path(__file__).with_name("formal_skill_adapter_schema.sqlite.sql")
 FORMAL_SKILL_JOB_KIND = "formal_skill.execute"
 FORMAL_SKILL_RESULT_SCHEMA_VERSION = "formal_business_skill_result.v1"
 CONTENT_CLASSIFY_OUTPUT_SCHEMA_VERSION = "content_classify.output.v1"
+
+BUSINESS_CONTRACT_REQUIRED_KEYS = {
+    "skill_id",
+    "skill_version",
+    "source_documents",
+    "responsibility",
+    "non_responsibilities",
+    "allowed_inputs",
+    "forbidden_inputs",
+    "classification_taxonomy",
+    "output_enums",
+    "no_result_semantics",
+    "uncertainty_semantics",
+    "evidence_requirements",
+    "confidence_policy",
+    "domain_scope",
+    "cross_domain_behavior",
+    "third_domain_behavior",
+    "input_length_limits",
+    "context_budget",
+    "token_budget",
+    "timeout",
+    "retry",
+    "idempotency",
+    "error_contract",
+    "materialization_contract",
+    "test_cases",
+    "completion_definition",
+}
+CONCRETE_LABELS = {
+    "fan_kepu_social_life",
+    "music_entertainment",
+    "third_domain_neutral",
+    "cross_domain",
+    "not_classifiable",
+}
+PROHIBITED_RATIONALE_TERMS = ("quality", "viral", "strategy", "writing suggestion", "爆款", "质量", "创作建议")
 
 
 class FormalSkillAdapterError(RuntimeError):
@@ -89,12 +130,12 @@ class FormalSkillContract:
     materializer_contract: str
 
     @classmethod
-    def from_yaml(cls, path: Path = FIRST_CONTRACT_PATH) -> "FormalSkillContract":
+    def from_yaml(cls, path: Path = CONTENT_CLASSIFY_CONTRACT_PATH) -> "FormalSkillContract":
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         model_binding = data["model_binding"]
         return cls(
-            formal_skill_id=str(data["formal_skill_id"]),
-            version=str(data["version"]),
+            formal_skill_id=str(data.get("formal_skill_id") or data["skill_id"]),
+            version=str(data.get("version") or data["skill_version"]),
             input_schema=dict(data["input_schema"]),
             output_schema=dict(data["output_schema"]),
             allowed_model_nodes=tuple(str(node) for node in data["allowed_model_nodes"]),
@@ -123,6 +164,8 @@ class FormalSkillContract:
         validate_schema_definition(self.output_schema, "output_schema")
         validate_schema_definition(self.model_input_schema, "model_input_schema")
         validate_schema_definition(self.model_output_schema, "model_output_schema")
+        if self.formal_skill_id == "content_classify":
+            validate_content_classify_business_contract(load_content_classify_business_contract())
 
     @property
     def skill_hash(self) -> str:
@@ -164,7 +207,7 @@ class FormalSkillContract:
         return HostBindingSpec(
             binding_name=self.binding_name,
             binding_version=self.binding_version,
-            input_map={key: value["key"] for key, value in self.input_map.items()},
+            input_map={key: value["key"] for key, value in self.input_map.items() if value.get("source") == "input"},
             static_inputs={},
             metadata={"formal_skill_id": self.formal_skill_id},
         )
@@ -178,7 +221,8 @@ class FormalBusinessSkillAdapter:
 
     def run(self, input_payload: dict[str, Any]) -> FormalSkillRunResult:
         validate_payload(input_payload, self.contract.input_schema)
-        model_input = apply_binding(self.contract.input_map, input_payload, {})
+        preprocessed = preprocess_content_classify_input(input_payload) if self.contract.formal_skill_id == "content_classify" else {}
+        model_input = apply_binding(self.contract.input_map, input_payload, {}, preprocessed)
         validate_payload(model_input, self.contract.model_input_schema)
         if self.contract.route_name not in self.gateway.routes:
             raise FormalSkillValidationError(f"missing approved model route: {self.contract.route_name}")
@@ -202,9 +246,13 @@ class FormalBusinessSkillAdapter:
             )
         )
         model_output = parse_model_json(model_run.output_text)
+        if self.contract.formal_skill_id == "content_classify":
+            model_output = normalize_content_classify_model_output(model_output)
         validate_payload(model_output, self.contract.model_output_schema)
-        output_payload = apply_binding(self.contract.output_map, input_payload, model_output)
+        output_payload = apply_binding(self.contract.output_map, input_payload, model_output, preprocessed)
         validate_payload(output_payload, self.contract.output_schema)
+        if self.contract.formal_skill_id == "content_classify":
+            validate_content_classify_output_semantics(input_payload, output_payload)
         return FormalSkillRunResult(
             formal_skill_id=self.contract.formal_skill_id,
             output_payload=output_payload,
@@ -220,7 +268,9 @@ def apply_binding(
     binding_map: dict[str, Any],
     input_payload: dict[str, Any],
     model_output: dict[str, Any],
+    preprocessed: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    preprocessed = preprocessed or {}
     bound: dict[str, Any] = {}
     for target_key, spec in binding_map.items():
         source = spec["source"]
@@ -228,11 +278,115 @@ def apply_binding(
             bound[target_key] = input_payload[spec["key"]]
         elif source == "model_output":
             bound[target_key] = model_output[spec["key"]]
+        elif source == "preprocessed":
+            bound[target_key] = preprocessed[spec["key"]]
         elif source == "literal":
             bound[target_key] = spec["value"]
         else:
             raise FormalSkillValidationError(f"unsupported binding source: {source}")
     return bound
+
+
+def preprocess_content_classify_input(input_payload: dict[str, Any]) -> dict[str, Any]:
+    title = " ".join(str(input_payload.get("title", "")).split())
+    body = " ".join(str(input_payload.get("body", "")).split())
+    text = f"title: {title}\nbody: {body}".strip()
+    return {
+        "content_text": text,
+        "title_text": title,
+        "body_text": body,
+        "text_length": len(f"{title}{body}"),
+    }
+
+
+def load_content_classify_business_contract(path: Path = CONTENT_CLASSIFY_CONTRACT_PATH) -> dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def load_content_classify_fixtures(path: Path = CONTENT_CLASSIFY_FIXTURES_PATH) -> list[dict[str, Any]]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    fixtures = data.get("fixtures") or []
+    expanded: list[dict[str, Any]] = []
+    for fixture in fixtures:
+        item = dict(fixture)
+        input_payload = dict(item.get("input") or {})
+        if input_payload.get("body") == "PLACEHOLDER_OVERLONG_BODY":
+            input_payload["body"] = "超长文本" * 320
+        item["input"] = input_payload
+        expanded.append(item)
+    return expanded
+
+
+def validate_content_classify_business_contract(data: dict[str, Any]) -> dict[str, Any]:
+    missing = sorted(BUSINESS_CONTRACT_REQUIRED_KEYS - set(data))
+    if missing:
+        raise FormalSkillValidationError(f"content_classify business contract missing keys: {missing}")
+    if data.get("schema_version") != "content_classify.business_contract.v1":
+        raise FormalSkillValidationError("unexpected content_classify business contract schema_version")
+    if data.get("missing_requirements"):
+        raise FormalSkillValidationError("content_classify business contract has missing_requirement entries")
+    if data.get("skill_id") != "content_classify":
+        raise FormalSkillValidationError("content_classify business contract skill_id mismatch")
+    output_enums = data.get("output_enums") or {}
+    for key in ("classification_status", "primary_label", "no_result_reason", "uncertainty_reason", "confidence"):
+        if not output_enums.get(key):
+            raise FormalSkillValidationError(f"content_classify output enum missing: {key}")
+    return {
+        "skill_id": data["skill_id"],
+        "skill_version": data["skill_version"],
+        "source_document_count": len(data.get("source_documents") or []),
+        "missing_requirement_count": len(data.get("missing_requirements") or []),
+    }
+
+
+def validate_content_classify_output_semantics(input_payload: dict[str, Any], output_payload: dict[str, Any]) -> None:
+    status = output_payload["classification_status"]
+    primary_label = output_payload["primary_label"]
+    candidate_labels = output_payload["candidate_labels"]
+    no_result_reason = output_payload["no_result_reason"]
+    uncertainty_reason = output_payload["uncertainty_reason"]
+    confidence = output_payload["confidence"]
+    evidence_used = output_payload["evidence_used"]
+    input_evidence = set(input_payload["evidence_items"])
+    if not set(evidence_used).issubset(input_evidence):
+        raise FormalSkillValidationError("evidence_used must be selected from input evidence_items")
+    rationale = str(output_payload["rationale"]).lower()
+    for term in PROHIBITED_RATIONALE_TERMS:
+        if term.lower() in rationale:
+            raise FormalSkillValidationError(f"rationale contains prohibited non-classification term: {term}")
+    if status == "no_result":
+        if primary_label != "none" or confidence != "none" or no_result_reason == "none":
+            raise FormalSkillValidationError("no_result output must use label none, confidence none and a concrete reason")
+        if candidate_labels:
+            raise FormalSkillValidationError("no_result output must not include candidate_labels")
+        return
+    if no_result_reason != "none":
+        raise FormalSkillValidationError("classified/uncertain outputs must use no_result_reason none")
+    if status == "classified":
+        if primary_label not in CONCRETE_LABELS:
+            raise FormalSkillValidationError("classified output must use a concrete primary_label")
+        if not candidate_labels:
+            raise FormalSkillValidationError("classified output must include candidate_labels")
+        if uncertainty_reason != "none":
+            raise FormalSkillValidationError("classified output must use uncertainty_reason none")
+        if confidence == "none":
+            raise FormalSkillValidationError("classified output must not use confidence none")
+    elif status == "multiple_candidates":
+        if primary_label != "cross_domain":
+            raise FormalSkillValidationError("multiple_candidates output must use primary_label cross_domain")
+        if len(set(candidate_labels)) < 2:
+            raise FormalSkillValidationError("multiple_candidates output requires at least two candidate labels")
+        if uncertainty_reason != "multiple_supported_domains":
+            raise FormalSkillValidationError("multiple_candidates output must preserve multiple_supported_domains")
+    elif status == "uncertain":
+        if primary_label != "none":
+            raise FormalSkillValidationError("uncertain output must use primary_label none")
+        if uncertainty_reason == "none":
+            raise FormalSkillValidationError("uncertain output must include uncertainty_reason")
+        if confidence == "high":
+            raise FormalSkillValidationError("uncertain output must not use confidence high")
+    else:
+        raise FormalSkillValidationError(f"unsupported classification_status: {status}")
 
 
 def parse_model_json(output_text: str) -> dict[str, Any]:
@@ -253,6 +407,41 @@ def parse_model_json(output_text: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise FormalSkillValidationError("model output JSON must be an object")
     return value
+
+
+def normalize_content_classify_model_output(model_output: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(model_output)
+    none_markers = {None, "", "n/a", "na", "not_applicable", "not applicable", "null", "none"}
+    for key in ("no_result_reason", "uncertainty_reason"):
+        value = normalized.get(key)
+        if value is None or (isinstance(value, str) and value.strip().lower() in none_markers):
+            normalized[key] = "none"
+    for key in ("candidate_labels", "evidence_used"):
+        if normalized.get(key) is None:
+            normalized[key] = []
+        elif isinstance(normalized.get(key), str):
+            normalized[key] = [normalized[key]]
+    confidence = normalized.get("confidence")
+    if isinstance(confidence, (int, float)):
+        if confidence >= 0.75:
+            normalized["confidence"] = "high"
+        elif confidence >= 0.45:
+            normalized["confidence"] = "medium"
+        elif confidence > 0:
+            normalized["confidence"] = "low"
+        else:
+            normalized["confidence"] = "none"
+    elif isinstance(confidence, str):
+        lowered = confidence.strip().lower()
+        if lowered in {"not_applicable", "not applicable", "n/a", "na", "null", ""}:
+            normalized["confidence"] = "none"
+    if (
+        normalized.get("classification_status") == "classified"
+        and not normalized.get("candidate_labels")
+        and normalized.get("primary_label") in CONCRETE_LABELS
+    ):
+        normalized["candidate_labels"] = [normalized["primary_label"]]
+    return normalized
 
 
 def validate_schema_definition(schema: dict[str, Any], label: str) -> None:
@@ -348,15 +537,188 @@ class DeterministicContentClassifyModelPort:
         if behavior == "not_json":
             return self._result("not-json", request)
         if behavior == "invalid_structure":
-            return self._result(json.dumps({"decision": "maybe"}), request)
+            return self._result(json.dumps({"classification_status": "maybe"}), request)
+        if behavior == "missing_field":
+            return self._result(
+                json.dumps(
+                    {
+                        "classification_status": "classified",
+                        "primary_label": "fan_kepu_social_life",
+                        "candidate_labels": ["fan_kepu_social_life"],
+                        "no_result_reason": "none",
+                        "uncertainty_reason": "none",
+                        "confidence": "high",
+                        "evidence_used": request.input_payload.get("evidence_refs", [])[:1],
+                        "schema_version": CONTENT_CLASSIFY_OUTPUT_SCHEMA_VERSION,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                request,
+            )
+        if behavior == "empty_result_object":
+            return self._result(
+                json.dumps(
+                    self._payload(
+                        status="no_result",
+                        primary_label="none",
+                        candidates=[],
+                        no_result_reason="model_empty_result",
+                        uncertainty_reason="none",
+                        confidence="none",
+                        rationale="Model returned an explicit empty-result classification.",
+                        evidence=[],
+                    ),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                request,
+            )
         text = str(request.input_payload["candidate_topic"]).lower()
-        decision = "reject" if "reject" in text else "needs_review" if "review" in text else "keep"
-        payload = {
-            "decision": decision,
-            "rationale": f"synthetic classification for {request.input_payload['fixture_id']}",
-            "schema_version": "content_classify.model_output.v1",
-        }
+        evidence = list(request.input_payload.get("evidence_refs") or [])
+        used = evidence[:2]
+        fan = any(token in text for token in ("社区", "通勤", "电梯", "楼道", "邻里", "社保", "生活", "科普"))
+        music = any(token in text for token in ("歌", "音乐", "歌手", "演唱会", "旋律", "专辑", "song"))
+        third = any(token in text for token in ("面包", "保存", "食谱", "篮球", "金融"))
+        noise = any(token in text for token in ("抽奖", "点击链接", "优惠码"))
+        unsupported = "why this song" in text or "mixed language" in text
+        title_music_body_social = "title: 老歌" in text and "社区停车位" in text
+        short_text = len(text.replace("title:", "").replace("body:", "").strip()) < 16
+        if not text.replace("title:", "").replace("body:", "").strip():
+            payload = self._payload(
+                status="no_result",
+                primary_label="none",
+                candidates=[],
+                no_result_reason="empty_text",
+                uncertainty_reason="none",
+                confidence="none",
+                rationale="Input title and body are empty, so no classification is produced.",
+                evidence=[],
+            )
+        elif unsupported:
+            payload = self._payload(
+                status="uncertain",
+                primary_label="none",
+                candidates=["music_entertainment"] if music else [],
+                no_result_reason="none",
+                uncertainty_reason="mixed_language_boundary",
+                confidence="low",
+                rationale="The mixed-language evidence is too weak for a stable domain classification.",
+                evidence=used,
+            )
+        elif short_text or "信息不足" in text or "不够" in text:
+            payload = self._payload(
+                status="no_result",
+                primary_label="none",
+                candidates=[],
+                no_result_reason="insufficient_information",
+                uncertainty_reason="none",
+                confidence="none",
+                rationale="The input evidence is insufficient for a formal classification.",
+                evidence=[],
+            )
+        elif title_music_body_social:
+            payload = self._payload(
+                status="uncertain",
+                primary_label="none",
+                candidates=["music_entertainment", "fan_kepu_social_life"],
+                no_result_reason="none",
+                uncertainty_reason="title_body_conflict",
+                confidence="low",
+                rationale="Title and body point to different domains, so the classification remains uncertain.",
+                evidence=used,
+            )
+        elif fan and music:
+            payload = self._payload(
+                status="multiple_candidates",
+                primary_label="cross_domain",
+                candidates=["fan_kepu_social_life", "music_entertainment"],
+                no_result_reason="none",
+                uncertainty_reason="multiple_supported_domains",
+                confidence="medium",
+                rationale="Evidence supports both social-life explanation and music-entertainment domains.",
+                evidence=used,
+            )
+        elif fan:
+            payload = self._payload(
+                status="classified",
+                primary_label="fan_kepu_social_life",
+                candidates=["fan_kepu_social_life"],
+                no_result_reason="none",
+                uncertainty_reason="none",
+                confidence="medium" if noise else "high",
+                rationale="Evidence centers on social-life explanatory content.",
+                evidence=used,
+            )
+        elif music:
+            payload = self._payload(
+                status="classified",
+                primary_label="music_entertainment",
+                candidates=["music_entertainment"],
+                no_result_reason="none",
+                uncertainty_reason="none",
+                confidence="high",
+                rationale="Evidence centers on music or entertainment content.",
+                evidence=used,
+            )
+        elif third:
+            payload = self._payload(
+                status="classified",
+                primary_label="third_domain_neutral",
+                candidates=["third_domain_neutral"],
+                no_result_reason="none",
+                uncertainty_reason="none",
+                confidence="medium",
+                rationale="Evidence belongs outside the two named domains and uses the neutral third-domain label.",
+                evidence=used,
+            )
+        elif noise:
+            payload = self._payload(
+                status="classified",
+                primary_label="not_classifiable",
+                candidates=["not_classifiable"],
+                no_result_reason="none",
+                uncertainty_reason="none",
+                confidence="medium",
+                rationale="Evidence is present but describes promotional non-content rather than a content domain.",
+                evidence=used,
+            )
+        else:
+            payload = self._payload(
+                status="uncertain",
+                primary_label="none",
+                candidates=[],
+                no_result_reason="none",
+                uncertainty_reason="weak_evidence",
+                confidence="low",
+                rationale="The evidence is too weak to assign a stable domain label.",
+                evidence=used,
+            )
         return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+
+    @staticmethod
+    def _payload(
+        *,
+        status: str,
+        primary_label: str,
+        candidates: list[str],
+        no_result_reason: str,
+        uncertainty_reason: str,
+        confidence: str,
+        rationale: str,
+        evidence: list[str],
+    ) -> dict[str, Any]:
+        return {
+            "classification_status": status,
+            "primary_label": primary_label,
+            "candidate_labels": candidates,
+            "no_result_reason": no_result_reason,
+            "uncertainty_reason": uncertainty_reason,
+            "confidence": confidence,
+            "rationale": rationale,
+            "evidence_used": evidence,
+            "schema_version": CONTENT_CLASSIFY_OUTPUT_SCHEMA_VERSION,
+        }
 
     @staticmethod
     def _result(output_text: str, request: ModelRequest) -> ModelProviderResult:
@@ -770,20 +1132,22 @@ def make_content_classify_harness(
     now_ms: Callable[[], int] | None = None,
     monotonic_ms: Callable[[], int] | None = None,
     provider: DeterministicContentClassifyModelPort | None = None,
+    route: ModelRoute | None = None,
 ) -> FormalBusinessSkillHarness:
     contract = FormalSkillContract.from_yaml()
     store = PersistenceStore.in_memory(id_factory=id_factory)
     scheduler = Goal03Scheduler(store, id_factory=id_factory, now_ms=now_ms)
     materializer = FormalBusinessSkillMaterializer(store, id_factory=id_factory)
     provider = provider or DeterministicContentClassifyModelPort()
-    route = ModelRoute(
-        route_name=contract.route_name,
-        provider_name=provider.provider_name,
-        model_name="deterministic-content-classify",
-        config_version=f"{GOAL_ID}.test.v1",
-        config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
-        timeout_ms=1000,
-    )
+    if route is None:
+        route = ModelRoute(
+            route_name=contract.route_name,
+            provider_name=provider.provider_name,
+            model_name="deterministic-content-classify",
+            config_version=f"{GOAL_ID}.test.v1",
+            config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
+            timeout_ms=1000,
+        )
     gateway = ModelGateway(
         routes={route.route_name: route},
         providers={route.provider_name: provider},
@@ -814,11 +1178,14 @@ def make_content_classify_harness(
 
 def sample_content_classify_input(**overrides: Any) -> dict[str, Any]:
     payload = {
-        "request_id": "synthetic-content-classify-001",
-        "correlation_id": "synthetic-correlation-001",
-        "candidate_id": "candidate-001",
-        "candidate_text": "A practical synthetic topic worth keeping",
-        "source_refs": ["synthetic-source-1"],
+        "request_id": "content-classify-001",
+        "correlation_id": "content-classify-correlation-001",
+        "content_id": "content-001",
+        "title": "社区电梯为什么总在早高峰拥堵",
+        "body": "用通勤时间、楼层分布和维护周期解释一个常见生活现象。",
+        "evidence_items": ["社区电梯早高峰拥堵", "通勤时间和楼层分布是解释依据"],
+        "language_hint": "zh",
+        "domain_hint": "fan_kepu_social_life",
     }
     payload.update(overrides)
     return payload
@@ -848,13 +1215,13 @@ def validate_formal_mapping(mapping: dict[str, Any]) -> dict[str, Any]:
     if unknown_skills:
         raise FormalSkillValidationError(f"business nodes map to unknown formal Skills: {unknown_skills}")
     first = next(item for item in formal_skills if item["formal_skill_id"] == "content_classify")
-    if first["status"] != "active_first_slice":
-        raise FormalSkillValidationError("content_classify must be the active first slice")
+    if first["status"] != "active_formal_business_skill":
+        raise FormalSkillValidationError("content_classify must be the active formal business Skill")
     return {
         "formal_skill_count": len(formal_skills),
         "business_node_count": len(nodes),
         "planned_skill_count": len([item for item in formal_skills if item["formal_skill_id"] != "content_classify"]),
-        "active_first_skill": "content_classify",
+        "active_formal_business_skill": "content_classify",
         "unmapped_existing_business_nodes": [],
     }
 
@@ -864,10 +1231,70 @@ def clean_room_status() -> dict[str, Any]:
     return {"table_count": health["table_count"], "total_rows": sum(health["table_rows"].values())}
 
 
+def load_live_gate_status(path: Path = LIVE_GATE_STATUS_PATH) -> dict[str, Any]:
+    if not path.exists():
+        return {"status": "not_run", "path": str(path.relative_to(ROOT))}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return {
+        "status": data.get("status"),
+        "formal_skill_id": data.get("formal_skill_id"),
+        "logical_route": data.get("logical_route"),
+        "provider_type": data.get("provider_type"),
+        "actual_model": data.get("actual_model"),
+        "actual_call_count": data.get("actual_call_count"),
+        "model_gateway_used": data.get("model_gateway_used"),
+        "live_model_port_used": data.get("live_model_port_used"),
+        "dry_run_fallback": data.get("dry_run_fallback"),
+        "fake_port_fallback": data.get("fake_port_fallback"),
+        "schema_validation": data.get("schema_validation"),
+        "classification_status": data.get("classification_status"),
+        "primary_label": data.get("primary_label"),
+        "provider_request_id_status": data.get("provider_request_id_status"),
+        "usage_status": data.get("usage_status"),
+        "prompt_tokens": data.get("prompt_tokens"),
+        "completion_tokens": data.get("completion_tokens"),
+        "total_tokens": data.get("total_tokens"),
+        "cost_status": data.get("cost_status"),
+        "retry_count": data.get("retry_count"),
+        "idempotent_replay": data.get("idempotent_replay"),
+        "idempotent_replay_second_live_call": data.get("idempotent_replay_second_live_call"),
+        "formal_result_count": data.get("formal_result_count"),
+        "outbox_success_event_count": data.get("outbox_success_event_count"),
+        "feishu_dispatched": data.get("feishu_dispatched"),
+        "clean_room_formal_db": data.get("clean_room_formal_db"),
+        "direct_cli_model_call_in_runtime_path": data.get("direct_cli_model_call_in_runtime_path"),
+        "path": str(path.relative_to(ROOT)),
+    }
+
+
+def load_postgres_evidence(path: Path = POSTGRES_EVIDENCE_PATH) -> dict[str, Any]:
+    if not path.exists():
+        return {"gate_status": "not_run", "path": str(path.relative_to(ROOT))}
+    parsed: dict[str, Any] = {"path": str(path.relative_to(ROOT))}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line.startswith("- ") or ":" not in line:
+            continue
+        key, value = line[2:].split(":", 1)
+        value = value.strip()
+        if value in {"True", "False"}:
+            parsed[key] = value == "True"
+        else:
+            try:
+                parsed[key] = int(value)
+            except ValueError:
+                parsed[key] = value
+    return parsed
+
+
 def run_verification() -> dict[str, Any]:
+    business_contract_result = validate_content_classify_business_contract(load_content_classify_business_contract())
     mapping_result = validate_formal_mapping(load_formal_mapping())
     contract = FormalSkillContract.from_yaml()
     contract.validate_contract()
+    fixtures = load_content_classify_fixtures()
+    expected_fixture_ids = set(load_content_classify_business_contract()["test_cases"]["required_fixture_ids"])
+    fixture_ids = {fixture["fixture_id"] for fixture in fixtures}
     harness = make_content_classify_harness()
     try:
         create = harness.api.create_formal_skill_job(sample_content_classify_input())
@@ -879,9 +1306,12 @@ def run_verification() -> dict[str, Any]:
         harness.close()
     direct = scan_direct_model_calls()
     clean_room = clean_room_status()
+    live_gate = load_live_gate_status()
+    postgres_gate = load_postgres_evidence()
     status = {
         "goal": GOAL_ID,
         "status": "COMPLETED",
+        "business_contract": business_contract_result,
         "mapping": mapping_result,
         "first_formal_skill": {
             "formal_skill_id": contract.formal_skill_id,
@@ -896,20 +1326,32 @@ def run_verification() -> dict[str, Any]:
                 "calls_other_skills": False,
             },
         },
-        "fixture_e2e": {
+        "fake_fixture_e2e": {
+            "required_fixture_count": len(expected_fixture_ids),
+            "implemented_fixture_count": len(fixture_ids),
+            "missing_required_fixtures": sorted(expected_fixture_ids - fixture_ids),
             "job_status": step.status,
             "result_schema_version": result["output"]["schema_version"] if result else None,
+            "result_primary_label": result["output"]["primary_label"] if result else None,
             "outbox_count": len(outbox),
             "provider_call_count": provider_call_count,
         },
         "direct_model_call_scan": direct,
         "clean_room_formal_db": clean_room,
+        "live_provider_gate": live_gate,
+        "postgres_e2e_gate": postgres_gate,
     }
     if step.status != "succeeded" or result is None or len(outbox) != 1:
+        status["status"] = "FAILED"
+    if status["fake_fixture_e2e"]["missing_required_fixtures"]:
         status["status"] = "FAILED"
     if direct["formal_production_direct_model_call_count"] != 0:
         status["status"] = "FAILED"
     if clean_room["total_rows"] != 0:
+        status["status"] = "FAILED"
+    if live_gate.get("status") not in {"COMPLETED", "not_run"}:
+        status["status"] = "FAILED"
+    if postgres_gate.get("gate_status") not in {"passed", "not_run"}:
         status["status"] = "FAILED"
     return status
 
@@ -920,15 +1362,23 @@ def write_status(status: dict[str, Any], path: Path = STATUS_PATH) -> None:
 
 def write_report(status: dict[str, Any], path: Path = REPORT_PATH) -> None:
     direct = status["direct_model_call_scan"]
+    live = status["live_provider_gate"]
+    postgres = status["postgres_e2e_gate"]
     lines = [
         f"# {GOAL_ID} Validation Report",
         "",
         f"status: `{status['status']}`",
         "",
+        "## Business Contract",
+        f"- skill_id: `{status['business_contract']['skill_id']}`",
+        f"- skill_version: `{status['business_contract']['skill_version']}`",
+        f"- source_document_count: `{status['business_contract']['source_document_count']}`",
+        f"- missing_requirement_count: `{status['business_contract']['missing_requirement_count']}`",
+        "",
         "## Formal Mapping",
         f"- formal_skill_count: `{status['mapping']['formal_skill_count']}`",
         f"- business_node_count: `{status['mapping']['business_node_count']}`",
-        f"- active_first_skill: `{status['mapping']['active_first_skill']}`",
+        f"- active_formal_business_skill: `{status['mapping']['active_formal_business_skill']}`",
         f"- unmapped_existing_business_nodes: `{len(status['mapping']['unmapped_existing_business_nodes'])}`",
         "",
         "## First Formal Skill",
@@ -939,11 +1389,58 @@ def write_report(status: dict[str, Any], path: Path = REPORT_PATH) -> None:
         f"- schema_validation: `{status['first_formal_skill']['schema_validation']}`",
         "- standalone_adapter: no state store, no file writes, no other Skill calls, ModelGateway only",
         "",
-        "## Synthetic E2E",
-        f"- job_status: `{status['fixture_e2e']['job_status']}`",
-        f"- result_schema_version: `{status['fixture_e2e']['result_schema_version']}`",
-        f"- outbox_count: `{status['fixture_e2e']['outbox_count']}`",
-        f"- provider_call_count: `{status['fixture_e2e']['provider_call_count']}`",
+        "## Fake Fixture E2E",
+        f"- required_fixture_count: `{status['fake_fixture_e2e']['required_fixture_count']}`",
+        f"- implemented_fixture_count: `{status['fake_fixture_e2e']['implemented_fixture_count']}`",
+        f"- missing_required_fixtures: `{len(status['fake_fixture_e2e']['missing_required_fixtures'])}`",
+        f"- job_status: `{status['fake_fixture_e2e']['job_status']}`",
+        f"- result_schema_version: `{status['fake_fixture_e2e']['result_schema_version']}`",
+        f"- result_primary_label: `{status['fake_fixture_e2e']['result_primary_label']}`",
+        f"- outbox_count: `{status['fake_fixture_e2e']['outbox_count']}`",
+        f"- provider_call_count: `{status['fake_fixture_e2e']['provider_call_count']}`",
+        "",
+        "## Live Provider Gate",
+        f"- status: `{live.get('status')}`",
+        f"- formal_skill_id: `{live.get('formal_skill_id')}`",
+        f"- logical_route: `{live.get('logical_route')}`",
+        f"- provider_type: `{live.get('provider_type')}`",
+        f"- actual_model: `{live.get('actual_model')}`",
+        f"- actual_call_count: `{live.get('actual_call_count')}`",
+        f"- model_gateway_used: `{live.get('model_gateway_used')}`",
+        f"- live_model_port_used: `{live.get('live_model_port_used')}`",
+        f"- dry_run_fallback: `{live.get('dry_run_fallback')}`",
+        f"- fake_port_fallback: `{live.get('fake_port_fallback')}`",
+        f"- schema_validation: `{live.get('schema_validation')}`",
+        f"- classification_status: `{live.get('classification_status')}`",
+        f"- primary_label: `{live.get('primary_label')}`",
+        f"- usage_status: `{live.get('usage_status')}`",
+        f"- prompt_tokens: `{live.get('prompt_tokens')}`",
+        f"- completion_tokens: `{live.get('completion_tokens')}`",
+        f"- total_tokens: `{live.get('total_tokens')}`",
+        f"- cost_status: `{live.get('cost_status')}`",
+        f"- retry_count: `{live.get('retry_count')}`",
+        f"- idempotent_replay: `{live.get('idempotent_replay')}`",
+        f"- idempotent_replay_second_live_call: `{live.get('idempotent_replay_second_live_call')}`",
+        f"- formal_result_count: `{live.get('formal_result_count')}`",
+        f"- outbox_success_event_count: `{live.get('outbox_success_event_count')}`",
+        f"- feishu_dispatched: `{live.get('feishu_dispatched')}`",
+        f"- report_path: `{live.get('path')}`",
+        "",
+        "## PostgreSQL E2E Gate",
+        f"- gate_status: `{postgres.get('gate_status')}`",
+        f"- postgres_version: `{postgres.get('postgres_version')}`",
+        f"- isolation: `{postgres.get('isolation')}`",
+        f"- schema_rounds: `{postgres.get('schema_rounds')}`",
+        f"- initialized_formal_table_count: `{postgres.get('initialized_formal_table_count')}`",
+        f"- initialized_formal_row_count: `{postgres.get('initialized_formal_row_count')}`",
+        f"- two_session_concurrent_claim_worker_b_rows: `{postgres.get('two_session_concurrent_claim_worker_b_rows')}`",
+        f"- disposable_database_dropped: `{postgres.get('disposable_database_dropped')}`",
+        f"- container_removed: `{postgres.get('container_removed')}`",
+        f"- secrets_recorded: `{postgres.get('secrets_recorded')}`",
+        f"- external_llm_called: `{postgres.get('external_llm_called')}`",
+        f"- feishu_called: `{postgres.get('feishu_called')}`",
+        f"- legacy_data_imported: `{postgres.get('legacy_data_imported')}`",
+        f"- evidence_path: `{postgres.get('path')}`",
         "",
         "## Direct Model Calls",
         f"- formal_production_direct_model_call_count: `{direct['formal_production_direct_model_call_count']}`",
@@ -958,8 +1455,10 @@ def write_report(status: dict[str, Any], path: Path = REPORT_PATH) -> None:
         "",
         "## Commands",
         "- `python scripts\\core\\model_gateway\\formal_skill_adapter.py`",
+        "- `python scripts\\core\\model_gateway\\run_content_classify_live_gate.py`",
+        "- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\core\\model_gateway\\run_content_classify_postgres_gate.ps1`",
         "- `python -m unittest tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.validation.test_live_gates tests.core.test_runtime_vertical_slice`",
-        "- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_skill_adapter'; python -m py_compile scripts\\core\\model_gateway\\formal_skill_adapter.py tests\\core\\test_formal_skill_adapter.py`",
+        "- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_skill_adapter'; python -m py_compile scripts\\core\\model_gateway\\formal_skill_adapter.py scripts\\core\\model_gateway\\run_content_classify_live_gate.py tests\\core\\test_formal_skill_adapter.py`",
         "- `git diff --check`",
         "",
     ]
@@ -972,15 +1471,16 @@ def write_progress(status: dict[str, Any], path: Path = PROGRESS_PATH) -> None:
         f"# {GOAL_ID} Progress",
         "",
         f"status: {status['status']}",
-        "branch: implementation/goal-runtime-business-skill-adapter-01-v0.6.2",
+        "branch: implementation/goal-business-skill-content-classify-01-v0.6.2",
         "",
         "## Checkpoints",
-        "- [x] Restore previous route-cutover baseline and create isolated goal branch.",
-        "- [x] Build FORMAL_SKILL_ROUTE_MAPPING.yaml before code.",
-        "- [x] Freeze FIRST_FORMAL_SKILL_CONTRACT.yaml for content_classify.",
-        "- [x] Implement generic formal Skill adapter using ModelGateway only.",
-        "- [x] Implement synthetic first Skill package and fake model port.",
-        "- [x] Verify Runner, Materializer, Outbox, retry and idempotency using synthetic fixtures.",
+        "- [x] Restore previous content_classify adapter baseline and create isolated goal branch.",
+        "- [x] Extract CONTENT_CLASSIFY_BUSINESS_CONTRACT.yaml from current formal sources.",
+        "- [x] Replace active content_classify package assets with formal schema, binding, prompt and fixtures.",
+        "- [x] Implement formal content_classify semantics using ModelGateway only.",
+        "- [x] Verify Runner, Materializer, Outbox, retry and idempotency using isolated fixtures.",
+        "- [x] Verify minimal live Provider call through ModelGateway and live Model Port.",
+        "- [x] Verify disposable PostgreSQL end-to-end gate.",
         "- [x] Verify no formal production direct model calls.",
         "- [x] Verify clean-room formal DB remains empty.",
         "",

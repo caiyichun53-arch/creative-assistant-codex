@@ -19,21 +19,22 @@ mapping_policy:
   unmapped_existing_production_model_nodes_allowed: false
 formal_skills:
   - formal_skill_id: content_classify
-    version: 0.1.0
-    source_document: GOAL-RUNTIME-BUSINESS-SKILL-ADAPTER-01 objective
-    responsibility: Classify a synthetic content candidate into a bounded judgement label.
-    input_schema: content_classify.input.v1
-    output_schema: content_classify.output.v1
+    version: 1.0.0
+    source_document: CONTENT_CLASSIFY_BUSINESS_CONTRACT.yaml
+    responsibility: Classify isolated public content text into the formal domain taxonomy, or return formal uncertain/no-result semantics when evidence is insufficient or unsuitable.
+    input_schema: content_classify.input_schema.v1
+    output_schema: content_classify.output_schema.v1
     allowed_model_nodes:
       - business.topic_judgement
     execution_order: 10
     whether_model_is_required: true
     target_runner: FormalBusinessSkillAdapter
     materializer_contract: formal_business_skill_result.v1
-    status: active_first_slice
+    status: active_formal_business_skill
     evidence:
-      - First dependency-light judgement Skill; matches the goal preference for content_classify/content_relation_judge as the first Skill.
-      - Uses business.topic_judgement only through ModelGateway with synthetic fixtures.
+      - Active formal content_classify Skill for GOAL-BUSINESS-SKILL-CONTENT-CLASSIFY-01.
+      - Uses business.topic_judgement only through ModelGateway with formal fixtures and live Provider validation.
+      - Scope excludes relation judgement, viral judgement, research, creation, review, DB reads, file reads, Feishu messaging, and other Skill invocation.
 
   - formal_skill_id: content_relation_judge
     version: planned

@@ -1,0 +1,18 @@
+schema_version: content_classify.binding.v1
+binding_name: content_classify_public_input_to_topic_judgement
+binding_version: 1.0.0
+route_name: business.topic_judgement
+input_map:
+  fixture_id: request_id
+  candidate_topic: preprocessed.content_text
+  evidence_refs: evidence_items
+output_map:
+  classification_status: model_output.classification_status
+  primary_label: model_output.primary_label
+  candidate_labels: model_output.candidate_labels
+  no_result_reason: model_output.no_result_reason
+  uncertainty_reason: model_output.uncertainty_reason
+  confidence: model_output.confidence
+  rationale: model_output.rationale
+  evidence_used: model_output.evidence_used
+  schema_version: model_output.schema_version
