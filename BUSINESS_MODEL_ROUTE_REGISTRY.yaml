@@ -1,0 +1,360 @@
+schema_version: business_model_route_registry.v1
+goal: GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01
+status: formal_registry
+source_policy:
+  allowed_sources:
+    - AGENTS.md
+    - BUILD_PLAN.md
+    - GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01 objective
+  excluded_sources:
+    - scripts/llm/call.py
+    - config/settings.yaml
+    - config/settings.example.yaml
+    - README files
+  note: Node inventory is derived from formal docs and the active goal, not from old aliases or legacy scripts.
+provider_policy_defaults:
+  provider_name: hermes
+  live_model_port: HermesModelProviderAdapter
+  model_ref_env: MODEL_PROVIDER_MODEL
+  tools_enabled: false
+  memory_enabled: false
+  feishu_messaging_enabled: false
+  nested_job_orchestration_enabled: false
+  file_or_terminal_side_effects_enabled: false
+  approved_provider_required: true
+  fallback_policy:
+    dry_run_fallback: false
+    fake_port_fallback: false
+    cli_fallback: false
+    on_failure: fail_closed
+nodes:
+  - node_id: topic_judgement
+    logical_route: business.topic_judgement
+    capability_tier: fast_reasoning
+    source_evidence:
+      - AGENTS.md: LLM allowed for 选题判断.
+      - BUILD_PLAN.md: 每日选题流 later connects LLM judgement after examples grow.
+    timeout_ms: 30000
+    retry:
+      max_attempts: 1
+      retry_on: []
+    token_context_budget:
+      max_input_tokens: 2000
+      max_output_tokens: 700
+    allowed_provider_policy:
+      inherit: provider_policy_defaults
+    fallback_policy:
+      inherit: provider_policy_defaults.fallback_policy
+    input_schema:
+      type: object
+      required: [fixture_id, candidate_topic, evidence_refs]
+      properties:
+        fixture_id: string
+        candidate_topic: string
+        evidence_refs: array
+      additional_properties: false
+    output_schema:
+      type: object
+      required: [decision, rationale, schema_version]
+      properties:
+        decision: string
+        rationale: string
+        schema_version: string
+      additional_properties: false
+
+  - node_id: research_synthesis
+    logical_route: business.research_synthesis
+    capability_tier: deep_reasoning
+    source_evidence:
+      - AGENTS.md: LLM allowed for 研究综合.
+      - BUILD_PLAN.md: 选中一个选题后进行研究并组装材料包.
+    timeout_ms: 60000
+    retry:
+      max_attempts: 1
+      retry_on: []
+    token_context_budget:
+      max_input_tokens: 9000
+      max_output_tokens: 1800
+    allowed_provider_policy:
+      inherit: provider_policy_defaults
+    fallback_policy:
+      inherit: provider_policy_defaults.fallback_policy
+    input_schema:
+      type: object
+      required: [fixture_id, research_question, evidence_refs]
+      properties:
+        fixture_id: string
+        research_question: string
+        evidence_refs: array
+      additional_properties: false
+    output_schema:
+      type: object
+      required: [summary, claims, schema_version]
+      properties:
+        summary: string
+        claims: array
+        schema_version: string
+      additional_properties: false
+
+  - node_id: reverse_dna_analysis
+    logical_route: business.reverse_dna_analysis
+    capability_tier: deep_reasoning
+    source_evidence:
+      - AGENTS.md: LLM allowed for 逆向 DNA 拆解.
+      - BUILD_PLAN.md: LLM 拆 DNA consumes transcript and data.
+    timeout_ms: 90000
+    retry:
+      max_attempts: 1
+      retry_on: []
+    token_context_budget:
+      max_input_tokens: 12000
+      max_output_tokens: 2500
+    allowed_provider_policy:
+      inherit: provider_policy_defaults
+    fallback_policy:
+      inherit: provider_policy_defaults.fallback_policy
+    input_schema:
+      type: object
+      required: [fixture_id, transcript_excerpt, metrics]
+      properties:
+        fixture_id: string
+        transcript_excerpt: string
+        metrics: object
+      additional_properties: false
+    output_schema:
+      type: object
+      required: [topic_pattern, hook_pattern, structure_pattern, schema_version]
+      properties:
+        topic_pattern: string
+        hook_pattern: string
+        structure_pattern: string
+        schema_version: string
+      additional_properties: false
+
+  - node_id: reverse_pattern_reduce
+    logical_route: business.reverse_pattern_reduce
+    capability_tier: deep_reasoning
+    source_evidence:
+      - BUILD_PLAN.md: reduce finds common patterns from multiple DNA notes into domain examples and methods.
+    timeout_ms: 90000
+    retry:
+      max_attempts: 1
+      retry_on: []
+    token_context_budget:
+      max_input_tokens: 14000
+      max_output_tokens: 2800
+    allowed_provider_policy:
+      inherit: provider_policy_defaults
+    fallback_policy:
+      inherit: provider_policy_defaults.fallback_policy
+    input_schema:
+      type: object
+      required: [fixture_id, dna_note_refs]
+      properties:
+        fixture_id: string
+        dna_note_refs: array
+      additional_properties: false
+    output_schema:
+      type: object
+      required: [common_patterns, example_candidates, schema_version]
+      properties:
+        common_patterns: array
+        example_candidates: array
+        schema_version: string
+      additional_properties: false
+
+  - node_id: creation_hook
+    logical_route: business.creation_hook
+    capability_tier: creative_generation
+    source_evidence:
+      - BUILD_PLAN.md: 创作对话 includes 钩子.
+    timeout_ms: 60000
+    retry:
+      max_attempts: 1
+      retry_on: []
+    token_context_budget:
+      max_input_tokens: 8000
+      max_output_tokens: 1500
+    allowed_provider_policy:
+      inherit: provider_policy_defaults
+    fallback_policy:
+      inherit: provider_policy_defaults.fallback_policy
+    input_schema:
+      type: object
+      required: [fixture_id, brief, style_examples]
+      properties:
+        fixture_id: string
+        brief: string
+        style_examples: array
+      additional_properties: false
+    output_schema:
+      type: object
+      required: [hooks, schema_version]
+      properties:
+        hooks: array
+        schema_version: string
+      additional_properties: false
+
+  - node_id: creation_outline
+    logical_route: business.creation_outline
+    capability_tier: creative_generation
+    source_evidence:
+      - BUILD_PLAN.md: 创作对话 includes 大纲.
+    timeout_ms: 60000
+    retry:
+      max_attempts: 1
+      retry_on: []
+    token_context_budget:
+      max_input_tokens: 9000
+      max_output_tokens: 1800
+    allowed_provider_policy:
+      inherit: provider_policy_defaults
+    fallback_policy:
+      inherit: provider_policy_defaults.fallback_policy
+    input_schema:
+      type: object
+      required: [fixture_id, selected_hook, brief]
+      properties:
+        fixture_id: string
+        selected_hook: string
+        brief: string
+      additional_properties: false
+    output_schema:
+      type: object
+      required: [beats, schema_version]
+      properties:
+        beats: array
+        schema_version: string
+      additional_properties: false
+
+  - node_id: creation_draft
+    logical_route: business.creation_draft
+    capability_tier: creative_generation
+    source_evidence:
+      - AGENTS.md: LLM allowed for 创作.
+      - BUILD_PLAN.md: 创作对话 includes 成稿.
+    timeout_ms: 120000
+    retry:
+      max_attempts: 1
+      retry_on: []
+    token_context_budget:
+      max_input_tokens: 12000
+      max_output_tokens: 4500
+    allowed_provider_policy:
+      inherit: provider_policy_defaults
+    fallback_policy:
+      inherit: provider_policy_defaults.fallback_policy
+    input_schema:
+      type: object
+      required: [fixture_id, outline, brief]
+      properties:
+        fixture_id: string
+        outline: array
+        brief: string
+      additional_properties: false
+    output_schema:
+      type: object
+      required: [draft_text, schema_version]
+      properties:
+        draft_text: string
+        schema_version: string
+      additional_properties: false
+
+  - node_id: creation_review
+    logical_route: business.creation_review
+    capability_tier: critique_reasoning
+    source_evidence:
+      - BUILD_PLAN.md: 审稿/优化 occurs before deterministic banned-word gate.
+    timeout_ms: 60000
+    retry:
+      max_attempts: 1
+      retry_on: []
+    token_context_budget:
+      max_input_tokens: 10000
+      max_output_tokens: 2000
+    allowed_provider_policy:
+      inherit: provider_policy_defaults
+    fallback_policy:
+      inherit: provider_policy_defaults.fallback_policy
+    input_schema:
+      type: object
+      required: [fixture_id, draft_text, brief]
+      properties:
+        fixture_id: string
+        draft_text: string
+        brief: string
+      additional_properties: false
+    output_schema:
+      type: object
+      required: [verdict, issues, schema_version]
+      properties:
+        verdict: string
+        issues: array
+        schema_version: string
+      additional_properties: false
+
+  - node_id: creation_polish
+    logical_route: business.creation_polish
+    capability_tier: creative_generation
+    source_evidence:
+      - BUILD_PLAN.md: 审稿/优化 and 精修 happen before final checks.
+    timeout_ms: 90000
+    retry:
+      max_attempts: 1
+      retry_on: []
+    token_context_budget:
+      max_input_tokens: 11000
+      max_output_tokens: 4500
+    allowed_provider_policy:
+      inherit: provider_policy_defaults
+    fallback_policy:
+      inherit: provider_policy_defaults.fallback_policy
+    input_schema:
+      type: object
+      required: [fixture_id, draft_text, edit_notes]
+      properties:
+        fixture_id: string
+        draft_text: string
+        edit_notes: array
+      additional_properties: false
+    output_schema:
+      type: object
+      required: [polished_text, schema_version]
+      properties:
+        polished_text: string
+        schema_version: string
+      additional_properties: false
+
+  - node_id: ai_flavor_judge
+    logical_route: business.ai_flavor_judge
+    capability_tier: critique_reasoning
+    source_evidence:
+      - AGENTS.md: LLM allowed for AI 味判官.
+      - BUILD_PLAN.md: AI 味判官 checks draft after writing.
+    timeout_ms: 60000
+    retry:
+      max_attempts: 1
+      retry_on: []
+    token_context_budget:
+      max_input_tokens: 9000
+      max_output_tokens: 1800
+    allowed_provider_policy:
+      inherit: provider_policy_defaults
+    fallback_policy:
+      inherit: provider_policy_defaults.fallback_policy
+    input_schema:
+      type: object
+      required: [fixture_id, draft_text, human_reference_refs]
+      properties:
+        fixture_id: string
+        draft_text: string
+        human_reference_refs: array
+      additional_properties: false
+    output_schema:
+      type: object
+      required: [ai_flavor_risk, revision_targets, schema_version]
+      properties:
+        ai_flavor_risk: string
+        revision_targets: array
+        schema_version: string
+      additional_properties: false

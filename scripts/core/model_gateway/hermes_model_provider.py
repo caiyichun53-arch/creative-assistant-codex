@@ -28,6 +28,27 @@ class HermesModelProviderConfig:
 class HermesModelProviderAdapter:
     provider_name = "hermes"
     billing_mode = "subscription"
+    disallowed_route_parameter_keys = frozenset(
+        {
+            "tools",
+            "tool_choice",
+            "parallel_tool_calls",
+            "previous_response_id",
+            "conversation",
+            "memory",
+            "store",
+            "metadata",
+            "response_sink",
+            "webhook_url",
+            "feishu",
+            "messaging",
+            "nested_jobs",
+            "job_orchestration",
+            "file_output",
+            "terminal",
+            "shell",
+        }
+    )
 
     def __init__(
         self,
@@ -41,6 +62,7 @@ class HermesModelProviderAdapter:
     def complete(self, request: ModelRequest, route: ModelRoute) -> ModelProviderResult:
         if route.provider_name != self.provider_name:
             raise HermesModelProviderError("route provider must be hermes")
+        self._validate_isolated_route(route)
         model_name = route.model_name or self.config.model
         if not model_name:
             raise HermesModelProviderError("model is required")
@@ -74,6 +96,11 @@ class HermesModelProviderAdapter:
             "max_retries": self.config.max_retries,
             "retry_count": 0,
             "timeout_seconds": self.config.timeout_seconds,
+            "tools_enabled": False,
+            "memory_enabled": False,
+            "messaging_enabled": False,
+            "nested_job_orchestration_enabled": False,
+            "file_or_terminal_side_effects_enabled": False,
         }
         return ModelProviderResult(
             output_text=output_text,
@@ -82,6 +109,12 @@ class HermesModelProviderAdapter:
             provider_request_id=provider_request_id,
             metadata=metadata,
         )
+
+    def _validate_isolated_route(self, route: ModelRoute) -> None:
+        parameters = route.parameters or {}
+        disallowed = sorted(set(parameters) & self.disallowed_route_parameter_keys)
+        if disallowed:
+            raise HermesModelProviderError(f"Hermes inference route enables forbidden parameters: {disallowed}")
 
     def _make_client(self) -> Any:
         factory = self._client_factory
