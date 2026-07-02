@@ -1,0 +1,819 @@
+schema_version: 1
+goal: GOAL-DATA-RESET-01
+phase: phase_1_plan_only_no_deletion
+generated_at: '2026-07-02T08:40:47Z'
+allowed_dispositions:
+- discard_from_target
+- fixture_only
+- cold_archive_only
+- retain_as_current_asset
+policy:
+  production_database: start_empty
+  legacy_business_data_import: forbidden
+  legacy_model_outputs_import: forbidden
+  fixtures: minimal_isolated_desensitized_test_only
+items:
+- path_or_table: data/creation.db::accounts
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 1
+  hash:
+    sha256_rows: c73569da60b95b8fcab39ca0539dd54e747f6d9f6de685d8f97ec7272f938ccd
+  contains_sensitive_information: true
+  current_code_references:
+  - config/accounts/example.yaml
+  - config/domains/泛科普.yaml
+  - scripts/analyze/judge_hits.py
+  - scripts/collect/crawl_competitors.py
+  - scripts/collect/register_competitor.py
+  - scripts/collect/register_full.py
+  - scripts/collect/register_seeds.py
+  - scripts/content/build_writer_dispatch.py
+  - scripts/content/save_draft.py
+  - scripts/db/seed_mvp.py
+  - scripts/language_fuel/backfill_comments.py
+  - scripts/language_fuel/extract_hit_comments.py
+  - scripts/language_fuel/extract_texture_base.py
+  - scripts/language_fuel/select_for_topic.py
+  - scripts/language_fuel/store_atoms.py
+  - scripts/project_check.py
+  - scripts/reverse/collect_openings.py
+  - scripts/reverse/dna.py
+  - scripts/reverse/fetch_comments.py
+  - scripts/reverse/reduce.py
+  - scripts/setup/create_domain_account.py
+  - scripts/topics/daily_topics.py
+  - scripts/topics/prepare_topic.py
+  disposition: discard_from_target
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::baselines
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 360
+  hash:
+    sha256_rows: 5efe00167f09b772c9197bf9da42f27cfc755d50292167ce75d3707891de4345
+  contains_sensitive_information: false
+  current_code_references:
+  - scripts/analyze/judge_hits.py
+  disposition: fixture_only
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::competitor_accounts
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 20
+  hash:
+    sha256_rows: e1b2093b8e1223365ccc691f96e1c64cb976d79d22c0eb5242a521f0f9319b08
+  contains_sensitive_information: true
+  current_code_references:
+  - config/domains/泛科普.yaml
+  - scripts/analyze/judge_hits.py
+  - scripts/collect/crawl_competitors.py
+  - scripts/collect/register_competitor.py
+  - scripts/collect/register_full.py
+  - scripts/collect/register_seeds.py
+  - scripts/language_fuel/backfill_comments.py
+  - scripts/language_fuel/extract_hit_comments.py
+  - scripts/language_fuel/extract_texture_base.py
+  - scripts/language_fuel/select_for_topic.py
+  - scripts/language_fuel/store_atoms.py
+  - scripts/project_check.py
+  - scripts/reverse/collect_openings.py
+  - scripts/reverse/dna.py
+  - scripts/reverse/fetch_comments.py
+  - scripts/reverse/reduce.py
+  - scripts/topics/daily_topics.py
+  - scripts/topics/prepare_topic.py
+  disposition: discard_from_target
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::competitor_videos
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 2307
+  hash:
+    sha256_rows: 6d6e52d268045baf6d0375f2fa8246342b68c80a85662d324f3011272f699faf
+  contains_sensitive_information: true
+  current_code_references:
+  - scripts/analyze/judge_hits.py
+  - scripts/collect/crawl_competitors.py
+  - scripts/db/migrate_001_videos.py
+  - scripts/db/migrate_002_checks.py
+  - scripts/project_check.py
+  disposition: discard_from_target
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::content_atoms
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 0
+  hash:
+    sha256_rows: 4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+  contains_sensitive_information: false
+  current_code_references:
+  - scripts/db/migrate_008_comments_and_atoms.py
+  - scripts/language_fuel/store_atoms.py
+  disposition: cold_archive_only
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::diffs
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 0
+  hash:
+    sha256_rows: 4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+  contains_sensitive_information: true
+  current_code_references:
+  - scripts/content/diff_draft.py
+  disposition: cold_archive_only
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::drafts
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 1
+  hash:
+    sha256_rows: 04c27261a93b867107421dc97d117bdea01a8e3c2341f751701c5b3dbeb30806
+  contains_sensitive_information: true
+  current_code_references:
+  - config/settings.example.yaml
+  - config/settings.yaml
+  - scripts/content/diff_draft.py
+  - scripts/content/save_draft.py
+  - scripts/project_check.py
+  disposition: discard_from_target
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::hit_comments
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 5713
+  hash:
+    sha256_rows: 8814b15080e35bc504b3a52a3d77aa2d1694dc75e3e49ac68cad48d9920e2c34
+  contains_sensitive_information: true
+  current_code_references:
+  - scripts/language_fuel/backfill_comments.py
+  - scripts/language_fuel/extract_hit_comments.py
+  - scripts/language_fuel/extract_texture_base.py
+  - scripts/language_fuel/store_atoms.py
+  - scripts/reverse/dna.py
+  - scripts/reverse/fetch_comments.py
+  disposition: fixture_only
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::hits
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 109
+  hash:
+    sha256_rows: 949255ce8813921728a93661dc5d3de96f5532a43396a4ac5e930bb9a8b0a803
+  contains_sensitive_information: true
+  current_code_references:
+  - scripts/analyze/cluster_hits.py
+  - scripts/analyze/judge_hits.py
+  - scripts/collect/crawl_competitors.py
+  - scripts/collect/register_full.py
+  - scripts/content/build_writer_dispatch.py
+  - scripts/db/migrate_003_clusters.py
+  - scripts/feishu/listener.py
+  - scripts/language_fuel/backfill_comments.py
+  - scripts/language_fuel/extract_hit_comments.py
+  - scripts/language_fuel/extract_texture_base.py
+  - scripts/language_fuel/select_for_topic.py
+  - scripts/language_fuel/store_atoms.py
+  - scripts/project_check.py
+  - scripts/research/research.py
+  - scripts/reverse/backfill_links.py
+  - scripts/reverse/collect_openings.py
+  - scripts/reverse/dna.py
+  - scripts/reverse/fetch_comments.py
+  - scripts/reverse/reduce.py
+  - scripts/run_daily.py
+  - scripts/topics/daily_topics.py
+  - scripts/topics/prepare_topic.py
+  - scripts/topics/spinoff.py
+  disposition: discard_from_target
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::language_fuel_batches
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 27
+  hash:
+    sha256_rows: 048ee5a0910d793a9e5be7110b9cc022bd1afb0d183dc0487131f250066b969a
+  contains_sensitive_information: false
+  current_code_references:
+  - scripts/language_fuel/collect_mediacrawler.py
+  - scripts/language_fuel/douban/README.md
+  - scripts/language_fuel/douban/common.py
+  disposition: discard_from_target
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::language_fuel_comments
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 5359
+  hash:
+    sha256_rows: 963a3825f784359a83d542fd19e695893a6a51a8471582efa26fa21e8f42c991
+  contains_sensitive_information: true
+  current_code_references:
+  - scripts/db/migrate_008_comments_and_atoms.py
+  - scripts/language_fuel/backfill_comments.py
+  - scripts/language_fuel/store_atoms.py
+  disposition: discard_from_target
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::language_fuel_insights
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 53
+  hash:
+    sha256_rows: 88cc7f3b5cc8a09c8fd13e42463e1099ae700a342eeea6207dd84e26faef3a1d
+  contains_sensitive_information: false
+  current_code_references:
+  - scripts/db/migrate_007_language_fuel_insights.py
+  - scripts/language_fuel/extract_hit_comments.py
+  - scripts/language_fuel/extract_texture_base.py
+  - scripts/language_fuel/select_for_topic.py
+  disposition: discard_from_target
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::language_fuel_items
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 1210
+  hash:
+    sha256_rows: 5022d15e956615795ceb936edf63083b52e8b883febc170101b5a7ffc16417f0
+  contains_sensitive_information: false
+  current_code_references:
+  - scripts/db/migrate_006_language_fuel_douban.py
+  - scripts/language_fuel/backfill_comments.py
+  - scripts/language_fuel/collect_mediacrawler.py
+  - scripts/language_fuel/douban/README.md
+  - scripts/language_fuel/douban/common.py
+  - scripts/language_fuel/store_atoms.py
+  disposition: discard_from_target
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::language_texture_observations
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 51
+  hash:
+    sha256_rows: 27a5d8b6aeec8b213f44df09e010e9d7158da6d54223e4d3d5e94161b87eb0e8
+  contains_sensitive_information: false
+  current_code_references:
+  - scripts/db/migrate_009_language_texture_observations.py
+  - scripts/language_fuel/extract_texture_base.py
+  disposition: discard_from_target
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::music_comment_batches
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 11
+  hash:
+    sha256_rows: db23500f5dd31c42082e380a2a60aa8503a5a0ba867c6090072cd56ad029a82d
+  contains_sensitive_information: false
+  current_code_references:
+  - scripts/music/collect_netease.py
+  disposition: fixture_only
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::music_comments
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 536
+  hash:
+    sha256_rows: 19322f008fc98beaef6fbe33ffe8e238127442695079fedd0bf78e7adaa277b5
+  contains_sensitive_information: true
+  current_code_references:
+  - scripts/db/migrate_004_music_sources.py
+  - scripts/language_fuel/backfill_comments.py
+  - scripts/language_fuel/store_atoms.py
+  - scripts/music/collect_netease.py
+  disposition: fixture_only
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::music_tracks
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 11
+  hash:
+    sha256_rows: b994b546c66aa2cc00bbdfe2dc8b0f376b2c5fe3227134f1c407ff46023e24cb
+  contains_sensitive_information: false
+  current_code_references:
+  - scripts/db/migrate_004_music_sources.py
+  - scripts/language_fuel/backfill_comments.py
+  - scripts/language_fuel/store_atoms.py
+  - scripts/music/collect_netease.py
+  disposition: fixture_only
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::topics
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 106
+  hash:
+    sha256_rows: 944a0d991d3814c92497eeba1511c4f35e4f20bfdf347f456c36e5efe6db7632
+  contains_sensitive_information: true
+  current_code_references:
+  - config/settings.example.yaml
+  - config/settings.yaml
+  - scripts/content/build_writer_dispatch.py
+  - scripts/content/check_banned.py
+  - scripts/content/diff_draft.py
+  - scripts/content/save_draft.py
+  - scripts/core/correction/verify_goal_10.py
+  - scripts/db/migrate_010_topic_derive_source.py
+  - scripts/feishu/listener.py
+  - scripts/language_fuel/douban/collect.py
+  - scripts/language_fuel/select_for_topic.py
+  - scripts/project_check.py
+  - scripts/research/research.py
+  - scripts/run_daily.py
+  - scripts/topics/daily_topics.py
+  - scripts/topics/new_topic.py
+  - scripts/topics/prepare_topic.py
+  - scripts/topics/spinoff.py
+  disposition: discard_from_target
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::tracking
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 0
+  hash:
+    sha256_rows: 4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+  contains_sensitive_information: false
+  current_code_references: []
+  disposition: discard_from_target
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db::video_checks
+  data_type: legacy_sqlite_table
+  quantity:
+    rows: 1226
+  hash:
+    sha256_rows: 737c70f59d358f18c5d985eb5aabc1b96b7520fbfa68516c60572f32ea9a245a
+  contains_sensitive_information: false
+  current_code_references:
+  - scripts/collect/crawl_competitors.py
+  - scripts/db/migrate_002_checks.py
+  disposition: discard_from_target
+  disposition_reason: Legacy business record; target formal DB starts empty. Fixture-only
+    tables may be sampled only into isolated, desensitized test DBs.
+- path_or_table: data/creation.db
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 1
+    bytes: 13242368
+  hash:
+    sha256: 71023bb01d185ba520d21056c35b9882baa0f06e49ee8f649cc814e8b5549512
+  contains_sensitive_information: true
+  current_code_references:
+  - config/settings.example.yaml
+  - config/settings.yaml
+  - scripts/project_check.py
+  - scripts/validation/live_gates.py
+  disposition: discard_from_target
+  disposition_reason: Legacy SQLite business database; cold backup only before purge,
+    never target import.
+- path_or_table: data/transcripts
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 106
+    bytes: 499935
+  hash:
+    sha256: 7bbddc7e169e490e8967a19f68b0b977d54b2a0cca85b55880f285e99bba450c
+  contains_sensitive_information: true
+  current_code_references:
+  - scripts/reverse/dna.py
+  disposition: fixture_only
+  disposition_reason: Old ASR transcript outputs; use synthetic or minimal redacted
+    parser fixture only.
+- path_or_table: data/????
+  data_type: file_or_directory
+  quantity:
+    exists: false
+    files: 0
+    bytes: 0
+  hash:
+    sha256: missing
+  contains_sensitive_information: true
+  current_code_references:
+  - config/accounts/example.yaml
+  - config/live_gates.example.yaml
+  - config/live_gates.yaml
+  - config/settings.example.yaml
+  - config/settings.yaml
+  - scripts/analyze/cluster_hits.py
+  - scripts/collect/common.py
+  - scripts/collect/crawl_competitors.py
+  - scripts/content/build_writer_dispatch.py
+  - scripts/content/check_banned.py
+  - scripts/content/diff_draft.py
+  - scripts/content/save_draft.py
+  - scripts/core/correction/goal10_corrections.py
+  - scripts/core/experience/goal09_experiments.py
+  - scripts/core/hermes/goal11_host_binding.py
+  - scripts/core/model_gateway/goal07_model_gateway.py
+  - scripts/core/model_gateway/goal07_skill_runner.py
+  - scripts/core/model_gateway/hermes_model_provider.py
+  - scripts/core/model_gateway/verify_goal_07.py
+  - scripts/core/production/goal08_production_chain.py
+  - scripts/core/production/verify_goal_08.py
+  - scripts/core/research/goal06_formal_research.py
+  - scripts/core/runtime/goal04_runtime_host.py
+  - scripts/core/scheduler/goal03_scheduler.py
+  - scripts/core/staging/verify_goal_12.py
+  - scripts/core/state/goal02_core.py
+  - scripts/core/workflow/goal05_workflow.py
+  - scripts/db/init_db.py
+  - scripts/db/migrate_001_videos.py
+  - scripts/db/migrate_002_checks.py
+  - scripts/db/migrate_003_clusters.py
+  - scripts/db/migrate_004_music_sources.py
+  - scripts/db/migrate_005_language_fuel.py
+  - scripts/db/migrate_006_language_fuel_douban.py
+  - scripts/db/migrate_007_language_fuel_insights.py
+  - scripts/db/migrate_008_comments_and_atoms.py
+  - scripts/db/migrate_009_language_texture_observations.py
+  - scripts/db/migrate_010_topic_derive_source.py
+  - scripts/db/seed_mvp.py
+  - scripts/feishu/client.py
+  disposition: discard_from_target
+  disposition_reason: 81 old DNA/model outputs and old derived analysis; not inherited.
+- path_or_table: data/reverse
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 98
+    bytes: 1856353
+  hash:
+    sha256: 7dc9d99d3dbfcdedee1dbcbe4bdb2a52551cda172e237062940557931cca0fa6
+  contains_sensitive_information: true
+  current_code_references:
+  - scripts/reverse/fetch_comments.py
+  disposition: discard_from_target
+  disposition_reason: Old reverse prep comments/detail outputs; not target business
+    data.
+- path_or_table: data/topics
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 14
+    bytes: 159432
+  hash:
+    sha256: cbaee71e63f696973b89ad657373a9423ded7cb67c6bb10489276908daaca536
+  contains_sensitive_information: true
+  current_code_references:
+  - scripts/content/check_banned.py
+  - scripts/content/diff_draft.py
+  - scripts/content/save_draft.py
+  - scripts/language_fuel/select_for_topic.py
+  - scripts/research/research.py
+  - scripts/topics/prepare_topic.py
+  disposition: discard_from_target
+  disposition_reason: Old topic material packs, research and drafts; not inherited.
+- path_or_table: data/drafts
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 1
+    bytes: 0
+  hash:
+    sha256: 629a78150d7bb0c2faac93c6335c340f1cad7f0f921a3fef897ccf8860f545e8
+  contains_sensitive_information: true
+  current_code_references:
+  - config/settings.example.yaml
+  - config/settings.yaml
+  disposition: discard_from_target
+  disposition_reason: Old draft files; not inherited.
+- path_or_table: data/language_fuel
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 39
+    bytes: 2000166
+  hash:
+    sha256: 33e9aa5e829e9a19a20aa239a31d84a5102c97cca230c0b3a38776520429ea25
+  contains_sensitive_information: true
+  current_code_references:
+  - config/settings.example.yaml
+  - config/settings.yaml
+  - scripts/language_fuel/douban/README.md
+  - scripts/language_fuel/douban/collect_comments.py
+  - scripts/language_fuel/douban/collect_group_topics.py
+  - scripts/language_fuel/douban/collect_reviews.py
+  disposition: discard_from_target
+  disposition_reason: Old derived experience/model outputs; not inherited.
+- path_or_table: data/humanize
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 19
+    bytes: 278993
+  hash:
+    sha256: 7c90e1e0735884b9ab02e1206bf84c0cf1d15fd09e0ece8da15463ff1f823000
+  contains_sensitive_information: true
+  current_code_references:
+  - config/settings.example.yaml
+  - config/settings.yaml
+  - scripts/humanize/extract.py
+  disposition: cold_archive_only
+  disposition_reason: Old humanizer run outputs; may be archived but not production
+    context.
+- path_or_table: data/music
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 22
+    bytes: 1713585
+  hash:
+    sha256: 557e3e2d7ff0eec6062752fa085072ffe806ec63e29bfd5b91415b8be23d138b
+  contains_sensitive_information: true
+  current_code_references:
+  - config/settings.example.yaml
+  - config/settings.yaml
+  - scripts/music/collect_netease.py
+  disposition: fixture_only
+  disposition_reason: May supply parser-shape fixture for music entertainment only
+    if synthetic is insufficient.
+- path_or_table: data/raw
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 45
+    bytes: 15647477
+  hash:
+    sha256: 31fe490c0162ba306cb142b4405af7aa5a3a788e0912d2ec1fd5688e03c792c9
+  contains_sensitive_information: true
+  current_code_references:
+  - config/settings.example.yaml
+  - config/settings.yaml
+  - scripts/collect/crawl_competitors.py
+  disposition: cold_archive_only
+  disposition_reason: Raw crawler output/log-like evidence; keep only outside production
+    path.
+- path_or_table: data/llm_state.json
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 1
+    bytes: 41
+  hash:
+    sha256: 10702dbafb4a06dbb722907ca1712fb9eeee0c376fb16375b0ac35eeb9b04468
+  contains_sensitive_information: false
+  current_code_references:
+  - scripts/llm/call.py
+  disposition: discard_from_target
+  disposition_reason: Legacy model cooldown/progress state; do not inherit.
+- path_or_table: logs
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 43
+    bytes: 2963391
+  hash:
+    sha256: d28e1a536254582ee509bf576dbd5e98c19858b8b0aeac13d6b10e4f816f2456
+  contains_sensitive_information: true
+  current_code_references:
+  - config/settings.example.yaml
+  - config/settings.yaml
+  - scripts/feishu/listener.py
+  - scripts/humanize/comment_voice.py
+  - scripts/humanize/extract.py
+  - scripts/reverse/dna.py
+  - scripts/reverse/reduce.py
+  - scripts/reverse/upgrade_examples.py
+  - scripts/run_daily.py
+  - scripts/topics/prepare_topic.py
+  disposition: cold_archive_only
+  disposition_reason: Operational history and possible external ids; never production
+    input.
+- path_or_table: outputs
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 70
+    bytes: 1001923
+  hash:
+    sha256: 5904692dd21d87faeb1882fa782691e25e517fa572487ffd879c61c6493ce0fb
+  contains_sensitive_information: true
+  current_code_references:
+  - scripts/setup/create_domain_account.py
+  disposition: cold_archive_only
+  disposition_reason: Test/output artifacts; not production input.
+- path_or_table: vault/??????.md
+  data_type: file_or_directory
+  quantity:
+    exists: false
+    files: 0
+    bytes: 0
+  hash:
+    sha256: missing
+  contains_sensitive_information: false
+  current_code_references: []
+  disposition: retain_as_current_asset
+  disposition_reason: Current effective writing foundation explicitly protected.
+- path_or_table: vault/???????.md
+  data_type: file_or_directory
+  quantity:
+    exists: false
+    files: 0
+    bytes: 0
+  hash:
+    sha256: missing
+  contains_sensitive_information: false
+  current_code_references: []
+  disposition: retain_as_current_asset
+  disposition_reason: Current effective comment voice foundation explicitly protected.
+- path_or_table: vault/??
+  data_type: file_or_directory
+  quantity:
+    exists: false
+    files: 0
+    bytes: 0
+  hash:
+    sha256: missing
+  contains_sensitive_information: true
+  current_code_references:
+  - config/accounts/example.yaml
+  - config/accounts/张芝士.yaml
+  - config/banned_words.yaml
+  - config/domains/泛科普.yaml
+  - config/settings.example.yaml
+  - config/settings.yaml
+  - scripts/content/build_writer_dispatch.py
+  - scripts/db/seed_mvp.py
+  - scripts/humanize/comment_voice.py
+  - scripts/humanize/extract.py
+  - scripts/language_fuel/collect_mediacrawler.py
+  - scripts/language_fuel/douban/README.md
+  - scripts/language_fuel/douban/common.py
+  - scripts/language_fuel/extract_hit_comments.py
+  - scripts/language_fuel/obsidian.py
+  - scripts/music/collect_netease.py
+  - scripts/project_check.py
+  - scripts/reverse/backfill_links.py
+  - scripts/reverse/build_card_digest.py
+  - scripts/reverse/collect_openings.py
+  - scripts/reverse/reduce.py
+  - scripts/reverse/upgrade_examples.py
+  - scripts/setup/create_domain_account.py
+  disposition: cold_archive_only
+  disposition_reason: Contains old derived examples/model outputs unless separately
+    re-approved as current asset.
+- path_or_table: vault/???
+  data_type: file_or_directory
+  quantity:
+    exists: false
+    files: 0
+    bytes: 0
+  hash:
+    sha256: missing
+  contains_sensitive_information: true
+  current_code_references:
+  - config/accounts/example.yaml
+  - config/accounts/张芝士.yaml
+  - config/banned_words.yaml
+  - config/domains/泛科普.yaml
+  - config/settings.example.yaml
+  - config/settings.yaml
+  - scripts/content/build_writer_dispatch.py
+  - scripts/db/seed_mvp.py
+  - scripts/humanize/comment_voice.py
+  - scripts/humanize/extract.py
+  - scripts/language_fuel/collect_mediacrawler.py
+  - scripts/language_fuel/douban/README.md
+  - scripts/language_fuel/douban/common.py
+  - scripts/language_fuel/extract_hit_comments.py
+  - scripts/language_fuel/obsidian.py
+  - scripts/music/collect_netease.py
+  - scripts/project_check.py
+  - scripts/reverse/backfill_links.py
+  - scripts/reverse/build_card_digest.py
+  - scripts/reverse/collect_openings.py
+  - scripts/reverse/reduce.py
+  - scripts/reverse/upgrade_examples.py
+  - scripts/setup/create_domain_account.py
+  disposition: cold_archive_only
+  disposition_reason: Contains old reduce/method outputs unless separately re-approved.
+- path_or_table: vault/????
+  data_type: file_or_directory
+  quantity:
+    exists: false
+    files: 0
+    bytes: 0
+  hash:
+    sha256: missing
+  contains_sensitive_information: true
+  current_code_references:
+  - config/accounts/example.yaml
+  - config/accounts/张芝士.yaml
+  - config/banned_words.yaml
+  - config/domains/泛科普.yaml
+  - config/settings.example.yaml
+  - config/settings.yaml
+  - scripts/content/build_writer_dispatch.py
+  - scripts/db/seed_mvp.py
+  - scripts/humanize/comment_voice.py
+  - scripts/humanize/extract.py
+  - scripts/language_fuel/collect_mediacrawler.py
+  - scripts/language_fuel/douban/README.md
+  - scripts/language_fuel/douban/common.py
+  - scripts/language_fuel/extract_hit_comments.py
+  - scripts/language_fuel/obsidian.py
+  - scripts/music/collect_netease.py
+  - scripts/project_check.py
+  - scripts/reverse/backfill_links.py
+  - scripts/reverse/build_card_digest.py
+  - scripts/reverse/collect_openings.py
+  - scripts/reverse/reduce.py
+  - scripts/reverse/upgrade_examples.py
+  - scripts/setup/create_domain_account.py
+  disposition: discard_from_target
+  disposition_reason: Junction/old DNA projection; not inherited.
+- path_or_table: config/domains
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 2
+    bytes: 3849
+  hash:
+    sha256: 95c65f8baab474e24ed8f8abb1c65600f106bbeaa2b5e1f242be1f9331358ea1
+  contains_sensitive_information: false
+  current_code_references:
+  - config/domains/example.yaml
+  - scripts/collect/register_seeds.py
+  - scripts/topics/new_topic.py
+  disposition: retain_as_current_asset
+  disposition_reason: Current domain config is protected asset.
+- path_or_table: config/accounts
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 2
+    bytes: 731
+  hash:
+    sha256: ea3c8ef6cd20598dc083f9afc5cb67091452312cef24f46ae4c1ba068603343d
+  contains_sensitive_information: true
+  current_code_references:
+  - config/accounts/example.yaml
+  disposition: retain_as_current_asset
+  disposition_reason: Current account config may contain local persona/business setup;
+    protect but review secrets.
+- path_or_table: scripts/db/schema.sql
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 1
+    bytes: 22098
+  hash:
+    sha256: c8a70c9ead1bdd5335d3c1de64b4677131b5fa8005dd1a1d30549ee7ad51bfec
+  contains_sensitive_information: false
+  current_code_references: []
+  disposition: retain_as_current_asset
+  disposition_reason: Schema/source technical implementation asset, not data.
+- path_or_table: scripts/core
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 87
+    bytes: 945594
+  hash:
+    sha256: 9449f5c04966cd4c41b6fa4c8fe5b8b1f87ea7ed4a03eec76e01f7e5a929c48a
+  contains_sensitive_information: false
+  current_code_references: []
+  disposition: retain_as_current_asset
+  disposition_reason: Formal technical implementation.
+- path_or_table: .agents/skills
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 63
+    bytes: 461735
+  hash:
+    sha256: c91a82506059350e9b5f521423b5a370b890f06bbe802ac937263fb4d66bcd6d
+  contains_sensitive_information: false
+  current_code_references: []
+  disposition: retain_as_current_asset
+  disposition_reason: Current formal/operator Skill assets to classify individually,
+    not broad-delete.
+- path_or_table: templates
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 2
+    bytes: 7057
+  hash:
+    sha256: 93bef16449388dabd05bde83f58b8a7a7a9a477c37881e2baff8b7523d2d73af
+  contains_sensitive_information: false
+  current_code_references:
+  - scripts/content/build_writer_dispatch.py
+  disposition: retain_as_current_asset
+  disposition_reason: Current templates if present.

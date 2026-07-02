@@ -34,6 +34,15 @@ Disabled legacy entrypoints until migrated:
 
 Validation: static reference scan proves new Core does not import old authority scripts; no deletion until a future retirement audit identifies a safe-to-remove candidate.
 
+
+## GOAL-DATA-RESET-01 Binding Update - Empty Formal Database
+
+V0.6.2 formal production starts from an empty formal database. Old project business data, old state, old DNA/model outputs, old topics/drafts and old derived experience are not migrated into production. Legacy data may only be used for minimal isolated desensitized fixtures, preferably synthetic, and cold archive evidence outside project and production load paths.
+
+This supersedes any earlier migration wording that implied old SQLite business records would be converted into formal production objects. Future migration goals must implement clean-room startup, fixture-only test loading and production fallback blocking before any business migration work.
+
+Additional stop conditions: stop if production config references `data/creation.db`, production code reads legacy data directories, a Skill/model context can access cold archive or fixtures, or old DNA/experience outputs appear in formal production artifacts.
+
 ## Phase 2 - Model Path Migration
 
 Recommended first implementation Goal:

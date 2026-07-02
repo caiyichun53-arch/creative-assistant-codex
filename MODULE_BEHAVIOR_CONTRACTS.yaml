@@ -63,6 +63,14 @@ contracts:
   unresolved_conflicts:
   - Direct DB writes
   - No adapter result contract
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: tools/asr/transcribe.py; tools/asr/reverse_prep_worker.py
   decision: wrap
   preserved_behavior:
@@ -124,6 +132,14 @@ contracts:
   unresolved_conflicts:
   - Valuable runtime but state mutation bypasses Core
   - Worker launch outside formal scheduler
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: scripts/feishu/client.py; scripts/feishu/push.py
   decision: wrap
   preserved_behavior:
@@ -184,6 +200,14 @@ contracts:
   unresolved_conflicts:
   - Cannot be called directly by business scripts
   - Must not expose credentials or duplicate sends
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: scripts/music/**; scripts/language_fuel/douban/**; scripts/language_fuel/collect_douban.py
   decision: wrap
   preserved_behavior:
@@ -244,6 +268,14 @@ contracts:
   unresolved_conflicts:
   - Direct persistence
   - No source capability/version manifest
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: config/accounts/**; config/domains/**; scripts/setup/create_domain_account.py
   decision: adapt
   preserved_behavior:
@@ -298,6 +330,14 @@ contracts:
   unresolved_conflicts:
   - No versioned account/domain record
   - Script writes config and DB directly
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: scripts/collect/register_competitor.py; scripts/collect/register_full.py;
     scripts/collect/register_seeds.py
   decision: adapt
@@ -357,6 +397,14 @@ contracts:
   - Register same competitor twice and prove idempotent result
   unresolved_conflicts:
   - Registration can start collection and mutate state outside Core
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: scripts/db/schema.sql; scripts/collect/crawl_competitors.py; scripts/analyze/judge_hits.py
   decision: adapt
   preserved_behavior:
@@ -417,6 +465,14 @@ contracts:
   - Idempotent rejudge checks
   unresolved_conflicts:
   - Direct writes and SQLite-specific shape
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: scripts/topics/daily_topics.py; scripts/topics/new_topic.py; scripts/topics/spinoff.py
   decision: adapt
   preserved_behavior:
@@ -477,6 +533,14 @@ contracts:
   - No external send in planner unit tests
   unresolved_conflicts:
   - Combines ranking, state mutation and external view push
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: scripts/reverse/dna.py; scripts/reverse/reduce.py; scripts/reverse/upgrade_examples.py;
     data/爆款拆解/**
   decision: adapt
@@ -539,6 +603,14 @@ contracts:
   unresolved_conflicts:
   - Model and persistence paths bypass formal runtime
   - Batch writes must not continue before migration
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: scripts/research/research.py; scripts/core/research/**
   decision: adapt
   preserved_behavior:
@@ -599,6 +671,14 @@ contracts:
   - No live search until gate opened
   unresolved_conflicts:
   - Legacy research is not formally materialized
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: scripts/language_fuel/extract_*.py; scripts/humanize/**
   decision: adapt
   preserved_behavior:
@@ -654,6 +734,14 @@ contracts:
   unresolved_conflicts:
   - LLM and persistence are not formalized
   - Risk of prompt bloat if migrated as rules instead of examples
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: scripts/content/check_banned.py; config/banned_words.yaml
   decision: adapt
   preserved_behavior:
@@ -713,6 +801,14 @@ contracts:
   - No LLM use
   unresolved_conflicts:
   - Needs formal result schema for workflow gating
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: scripts/content/build_writer_dispatch.py; scripts/content/save_draft.py;
     scripts/content/diff_draft.py; templates/**
   decision: adapt
@@ -773,6 +869,14 @@ contracts:
   - Diff artifact hash
   unresolved_conflicts:
   - Draft/diff registration bypasses Core and immutable versioning
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: vault symlink; Obsidian writers in legacy scripts
   decision: adapt
   preserved_behavior:
@@ -825,6 +929,14 @@ contracts:
   - Projection replay from formal artifact produces same note path/hash
   unresolved_conflicts:
   - Projection writes can become hidden state if not tied to Core versions
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: .agents/skills/**; .claude/skills/**; .codex/agents/**
   decision: adapt
   preserved_behavior:
@@ -885,6 +997,14 @@ contracts:
   unresolved_conflicts:
   - Host-bound paths and prose-only I/O
   - Some Skills advance business state indirectly
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: scripts/run_daily.py; 启动*.bat; Windows scheduled-task docs
   decision: adapt
   preserved_behavior:
@@ -939,6 +1059,14 @@ contracts:
   - No duplicate outbox emission
   unresolved_conflicts:
   - Process launch is outside formal scheduler/job lease/runtime host
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: config/settings.yaml; config/settings.example.yaml; config/live_gates.yaml;
     .env.example; .env.live-gates.example
   decision: adapt
@@ -1001,6 +1129,14 @@ contracts:
   unresolved_conflicts:
   - Old production route config is not wired into ModelGateway
   - Validation config must not become production defaults
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: scripts/project_check.py
   decision: adapt
   preserved_behavior:
@@ -1054,6 +1190,14 @@ contracts:
   - Run project_check read-only before local development changes
   unresolved_conflicts:
   - Not a formal production readiness gate
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: data/creation.db; data/** historical artifacts; logs/**; outputs/**
   decision: adapt
   preserved_behavior:
@@ -1115,6 +1259,14 @@ contracts:
   unresolved_conflicts:
   - Historical files are not all immutable/versioned
   - Generated data must not be silently rewritten
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
 - module: README.md; BUILD_PLAN.md; CLAUDE.md; AGENTS.md; GOAL-* reports
   decision: adapt
   preserved_behavior:
@@ -1170,3 +1322,14 @@ contracts:
   unresolved_conflicts:
   - Some docs still reference disabled legacy entrypoints
   - Historical GOAL-00 progress had stale HEAD before this pass
+  clean_room_contract:
+    production_must_not_read:
+    - data/creation.db
+    - legacy data directories
+    - cold archive
+    - test fixtures
+    startup_assumption: empty formal database
+    fixture_access: test environment only
+data_reset_policy:
+  all_adapt_wrap_modules: must run without legacy business data fallback
+  fixtures: test-only

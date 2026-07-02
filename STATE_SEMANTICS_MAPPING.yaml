@@ -80,3 +80,12 @@ states:
   target_state: job_attempt_state
   conversion_rule: already formal in scripts/core; no legacy DB import
   forbidden_interpretation: business result
+- legacy_location: all legacy business tables/files
+  legacy_value: any old status/progress/path/model-output state
+  true_semantics: historical source/cold archive or test fixture evidence only
+  target_state: not_imported
+  conversion_rule: discard from formal target; fixture-only if isolated and desensitized
+  forbidden_interpretation: production current state
+data_reset_policy:
+  legacy_states_not_inherited: true
+  formal_initial_state: empty schema with zero business rows

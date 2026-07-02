@@ -1345,3 +1345,104 @@ traceability:
     defaults:
       decision_policy: document then decide
     thresholds: {}
+- requirement_id: BR-DATARESET-001
+  legacy_files:
+  - data/creation.db
+  - data/**
+  - vault/**
+  - scripts/**/*.py
+  legacy_functions:
+  - legacy SQLite readers/writers
+  - legacy artifact loaders
+  observed_legacy_behavior: Old project persisted business data, derived outputs and
+    runtime state in local SQLite/files.
+  target_component: clean_room_startup_and_fixture_boundary
+  current_implementation_status: phase 1 plan only; physical purge not executed
+  alignment_status: missing_in_code
+  difference_type:
+  - removed
+  - state_changed
+  - ownership_changed
+  migration_action: Do not migrate old business records; implement clean-room empty
+    DB startup and fixture-only test loaders after approval.
+  test_ids:
+  - CLEAN_ROOM_ACCEPTANCE.yaml
+  evidence:
+    inventory: LEGACY_DATA_INVENTORY.yaml
+    fixture_policy: FIXTURE_RETENTION_MANIFEST.yaml
+- requirement_id: BR-DATARESET-002
+  legacy_files:
+  - data/creation.db
+  - data/**
+  - vault/**
+  - scripts/**/*.py
+  legacy_functions:
+  - legacy SQLite readers/writers
+  - legacy artifact loaders
+  observed_legacy_behavior: Old project persisted business data, derived outputs and
+    runtime state in local SQLite/files.
+  target_component: clean_room_startup_and_fixture_boundary
+  current_implementation_status: phase 1 plan only; physical purge not executed
+  alignment_status: missing_in_code
+  difference_type:
+  - removed
+  - state_changed
+  - ownership_changed
+  migration_action: Do not migrate old business records; implement clean-room empty
+    DB startup and fixture-only test loaders after approval.
+  test_ids:
+  - CLEAN_ROOM_ACCEPTANCE.yaml
+  evidence:
+    inventory: LEGACY_DATA_INVENTORY.yaml
+    fixture_policy: FIXTURE_RETENTION_MANIFEST.yaml
+- requirement_id: BR-DATARESET-003
+  legacy_files:
+  - data/creation.db
+  - data/**
+  - vault/**
+  - scripts/**/*.py
+  legacy_functions:
+  - legacy SQLite readers/writers
+  - legacy artifact loaders
+  observed_legacy_behavior: Old project persisted business data, derived outputs and
+    runtime state in local SQLite/files.
+  target_component: clean_room_startup_and_fixture_boundary
+  current_implementation_status: phase 1 plan only; physical purge not executed
+  alignment_status: conflict
+  difference_type:
+  - ambiguous
+  migration_action: Do not migrate old business records; implement clean-room empty
+    DB startup and fixture-only test loaders after approval.
+  test_ids:
+  - CLEAN_ROOM_ACCEPTANCE.yaml
+  evidence:
+    inventory: LEGACY_DATA_INVENTORY.yaml
+    fixture_policy: FIXTURE_RETENTION_MANIFEST.yaml
+- requirement_id: BR-DATARESET-004
+  legacy_files:
+  - data/creation.db
+  - data/**
+  - vault/**
+  - scripts/**/*.py
+  legacy_functions:
+  - legacy SQLite readers/writers
+  - legacy artifact loaders
+  observed_legacy_behavior: Old project persisted business data, derived outputs and
+    runtime state in local SQLite/files.
+  target_component: clean_room_startup_and_fixture_boundary
+  current_implementation_status: phase 1 plan only; physical purge not executed
+  alignment_status: conflict
+  difference_type:
+  - removed
+  - state_changed
+  - ownership_changed
+  migration_action: Do not migrate old business records; implement clean-room empty
+    DB startup and fixture-only test loaders after approval.
+  test_ids:
+  - CLEAN_ROOM_ACCEPTANCE.yaml
+  evidence:
+    inventory: LEGACY_DATA_INVENTORY.yaml
+    fixture_policy: FIXTURE_RETENTION_MANIFEST.yaml
+data_reset_policy:
+  legacy_data_authority: forbidden
+  old_logic_retention_due_to_old_data: forbidden

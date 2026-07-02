@@ -1486,3 +1486,128 @@ rules:
   supersedes: []
   validation_required:
   - UNDOCUMENTED_LEGACY_BEHAVIOR.md
+- requirement_id: BR-DATARESET-001
+  source_document: GOAL-DATA-RESET-01??
+  source_section: ??????
+  priority: P0
+  domain_scope: all domains
+  trigger: formal system initialization
+  inputs:
+  - formal schema/migrations
+  expected_behavior: The formal V0.6.2 database starts empty and imports zero legacy
+    business records.
+  defaults:
+    legacy_business_import: false
+  thresholds:
+    initial_business_rows: 0
+  timing_semantics: Applies before GOAL-MIGRATION-01 and every production startup.
+  state_effects:
+  - new formal DB business tables are empty
+  allowed_side_effects:
+  - create empty schema after approval
+  forbidden_behavior:
+  - import old SQLite records
+  - inherit old statuses
+  - inherit old DNA/model outputs
+  edge_cases:
+  - test fixtures must use isolated test DB only
+  user_confirmation_required: true
+  supersedes:
+  - BR-LEGACY-002 previous migration-source mapping
+  validation_required:
+  - CLEAN_ROOM_ACCEPTANCE.yaml CR-DB-EMPTY
+  - CR-NO-OLD-IDENTIFIERS
+- requirement_id: BR-DATARESET-002
+  source_document: GOAL-DATA-RESET-01??
+  source_section: ?????fixture
+  priority: P0
+  domain_scope: validation only
+  trigger: test fixture construction
+  inputs:
+  - synthetic fixture spec
+  - optional redacted legacy shape sample
+  expected_behavior: Legacy data may only contribute minimal isolated desensitized
+    fixtures when synthetic data cannot cover format/parser boundaries.
+  defaults:
+    prefer_synthetic: true
+  thresholds:
+    production_fixture_rows: 0
+  timing_semantics: Fixtures are built after inventory approval and before clean-room
+    tests.
+  state_effects:
+  - test DB rows only
+  allowed_side_effects:
+  - write isolated test fixture DB after approval
+  forbidden_behavior:
+  - load fixture into production
+  - use old model output as fixture result
+  - expose fixture to Hermes memory or production retrieval
+  edge_cases:
+  - schema parser edge requiring one redacted JSON shape
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - CR-FIXTURE-TEST-ONLY
+  - CR-PRODUCTION-STARTS-WITHOUT-FIXTURES
+- requirement_id: BR-DATARESET-003
+  source_document: GOAL-DATA-RESET-01??
+  source_section: ??????
+  priority: P0
+  domain_scope: all domains
+  trigger: purge planning or cleanup
+  inputs:
+  - path inventory
+  - asset classification
+  expected_behavior: Current formal docs, formal Skills, schema, templates, domain
+    config, current writing foundations and pure technical implementation are protected
+    from broad deletion.
+  defaults:
+    broad_directory_delete: false
+  thresholds: {}
+  timing_semantics: Protection applies during both purge planning and cleanup.
+  state_effects:
+  - retain_as_current_asset classifications
+  allowed_side_effects:
+  - manual asset-by-asset review
+  forbidden_behavior:
+  - delete formal assets because they share a directory with legacy data
+  edge_cases:
+  - vault contains mixed current assets and old derived outputs
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - LEGACY_DATA_INVENTORY disposition scan
+- requirement_id: BR-DATARESET-004
+  source_document: GOAL-DATA-RESET-01??
+  source_section: ??????????
+  priority: P0
+  domain_scope: all domains
+  trigger: migration design decision
+  inputs:
+  - legacy code branch
+  - legacy data evidence
+  expected_behavior: Legacy business logic is not retained merely because old data
+    exists or old outputs depend on it; formal docs and explicit decisions govern
+    behavior.
+  defaults:
+    legacy_data_as_authority: false
+  thresholds: {}
+  timing_semantics: Applies before implementation work.
+  state_effects:
+  - decision backlog for valuable undocumented behavior
+  allowed_side_effects:
+  - document as fixture/cold archive evidence
+  forbidden_behavior:
+  - preserve old logic solely to keep old results reproducible
+  edge_cases:
+  - legacy behavior has clear business value but no formal doc
+  user_confirmation_required: true
+  supersedes:
+  - BR-LEGACY-003
+  validation_required:
+  - REQUIREMENT_CODE_TRACEABILITY conflict review
+data_reset_policy:
+  production_database: empty_start
+  legacy_business_data: not_migrated
+  legacy_model_outputs: not_inherited
+  legacy_fixtures: minimal_isolated_desensitized_test_only

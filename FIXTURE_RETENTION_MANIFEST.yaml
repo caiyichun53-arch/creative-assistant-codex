@@ -1,0 +1,88 @@
+schema_version: 1
+goal: GOAL-DATA-RESET-01
+phase: phase_1_plan_only_no_fixture_write
+policy:
+  prefer_synthetic: true
+  real_legacy_use: only_for_format_or_parser_edge_after_desensitization
+  load_target: test_database_only
+  forbidden_targets:
+  - production database
+  - production retrieval
+  - experience library
+  - model context
+  - Hermes memory
+  - formal business judgement
+fixtures:
+- fixture_id: FX-BASELINE-19
+  coverage: 19 account baseline boundary
+  source: synthetic
+  records: 19 settled video metric rows
+  legacy_fields_removed:
+  - old ids
+  - old statuses
+  - old tags
+  - derived outputs
+- fixture_id: FX-BASELINE-20
+  coverage: 20 account baseline boundary
+  source: synthetic
+  records: 20 settled video metric rows
+  legacy_fields_removed:
+  - old ids
+  - old statuses
+  - old tags
+  - derived outputs
+- fixture_id: FX-DISCOVERY-PUBLISH-GAP
+  coverage: first_seen_at differs from publish_time
+  source: synthetic
+  records: '3 videos: stock gap, daily new, missing publish_time'
+- fixture_id: FX-DUPLICATE-VIDEO-ID
+  coverage: duplicate platform_item_id idempotency
+  source: synthetic
+  records: same platform id across repeated crawl payloads
+- fixture_id: FX-COMMENTS-PRESENT-ABSENT
+  coverage: with and without comments
+  source: synthetic preferred; legacy shape sample allowed from hit_comments schema
+    only
+  records: one hit with 3 sanitized comments, one hit with zero comments
+- fixture_id: FX-ASR-PRESENT-ABSENT
+  coverage: with and without ASR
+  source: synthetic transcript text and empty transcript reference
+  records: one transcript artifact hash, one missing transcript case
+- fixture_id: FX-PERFORMANCE-BANDS
+  coverage: high normal low performance
+  source: synthetic
+  records: three account-relative videos around median/P90/threshold
+- fixture_id: FX-DOMAIN-FANKEPU
+  coverage: ??? domain
+  source: synthetic config fixture
+  records: minimal domain/account/source tuple
+- fixture_id: FX-DOMAIN-MUSIC
+  coverage: ???? domain
+  source: synthetic config fixture
+  records: minimal domain/account/source tuple, no old music comments imported
+- fixture_id: FX-DOMAIN-THIRD-NEUTRAL
+  coverage: third neutral domain
+  source: synthetic config fixture
+  records: neutral domain with empty examples
+- fixture_id: FX-MODEL-FAIL-RETRY
+  coverage: model failure, retry and no partial state
+  source: synthetic fake provider
+  records: failure then success envelope, max attempts explicit
+- fixture_id: FX-IDEMPOTENCY
+  coverage: command replay idempotency
+  source: synthetic
+  records: same command/event replayed twice, one materialized result
+legacy_real_data_allowed_only_for:
+- case: SQLite schema/column parser shape
+  allowed_material: schema metadata and row-count/hash only
+  text_payload_allowed: false
+- case: platform raw JSON parser edge
+  allowed_material: single redacted JSON shape if synthetic cannot reproduce parser
+    failure
+  text_payload_allowed: false
+explicitly_excluded_legacy_data:
+- 81 old DNA results
+- 14 pending DNA tasks
+- old accounts/videos/comments/ASR as production records
+- old topics/drafts/experience/model outputs
+- old runtime statuses and temp paths
