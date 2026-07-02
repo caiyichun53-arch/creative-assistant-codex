@@ -1,0 +1,228 @@
+schema_version: content_relation_judge.business_contract.v1
+goal: GOAL-BUSINESS-SKILL-CONTENT-RELATION-JUDGE-01
+status: blocked_missing_requirement
+skill_id: content_relation_judge
+skill_version: 1.0.0-blocked
+source_documents:
+  - C:\Users\15891\.codex\attachments\dfa88726-2b0d-46c7-9442-9b2d3d1597f6\pasted-text-1.txt
+  - AGENTS.md
+  - BUILD_PLAN.md
+  - FORMAL_SKILL_ROUTE_MAPPING.yaml
+  - BUSINESS_RULE_CATALOG.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+source_sections:
+  - pasted goal: sections 2-20
+  - FORMAL_SKILL_ROUTE_MAPPING.yaml: formal_skills.content_relation_judge
+  - BUSINESS_RULE_CATALOG.yaml: BR-REL-001
+  - REQUIREMENT_CODE_TRACEABILITY.yaml: BR-REL-001
+responsibility: Judge the formal relation between two already provided public content objects or evidence units, once the formal relation taxonomy and direction semantics exist.
+non_responsibilities:
+  - content_classify
+  - viral_or_hit_judgement
+  - account_baseline_calculation
+  - topic_generation
+  - fact_research
+  - deep_sample_analysis
+  - tactic_extract
+  - creation
+  - review
+  - similarity_search
+  - content_clustering
+  - deduplication_writeback
+  - status_transition
+  - database_query
+  - file_read_write
+  - feishu_messaging
+  - other_skill_invocation
+relation_subject_definition:
+  left: public, portable content object or evidence unit supplied by the caller
+  right: public, portable content object or evidence unit supplied by the caller
+  boundary: The Skill may only judge the relation between the supplied left and right inputs; it must not fetch, infer, or look up missing context.
+allowed_inputs:
+  required_public_shape:
+    - request_id
+    - correlation_id
+    - left_content
+    - right_content
+    - left_evidence_items
+    - right_evidence_items
+    - domain_context
+    - relation_scope
+    - schema_version
+  allowed_optional_public_fields:
+    - left_title
+    - right_title
+    - left_local_ref
+    - right_local_ref
+    - frozen_non_sensitive_metadata
+forbidden_inputs:
+  - database_connection
+  - orm_object
+  - internal_table_name
+  - legacy_database_id
+  - business_status_code
+  - local_file_path
+  - dna_file_path
+  - hermes_chat_memory
+  - cookie_or_token
+  - cold_backup_reference
+  - url_that_skill_must_fetch
+  - implicit_field_requiring_core_or_database_lookup
+relation_taxonomy:
+  status: missing_requirement
+  allowed_relation_types: []
+  missing_reason: Latest formal sources require an explicit relation artifact but do not define the formal relation enum values.
+relation_directionality:
+  status: missing_requirement
+  missing_reason: Latest formal sources do not define which relation types are symmetric, asymmetric, reversible, or order-sensitive.
+symmetric_relations:
+  status: missing_requirement
+  relation_types: []
+asymmetric_relations:
+  status: missing_requirement
+  relation_types: []
+order_sensitivity:
+  status: missing_requirement
+  rule: Cannot be implemented without a formal relation taxonomy and reversal rules.
+same_item_semantics:
+  status: missing_requirement
+  missing_reason: Latest formal sources mention same-item fixture coverage but do not define the formal output for same-item inputs.
+insufficient_evidence_semantics:
+  status: missing_requirement
+  distinction_required: Must be distinct from no_relation and technical_failure.
+  missing_reason: Latest formal sources require the distinction but do not define the output enum/state.
+no_relation_semantics:
+  status: missing_requirement
+  distinction_required: Must be distinct from insufficient_evidence and technical_failure.
+  missing_reason: Latest formal sources require the distinction but do not define the output enum/state.
+uncertainty_semantics:
+  status: missing_requirement
+  missing_reason: Latest formal sources do not define whether uncertainty is a relation_type, a status, or a separate field.
+multiple_relation_policy:
+  status: missing_requirement
+  missing_reason: Latest formal sources require a primary relation policy but do not define it.
+primary_relation_policy:
+  status: missing_requirement
+  missing_reason: Latest formal sources do not define priority ordering among possible relations.
+evidence_requirements:
+  output_evidence_must_reference_input: true
+  evidence_from_left_required_when_available: true
+  evidence_from_right_required_when_available: true
+  rationale_must_not_add_unseen_facts: true
+rationale_requirements:
+  structured_rationale_required: true
+  must_support_relation_type: true
+  must_not_expose_prompt_or_internal_model_config: true
+  must_not_emit_topic_creation_or_strategy_advice: true
+confidence_policy:
+  status: missing_requirement
+  missing_reason: Latest formal sources mention confidence but do not define enum, numeric range, or threshold semantics.
+domain_scope:
+  current_named_domains:
+    - fan_kepu_social_life
+    - music_entertainment
+  extensibility_required: true
+cross_domain_behavior:
+  status: missing_requirement
+  missing_reason: Latest formal sources require cross-domain fixture coverage but do not define cross-domain relation semantics.
+third_domain_behavior:
+  fixture_limit: Third-domain fixture may only prove the Skill is not hardcoded to current two named domains.
+  must_not_claim_business_quality_passed: true
+input_length_limits:
+  status: missing_requirement
+  conservative_placeholder:
+    request_id_max: 80
+    correlation_id_max: 80
+    title_max: 120
+    content_max: 1200
+    evidence_items_max: 8
+context_budget:
+  max_input_tokens: 2000
+token_budget:
+  max_output_tokens: 700
+timeout:
+  milliseconds: 30000
+retry:
+  provider_max_attempts_per_job: 1
+  scheduler_max_attempts: 3
+  retry_on:
+    - provider_error
+    - model_empty_result
+    - output_schema_error
+idempotency:
+  key: content_relation_judge:{request_id}
+  duplicate_same_request: replay_existing_job
+  duplicate_different_request: reject
+error_contract:
+  validation_error: fail_without_formal_result
+  provider_error: fail_attempt_and_retry_if_attempts_remain
+  model_empty_result: fail_without_formal_result_until_no_result_semantics_are_defined
+  schema_error: fail_without_formal_result
+  materializer_error: fail_without_success_outbox
+materialization_contract:
+  object_kind: formal_business_skill_result
+  projection_version: formal_business_skill_result.v1
+  result_index: formal_business_skill_result_index
+  success_outbox_topic: formal_business_skill.result.materialized
+  failed_runs_record_attempt: true
+  failed_runs_create_formal_result: false
+fixture_cases:
+  status: blocked_until_relation_taxonomy_defined
+  required_semantic_scenarios_from_goal:
+    - same_content
+    - high_semantic_similarity
+    - left_contains_right_or_right_contains_left
+    - one_side_supplements_other
+    - explicit_conflict
+    - related_topic_without_direct_relation
+    - unrelated
+    - insufficient_evidence
+    - swapped_left_right
+    - similar_title_different_body
+    - different_title_related_body
+    - noisy_input
+    - cross_domain
+    - fan_kepu_social_life
+    - music_entertainment
+    - third_domain_neutral
+    - empty_input
+    - overlong_input
+    - mixed_language
+    - model_empty_result
+    - non_json_output
+    - illegal_relation_enum
+    - invalid_direction_field
+    - evidence_not_in_input
+    - missing_output_field
+completion_definition:
+  - relation_taxonomy_defined_by_formal_source
+  - directionality_defined_by_formal_source
+  - no_relation_and_insufficient_evidence_distinguished_by_formal_source
+  - primary_relation_policy_defined_by_formal_source
+  - formal_skill_package_active
+  - fake_fixture_matrix_passed
+  - minimal_live_provider_call_passed
+  - postgresql_end_to_end_gate_passed
+  - content_classify_regression_passed
+  - clean_room_formal_db_all_zero
+  - formal_production_direct_cli_model_calls_zero
+missing_requirements:
+  - id: relation_taxonomy
+    severity: blocking
+    detail: No latest formal source defines the allowed relation_type enum values.
+  - id: relation_directionality
+    severity: blocking
+    detail: No latest formal source defines symmetric/asymmetric relation types or left/right swap reversal rules.
+  - id: no_relation_vs_insufficient_evidence
+    severity: blocking
+    detail: Formal sources require the distinction but do not define concrete output states.
+  - id: primary_relation_policy
+    severity: blocking
+    detail: No latest formal source defines how to select a primary relation when multiple relations may apply.
+  - id: confidence_policy
+    severity: blocking
+    detail: No latest formal source defines confidence enum, numeric range, or threshold semantics.
+allowed_model_nodes: []
+whether_model_is_required: true
+target_runner: FormalBusinessSkillAdapter
+materializer_contract: formal_business_skill_result.v1
