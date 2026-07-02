@@ -1446,3 +1446,27 @@ traceability:
 data_reset_policy:
   legacy_data_authority: forbidden
   old_logic_retention_due_to_old_data: forbidden
+goal_data_reset_01_phase_2_execution:
+  status: clean_room_validated
+  updated_at: '2026-07-02T10:50:00Z'
+  requirement_ids:
+  - BR-DATA-RESET-001
+  code_artifacts:
+  - config/settings.yaml
+  - config/settings.example.yaml
+  - scripts/project_check.py
+  - scripts/validation/clean_room_empty_db.py
+  - scripts/validation/fixture_loader.py
+  - scripts/validation/production_startup_smoke.py
+  - scripts/validation/clean_room_readiness.py
+  tests:
+  - tests/validation/test_clean_room_readiness.py
+  evidence:
+  - CLEAN_ROOM_PHASE2_READINESS.yaml
+  - CLEAN_ROOM_ACCEPTANCE.yaml
+  - GOAL-DATA-RESET-01_VALIDATION_REPORT.md
+  formal_db:
+    path: data/formal/clean_room_v0_6_2.sqlite3
+    table_count: 18
+    all_tables_zero_rows: true
+  legacy_data_import_allowed: false

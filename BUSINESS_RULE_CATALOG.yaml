@@ -8,6 +8,36 @@ source_scope:
 - MODULE_REUSE_MATRIX.yaml
 - legacy scripts/config/data read-only audit
 rules:
+- requirement_id: BR-DATA-RESET-001
+  source_document: GOAL-DATA-RESET-01 user scope revision
+  source_section: clean-room final freeze
+  priority: P0
+  domain_scope: all domains
+  trigger: production startup or data reset validation
+  inputs:
+  - config/settings.yaml
+  - formal V0.6.2 schema chain
+  expected_behavior: Production starts from an empty formal database and never imports
+    old business data, old DNA, old topics, old drafts, old model outputs or old
+    runtime state.
+  defaults:
+    formal_engine: postgresql
+    local_validation_db: data/formal/clean_room_v0_6_2.sqlite3
+  state_effects:
+  - legacy_runtime.enabled=false
+  allowed_side_effects:
+  - synthetic fixture load into isolated test database only
+  - cold backup outside repository and production load paths
+  forbidden_behavior:
+  - read data/creation.db in production
+  - load fixtures in production
+  - migrate old SQLite records into formal tables
+  - use legacy runtime fallback
+  validation_required:
+  - clean-room empty DB zero-row check
+  - production startup without old paths
+  - fixture production rejection
+  - readiness --require-safe
 - requirement_id: BR-COLLECT-001
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
   source_section: 竞品数据侧/注册存量视频

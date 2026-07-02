@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import shutil
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -24,6 +23,10 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 COLLECT_DIR = ROOT / "scripts" / "collect"
 if str(COLLECT_DIR) not in sys.path:
     sys.path.insert(0, str(COLLECT_DIR))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.validation.clean_room_empty_db import configured_db_path, health_check, install_schema
 
 
 def _ok(msg: str) -> tuple[str, str]:
@@ -63,8 +66,9 @@ def check_files(settings: dict) -> list[tuple[str, str]]:
         required = [
             "人设/张芝士.md",
             "真人写作基石.md",
-            "方法论/结构打法路由表.md",
-            "方法论/钩子打法.md",
+            "评论真人味基石.md",
+            "模板",
+            "词表",
         ]
         missing = [p for p in required if not (vault / p).exists()]
         out.append(_ok(f"vault ready: {vault}") if not missing
@@ -111,18 +115,17 @@ def check_codex(settings: dict) -> list[tuple[str, str]]:
 
 
 def check_db(settings: dict) -> list[tuple[str, str]]:
-    db = ROOT / settings.get("paths", {}).get("db", "data/creation.db")
+    db = configured_db_path(settings)
     if not db.exists():
-        return [_fail(f"database missing: {db}")]
+        try:
+            install_schema(db)
+        except Exception as e:
+            return [_fail(f"formal clean-room database initialization failed: {e}")]
     try:
-        conn = sqlite3.connect(db)
-        counts = {}
-        for table in ["competitor_accounts", "competitor_videos", "hits", "topics", "drafts"]:
-            counts[table] = conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
-        conn.close()
+        result = health_check(db)
     except Exception as e:
-        return [_fail(f"database unreadable: {e}")]
-    return [_ok("database readable: " + ", ".join(f"{k}={v}" for k, v in counts.items()))]
+        return [_fail(f"formal clean-room database health failed: {e}")]
+    return [_ok(f"formal clean-room database ready: tables={result['table_count']}, rows=0")]
 
 
 def check_runtime() -> list[tuple[str, str]]:

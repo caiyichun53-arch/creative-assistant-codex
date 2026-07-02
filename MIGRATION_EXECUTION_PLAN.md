@@ -1,6 +1,6 @@
 # Migration Execution Plan - GOAL-00
 
-status: `PLAN_READY_NO_BUSINESS_EXECUTION`
+status: `DATA_RESET_CLEAN_ROOM_COMPLETE`
 
 This plan is the GOAL-00 handoff. It defines the order for migrating the legacy MVP into the V0.6.2 architecture without running business writes, live external sends, production model calls, or irreversible data changes during the planning step.
 
@@ -42,6 +42,20 @@ V0.6.2 formal production starts from an empty formal database. Old project busin
 This supersedes any earlier migration wording that implied old SQLite business records would be converted into formal production objects. Future migration goals must implement clean-room startup, fixture-only test loading and production fallback blocking before any business migration work.
 
 Additional stop conditions: stop if production config references `data/creation.db`, production code reads legacy data directories, a Skill/model context can access cold archive or fixtures, or old DNA/experience outputs appear in formal production artifacts.
+
+## GOAL-DATA-RESET-01 Phase 2 Result
+
+Phase 2 executed the clean-room reset:
+
+- Production config no longer points at `data/creation.db`.
+- Formal target remains PostgreSQL; local clean-room verification uses `data/formal/clean_room_v0_6_2.sqlite3` loaded from GOAL-01/02/03 SQLite schema files.
+- The local formal validation DB has 18 formal tables, all 0 rows.
+- Legacy runtime entrypoints are read-only quarantined and disabled for production.
+- Old business data and derived outputs were moved to `I:/Creation_assistant_cold_backups/GOAL-DATA-RESET-01/20260702T184708`.
+- Synthetic fixtures are loadable only through `scripts/validation/fixture_loader.py` in explicit test mode.
+- Production startup passes with old data paths absent and rejects fixture mode outside test.
+
+The next migration Goal must start from this clean-room baseline. It must not resume old DNA, ASR, collection, Feishu business sends or legacy data migration.
 
 ## Phase 2 - Model Path Migration
 

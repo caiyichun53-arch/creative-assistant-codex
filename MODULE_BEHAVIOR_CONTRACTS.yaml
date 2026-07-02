@@ -1333,3 +1333,27 @@ contracts:
 data_reset_policy:
   all_adapt_wrap_modules: must run without legacy business data fallback
   fixtures: test-only
+goal_data_reset_01_phase_2_execution:
+  status: clean_room_contract_active
+  updated_at: '2026-07-02T10:50:00Z'
+  production_contracts:
+  - module: formal_storage
+    behavior: use PostgreSQL target contract; local validation may use isolated SQLite clean-room DB only
+    forbidden:
+    - data/creation.db
+    - old SQLite fallback
+    - old business row import
+  - module: fixture_loader
+    behavior: load synthetic fixtures only into isolated test DB with explicit test environment and CLI flag
+    forbidden:
+    - production fixture loading
+    - fixture load into data/formal/clean_room_v0_6_2.sqlite3
+  - module: legacy_runtime
+    behavior: source retained as read-only/quarantined technical reference
+    forbidden:
+    - production execution
+    - production fallback
+    - old business state mutation
+  validation:
+  - python scripts/validation/clean_room_readiness.py --require-safe
+  - python scripts/validation/production_startup_smoke.py --require-legacy-absent

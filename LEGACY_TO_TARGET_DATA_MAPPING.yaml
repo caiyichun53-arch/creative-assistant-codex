@@ -209,3 +209,23 @@ data_reset_policy:
   - experience library seeding
   - model context
   - Hermes memory
+goal_data_reset_01_phase_2_execution:
+  status: no_legacy_business_data_mapped_to_formal_target
+  updated_at: '2026-07-02T10:50:00Z'
+  final_allowed_dispositions:
+  - discard_from_target
+  - fixture_only
+  - cold_archive_only
+  - retain_as_current_asset
+  target_formal_db:
+    type: postgresql_contract_with_sqlite_local_validation
+    local_validation_path: data/formal/clean_room_v0_6_2.sqlite3
+    imported_legacy_rows: 0
+  old_business_data_result:
+    action: moved_out_of_formal_runtime_paths
+    cold_backup_root: I:/Creation_assistant_cold_backups/GOAL-DATA-RESET-01/20260702T184708
+  forbidden_mapping:
+  - old SQLite business rows to formal production tables
+  - old DNA to formal experience or model context
+  - old topics/drafts to formal topic or production task state
+  - old runtime progress to formal scheduler jobs

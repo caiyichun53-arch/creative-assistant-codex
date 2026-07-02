@@ -1,11 +1,44 @@
 # Copy to config/settings.yaml and adjust local paths before running.
 
 paths:
-  db: data/creation.db
+  db: data/formal/clean_room_v0_6_2.sqlite3
   vault: vault
-  raw: data/raw
-  drafts: data/drafts
+  raw: data/formal/raw
+  drafts: data/formal/drafts
   logs: logs
+
+storage:
+  formal_engine: postgresql
+  database_url_env: CREATION_ASSISTANT_DATABASE_URL
+  local_validation_engine: sqlite
+  local_validation_db: data/formal/clean_room_v0_6_2.sqlite3
+  sqlite_schema_chain:
+    - scripts/core/persistence/goal01_schema.sqlite.sql
+    - scripts/core/persistence/goal02_schema.sqlite.sql
+    - scripts/core/persistence/goal03_schema.sqlite.sql
+  postgres_schema_chain:
+    - scripts/core/persistence/goal01_schema.postgres.sql
+    - scripts/core/persistence/goal02_schema.postgres.sql
+    - scripts/core/persistence/goal03_schema.postgres.sql
+
+legacy_runtime:
+  enabled: false
+  allow_env: CREATION_ASSISTANT_ENABLE_LEGACY_RUNTIME
+  status: read_only_quarantined
+  quarantined_entrypoints:
+    - scripts/run_daily.py
+    - scripts/collect
+    - scripts/analyze
+    - scripts/topics
+    - scripts/reverse
+    - scripts/research
+    - scripts/content
+    - scripts/language_fuel
+    - scripts/music
+    - scripts/feishu
+    - tools/asr
+    - 启动逆向拆DNA.bat
+    - 启动真人写作提炼.bat
 
 llm:
   provider: codex

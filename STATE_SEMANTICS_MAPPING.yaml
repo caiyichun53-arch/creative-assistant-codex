@@ -89,3 +89,17 @@ states:
 data_reset_policy:
   legacy_states_not_inherited: true
   formal_initial_state: empty schema with zero business rows
+goal_data_reset_01_phase_2_execution:
+  status: old_state_not_inherited
+  updated_at: '2026-07-02T10:50:00Z'
+  old_state_semantics_disposition: discard_from_target
+  formal_state_start:
+    database: data/formal/clean_room_v0_6_2.sqlite3
+    production_task_state_rows: 0
+    topic_state_rows: 0
+    claim_state_rows: 0
+    experiment_state_rows: 0
+    tactic_state_rows: 0
+    scheduler_job_rows: 0
+    scheduler_job_attempt_rows: 0
+  legacy_fallback_allowed: false

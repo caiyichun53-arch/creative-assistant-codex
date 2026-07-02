@@ -1,11 +1,11 @@
 # GOAL-DATA-RESET-01 Validation Report
 
-status: `PHASE_1_COMPLETE_SECOND_STAGE_NOT_APPROVED`
-updated_at: `2026-07-02T08:49:38Z`
+status: `PHASE_2_CLEAN_ROOM_VALIDATED`
+updated_at: `2026-07-02T10:50:00Z`
 
 ## Phase Boundary
 
-This checkpoint generated the cleanup plan and policy updates only. It did not delete files, create cold backups, create a new database, run migrations, run DNA, load fixtures, or change production runtime behavior.
+Phase 1 generated the cleanup plan and policy updates only. Phase 2 was later explicitly authorized by the user pasted scope revision and executed inside the same GOAL-DATA-RESET-01.
 
 ## Disposition Counts
 
@@ -35,9 +35,24 @@ Phase-1 static scan found remaining references to legacy data paths:
 
 ## Second Stage Safety
 
-`safe_to_execute_phase_2`: `false`
+`safe_to_execute_phase_2`: `true`
 
-Reason: production/local runtime config and legacy scripts still have direct fallback paths to `data/creation.db`, `data/topics`, transcript paths and DNA note paths. Phase 2 needs an explicit remediation step that switches production config to the new empty formal DB and prevents production execution of legacy readers/writers before any deletion.
+Reason: production config no longer references `data/creation.db`; formal production code scan passes; legacy entrypoints are read-only quarantined; fixture loading is test-only; the empty formal validation DB exists and has 18 tables with 0 rows.
+
+## Phase 2 Execution Evidence
+
+- Formal target database type: PostgreSQL contract, with local SQLite clean-room validation DB.
+- Local validation DB: `data/formal/clean_room_v0_6_2.sqlite3`.
+- Schema chain: `scripts/core/persistence/goal01_schema.sqlite.sql`, `goal02_schema.sqlite.sql`, `goal03_schema.sqlite.sql`.
+- Empty DB verification: 18 formal tables, all 0 rows, foreign key check passed.
+- Cold backup: `I:/Creation_assistant_cold_backups/GOAL-DATA-RESET-01/20260702T184708`.
+- Backup manifest: `BACKUP_MANIFEST.json`, 596 entries.
+- Removed from formal runtime paths: `data/creation.db*`, `data/transcripts`, `data/爆款拆解`, `data/reverse`, `data/topics`, `data/drafts`, `data/language_fuel`, `data/humanize`, `data/music`, `data/raw`, `data/llm_state.json`, `logs`, `outputs`, `vault/范例`, `vault/方法论`, `vault/语感燃料`, `vault/爆款拆解`.
+- Preserved current assets: formal docs, Core code, validation harnesses, config examples, Skills, templates, persona, taxonomy, `vault/真人写作基石.md`, `vault/评论真人味基石.md`.
+- Fixture loader: `scripts/validation/fixture_loader.py`; requires `CREATION_ASSISTANT_ENV=test`, `CREATION_ASSISTANT_ALLOW_FIXTURES=1`, `--allow-test-fixtures`, and an isolated test DB path.
+- Production startup smoke: `scripts/validation/production_startup_smoke.py --require-legacy-absent` passed.
+- Production fixture rejection: startup smoke failed closed when fixture loading was enabled outside test mode.
+- Clean-room test command: `python -m unittest tests.validation.test_clean_room_readiness` passed.
 
 ## Validation Performed
 

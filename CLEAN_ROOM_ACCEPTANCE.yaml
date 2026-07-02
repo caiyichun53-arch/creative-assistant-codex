@@ -1,6 +1,25 @@
 schema_version: 1
 goal: GOAL-DATA-RESET-01
 phase: clean_room_acceptance_definition
+phase_2_result:
+  status: passed
+  validated_at: '2026-07-02T10:50:00Z'
+  commands:
+  - python scripts/validation/clean_room_empty_db.py --health
+  - python scripts/validation/production_startup_smoke.py --require-legacy-absent
+  - python scripts/validation/clean_room_readiness.py --require-safe
+  - python -m unittest tests.validation.test_clean_room_readiness
+  - python scripts/project_check.py
+  formal_db:
+    type: sqlite_local_validation_for_postgresql_contract
+    path: data/formal/clean_room_v0_6_2.sqlite3
+    formal_table_count: 18
+    all_formal_tables_zero_rows: true
+  fixture_loader:
+    path: scripts/validation/fixture_loader.py
+    production_rejects_fixtures: true
+    test_load_destroy_passed: true
+  old_runtime_paths_absent: true
 hard_gates:
 - gate_id: CR-DB-EMPTY
   assertion: New formal database business tables start with 0 rows

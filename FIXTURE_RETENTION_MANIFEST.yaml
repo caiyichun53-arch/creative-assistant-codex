@@ -1,6 +1,6 @@
 schema_version: 1
 goal: GOAL-DATA-RESET-01
-phase: phase_1_plan_only_no_fixture_write
+phase: phase_2_fixture_loader_implemented_test_only
 policy:
   prefer_synthetic: true
   real_legacy_use: only_for_format_or_parser_edge_after_desensitization
@@ -12,6 +12,17 @@ policy:
   - model context
   - Hermes memory
   - formal business judgement
+loader:
+  path: scripts/validation/fixture_loader.py
+  synthetic_case_count: 17
+  requires:
+  - CREATION_ASSISTANT_ENV=test
+  - CREATION_ASSISTANT_ALLOW_FIXTURES=1
+  - --allow-test-fixtures
+  allowed_targets:
+  - tests/fixtures/clean_room
+  - validation_evidence/clean_room/fixtures
+  production_rejection_verified: true
 fixtures:
 - fixture_id: FX-BASELINE-19
   coverage: 19 account baseline boundary

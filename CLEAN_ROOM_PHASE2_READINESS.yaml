@@ -1,174 +1,60 @@
-schema_version: 1
+﻿schema_version: 1
 goal: GOAL-DATA-RESET-01
-phase: phase_2_readiness_audit_no_deletion
-generated_at: '2026-07-02T08:45:56Z'
-phase_2_safe_to_execute: false
-reason: Legacy production/local config and legacy runtime readers still reference
-  old SQLite and old artifact paths; cold backup location and test-only fixture loader
-  are not approved/implemented.
+validation_errors: []
+phase_2_safe_to_execute: true
 checks:
 - check_id: P2-BLOCK-001
-  requirement: Production config must not reference legacy SQLite.
-  status: blocked
-  evidence:
-  - 'config/settings.example.yaml:4:  db: data/creation.db'
-  - 'config/settings.yaml:5:  db: data/creation.db'
-  - 'scripts/project_check.py:114:    db = ROOT / settings.get("paths", {}).get("db",
-    "data/creation.db")'
-  - 'scripts/validation/live_gates.py:291:        if not normalized or normalized
-    in {"data/creation.db", "./data/creation.db"}:'
-  required_remediation: Introduce formal production DB config pointing to new empty
-    V0.6.2 database; keep data/creation.db only in cold archive/test docs if needed.
+  status: passed
+  requirement: Production configuration must not reference data/creation.db.
+  evidence: []
+  required_remediation: Point production configuration at the new empty formal database
+    before cleanup.
 - check_id: P2-BLOCK-002
-  requirement: Production code must not read legacy artifact paths or old business
-    tables.
-  status: blocked
-  evidence:
-  - 'scripts/analyze/cluster_hits.py:70:    rows = conn.execute("SELECT id, title,
-    excess_ratio FROM hits ORDER BY id").fetchall()'
-  - 'scripts/analyze/judge_hits.py:105:        """UPDATE competitor_videos SET status=''archived'''
-  - 'scripts/analyze/judge_hits.py:139:    total = conn.execute("SELECT COUNT(*) FROM
-    hits").fetchone()[0]'
-  - 'scripts/analyze/judge_hits.py:40:    base_q = ("SELECT * FROM competitor_videos
-    "'
-  - 'scripts/analyze/judge_hits.py:96:        conn.execute("UPDATE competitor_videos
-    SET status=''promoted'' WHERE id=?", (v["id"],))'
-  - 'scripts/collect/crawl_competitors.py:129:                """INSERT INTO competitor_videos('
-  - 'scripts/collect/crawl_competitors.py:148:                "SELECT id, status,
-    check_count FROM competitor_videos "'
-  - scripts/collect/crawl_competitors.py:1:"""增量采集对标账号视频 → competitor_videos(按发布时间分流状态)。
-  - 'scripts/collect/crawl_competitors.py:6:  3. 解析其 jsonl 输出,upsert 进 competitor_videos:'
-  - 'scripts/content/check_banned.py:7:  python scripts/content/check_banned.py <topic_id>        #
-    扫 data/topics/<id>/draft_v1.md(最新版)'
-  - 'scripts/content/diff_draft.py:9:  1) 创作写出 data/topics/<id>/draft_v1.md,`save_draft
-    <id> --author ai` 登记。'
-  - scripts/content/save_draft.py:1:"""登记成稿(确定性):data/topics/<id>/draft_v<N>.md →
-    drafts 表。
-  - 'scripts/content/save_draft.py:26:    t = conn.execute("SELECT domain FROM topics
-    WHERE id=?", (a.topic_id,)).fetchone()'
-  - 'scripts/content/save_draft.py:5:约定: 创作对话把成稿写到 data/topics/<id>/draft_v1.md(或递增版本)。'
-  - scripts/db/migrate_001_videos.py:1:"""迁移001:observation_pool 表 → competitor_videos
-    表 + observation_pool 视图。
-  - 'scripts/db/migrate_001_videos.py:21:            ALTER TABLE observation_pool
-    RENAME TO competitor_videos;'
-  - 'scripts/db/migrate_001_videos.py:24:                ON competitor_videos(status,
-    last_checked_at);'
-  - 'scripts/feishu/listener.py:112:        conn.execute("UPDATE hits SET transcript_path=?,
-    reverse_status=''transcribed'' "'
-  - 'scripts/feishu/listener.py:125:    pt = conn.execute("SELECT title FROM topics
-    WHERE id=?", (tid,)).fetchone()'
-  - 'scripts/feishu/listener.py:61:                  h.transcript_path AS hit_transcript'
-  - 'scripts/feishu/listener.py:62:           FROM topics t LEFT JOIN hits h ON h.id
-    = t.source_hit_id'
-  - 'scripts/language_fuel/backfill_comments.py:157:def rows_from_hit_comments(conn:
-    sqlite3.Connection) -> Iterable[dict]:'
-  - 'scripts/language_fuel/backfill_comments.py:161:           FROM hit_comments c'
-  - 'scripts/language_fuel/backfill_comments.py:168:            "channel": "hit_comments",'
-  - 'scripts/language_fuel/backfill_comments.py:170:            "source_table": "hit_comments",'
-  - 'scripts/language_fuel/backfill_comments.py:189:        choices=["all", "language_fuel_items",
-    "music_comments", "hit_comments"],'
-  - 'scripts/language_fuel/backfill_comments.py:198:        "hit_comments": rows_from_hit_comments,'
-  - 'scripts/language_fuel/extract_hit_comments.py:262:        "FROM hits h JOIN competitor_accounts
-    c ON c.id=h.competitor_id "'
-  - scripts/language_fuel/extract_hit_comments.py:27:OUT_DIR = ROOT / "data" / "language_fuel"
-    / "hit_comments"
-  - scripts/language_fuel/extract_hit_comments.py:4:hit_comments -> classified insights
-    -> SQLite + Obsidian raw insight notes.
-  - 'scripts/language_fuel/extract_texture_base.py:212:        "FROM hits h JOIN competitor_accounts
-    c ON c.id=h.competitor_id "'
-  - scripts/language_fuel/select_for_topic.py:4:data/topics/<id>/brief.md so the creation
-    workflow can use already-extracted
-  - 'scripts/language_fuel/select_for_topic.py:72:           FROM topics t LEFT JOIN
-    hits h ON h.id=t.source_hit_id'
-  - 'scripts/language_fuel/store_atoms.py:84:    elif source_table == "hit_comments":'
-  - 'scripts/language_fuel/store_atoms.py:87:                 FROM hit_comments c'
-  - 'scripts/research/research.py:25:        """SELECT t.*, h.transcript_path FROM
-    topics t'
-  - 'scripts/research/research.py:32:    if t["source_type"] == "hit" and t["transcript_path"]:'
-  - 'scripts/research/research.py:35:            transcript=(ROOT / t["transcript_path"]).read_text(encoding="utf-8"))'
-  - scripts/research/research.py:3:研究 ⟂ 创作:本脚本产出独立 artifact(data/topics/<id>/research.md),创作对话装载之,
-  - 'scripts/reverse/backfill_links.py:42:    id2stem = {r["id"]: Path(r["dna_note_path"]).stem'
-  - 'scripts/reverse/backfill_links.py:44:                   "SELECT id, dna_note_path
-    FROM hits "'
-  - 'scripts/reverse/backfill_links.py:45:                   "WHERE dna_note_path
-    IS NOT NULL AND dna_note_path!=''''")}'
-  - 'scripts/reverse/collect_openings.py:60:    q = ("SELECT h.id, h.title, h.excess_ratio,
-    h.transcript_path, c.domain "'
-  - 'scripts/reverse/collect_openings.py:61:         "FROM hits h JOIN competitor_accounts
-    c ON c.id=h.competitor_id "'
-  - 'scripts/reverse/collect_openings.py:62:         "WHERE h.transcript_path IS NOT
-    NULL AND h.transcript_path!='''' "'
-  - 'scripts/reverse/dna.py:102:        conn.execute("UPDATE hits SET dna_note_path=?,
-    reverse_status=''done'' WHERE id=?",'
-  - 'scripts/reverse/dna.py:118:        "AND (dna_note_path IS NULL OR dna_note_path='''')
-    "'
-  - 'scripts/reverse/dna.py:29:VAULT_DNA = ROOT / "data" / "爆款拆解"  # 中间燃料(与 data/transcripts
-    并列),非成品仓'
-  - scripts/reverse/dna.py:3:输入:hits 行(须已有 transcript_path)。输出:拆解笔记 md + 回写 hits.dna_note_path。
-  - scripts/reverse/dna.py:8:重置后跑同命令从断点续(已拆的靠 dna_note_path 幂等跳过,不重拆)。
-  - scripts/reverse/fetch_comments.py:2:入 hit_comments 表 + 写分类 json(data/reverse/领域/账号/hit/comments.json)。
-  - 'scripts/reverse/fetch_comments.py:56:    """data/reverse/{领域}/{账号}/{hit}_{标题}/  (备料分类目录,给
-    web 按领域>账号查)"""'
-  - 'scripts/run_daily.py:60:        n = conn.execute("SELECT count(*) FROM hits WHERE
-    reverse_status IN "'
-  - 'scripts/topics/daily_topics.py:54:            "SELECT tags FROM hits WHERE promoted_at
-    >= datetime(''now'',''localtime'',''-1 day'')"):'
-  - 'scripts/topics/daily_topics.py:86:        r = conn.execute("SELECT COALESCE(cluster_id,
-    id) AS ck FROM hits WHERE id=?", (shid,)).fetchone()'
-  - 'scripts/topics/daily_topics.py:92:           FROM hits h JOIN competitor_accounts
-    c ON c.id = h.competitor_id'
-  - 'scripts/topics/prepare_topic.py:136:    t = conn.execute("SELECT t.source_type,
-    t.source_hit_id, h.dna_note_path FROM topics t "'
-  - scripts/topics/prepare_topic.py:4:材料包 = data/topics/<id>/brief.md(创作对话的唯一装载入口)。
-  - 'scripts/topics/prepare_topic.py:57:                  h.excess_ratio, h.share_comment_ratio,
-    h.transcript_path, h.dna_note_path,'
-  - 'scripts/topics/prepare_topic.py:59:           FROM topics t LEFT JOIN hits h
-    ON h.id=t.source_hit_id'
-  - 'scripts/topics/prepare_topic.py:83:        transcript = (ROOT / t["transcript_path"]).read_text(encoding="utf-8")
-    /'
-  - 'scripts/topics/prepare_topic.py:84:            if t["transcript_path"] else "(无)"'
-  - 'scripts/topics/spinoff.py:111:    pt = conn.execute("SELECT title, domain FROM
-    topics WHERE id=?", (topic_id,)).fetchone()'
-  - 'scripts/topics/spinoff.py:125:    pt = conn.execute("SELECT domain, source_hit_id
-    FROM topics WHERE id=?",'
-  - 'scripts/topics/spinoff.py:68:        "SELECT t.*, h.dna_note_path FROM topics
-    t LEFT JOIN hits h ON h.id=t.source_hit_id "'
-  - 'scripts/topics/spinoff.py:94:    if t["dna_note_path"]:'
-  - 'scripts/topics/spinoff.py:95:        note = ROOT / t["dna_note_path"]'
-  required_remediation: Disable legacy runtime entrypoints for production or move
-    them behind explicit quarantine/test-only commands before deleting old data.
+  status: passed
+  requirement: Formal production code must not read legacy SQLite tables or legacy
+    artifact paths.
+  evidence: []
+  required_remediation: Keep legacy readers out of formal production roots and behind
+    legacy quarantine.
 - check_id: P2-BLOCK-003
-  requirement: Cold backup location must be approved outside repo and outside production
-    load paths.
-  status: blocked_pending_user_approval
-  evidence: []
-  required_remediation: Choose an absolute backup root outside I:/Creation_assistant-codex
-    and outside Hermes/Skill/retrieval mounts, then create read-only backup in phase
-    2.
-- check_id: P2-BLOCK-004
-  requirement: Fixture loader must be test-only and production must start with fixtures
-    absent.
-  status: blocked_missing_implementation
-  evidence: []
-  required_remediation: Add a fixture loader guarded by explicit test environment
-    and a startup smoke test proving production does not depend on fixtures.
-- check_id: P2-BLOCK-005
-  requirement: Clean-room empty database creation command must be identified and verified.
-  status: blocked_missing_implementation
+  status: passed
+  requirement: Cold backup location must be approved outside repo and production load
+    paths.
   evidence:
-  - scripts/core/persistence/** exists, but no phase-2 empty formal DB creation run
-    was executed in this Goal.
-  required_remediation: Define exact command/schema target for new formal empty DB,
-    run only after backup and fallback blockers are cleared.
-allowed_next_work_before_cleanup:
-- production config split for empty formal DB
-- legacy entrypoint quarantine/disablement
-- test-only fixture loader design
-- cold backup path approval
-- clean-room startup smoke test design
-forbidden_until_all_checks_pass:
-- physical deletion of old data
-- moving old data into production DB
-- running DNA
-- loading fixtures into production
-- creating cold backup inside repo
+  - I:/Creation_assistant-codex/CLEAN_ROOM_PHASE2_APPROVAL.yaml
+  required_remediation: Add an approved backup location manifest before phase-2 backup
+    creation.
+- check_id: P2-BLOCK-004
+  status: passed
+  requirement: Fixture loader must be test-only and absent from production startup.
+  evidence:
+  - scripts/validation/fixture_loader.py
+  required_remediation: Implement an explicitly test-only fixture loader and production-without-fixtures
+    smoke test.
+- check_id: P2-BLOCK-005
+  status: passed
+  requirement: Clean-room empty database creation command must be identified and verified.
+  evidence:
+  - scripts/validation/clean_room_empty_db.py
+  - data/formal/clean_room_v0_6_2.sqlite3
+  required_remediation: Define the exact empty formal DB creation command before deleting
+    old runtime data.
+- check_id: P2-BLOCK-006
+  status: passed
+  requirement: Formal storage config must point at the V0.6.2 clean-room target and
+    local validation DB.
+  evidence: []
+  required_remediation: Update storage config to PostgreSQL target plus isolated local
+    SQLite validation DB.
+- check_id: P2-BLOCK-007
+  status: passed
+  requirement: Legacy runtime entrypoints must be read-only quarantined for production.
+  evidence: []
+  required_remediation: Declare legacy_runtime.enabled=false and enumerate legacy
+    entrypoints.
+- check_id: P2-BLOCK-008
+  status: passed
+  requirement: Production mode must reject fixture loading.
+  evidence: []
+  required_remediation: Unset fixture loading in production; fixtures require explicit
+    test environment.

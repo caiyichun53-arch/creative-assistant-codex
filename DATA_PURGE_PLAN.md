@@ -1,7 +1,7 @@
 # Data Purge Plan - GOAL-DATA-RESET-01
 
-status: `PHASE_1_PLAN_ONLY_NO_DELETION`
-updated_at: `2026-07-02T08:49:38Z`
+status: `PHASE_2_EXECUTED_CLEAN_ROOM_VALIDATED`
+updated_at: `2026-07-02T10:50:00Z`
 
 ## Binding Data Principle
 
@@ -16,7 +16,7 @@ Planned for phase 2 only, after manifest review and explicit approval:
 - Runtime history not needed for production start: `logs/*.log`, `outputs/*`.
 - Old vault derived/business outputs: `vault/爆款拆解`, `vault/语感燃料`, and unapproved old `vault/范例` / `vault/方法论` derived from old DNA or old model outputs.
 
-No physical deletion is performed in phase 1.
+Phase 1 performed no physical deletion. Phase 2 later moved the approved old business data out of formal runtime paths after config, empty DB and fixture gates passed.
 
 ## Protected Formal Assets
 
@@ -64,3 +64,18 @@ Production config must not reference `data/creation.db`. Production code must no
 ## Phase 2 Stop Conditions
 
 Stop before deletion if any production path still depends on `data/creation.db`, old `data/**` outputs, old DNA notes, old topics/drafts, or old vault derived content.
+
+## Phase 2 Execution Result
+
+- Cold backup root: `I:/Creation_assistant_cold_backups/GOAL-DATA-RESET-01/20260702T184708`.
+- Manifest: `BACKUP_MANIFEST.json`, 596 entries.
+- Formal runtime old paths removed or isolated:
+  - `data/creation.db`, `data/creation.db-shm`, `data/creation.db-wal`
+  - `data/transcripts`, `data/爆款拆解`, `data/reverse`, `data/topics`, `data/drafts`, `data/language_fuel`, `data/humanize`, `data/music`, `data/raw`, `data/llm_state.json`
+  - `logs`, `outputs`
+  - `vault/范例`, `vault/方法论`, `vault/语感燃料`, `vault/爆款拆解`
+- Formal runtime paths retained:
+  - `data/formal/clean_room_v0_6_2.sqlite3`
+  - technical caches under `data/npm-cache` and `data/uv-cache`
+  - current vault assets: `人设`, `模板`, `词表`, `真人写作基石.md`, `评论真人味基石.md`
+- Verification: `python scripts/validation/production_startup_smoke.py --require-legacy-absent` passed.
