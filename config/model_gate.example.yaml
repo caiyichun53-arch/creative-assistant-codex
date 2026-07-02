@@ -1,0 +1,28 @@
+# Example only. Keep real values in .env.live-gates or another ignored local secret store.
+
+goal: GOAL-RUNTIME-MODEL-GATE-01
+route:
+  route_name: runtime_probe.test
+  provider_name: hermes
+  config_version: goal-runtime-model-gate-01.live.v1
+  timeout_ms: 30000
+  parameters:
+    temperature: 0
+    max_completion_tokens: 128
+    reasoning_effort: low
+    response_format:
+      type: json_object
+provider:
+  type: openai_compatible_chat_completions
+  api_key_env: MODEL_PROVIDER_API_KEY
+  base_url_env: MODEL_PROVIDER_BASE_URL
+  model_env: MODEL_PROVIDER_MODEL
+  optional_project_id_env: MODEL_PROVIDER_PROJECT_ID
+  optional_cost_cap_env: MODEL_PROVIDER_COST_CAP
+  billing_mode: subscription_or_proxy
+  cost_status_when_amount_missing: not_reported
+safety:
+  live_call_limit: 1
+  dry_run_fallback_allowed: false
+  fake_port_fallback_allowed: false
+  business_content_allowed: false

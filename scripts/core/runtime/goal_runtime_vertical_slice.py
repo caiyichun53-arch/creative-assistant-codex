@@ -10,6 +10,7 @@ import yaml
 from scripts.core.model_gateway.goal07_model_gateway import (
     ModelGateway,
     ModelGatewayError,
+    ModelProvider,
     ModelProviderResult,
     ModelRequest,
     ModelRoute,
@@ -157,9 +158,14 @@ def load_runtime_probe_skill(path: Path = RUNTIME_PROBE_SKILL_PATH) -> PortableS
     required = tuple(data["input_schema"]["required"])
     # Keep prompt free of provider and host/runtime implementation details.
     prompt = (
-        "Return only JSON for runtime_probe. "
+        "Return only a JSON object with exactly these keys: "
+        "normalized_text, operation, result_code, deterministic_summary, trace, schema_version. "
+        "Use result_code=\"ok\" and schema_version=\"runtime_probe.output.v1\". "
+        "Set normalized_text to the lower-case normalized form of text. "
+        "Set operation to requested_operation. "
+        "Set trace.request_id and trace.correlation_id from the input. "
         "request_id={request_id}; correlation_id={correlation_id}; "
-        "operation={requested_operation}; text={text}"
+        "requested_operation={requested_operation}; text={text}"
     )
     spec = PortableSkillSpec(
         skill_name=data["skill_name"],
@@ -222,6 +228,11 @@ class RuntimeProbeRunner:
         self.skill = load_runtime_probe_skill()
         self.binding = RuntimeProbeInputBinding()
 
+    @property
+    def model_port_name(self) -> str:
+        route = self.gateway.routes.get(self.skill.route_name)
+        return route.provider_name if route is not None else "unconfigured"
+
     def run(self, frozen_payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
         public_input = self.binding.bind(frozen_payload)
         RuntimeProbeContract.validate_request_dict({**public_input, "idempotency_key": frozen_payload.get("idempotency_key")})
@@ -241,11 +252,26 @@ class RuntimeProbeRunner:
             )
         )
         try:
-            output_payload = json.loads(model_run.output_text)
+            output_payload = parse_model_json(model_run.output_text)
         except json.JSONDecodeError as exc:
             raise RuntimeProbeValidationError("model output is not JSON") from exc
         RuntimeProbeContract.validate_output(output_payload)
         return output_payload, model_run.envelope_version_id
+
+
+def parse_model_json(output_text: str) -> dict[str, Any]:
+    stripped = output_text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        stripped = "\n".join(lines).strip()
+    value = json.loads(stripped)
+    if not isinstance(value, dict):
+        raise RuntimeProbeValidationError("model output JSON must be an object")
+    return value
 
 
 class RuntimeProbeMaterializer:
@@ -291,7 +317,7 @@ class RuntimeProbeMaterializer:
                 runner.binding.binding_version,
                 runner.binding.binding_hash,
                 runner.skill.route_name,
-                "runtime_probe_test_port",
+                runner.model_port_name,
                 input_hash,
                 canonical_json(error),
             ),
@@ -354,7 +380,7 @@ class RuntimeProbeMaterializer:
                 "output_hash": output_hash,
                 "schema_version": RUNTIME_PROBE_SCHEMA_VERSION,
                 "model_route": runner.skill.route_name,
-                "model_port": "runtime_probe_test_port",
+                "model_port": runner.model_port_name,
                 "output": output_payload,
             }
             version_id = self.store.append_version(
@@ -410,7 +436,7 @@ class RuntimeProbeMaterializer:
                     output_hash,
                     RUNTIME_PROBE_SCHEMA_VERSION,
                     runner.skill.route_name,
-                    "runtime_probe_test_port",
+                    runner.model_port_name,
                 ),
             )
         return root_id, version_id, skill_run_id, outbox_id
@@ -583,21 +609,26 @@ def make_runtime_probe_harness(
     id_factory: Callable[[], str] = uuid7,
     now_ms: Callable[[], int] | None = None,
     monotonic_ms: Callable[[], int] | None = None,
+    route: ModelRoute | None = None,
+    provider: ModelProvider | None = None,
 ) -> RuntimeProbeHarness:
     store = PersistenceStore.in_memory(id_factory=id_factory)
     scheduler = Goal03Scheduler(store, id_factory=id_factory, now_ms=now_ms)
     materializer = RuntimeProbeMaterializer(store, id_factory=id_factory)
-    route = ModelRoute(
-        route_name="runtime_probe.test",
-        provider_name="runtime_probe_test_port",
-        model_name="deterministic-runtime-probe",
-        config_version="runtime-probe-test.v1",
-        config_hash=content_hash({"route": "runtime_probe.test"}),
-        timeout_ms=1000,
-    )
+    if route is None:
+        route = ModelRoute(
+            route_name="runtime_probe.test",
+            provider_name="runtime_probe_test_port",
+            model_name="deterministic-runtime-probe",
+            config_version="runtime-probe-test.v1",
+            config_hash=content_hash({"route": "runtime_probe.test"}),
+            timeout_ms=1000,
+        )
+    if provider is None:
+        provider = DeterministicRuntimeProbeModelPort()
     gateway = ModelGateway(
         routes={route.route_name: route},
-        providers={"runtime_probe_test_port": DeterministicRuntimeProbeModelPort()},
+        providers={route.provider_name: provider},
         materializer=ModelRunMaterializer(store),
         monotonic_ms=monotonic_ms,
     )

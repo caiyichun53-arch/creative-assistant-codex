@@ -67,7 +67,7 @@ class HermesModelProviderAdapter:
             "api_mode": "chat_completions",
             "billing_mode": self.billing_mode,
             "usage_status": usage_status,
-            "cost_status": "not_applicable",
+            "cost_status": "not_reported",
             "provider_request_id_status": "available" if provider_request_id else "not_available",
             "finish_reason": finish_reason or "not_available",
             "visible_output_status": "available" if output_text else "empty",
@@ -78,7 +78,7 @@ class HermesModelProviderAdapter:
         return ModelProviderResult(
             output_text=output_text,
             usage=usage,
-            cost={"status": "not_applicable", "billing_mode": self.billing_mode},
+            cost={"status": "not_reported", "billing_mode": self.billing_mode},
             provider_request_id=provider_request_id,
             metadata=metadata,
         )

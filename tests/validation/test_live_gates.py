@@ -189,9 +189,9 @@ class LiveGateHarnessTests(unittest.TestCase):
         self.assertEqual(result.usage.total_tokens, 0)
         self.assertEqual(result.metadata["usage_status"], "not_available")
         self.assertEqual(result.metadata["billing_mode"], "subscription")
-        self.assertEqual(result.metadata["cost_status"], "not_applicable")
+        self.assertEqual(result.metadata["cost_status"], "not_reported")
         self.assertEqual(result.metadata["visible_output_status"], "available")
-        self.assertEqual(result.cost["status"], "not_applicable")
+        self.assertEqual(result.cost["status"], "not_reported")
         self.assertEqual(result.cost["billing_mode"], "subscription")
 
     def test_hermes_adapter_allows_empty_visible_output_for_minimal_token_gate(self) -> None:
@@ -222,7 +222,7 @@ class LiveGateHarnessTests(unittest.TestCase):
         )
         self.assertEqual(result.output_text, "")
         self.assertEqual(result.metadata["visible_output_status"], "empty")
-        self.assertEqual(result.metadata["cost_status"], "not_applicable")
+        self.assertEqual(result.metadata["cost_status"], "not_reported")
 
     def test_hermes_adapter_scrubs_api_key_from_errors(self) -> None:
         secret = "test-model-key"
@@ -270,13 +270,13 @@ class LiveGateHarnessTests(unittest.TestCase):
                 return ModelProviderResult(
                     output_text="MODEL_GATE_OK",
                     usage=ModelUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
-                    cost={"status": "not_applicable", "billing_mode": "subscription"},
+                    cost={"status": "not_reported", "billing_mode": "subscription"},
                     provider_request_id="provider-request-1",
                     metadata={
                         "external_io": True,
                         "billing_mode": "subscription",
                         "usage_status": "available",
-                        "cost_status": "not_applicable",
+                        "cost_status": "not_reported",
                         "provider_request_id_status": "available",
                         "finish_reason": "stop",
                         "visible_output_status": "available",
@@ -305,7 +305,7 @@ class LiveGateHarnessTests(unittest.TestCase):
             self.assertEqual(manifest["response"]["provider"], "hermes")
             self.assertEqual(manifest["response"]["status"], "succeeded")
             self.assertEqual(manifest["response"]["billing_mode"], "subscription")
-            self.assertEqual(manifest["response"]["cost_status"], "not_applicable")
+            self.assertEqual(manifest["response"]["cost_status"], "not_reported")
             self.assertEqual(manifest["response"]["monetary_cost_cap"], "not_applicable")
             self.assertEqual(manifest["response"]["visible_output_status"], "available")
             self.assertTrue(manifest["response"]["expected_output_match"])

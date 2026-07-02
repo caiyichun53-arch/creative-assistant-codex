@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import sqlite3
 import unittest
+import json
 from pathlib import Path
 from unittest.mock import patch
 
+from scripts.core.model_gateway.goal07_model_gateway import ModelProviderResult, ModelRoute, ModelUsage
 from scripts.core.persistence.goal01_store import IdempotencyConflict, UUIDv7Generator
 from scripts.core.runtime.goal_runtime_vertical_slice import (
     RuntimeProbeContract,
@@ -59,6 +61,59 @@ def valid_payload(**overrides):
     return payload
 
 
+class CountingJsonModelProvider:
+    provider_name = "hermes"
+
+    def __init__(self, *, output=None, error: Exception | None = None):
+        self.output = output
+        self.error = error
+        self.call_count = 0
+
+    def complete(self, request, route):
+        self.call_count += 1
+        if self.error is not None:
+            raise self.error
+        output = self.output
+        if output is None:
+            output = {
+                "normalized_text": "model_gate_ok",
+                "operation": request.input_payload["requested_operation"],
+                "result_code": "ok",
+                "deterministic_summary": "MODEL_GATE_OK",
+                "trace": {
+                    "request_id": request.input_payload["request_id"],
+                    "correlation_id": request.input_payload["correlation_id"],
+                },
+                "schema_version": "runtime_probe.output.v1",
+            }
+        text = output if isinstance(output, str) else json.dumps(output)
+        return ModelProviderResult(
+            output_text=text,
+            usage=ModelUsage(prompt_tokens=3, completion_tokens=5, total_tokens=8),
+            cost={"status": "not_reported", "billing_mode": "subscription"},
+            provider_request_id="provider-request-live-test",
+            metadata={
+                "external_io": True,
+                "usage_status": "available",
+                "cost_status": "not_reported",
+                "dry_run_fallback": False,
+                "fake_port_fallback": False,
+                "retry_count": 0,
+            },
+        )
+
+
+def live_route(provider_name: str = "hermes") -> ModelRoute:
+    return ModelRoute(
+        route_name="runtime_probe.test",
+        provider_name=provider_name,
+        model_name="test-live-model",
+        config_version="goal-runtime-model-gate-01.test.v1",
+        config_hash="test-config-hash",
+        timeout_ms=30_000,
+    )
+
+
 class RuntimeVerticalSliceTests(unittest.TestCase):
     def make_harness(self):
         harness, clock = make_harness()
@@ -102,6 +157,32 @@ class RuntimeVerticalSliceTests(unittest.TestCase):
         self.assertEqual(len(outbox), 1)
         self.assertEqual(outbox[0]["status"], "pending")
         self.assertEqual(outbox[0]["payload"]["job_id"], created.job_id)
+
+    def test_live_model_port_uses_gateway_and_idempotency_does_not_second_call(self) -> None:
+        clock = FakeClock()
+        generator = UUIDv7Generator(now_ms=clock.now_ms, randbits=DeterministicBits())
+        provider = CountingJsonModelProvider()
+        harness = make_runtime_probe_harness(
+            id_factory=generator.new,
+            now_ms=clock.now_ms,
+            monotonic_ms=clock.now_ms,
+            route=live_route(),
+            provider=provider,
+        )
+        self.addCleanup(harness.store.conn.close)
+        payload = valid_payload(text="MODEL_GATE_OK", metadata={"case_id": "model_gate_live"})
+        created = harness.api.create_runtime_probe_job(payload)
+        replay = harness.api.create_runtime_probe_job(payload)
+        self.assertTrue(replay.replayed)
+        self.assertEqual(harness.worker.run_once().status, "succeeded")
+        self.assertEqual(harness.worker.run_once().status, "idle")
+        self.assertEqual(provider.call_count, 1)
+        result = harness.api.get_result(created.job_id)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["model_port"], "hermes")
+        self.assertEqual(result["output"]["normalized_text"], "model_gate_ok")
+        self.assertEqual(len(harness.api.list_outbox()), 1)
 
     def test_same_job_cannot_be_completed_by_two_workers(self) -> None:
         harness, _clock = self.make_harness()
@@ -149,6 +230,52 @@ class RuntimeVerticalSliceTests(unittest.TestCase):
         self.assertEqual(step.status, "failed")
         self.assertIsNone(harness.api.get_result(created.job_id))
 
+    def test_live_non_json_output_fails_without_success_outbox(self) -> None:
+        clock = FakeClock()
+        generator = UUIDv7Generator(now_ms=clock.now_ms, randbits=DeterministicBits())
+        provider = CountingJsonModelProvider(output="not json")
+        harness = make_runtime_probe_harness(
+            id_factory=generator.new,
+            now_ms=clock.now_ms,
+            monotonic_ms=clock.now_ms,
+            route=live_route(),
+            provider=provider,
+        )
+        self.addCleanup(harness.store.conn.close)
+        created = harness.api.create_runtime_probe_job(valid_payload())
+        step = harness.worker.run_once()
+        self.assertEqual(step.status, "failed")
+        self.assertIsNone(harness.api.get_result(created.job_id))
+        self.assertEqual(harness.api.list_outbox(), [])
+
+    def test_live_schema_missing_field_fails_without_success_outbox(self) -> None:
+        clock = FakeClock()
+        generator = UUIDv7Generator(now_ms=clock.now_ms, randbits=DeterministicBits())
+        provider = CountingJsonModelProvider(output={"result_code": "ok", "schema_version": "runtime_probe.output.v1"})
+        harness = make_runtime_probe_harness(
+            id_factory=generator.new,
+            now_ms=clock.now_ms,
+            monotonic_ms=clock.now_ms,
+            route=live_route(),
+            provider=provider,
+        )
+        self.addCleanup(harness.store.conn.close)
+        created = harness.api.create_runtime_probe_job(valid_payload())
+        step = harness.worker.run_once()
+        self.assertEqual(step.status, "failed")
+        self.assertIsNone(harness.api.get_result(created.job_id))
+        self.assertEqual(harness.api.list_outbox(), [])
+
+    def test_unknown_route_and_missing_provider_fail_before_fake_fallback(self) -> None:
+        provider = CountingJsonModelProvider()
+        harness = make_runtime_probe_harness(route=live_route(provider_name="missing-provider"), provider=provider)
+        self.addCleanup(harness.store.conn.close)
+        created = harness.api.create_runtime_probe_job(valid_payload())
+        step = harness.worker.run_once()
+        self.assertEqual(step.status, "failed")
+        self.assertEqual(provider.call_count, 0)
+        self.assertIsNone(harness.api.get_result(created.job_id))
+
     def test_model_port_timeout_fails_without_result(self) -> None:
         harness, _clock = self.make_harness()
         created = harness.api.create_runtime_probe_job(
@@ -157,6 +284,33 @@ class RuntimeVerticalSliceTests(unittest.TestCase):
         step = harness.worker.run_once()
         self.assertEqual(step.status, "failed")
         self.assertIsNone(harness.api.get_result(created.job_id))
+
+    def test_controlled_live_provider_failures_do_not_create_success_result(self) -> None:
+        cases = {
+            "auth_rejected": RuntimeError("provider rejected authentication"),
+            "rate_limited": RuntimeError("provider rate limit"),
+            "provider_5xx": RuntimeError("provider HTTP 500"),
+            "network_timeout": TimeoutError("provider timeout"),
+        }
+        for case_id, error in cases.items():
+            with self.subTest(case_id=case_id):
+                clock = FakeClock()
+                generator = UUIDv7Generator(now_ms=clock.now_ms, randbits=DeterministicBits())
+                provider = CountingJsonModelProvider(error=error)
+                harness = make_runtime_probe_harness(
+                    id_factory=generator.new,
+                    now_ms=clock.now_ms,
+                    monotonic_ms=clock.now_ms,
+                    route=live_route(),
+                    provider=provider,
+                )
+                self.addCleanup(harness.store.conn.close)
+                created = harness.api.create_runtime_probe_job(valid_payload(metadata={"case_id": case_id}))
+                step = harness.worker.run_once()
+                self.assertEqual(step.status, "failed")
+                self.assertEqual(provider.call_count, 1)
+                self.assertIsNone(harness.api.get_result(created.job_id))
+                self.assertEqual(harness.api.list_outbox(), [])
 
     def test_retry_then_success_does_not_duplicate_result_or_outbox(self) -> None:
         harness, _clock = self.make_harness()

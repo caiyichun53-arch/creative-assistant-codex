@@ -1,0 +1,74 @@
+goal: GOAL-RUNTIME-MODEL-GATE-01
+status: COMPLETED
+logical_route: runtime_probe.test
+provider_type: hermes
+actual_model: xiaomi/mimo-v2.5-pro
+model_gateway_used: true
+live_model_port_used: true
+actual_call_count: 1
+dry_run_fallback: false
+fake_port_fallback: false
+schema_validation: passed
+expected_output_match: true
+provider_request_id_status: available
+usage_status: available
+prompt_tokens: 382
+completion_tokens: 128
+total_tokens: 510
+cost_status: not_reported
+latency_ms: 4168
+retry_count: 0
+max_retries: 0
+idempotent_replay: true
+idempotent_replay_second_live_call: false
+worker_second_run_status: idle
+formal_result_count: 1
+outbox_success_event_count: 1
+feishu_dispatched: false
+preflight:
+  preflight: passed
+  gate_id: GATE-MODEL-PROVIDER
+  provider: hermes
+  billing_mode: subscription
+  monetary_cost_cap: not_applicable
+  live_call_limit: 1
+  max_retries: 0
+  timeout_ms: 30000
+  gate_max_output_tokens: 128
+  required_fields:
+  - MODEL_PROVIDER_API_KEY
+  - MODEL_PROVIDER_BASE_URL
+  - MODEL_PROVIDER_MODEL
+  optional_fields:
+  - MODEL_PROVIDER_PROJECT_ID
+  - MODEL_PROVIDER_COST_CAP
+job_id: 019f2431-03ad-7d63-82d3-a4e4f4b7f492
+correlation_id: 019f2431-03ac-78a0-978a-93e07cf36c1d
+model_run_envelope_version_id: 019f2431-13f5-72de-a733-3fe338a119f2
+clean_room_formal_db:
+  path: data/formal/clean_room_v0_6_2.sqlite3
+  table_count: 20
+  total_rows: 0
+direct_cli_model_call_in_runtime_path: false
+controlled_error_tests:
+  missing_credentials: passed
+  provider_auth_rejected: passed
+  network_timeout: passed
+  rate_limited: passed
+  provider_5xx: passed
+  empty_response: passed
+  non_json_response: passed
+  output_schema_error: passed
+  unknown_or_mismatched_route: passed
+  live_failure_fake_fallback: false
+  success_outbox_on_failure: false
+postgres_test_environment:
+  gate_status: passed
+  postgres_image: postgres:16-alpine
+  postgres_version: "PostgreSQL 16.14 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit"
+  disposable_database: goal_runtime_model_gate_01
+  schema_rounds: 2
+  initialized_formal_table_count: 20
+  initialized_formal_row_count: 0
+  disposable_database_dropped: True
+  container_removed: True
