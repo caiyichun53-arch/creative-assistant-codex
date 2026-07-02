@@ -7,6 +7,8 @@ Generated phase-1 artifacts only. No physical deletion, cold backup creation, em
 
 Artifacts:
 
+- `CLEAN_ROOM_PHASE2_READINESS.yaml`
+
 - `GOAL-DATA-RESET-01_VALIDATION_REPORT.md`
 
 - `LEGACY_DATA_INVENTORY.yaml`
@@ -26,3 +28,5 @@ Synchronized policy files:
 Next required action: review and approve phase-1 manifests before any phase-2 physical cleanup.
 
 Phase-1 conclusion: second-stage physical cleanup is not yet safe because legacy runtime/config references remain.
+
+Supplemental audit: `CLEAN_ROOM_PHASE2_READINESS.yaml` records phase-2 blockers and keeps physical cleanup disabled.

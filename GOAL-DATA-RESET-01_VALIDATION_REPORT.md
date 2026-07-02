@@ -1,7 +1,7 @@
 # GOAL-DATA-RESET-01 Validation Report
 
 status: `PHASE_1_COMPLETE_SECOND_STAGE_NOT_APPROVED`
-updated_at: `2026-07-02T08:42:20Z`
+updated_at: `2026-07-02T08:49:38Z`
 
 ## Phase Boundary
 
@@ -9,16 +9,16 @@ This checkpoint generated the cleanup plan and policy updates only. It did not d
 
 ## Disposition Counts
 
-- discard_from_target: `21`
+- discard_from_target: `22`
 - fixture_only: `7`
 - cold_archive_only: `8`
-- retain_as_current_asset: `8`
+- retain_as_current_asset: `11`
 
 ## Vault Classification
 
-- retain_as_current_asset: `vault/??????.md`, `vault/???????.md`, `vault/??`, `vault/??`, `vault/??`.
-- discard_from_target: `vault/????`, `vault/????` and old model-derived vault projections.
-- cold_archive_only: old `vault/??` and `vault/???` unless later manually re-approved as current assets with clean provenance.
+- retain_as_current_asset: `vault/真人写作基石.md`, `vault/评论真人味基石.md`, `vault/模板`, `vault/人设`, `vault/词表`.
+- discard_from_target: `vault/爆款拆解`, `vault/语感燃料` and old model-derived vault projections.
+- cold_archive_only: old `vault/范例` and `vault/方法论` unless later manually re-approved as current assets with clean provenance.
 - fixture_only: none by default; vault text should not seed production fixtures.
 
 ## Planned Cleanup Scope
@@ -42,7 +42,7 @@ Reason: production/local runtime config and legacy scripts still have direct fal
 ## Validation Performed
 
 - Parsed and validated `LEGACY_DATA_INVENTORY.yaml` disposition enum coverage.
-- Parsed and validated `FIXTURE_RETENTION_MANIFEST.yaml` coverage for 19/20 baseline, discovery/publish gap, duplicate ID, comments, ASR, performance bands, ???, ????, third domain, model failure/retry and idempotency.
+- Parsed and validated `FIXTURE_RETENTION_MANIFEST.yaml` coverage for 19/20 baseline, discovery/publish gap, duplicate ID, comments, ASR, performance bands, 泛科普, 音乐娱乐, third domain, model failure/retry and idempotency.
 - Parsed and validated `CLEAN_ROOM_ACCEPTANCE.yaml` hard gates.
 - Confirmed data-reset rules were added to `BUSINESS_RULE_CATALOG.yaml` and traceability/policy files were synchronized.
 - `git diff --check` passed, with only line-ending warnings.

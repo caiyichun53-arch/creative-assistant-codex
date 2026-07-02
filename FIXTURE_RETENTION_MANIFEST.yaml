@@ -53,11 +53,11 @@ fixtures:
   source: synthetic
   records: three account-relative videos around median/P90/threshold
 - fixture_id: FX-DOMAIN-FANKEPU
-  coverage: ??? domain
+  coverage: 泛科普 domain
   source: synthetic config fixture
   records: minimal domain/account/source tuple
 - fixture_id: FX-DOMAIN-MUSIC
-  coverage: ???? domain
+  coverage: 音乐娱乐 domain
   source: synthetic config fixture
   records: minimal domain/account/source tuple, no old music comments imported
 - fixture_id: FX-DOMAIN-THIRD-NEUTRAL

@@ -1,7 +1,7 @@
 schema_version: 1
 goal: GOAL-DATA-RESET-01
 phase: phase_1_plan_only_no_deletion
-generated_at: '2026-07-02T08:40:47Z'
+generated_at: '2026-07-02T08:49:38Z'
 allowed_dispositions:
 - discard_from_target
 - fixture_only
@@ -374,9 +374,32 @@ items:
     sha256: 71023bb01d185ba520d21056c35b9882baa0f06e49ee8f649cc814e8b5549512
   contains_sensitive_information: true
   current_code_references:
+  - config/live_gates.example.yaml
+  - config/live_gates.yaml
   - config/settings.example.yaml
   - config/settings.yaml
+  - scripts/analyze/cluster_hits.py
+  - scripts/collect/common.py
+  - scripts/db/init_db.py
+  - scripts/db/migrate_001_videos.py
+  - scripts/db/migrate_002_checks.py
+  - scripts/db/migrate_003_clusters.py
+  - scripts/db/migrate_004_music_sources.py
+  - scripts/db/migrate_005_language_fuel.py
+  - scripts/db/migrate_006_language_fuel_douban.py
+  - scripts/db/migrate_007_language_fuel_insights.py
+  - scripts/db/migrate_008_comments_and_atoms.py
+  - scripts/db/migrate_009_language_texture_observations.py
+  - scripts/db/migrate_010_topic_derive_source.py
+  - scripts/db/seed_mvp.py
+  - scripts/language_fuel/backfill_comments.py
+  - scripts/language_fuel/collect_mediacrawler.py
+  - scripts/language_fuel/douban/common.py
+  - scripts/language_fuel/store_atoms.py
+  - scripts/music/collect_netease.py
   - scripts/project_check.py
+  - scripts/run_daily.py
+  - scripts/setup/create_domain_account.py
   - scripts/validation/live_gates.py
   disposition: discard_from_target
   disposition_reason: Legacy SQLite business database; cold backup only before purge,
@@ -391,60 +414,31 @@ items:
     sha256: 7bbddc7e169e490e8967a19f68b0b977d54b2a0cca85b55880f285e99bba450c
   contains_sensitive_information: true
   current_code_references:
+  - scripts/feishu/listener.py
+  - scripts/research/research.py
+  - scripts/reverse/collect_openings.py
   - scripts/reverse/dna.py
+  - scripts/reverse/reduce.py
+  - scripts/topics/prepare_topic.py
   disposition: fixture_only
   disposition_reason: Old ASR transcript outputs; use synthetic or minimal redacted
     parser fixture only.
-- path_or_table: data/????
+- path_or_table: data/爆款拆解
   data_type: file_or_directory
   quantity:
-    exists: false
-    files: 0
-    bytes: 0
+    exists: true
+    files: 77
+    bytes: 424703
   hash:
-    sha256: missing
+    sha256: c1dfe495d8b3ded1c55cd4443cb484164eea4be588eb84546842808162b412fd
   contains_sensitive_information: true
   current_code_references:
-  - config/accounts/example.yaml
-  - config/live_gates.example.yaml
-  - config/live_gates.yaml
-  - config/settings.example.yaml
-  - config/settings.yaml
-  - scripts/analyze/cluster_hits.py
-  - scripts/collect/common.py
-  - scripts/collect/crawl_competitors.py
-  - scripts/content/build_writer_dispatch.py
-  - scripts/content/check_banned.py
-  - scripts/content/diff_draft.py
-  - scripts/content/save_draft.py
-  - scripts/core/correction/goal10_corrections.py
-  - scripts/core/experience/goal09_experiments.py
-  - scripts/core/hermes/goal11_host_binding.py
-  - scripts/core/model_gateway/goal07_model_gateway.py
-  - scripts/core/model_gateway/goal07_skill_runner.py
-  - scripts/core/model_gateway/hermes_model_provider.py
-  - scripts/core/model_gateway/verify_goal_07.py
-  - scripts/core/production/goal08_production_chain.py
-  - scripts/core/production/verify_goal_08.py
-  - scripts/core/research/goal06_formal_research.py
-  - scripts/core/runtime/goal04_runtime_host.py
-  - scripts/core/scheduler/goal03_scheduler.py
-  - scripts/core/staging/verify_goal_12.py
-  - scripts/core/state/goal02_core.py
-  - scripts/core/workflow/goal05_workflow.py
-  - scripts/db/init_db.py
-  - scripts/db/migrate_001_videos.py
-  - scripts/db/migrate_002_checks.py
-  - scripts/db/migrate_003_clusters.py
-  - scripts/db/migrate_004_music_sources.py
-  - scripts/db/migrate_005_language_fuel.py
-  - scripts/db/migrate_006_language_fuel_douban.py
-  - scripts/db/migrate_007_language_fuel_insights.py
-  - scripts/db/migrate_008_comments_and_atoms.py
-  - scripts/db/migrate_009_language_texture_observations.py
-  - scripts/db/migrate_010_topic_derive_source.py
-  - scripts/db/seed_mvp.py
-  - scripts/feishu/client.py
+  - scripts/feishu/listener.py
+  - scripts/reverse/backfill_links.py
+  - scripts/reverse/dna.py
+  - scripts/reverse/reduce.py
+  - scripts/topics/prepare_topic.py
+  - scripts/topics/spinoff.py
   disposition: discard_from_target
   disposition_reason: 81 old DNA/model outputs and old derived analysis; not inherited.
 - path_or_table: data/reverse
@@ -505,10 +499,26 @@ items:
   current_code_references:
   - config/settings.example.yaml
   - config/settings.yaml
+  - scripts/db/migrate_005_language_fuel.py
+  - scripts/db/migrate_006_language_fuel_douban.py
+  - scripts/db/migrate_007_language_fuel_insights.py
+  - scripts/db/migrate_008_comments_and_atoms.py
+  - scripts/language_fuel/backfill_comments.py
+  - scripts/language_fuel/collect_douban.py
+  - scripts/language_fuel/collect_mediacrawler.py
   - scripts/language_fuel/douban/README.md
+  - scripts/language_fuel/douban/collect.py
   - scripts/language_fuel/douban/collect_comments.py
   - scripts/language_fuel/douban/collect_group_topics.py
   - scripts/language_fuel/douban/collect_reviews.py
+  - scripts/language_fuel/douban/common.py
+  - scripts/language_fuel/extract_hit_comments.py
+  - scripts/language_fuel/extract_texture_base.py
+  - scripts/language_fuel/obsidian.py
+  - scripts/language_fuel/probe_platforms.py
+  - scripts/language_fuel/select_for_topic.py
+  - scripts/language_fuel/store_atoms.py
+  - scripts/music/collect_netease.py
   disposition: discard_from_target
   disposition_reason: Old derived experience/model outputs; not inherited.
 - path_or_table: data/humanize
@@ -608,134 +618,181 @@ items:
   - scripts/setup/create_domain_account.py
   disposition: cold_archive_only
   disposition_reason: Test/output artifacts; not production input.
-- path_or_table: vault/??????.md
+- path_or_table: vault/真人写作基石.md
   data_type: file_or_directory
   quantity:
-    exists: false
-    files: 0
-    bytes: 0
+    exists: true
+    files: 1
+    bytes: 11616
   hash:
-    sha256: missing
+    sha256: 5204d132908141ed10bc3820a3e2033381b422e390bf92ae13a37d01ce607968
   contains_sensitive_information: false
-  current_code_references: []
+  current_code_references:
+  - config/settings.yaml
+  - scripts/content/build_writer_dispatch.py
+  - scripts/humanize/comment_voice.py
+  - scripts/humanize/extract.py
+  - scripts/project_check.py
+  - scripts/reverse/build_card_digest.py
+  - scripts/reverse/reduce.py
   disposition: retain_as_current_asset
   disposition_reason: Current effective writing foundation explicitly protected.
-- path_or_table: vault/???????.md
+- path_or_table: vault/评论真人味基石.md
   data_type: file_or_directory
   quantity:
-    exists: false
-    files: 0
-    bytes: 0
+    exists: true
+    files: 1
+    bytes: 4748
   hash:
-    sha256: missing
+    sha256: 1c21f2f6046c55017102beae35d68193a8eb96366199c859544ca432a95fb498
+  contains_sensitive_information: false
+  current_code_references:
+  - scripts/humanize/comment_voice.py
+  - scripts/reverse/build_card_digest.py
+  disposition: retain_as_current_asset
+  disposition_reason: Current effective comment voice foundation explicitly protected.
+- path_or_table: vault/模板
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 3
+    bytes: 2468
+  hash:
+    sha256: 7682cc0aedb0bd9c781951c31d27cb39ee33f46808bbebe74e0f4eb7ad9235ab
   contains_sensitive_information: false
   current_code_references: []
   disposition: retain_as_current_asset
-  disposition_reason: Current effective comment voice foundation explicitly protected.
-- path_or_table: vault/??
+  disposition_reason: Current templates/design assets, not legacy business data.
+- path_or_table: vault/人设
   data_type: file_or_directory
   quantity:
-    exists: false
-    files: 0
-    bytes: 0
+    exists: true
+    files: 1
+    bytes: 1090
   hash:
-    sha256: missing
-  contains_sensitive_information: true
+    sha256: 4c394e806b4ca2520b7d5c31e08bb5649a33b0f7b11e2b628ba01453be6ccc5b
+  contains_sensitive_information: false
   current_code_references:
   - config/accounts/example.yaml
   - config/accounts/张芝士.yaml
+  - scripts/content/build_writer_dispatch.py
+  - scripts/core/hermes/goal11_host_binding.py
+  - scripts/db/seed_mvp.py
+  - scripts/setup/create_domain_account.py
+  - scripts/topics/prepare_topic.py
+  disposition: retain_as_current_asset
+  disposition_reason: Current persona assets/config references; protect from broad
+    deletion.
+- path_or_table: vault/词表
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 3
+    bytes: 4276
+  hash:
+    sha256: f77440697cdd162ce3c48eb0affc4d18743606f73e7fb9bc6fbcbe3f4ac21065
+  contains_sensitive_information: false
+  current_code_references:
   - config/banned_words.yaml
+  - scripts/reverse/reduce.py
+  - scripts/topics/daily_topics.py
+  disposition: retain_as_current_asset
+  disposition_reason: Current taxonomies/word lists; protect.
+- path_or_table: vault/范例
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 32
+    bytes: 136782
+  hash:
+    sha256: 3c59b80e4eb49f267d8eee4e173fcb0c9fa84b23bacae2df49302b8f44cb76e4
+  contains_sensitive_information: true
+  current_code_references:
+  - config/accounts/张芝士.yaml
   - config/domains/泛科普.yaml
-  - config/settings.example.yaml
   - config/settings.yaml
   - scripts/content/build_writer_dispatch.py
-  - scripts/db/seed_mvp.py
+  - scripts/content/diff_draft.py
   - scripts/humanize/comment_voice.py
   - scripts/humanize/extract.py
-  - scripts/language_fuel/collect_mediacrawler.py
   - scripts/language_fuel/douban/README.md
   - scripts/language_fuel/douban/common.py
   - scripts/language_fuel/extract_hit_comments.py
   - scripts/language_fuel/obsidian.py
-  - scripts/music/collect_netease.py
-  - scripts/project_check.py
   - scripts/reverse/backfill_links.py
   - scripts/reverse/build_card_digest.py
   - scripts/reverse/collect_openings.py
+  - scripts/reverse/dna.py
   - scripts/reverse/reduce.py
   - scripts/reverse/upgrade_examples.py
   - scripts/setup/create_domain_account.py
   disposition: cold_archive_only
   disposition_reason: Contains old derived examples/model outputs unless separately
     re-approved as current asset.
-- path_or_table: vault/???
+- path_or_table: vault/方法论
   data_type: file_or_directory
   quantity:
-    exists: false
-    files: 0
-    bytes: 0
+    exists: true
+    files: 6
+    bytes: 20790
   hash:
-    sha256: missing
+    sha256: 304cbe5ec061f70a217b50ba10ef8607de2119b2f24f57484d9b4ffe8cdbeae5
   contains_sensitive_information: true
   current_code_references:
-  - config/accounts/example.yaml
-  - config/accounts/张芝士.yaml
-  - config/banned_words.yaml
-  - config/domains/泛科普.yaml
-  - config/settings.example.yaml
   - config/settings.yaml
   - scripts/content/build_writer_dispatch.py
-  - scripts/db/seed_mvp.py
-  - scripts/humanize/comment_voice.py
-  - scripts/humanize/extract.py
-  - scripts/language_fuel/collect_mediacrawler.py
-  - scripts/language_fuel/douban/README.md
-  - scripts/language_fuel/douban/common.py
   - scripts/language_fuel/extract_hit_comments.py
-  - scripts/language_fuel/obsidian.py
-  - scripts/music/collect_netease.py
+  - scripts/language_fuel/extract_texture_base.py
   - scripts/project_check.py
   - scripts/reverse/backfill_links.py
   - scripts/reverse/build_card_digest.py
-  - scripts/reverse/collect_openings.py
   - scripts/reverse/reduce.py
-  - scripts/reverse/upgrade_examples.py
-  - scripts/setup/create_domain_account.py
   disposition: cold_archive_only
   disposition_reason: Contains old reduce/method outputs unless separately re-approved.
-- path_or_table: vault/????
+- path_or_table: vault/语感燃料
   data_type: file_or_directory
   quantity:
-    exists: false
-    files: 0
-    bytes: 0
+    exists: true
+    files: 5
+    bytes: 39325
   hash:
-    sha256: missing
+    sha256: 7be5aaf2dad90d958e530ccf6805565c3e20d9a6cc909c9f405ab26980daa691
   contains_sensitive_information: true
   current_code_references:
-  - config/accounts/example.yaml
-  - config/accounts/张芝士.yaml
-  - config/banned_words.yaml
-  - config/domains/泛科普.yaml
   - config/settings.example.yaml
   - config/settings.yaml
-  - scripts/content/build_writer_dispatch.py
-  - scripts/db/seed_mvp.py
+  - scripts/db/migrate_005_language_fuel.py
   - scripts/humanize/comment_voice.py
-  - scripts/humanize/extract.py
   - scripts/language_fuel/collect_mediacrawler.py
   - scripts/language_fuel/douban/README.md
+  - scripts/language_fuel/douban/__init__.py
+  - scripts/language_fuel/douban/collect.py
+  - scripts/language_fuel/douban/collect_group_topics.py
   - scripts/language_fuel/douban/common.py
   - scripts/language_fuel/extract_hit_comments.py
   - scripts/language_fuel/obsidian.py
+  - scripts/language_fuel/probe_platforms.py
   - scripts/music/collect_netease.py
-  - scripts/project_check.py
-  - scripts/reverse/backfill_links.py
-  - scripts/reverse/build_card_digest.py
-  - scripts/reverse/collect_openings.py
   - scripts/reverse/reduce.py
-  - scripts/reverse/upgrade_examples.py
   - scripts/setup/create_domain_account.py
+  disposition: discard_from_target
+  disposition_reason: Old extracted fuel; not production retrieval/model context.
+- path_or_table: vault/爆款拆解
+  data_type: file_or_directory
+  quantity:
+    exists: true
+    files: 78
+    bytes: 436572
+  hash:
+    sha256: 1658792548361cbb7386eb01b12714f7bf7fe4e0f4a2d4ce9e4d5456b9c6848a
+  contains_sensitive_information: true
+  current_code_references:
+  - scripts/feishu/listener.py
+  - scripts/reverse/backfill_links.py
+  - scripts/reverse/dna.py
+  - scripts/reverse/reduce.py
+  - scripts/topics/prepare_topic.py
+  - scripts/topics/spinoff.py
   disposition: discard_from_target
   disposition_reason: Junction/old DNA projection; not inherited.
 - path_or_table: config/domains

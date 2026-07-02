@@ -1,7 +1,7 @@
 # Data Purge Plan - GOAL-DATA-RESET-01
 
 status: `PHASE_1_PLAN_ONLY_NO_DELETION`
-updated_at: `2026-07-02T08:40:47Z`
+updated_at: `2026-07-02T08:49:38Z`
 
 ## Binding Data Principle
 
@@ -12,9 +12,9 @@ The V0.6.2 formal system starts from an empty formal database. It does not migra
 Planned for phase 2 only, after manifest review and explicit approval:
 
 - `data/creation.db` and SQLite sidecars if present.
-- Legacy business output directories: `data/transcripts`, `data/????`, `data/reverse`, `data/topics`, `data/drafts`, `data/language_fuel`, `data/music` business payloads, `data/raw` crawler outputs, `data/llm_state.json`.
+- Legacy business output directories: `data/transcripts`, `data/爆款拆解`, `data/reverse`, `data/topics`, `data/drafts`, `data/language_fuel`, `data/music` business payloads, `data/raw` crawler outputs, `data/llm_state.json`.
 - Runtime history not needed for production start: `logs/*.log`, `outputs/*`.
-- Old vault derived/business outputs: `vault/????`, `vault/????`, and unapproved old `vault/??` / `vault/???` derived from old DNA or old model outputs.
+- Old vault derived/business outputs: `vault/爆款拆解`, `vault/语感燃料`, and unapproved old `vault/范例` / `vault/方法论` derived from old DNA or old model outputs.
 
 No physical deletion is performed in phase 1.
 
@@ -26,13 +26,13 @@ Do not delete by broad directory operations:
 - `scripts/core/**`, schema/source code, validation harnesses and tests.
 - Formal/current Skills and operator Skill definitions until individually classified.
 - `config/domains/**`, `config/accounts/**`, examples and non-secret config templates.
-- Current effective writing foundations: `vault/??????.md`, `vault/???????.md`.
-- Current templates/persona/taxonomy assets: `vault/??`, `vault/??`, `vault/??`, root templates if present.
+- Current effective writing foundations: `vault/真人写作基石.md`, `vault/评论真人味基石.md`.
+- Current templates/persona/taxonomy assets: `vault/模板`, `vault/人设`, `vault/词表`, root templates if present.
 
 ## Vault Classification
 
 - retain_as_current_asset: writing foundations, templates, persona, taxonomy and explicitly current design assets.
-- discard_from_target: old DNA projections, old????, old derived model outputs.
+- discard_from_target: old DNA projections, old language fuel, old derived model outputs.
 - cold_archive_only: old examples/methodology unless manually re-approved as current asset after provenance review.
 - fixture_only: none by default; vault text should not seed production fixtures unless a parser/layout test cannot be synthetic.
 
