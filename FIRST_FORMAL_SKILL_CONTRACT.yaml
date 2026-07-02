@@ -1,0 +1,150 @@
+schema_version: first_formal_skill_contract.v1
+goal: GOAL-RUNTIME-BUSINESS-SKILL-ADAPTER-01
+formal_skill_id: content_classify
+version: 0.1.0
+source_document: GOAL-RUNTIME-BUSINESS-SKILL-ADAPTER-01 objective
+responsibility: Classify one synthetic content candidate into a bounded judgement label without touching real workflows or old data.
+dependency_position:
+  selected_first: true
+  reason: content_classify is a dependency-light judgement Skill and is explicitly preferred by the goal when formal docs do not disagree.
+standalone_boundaries:
+  reads_real_business_data: false
+  writes_files: false
+  advances_status: false
+  calls_other_skills: false
+  calls_provider_directly: false
+  uses_model_gateway_only: true
+  synthetic_fixtures_only: true
+input_schema:
+  type: object
+  required:
+    - request_id
+    - correlation_id
+    - candidate_id
+    - candidate_text
+    - source_refs
+  properties:
+    request_id:
+      type: string
+      minLength: 1
+      maxLength: 80
+    correlation_id:
+      type: string
+      minLength: 1
+      maxLength: 80
+    candidate_id:
+      type: string
+      minLength: 1
+      maxLength: 80
+    candidate_text:
+      type: string
+      minLength: 1
+      maxLength: 400
+    source_refs:
+      type: array
+      minItems: 1
+      maxItems: 5
+      items:
+        type: string
+  additional_properties: false
+output_schema:
+  type: object
+  required:
+    - classification
+    - rationale
+    - evidence_used
+    - schema_version
+  properties:
+    classification:
+      type: string
+      enum:
+        - keep
+        - reject
+        - needs_review
+    rationale:
+      type: string
+      minLength: 1
+      maxLength: 500
+    evidence_used:
+      type: array
+      minItems: 1
+      maxItems: 5
+      items:
+        type: string
+    schema_version:
+      type: string
+      const: content_classify.output.v1
+  additional_properties: false
+allowed_model_nodes:
+  - business.topic_judgement
+whether_model_is_required: true
+target_runner: FormalBusinessSkillAdapter
+materializer_contract: formal_business_skill_result.v1
+model_binding:
+  route_name: business.topic_judgement
+  binding_name: content_classify_to_topic_judgement
+  binding_version: 0.1.0
+  input_map:
+    fixture_id:
+      source: input
+      key: request_id
+    candidate_topic:
+      source: input
+      key: candidate_text
+    evidence_refs:
+      source: input
+      key: source_refs
+  model_input_schema:
+    type: object
+    required:
+      - fixture_id
+      - candidate_topic
+      - evidence_refs
+    properties:
+      fixture_id: string
+      candidate_topic: string
+      evidence_refs: array
+    additional_properties: false
+  prompt_template: >-
+    Return only a JSON object with exactly these keys: decision, rationale, schema_version.
+    Use decision as one of keep, reject, needs_review. Use schema_version content_classify.model_output.v1.
+    fixture_id={fixture_id}; candidate_topic={candidate_topic}; evidence_refs={evidence_refs}
+  model_output_schema:
+    type: object
+    required:
+      - decision
+      - rationale
+      - schema_version
+    properties:
+      decision:
+        type: string
+        enum:
+          - keep
+          - reject
+          - needs_review
+      rationale:
+        type: string
+        minLength: 1
+        maxLength: 500
+      schema_version:
+        type: string
+        const: content_classify.model_output.v1
+    additional_properties: false
+  output_map:
+    classification:
+      source: model_output
+      key: decision
+    rationale:
+      source: model_output
+      key: rationale
+    evidence_used:
+      source: input
+      key: source_refs
+    schema_version:
+      source: literal
+      value: content_classify.output.v1
+fixtures:
+  success_case: synthetic_content_classify_keep
+  failure_case: synthetic_content_classify_invalid_model_output
+  retry_case: synthetic_content_classify_fail_once_then_keep
+status: frozen_first_slice
