@@ -16,10 +16,12 @@ storage:
     - scripts/core/persistence/goal01_schema.sqlite.sql
     - scripts/core/persistence/goal02_schema.sqlite.sql
     - scripts/core/persistence/goal03_schema.sqlite.sql
+    - scripts/core/runtime/goal_runtime_vertical_slice_schema.sqlite.sql
   postgres_schema_chain:
     - scripts/core/persistence/goal01_schema.postgres.sql
     - scripts/core/persistence/goal02_schema.postgres.sql
     - scripts/core/persistence/goal03_schema.postgres.sql
+    - scripts/core/runtime/goal_runtime_vertical_slice_schema.postgres.sql
 
 legacy_runtime:
   enabled: false

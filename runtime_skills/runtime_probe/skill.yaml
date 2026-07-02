@@ -1,0 +1,35 @@
+schema_version: runtime_probe.skill.v1
+skill_name: runtime_probe
+skill_version: 0.1.0
+route_name: runtime_probe.test
+description: Synthetic runtime-only probe for GOAL-RUNTIME-VERTICAL-SLICE-01.
+input_schema:
+  required:
+  - request_id
+  - correlation_id
+  - text
+  - requested_operation
+  - metadata
+  properties:
+    request_id: string
+    correlation_id: string
+    text: string
+    requested_operation: string
+    metadata: object
+  additional_properties: false
+output_schema:
+  required:
+  - normalized_text
+  - operation
+  - result_code
+  - deterministic_summary
+  - trace
+  - schema_version
+  properties:
+    normalized_text: string
+    operation: string
+    result_code: string
+    deterministic_summary: string
+    trace: object
+    schema_version: string
+  additional_properties: false
