@@ -196,6 +196,7 @@ Completed checkpoints:
   - Live Provider matrix used a minimal representative Mimo matrix for `content_classify` and `content_relation_judge`.
   - Actual Provider/model/endpoint remained redacted from tracked reports.
   - One same-Provider diagnostic rerun was used after a transient relation live output failure; no fallback, GPT, DeepSeek, dry-run or fake success was used.
+  - Phase 3 validation checkpoint committed at `3b435c6`.
 
 Current HEAD:
 
@@ -349,3 +350,4 @@ Internal Phase commits:
 - Phase 2 script_review progress record: 50ee2e7 docs(skill): record script_review checkpoint
 - Phase 2 remaining Skills: efd9136 feat(skill): complete remaining phase 2 skills
 - Phase 2 remaining Skills progress record: 0d7d015 docs(skill): record remaining phase 2 checkpoint
+- Phase 3 centralized validation: 3b435c6 test(runtime): record phase 3 centralized validation
