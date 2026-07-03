@@ -186,10 +186,11 @@ Completed checkpoints:
   - Deterministic test model port, harness, sample input and semantic checks in `scripts/core/model_gateway/formal_skill_adapter.py`
   - `tests/core/test_experience_revision_propose_skill.py`
 - Phase 2 now has 12 formal Skills implemented; real Provider validation remains deferred to Phase 3 centralized Mimo matrix.
+- Committed remaining Phase 2 Skills checkpoint at `efd9136`.
 
 Current HEAD:
 
-- See `git rev-parse --short HEAD` after checkout. Phase 1 implementation checkpoint is `b9d0cb6`.
+- See `git rev-parse --short HEAD` after checkout. Remaining Phase 2 Skills implementation checkpoint is `efd9136`.
 
 Test results:
 
@@ -290,7 +291,6 @@ Test results:
 
 Remaining work:
 
-- Commit the remaining Phase 2 Skill checkpoint.
 - Continue to Phase 3 centralized Skill validation after Phase 2 closeout commit.
 
 Blocking issues:
@@ -326,3 +326,4 @@ Internal Phase commits:
 - Phase 2 script_generate progress record: 9c24bf3 docs(skill): record script_generate checkpoint
 - Phase 2 script_review: a9e4a73 feat(skill): implement script_review
 - Phase 2 script_review progress record: 50ee2e7 docs(skill): record script_review checkpoint
+- Phase 2 remaining Skills: efd9136 feat(skill): complete remaining phase 2 skills
