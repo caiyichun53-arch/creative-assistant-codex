@@ -5,6 +5,7 @@ import unittest
 from scripts.core.model_gateway.formal_skill_adapter import FORMAL_SKILL_JOB_KIND, sample_content_plan_input
 from scripts.core.workflow.goal_phase5_business_workflow import (
     BusinessWorkflowError,
+    BusinessWorkflowMaterializer,
     ExperienceSelector,
     ExperienceUsageValidator,
     ExperienceVersion,
@@ -12,7 +13,7 @@ from scripts.core.workflow.goal_phase5_business_workflow import (
     InputAssembly,
     build_formal_business_workflow_steps,
 )
-from scripts.core.persistence.goal01_store import UUIDv7Generator
+from scripts.core.persistence.goal01_store import PersistenceStore, UUIDv7Generator
 from scripts.core.scheduler.goal03_scheduler import Goal03Scheduler
 from scripts.core.workflow.goal05_workflow import Goal05WorkflowOrchestrator
 
@@ -35,6 +36,26 @@ def published_experience(**overrides) -> ExperienceVersion:
     }
     base.update(overrides)
     return ExperienceVersion(**base)
+
+
+def frozen_content_plan_input():
+    return InputAssembly().freeze_skill_input(
+        workflow_id="workflow-1",
+        step_key="content_plan",
+        formal_skill_id="content_plan",
+        input_payload=sample_content_plan_input(request_id="phase5-materialized"),
+        upstream_refs=[
+            {
+                "formal_skill_id": "production_research_plan",
+                "result_version_id": "version-plan-1",
+                "output_hash": "sha256:plan",
+            }
+        ],
+        domain="fan_kepu_social_life",
+        content_form="short_video_script",
+        conditions=("ordinary_life_problem",),
+        experience_candidates=[published_experience()],
+    )
 
 
 class Phase5BusinessWorkflowTests(unittest.TestCase):
@@ -246,6 +267,97 @@ class Phase5BusinessWorkflowTests(unittest.TestCase):
         row = scheduler.conn.execute("SELECT job_kind, payload_json FROM scheduler_job").fetchone()
         self.assertEqual(row["job_kind"], FORMAL_SKILL_JOB_KIND)
         self.assertIn(frozen.assembly_hash, row["payload_json"])
+
+    def test_materializer_persists_input_assembly_with_refs_audit_outbox_and_idempotency(self) -> None:
+        store = PersistenceStore.in_memory()
+        self.addCleanup(store.conn.close)
+        materializer = BusinessWorkflowMaterializer(store)
+        frozen = frozen_content_plan_input()
+
+        first = materializer.record_input_assembly(
+            frozen,
+            actor="phase5-test",
+            idempotency_key="assembly-1",
+        )
+        replay = materializer.record_input_assembly(
+            frozen,
+            actor="phase5-test",
+            idempotency_key="assembly-1",
+        )
+
+        self.assertFalse(first.replayed)
+        self.assertTrue(replay.replayed)
+        self.assertEqual(first.version_id, replay.version_id)
+        roots = store.conn.execute(
+            "SELECT count(*) FROM trace_root WHERE object_kind='business_workflow_input_assembly'"
+        ).fetchone()[0]
+        refs = store.conn.execute("SELECT relation_role FROM object_reference").fetchall()
+        outbox = store.conn.execute(
+            "SELECT topic FROM outbox_message WHERE topic='phase5.input_assembly.recorded'"
+        ).fetchall()
+        self.assertEqual(roots, 1)
+        self.assertIn("assembled_from_upstream_skill_result", {row["relation_role"] for row in refs})
+        self.assertIn("freezes_experience_context", {row["relation_role"] for row in refs})
+        self.assertEqual(len(outbox), 1)
+
+    def test_materializer_persists_experience_usage_and_rejects_unfrozen_usage_without_write(self) -> None:
+        store = PersistenceStore.in_memory()
+        self.addCleanup(store.conn.close)
+        materializer = BusinessWorkflowMaterializer(store)
+        frozen = frozen_content_plan_input()
+        good = {
+            "experience_usage": [
+                {
+                    "experience_ref": "experience:scene_first_hook",
+                    "experience_version": "v1",
+                    "usage_status": "applied",
+                    "influence_scope": "opening",
+                    "usage_summary": "used the scene-first opening principle",
+                }
+            ]
+        }
+
+        result = materializer.record_experience_usage(
+            frozen=frozen,
+            output_payload=good,
+            result_version_id="result-version-1",
+            actor="phase5-test",
+            idempotency_key="usage-1",
+            require_usage=True,
+        )
+        replay = materializer.record_experience_usage(
+            frozen=frozen,
+            output_payload=good,
+            result_version_id="result-version-1",
+            actor="phase5-test",
+            idempotency_key="usage-1",
+            require_usage=True,
+        )
+
+        self.assertFalse(result.replayed)
+        self.assertTrue(replay.replayed)
+        self.assertEqual(result.version_id, replay.version_id)
+        self.assertEqual(
+            store.conn.execute(
+                "SELECT count(*) FROM trace_root WHERE object_kind='business_workflow_experience_usage'"
+            ).fetchone()[0],
+            1,
+        )
+        with self.assertRaises(BusinessWorkflowError):
+            materializer.record_experience_usage(
+                frozen=frozen,
+                output_payload={"experience_usage": [{"experience_ref": "experience:not-frozen", "usage_status": "applied"}]},
+                result_version_id="result-version-2",
+                actor="phase5-test",
+                idempotency_key="usage-bad",
+                require_usage=True,
+            )
+        self.assertEqual(
+            store.conn.execute(
+                "SELECT count(*) FROM trace_root WHERE object_kind='business_workflow_experience_usage'"
+            ).fetchone()[0],
+            1,
+        )
 
 
 if __name__ == "__main__":

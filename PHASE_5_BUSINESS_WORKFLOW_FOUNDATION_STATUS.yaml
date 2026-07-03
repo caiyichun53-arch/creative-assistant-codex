@@ -36,6 +36,13 @@ implemented:
     validates_refs_against_frozen_context: true
     requires_usage_when_context_injected_for_required_skills: true
     unsupported_usage_status_rejected: true
+  materializer:
+    input_assembly_trace_artifact: true
+    experience_usage_trace_artifact: true
+    audit_events: true
+    outbox_events: true
+    idempotency_receipts: true
+    unresolved_business_refs_stay_in_locator_until_trace_version_exists: true
   scheduler_workflow:
     uses_goal05_orchestrator: true
     uses_formal_skill_job_kind: formal_skill.execute
@@ -52,12 +59,15 @@ validation:
   tests:
     - command: python -m unittest tests.core.test_phase5_business_workflow
       result: PASS
-      tests: 7
+      tests: 9
     - command: python scripts\core\workflow\verify_goal_05.py
       result: PASS
     - command: python -m unittest tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters
       result: PASS
       tests: 63
+    - command: python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters
+      result: PASS
+      tests: 72
     - command: py_compile phase5 workflow files
       result: PASS
     - command: python scripts\validation\clean_room_empty_db.py --health
@@ -68,5 +78,4 @@ validation:
       result: PASS
 remaining_phase5_work:
   - Wire frozen input assembly into actual multi-step workers for the full formal business workflow.
-  - Persist workflow-level input assembly and experience usage records through formal Materializers.
   - Add end-to-end synthetic workflow coverage across all 12 Skills.

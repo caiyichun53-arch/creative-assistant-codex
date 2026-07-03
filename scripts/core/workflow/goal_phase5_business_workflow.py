@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable
+import json
+from typing import Any, Callable, Iterable
 
 from scripts.core.model_gateway.formal_skill_adapter import FORMAL_SKILL_JOB_KIND
-from scripts.core.persistence.goal01_store import content_hash
+from scripts.core.persistence.goal01_store import PersistenceStore, content_hash, uuid7
 from scripts.core.workflow.goal05_workflow import WorkflowStepSpec
 
 
@@ -147,6 +148,15 @@ class FrozenSkillInput:
                 "experience_context": self.experience_context.as_payload(),
             },
         }
+
+
+@dataclass(frozen=True)
+class WorkflowArtifactResult:
+    root_id: str
+    version_id: str
+    receipt_id: str
+    outbox_id: str
+    replayed: bool = False
 
 
 class ExperienceSelector:
@@ -310,6 +320,235 @@ class ExperienceUsageValidator:
                 raise BusinessWorkflowError("experience_usage references experience not frozen in input")
             if status not in ALLOWED_USAGE_STATUSES:
                 raise BusinessWorkflowError("experience_usage has unsupported usage_status")
+
+
+class BusinessWorkflowMaterializer:
+    def __init__(self, store: PersistenceStore, *, id_factory: Callable[[], str] = uuid7):
+        self.store = store
+        self.conn = store.conn
+        self.id_factory = id_factory
+        self.usage_validator = ExperienceUsageValidator()
+
+    def record_input_assembly(
+        self,
+        frozen: FrozenSkillInput,
+        *,
+        actor: str,
+        idempotency_key: str,
+    ) -> WorkflowArtifactResult:
+        existing = self._existing_result("phase5.input_assembly.record", idempotency_key)
+        if existing is not None:
+            return existing
+        payload = {
+            "schema_version": frozen.schema_version,
+            "workflow_id": frozen.workflow_id,
+            "step_key": frozen.step_key,
+            "formal_skill_id": frozen.formal_skill_id,
+            "input_hash": frozen.input_hash,
+            "assembly_hash": frozen.assembly_hash,
+            "upstream_refs": list(frozen.upstream_refs),
+            "experience_context": frozen.experience_context.as_payload(),
+        }
+        with self.conn:
+            root_id = self.store.create_root("business_workflow_input_assembly")
+            version_id = self.store.append_version(
+                root_id,
+                payload,
+                projection_version=frozen.schema_version,
+                business_payload={
+                    "workflow_id": frozen.workflow_id,
+                    "step_key": frozen.step_key,
+                    "formal_skill_id": frozen.formal_skill_id,
+                    "assembly_hash": frozen.assembly_hash,
+                },
+            )
+            self.store.set_current_version(root_id, version_id)
+            for ref in frozen.upstream_refs:
+                target_version = self._existing_trace_version(str(ref["result_version_id"]))
+                self.store.record_object_reference(
+                    source_version_id=version_id,
+                    relation_role="assembled_from_upstream_skill_result",
+                    target_object_kind="formal_business_skill_result",
+                    target_stable_id=str(ref["formal_skill_id"]),
+                    target_version_id=target_version,
+                    target_content_hash=str(ref["output_hash"]),
+                    locator={
+                        "formal_skill_id": ref["formal_skill_id"],
+                        "step_key": frozen.step_key,
+                        "result_version_id": ref["result_version_id"],
+                    },
+                )
+            for item in frozen.experience_context.items:
+                target_version = self._existing_trace_version(str(item["experience_version"]))
+                self.store.record_object_reference(
+                    source_version_id=version_id,
+                    relation_role="freezes_experience_context",
+                    target_object_kind="formal_experience",
+                    target_stable_id=str(item["experience_ref"]),
+                    target_version_id=target_version,
+                    target_content_hash=str(item["content_hash"]),
+                    locator={"selection_reason": item["selection_reason"], "experience_version": item["experience_version"]},
+                )
+            audit_id = self.store.record_audit(
+                event_type="phase5.input_assembly.recorded",
+                actor=actor,
+                object_kind="business_workflow_input_assembly",
+                object_id=root_id,
+                version_id=version_id,
+                payload={"workflow_id": frozen.workflow_id, "step_key": frozen.step_key},
+                correlation_id=frozen.workflow_id,
+            )
+            outbox_id = self.store.enqueue_outbox(
+                topic="phase5.input_assembly.recorded",
+                payload={
+                    "workflow_id": frozen.workflow_id,
+                    "step_key": frozen.step_key,
+                    "formal_skill_id": frozen.formal_skill_id,
+                    "version_id": version_id,
+                    "assembly_hash": frozen.assembly_hash,
+                },
+                correlation_id=frozen.workflow_id,
+                causation_id=audit_id,
+            )
+            result_payload = {
+                "root_id": root_id,
+                "version_id": version_id,
+                "outbox_id": outbox_id,
+            }
+            receipt_id = self.store.record_command(
+                command_scope="phase5.input_assembly.record",
+                idempotency_key=idempotency_key,
+                request_payload=payload,
+                result_payload=result_payload,
+                correlation_id=frozen.workflow_id,
+                causation_id=audit_id,
+            )
+        return WorkflowArtifactResult(root_id=root_id, version_id=version_id, receipt_id=receipt_id, outbox_id=outbox_id)
+
+    def record_experience_usage(
+        self,
+        *,
+        frozen: FrozenSkillInput,
+        output_payload: dict[str, Any],
+        result_version_id: str,
+        actor: str,
+        idempotency_key: str,
+        require_usage: bool,
+    ) -> WorkflowArtifactResult:
+        existing = self._existing_result("phase5.experience_usage.record", idempotency_key)
+        if existing is not None:
+            return existing
+        self.usage_validator.validate(
+            experience_context=frozen.experience_context,
+            output_payload=output_payload,
+            require_usage=require_usage,
+        )
+        usage = list(output_payload.get("experience_usage") or [])
+        payload = {
+            "schema_version": "business_workflow.experience_usage.v1",
+            "workflow_id": frozen.workflow_id,
+            "step_key": frozen.step_key,
+            "formal_skill_id": frozen.formal_skill_id,
+            "result_version_id": result_version_id,
+            "experience_context_hash": frozen.experience_context.context_hash,
+            "experience_usage": usage,
+        }
+        with self.conn:
+            root_id = self.store.create_root("business_workflow_experience_usage")
+            version_id = self.store.append_version(
+                root_id,
+                payload,
+                projection_version="business_workflow.experience_usage.v1",
+                business_payload={
+                    "workflow_id": frozen.workflow_id,
+                    "step_key": frozen.step_key,
+                    "formal_skill_id": frozen.formal_skill_id,
+                    "result_version_id": result_version_id,
+                },
+            )
+            self.store.set_current_version(root_id, version_id)
+            self.store.record_object_reference(
+                source_version_id=version_id,
+                relation_role="records_usage_for_skill_result",
+                target_object_kind="formal_business_skill_result",
+                target_stable_id=frozen.formal_skill_id,
+                target_version_id=self._existing_trace_version(result_version_id),
+                target_content_hash=None,
+                locator={"workflow_id": frozen.workflow_id, "step_key": frozen.step_key},
+            )
+            for item in usage:
+                target_version = self._existing_trace_version(str(item.get("experience_version") or ""))
+                self.store.record_object_reference(
+                    source_version_id=version_id,
+                    relation_role="uses_frozen_experience",
+                    target_object_kind="formal_experience",
+                    target_stable_id=str(item["experience_ref"]),
+                    target_version_id=target_version,
+                    target_content_hash=None,
+                    locator={"usage_status": item["usage_status"], "experience_version": item.get("experience_version")},
+                )
+            audit_id = self.store.record_audit(
+                event_type="phase5.experience_usage.recorded",
+                actor=actor,
+                object_kind="business_workflow_experience_usage",
+                object_id=root_id,
+                version_id=version_id,
+                payload={"workflow_id": frozen.workflow_id, "step_key": frozen.step_key, "usage_count": len(usage)},
+                correlation_id=frozen.workflow_id,
+                causation_id=result_version_id,
+            )
+            outbox_id = self.store.enqueue_outbox(
+                topic="phase5.experience_usage.recorded",
+                payload={
+                    "workflow_id": frozen.workflow_id,
+                    "step_key": frozen.step_key,
+                    "formal_skill_id": frozen.formal_skill_id,
+                    "version_id": version_id,
+                    "usage_count": len(usage),
+                },
+                correlation_id=frozen.workflow_id,
+                causation_id=audit_id,
+            )
+            result_payload = {
+                "root_id": root_id,
+                "version_id": version_id,
+                "outbox_id": outbox_id,
+            }
+            receipt_id = self.store.record_command(
+                command_scope="phase5.experience_usage.record",
+                idempotency_key=idempotency_key,
+                request_payload=payload,
+                result_payload=result_payload,
+                correlation_id=frozen.workflow_id,
+                causation_id=audit_id,
+            )
+        return WorkflowArtifactResult(root_id=root_id, version_id=version_id, receipt_id=receipt_id, outbox_id=outbox_id)
+
+    def _existing_result(self, command_scope: str, idempotency_key: str) -> WorkflowArtifactResult | None:
+        row = self.conn.execute(
+            """
+            SELECT receipt_id, result_json
+              FROM command_receipt
+             WHERE command_scope=? AND idempotency_key=?
+            """,
+            (command_scope, idempotency_key),
+        ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row["result_json"])
+        return WorkflowArtifactResult(
+            root_id=str(payload["root_id"]),
+            version_id=str(payload["version_id"]),
+            receipt_id=str(row["receipt_id"]),
+            outbox_id=str(payload["outbox_id"]),
+            replayed=True,
+        )
+
+    def _existing_trace_version(self, version_id: str) -> str | None:
+        if not version_id:
+            return None
+        row = self.conn.execute("SELECT version_id FROM trace_version WHERE version_id=?", (version_id,)).fetchone()
+        return str(row["version_id"]) if row is not None else None
 
 
 def build_formal_business_workflow_steps(
