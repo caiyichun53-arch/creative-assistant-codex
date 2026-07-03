@@ -19,7 +19,7 @@ from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelG
 from scripts.core.model_gateway.goal07_skill_runner import SkillContractError
 from scripts.core.persistence.goal01_store import PersistenceStore, content_hash, uuid7
 from scripts.core.scheduler.goal03_scheduler import Goal03Scheduler, NoClaimableJob
-from scripts.core.workflow.goal05_workflow import WorkflowStepSpec
+from scripts.core.workflow.goal05_workflow import Goal05WorkflowOrchestrator, WorkflowStepSpec
 
 
 class BusinessWorkflowError(RuntimeError):
@@ -219,6 +219,166 @@ class BusinessWorkflowStepResult:
     formal_skill_id: str | None = None
     result_version_id: str | None = None
     reason: str | None = None
+
+
+@dataclass(frozen=True)
+class FormalWorkflowStepDefinition:
+    step_key: str
+    formal_skill_id: str
+    depends_on: tuple[str, ...] = ()
+    required_artifacts: tuple[str, ...] = ()
+    optional_artifacts: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class FormalWorkflowDefinition:
+    workflow_id: str
+    workflow_version: str
+    entry_contract: str
+    step_graph: tuple[FormalWorkflowStepDefinition, ...]
+    required_artifacts: tuple[str, ...]
+    optional_artifacts: tuple[str, ...]
+    success_definition: str
+    failure_definition: str
+    cancellation_policy: str
+    retry_policy: str
+    materialization_contract: str
+    outbox_contract: str
+
+
+@dataclass(frozen=True)
+class BusinessWorkflowRunResult:
+    workflow_id: str
+    workflow_version: str
+    workflow_instance_id: str
+    completed_steps: tuple[BusinessWorkflowStepResult, ...]
+    upstream_refs: tuple[dict[str, Any], ...]
+
+
+FORMAL_WORKFLOW_DEFINITIONS: dict[str, FormalWorkflowDefinition] = {
+    "business.content_learning_analysis": FormalWorkflowDefinition(
+        workflow_id="business.content_learning_analysis",
+        workflow_version="1.0.0",
+        entry_contract="content_learning_analysis.entry.v1",
+        step_graph=(
+            FormalWorkflowStepDefinition("content_classify", "content_classify"),
+            FormalWorkflowStepDefinition("sample_deep_analyze", "sample_deep_analyze", depends_on=("content_classify",)),
+            FormalWorkflowStepDefinition("tactic_extract", "tactic_extract", depends_on=("sample_deep_analyze",)),
+        ),
+        required_artifacts=("public_content_sample", "sample_metrics"),
+        optional_artifacts=("prior_relation_summary",),
+        success_definition="classified sample, single-sample analysis and tactic candidates are materialized",
+        failure_definition="any required step failure stops downstream scheduling",
+        cancellation_policy="queued not-yet-started downstream steps may be cancelled by Core only",
+        retry_policy="retry same frozen input only; no provider, route, Skill, prompt or experience changes",
+        materialization_contract="formal_business_skill_result.v1 plus business_workflow_input_assembly",
+        outbox_contract="formal_business_skill.result.materialized and phase5 input/usage events",
+    ),
+    "business.source_to_topic": FormalWorkflowDefinition(
+        workflow_id="business.source_to_topic",
+        workflow_version="1.0.0",
+        entry_contract="source_to_topic.entry.v1",
+        step_graph=(
+            FormalWorkflowStepDefinition("content_relation_judge", "content_relation_judge"),
+            FormalWorkflowStepDefinition("source_to_topic", "source_to_topic", depends_on=("content_relation_judge",)),
+        ),
+        required_artifacts=("source_content", "relation_inputs"),
+        optional_artifacts=("prior_topic_context",),
+        success_definition="source relation judgement and candidate topic are materialized",
+        failure_definition="topic generation is not scheduled unless relation judgement succeeds",
+        cancellation_policy="Core may cancel queued downstream topic generation before lease",
+        retry_policy="retry same frozen input only",
+        materialization_contract="formal_business_skill_result.v1 plus business_workflow_input_assembly",
+        outbox_contract="formal_business_skill.result.materialized and phase5 input/usage events",
+    ),
+    "business.research": FormalWorkflowDefinition(
+        workflow_id="business.research",
+        workflow_version="1.0.0",
+        entry_contract="research.entry.v1",
+        step_graph=(
+            FormalWorkflowStepDefinition("research_evidence_extract", "research_evidence_extract"),
+            FormalWorkflowStepDefinition(
+                "production_research_plan",
+                "production_research_plan",
+                depends_on=("research_evidence_extract",),
+            ),
+        ),
+        required_artifacts=("research_packet", "research_question"),
+        optional_artifacts=("topic_constraints",),
+        success_definition="research evidence and production research plan are materialized",
+        failure_definition="research planning is not scheduled unless evidence extraction succeeds",
+        cancellation_policy="Core may cancel queued downstream planning before lease",
+        retry_policy="retry same frozen input only",
+        materialization_contract="formal_business_skill_result.v1 plus business_workflow_input_assembly",
+        outbox_contract="formal_business_skill.result.materialized and phase5 input/usage events",
+    ),
+    "business.creation": FormalWorkflowDefinition(
+        workflow_id="business.creation",
+        workflow_version="1.0.0",
+        entry_contract="creation.entry.v1",
+        step_graph=(
+            FormalWorkflowStepDefinition("content_plan", "content_plan"),
+            FormalWorkflowStepDefinition("script_generate", "script_generate", depends_on=("content_plan",)),
+        ),
+        required_artifacts=("brief", "research_summary", "style_examples"),
+        optional_artifacts=("human_reference_refs",),
+        success_definition="content plan and generated draft are materialized",
+        failure_definition="draft generation is not scheduled unless content planning succeeds",
+        cancellation_policy="Core may cancel queued downstream draft generation before lease",
+        retry_policy="retry same frozen input only",
+        materialization_contract="formal_business_skill_result.v1 plus business_workflow_input_assembly",
+        outbox_contract="formal_business_skill.result.materialized and phase5 input/usage events",
+    ),
+    "business.review": FormalWorkflowDefinition(
+        workflow_id="business.review",
+        workflow_version="1.0.0",
+        entry_contract="review.entry.v1",
+        step_graph=(FormalWorkflowStepDefinition("script_review", "script_review"),),
+        required_artifacts=("draft_text", "brief", "human_reference_refs"),
+        optional_artifacts=("review_preferences",),
+        success_definition="script review result is materialized",
+        failure_definition="review failure is terminal for this review workflow run",
+        cancellation_policy="Core may cancel queued review before lease",
+        retry_policy="retry same frozen input only",
+        materialization_contract="formal_business_skill_result.v1 plus business_workflow_input_assembly",
+        outbox_contract="formal_business_skill.result.materialized and phase5 input/usage events",
+    ),
+    "business.experiment_review": FormalWorkflowDefinition(
+        workflow_id="business.experiment_review",
+        workflow_version="1.0.0",
+        entry_contract="experiment_review.entry.v1",
+        step_graph=(FormalWorkflowStepDefinition("experiment_review", "experiment_review"),),
+        required_artifacts=("experiment_design", "execution_summary", "result_metrics"),
+        optional_artifacts=("tested_experience_refs",),
+        success_definition="experiment review result is materialized",
+        failure_definition="experiment review failure is terminal for this workflow run",
+        cancellation_policy="Core may cancel queued experiment review before lease",
+        retry_policy="retry same frozen input only",
+        materialization_contract="formal_business_skill_result.v1 plus business_workflow_input_assembly",
+        outbox_contract="formal_business_skill.result.materialized and phase5 input/usage events",
+    ),
+    "business.experience_revision_candidate": FormalWorkflowDefinition(
+        workflow_id="business.experience_revision_candidate",
+        workflow_version="1.0.0",
+        entry_contract="experience_revision_candidate.entry.v1",
+        step_graph=(
+            FormalWorkflowStepDefinition("experiment_review", "experiment_review"),
+            FormalWorkflowStepDefinition(
+                "experience_revision_propose",
+                "experience_revision_propose",
+                depends_on=("experiment_review",),
+            ),
+        ),
+        required_artifacts=("frozen_experience_versions", "new_evidence_refs", "experiment_packet"),
+        optional_artifacts=("tactic_candidates",),
+        success_definition="experiment review and candidate-only experience revision proposal are materialized",
+        failure_definition="revision proposal is not scheduled unless experiment review succeeds",
+        cancellation_policy="Core may cancel queued downstream revision proposal before lease",
+        retry_policy="retry same frozen input only",
+        materialization_contract="formal_business_skill_result.v1 plus business_workflow_input_assembly",
+        outbox_contract="formal_business_skill.result.materialized and phase5 input/usage events",
+    ),
+}
 
 
 class SkillExecutionPort(Protocol):
@@ -827,6 +987,127 @@ class BusinessWorkflowWorker:
                 attempt_id=claim.attempt_id,
                 reason=next_status,
             )
+
+
+class BusinessWorkflowChainRunner:
+    def __init__(
+        self,
+        *,
+        scheduler: Goal03Scheduler,
+        worker: BusinessWorkflowWorker,
+        input_assembly: InputAssembly | None = None,
+    ):
+        self.scheduler = scheduler
+        self.worker = worker
+        self.input_assembly = input_assembly or InputAssembly()
+        self.orchestrator = Goal05WorkflowOrchestrator(scheduler)
+
+    def run(
+        self,
+        *,
+        definition: FormalWorkflowDefinition,
+        workflow_instance_id: str,
+        input_payloads: dict[str, dict[str, Any]],
+        domain: str,
+        content_form: str,
+        conditions: Iterable[str],
+        experience_candidates: Iterable[ExperienceVersion],
+        idempotency_key: str,
+        token_budget: int = 1200,
+        max_attempts: int = 1,
+    ) -> BusinessWorkflowRunResult:
+        self._validate_definition(definition)
+        completed_refs: dict[str, dict[str, Any]] = {}
+        completed_steps: list[BusinessWorkflowStepResult] = []
+        all_upstream_refs: list[dict[str, Any]] = []
+        for step in definition.step_graph:
+            missing = [dependency for dependency in step.depends_on if dependency not in completed_refs]
+            if missing:
+                raise BusinessWorkflowError(f"workflow dependencies are not satisfied: {missing}")
+            if step.step_key not in input_payloads:
+                raise BusinessWorkflowError(f"missing input payload for workflow step: {step.step_key}")
+            upstream_refs = tuple(completed_refs[dependency] for dependency in step.depends_on)
+            all_upstream_refs.extend(upstream_refs)
+            frozen = self.input_assembly.freeze_skill_input(
+                workflow_id=workflow_instance_id,
+                step_key=step.step_key,
+                formal_skill_id=step.formal_skill_id,
+                input_payload=input_payloads[step.step_key],
+                upstream_refs=upstream_refs,
+                domain=domain,
+                content_form=content_form,
+                conditions=conditions,
+                experience_candidates=experience_candidates,
+                token_budget=token_budget,
+            )
+            workflow_steps = build_formal_business_workflow_steps(
+                workflow_id=workflow_instance_id,
+                frozen_inputs=[frozen],
+                max_attempts=max_attempts,
+            )
+            self.orchestrator.start_workflow(
+                workflow_name=definition.workflow_id,
+                steps=workflow_steps,
+                idempotency_key=f"{idempotency_key}:{step.step_key}",
+            )
+            result = self.worker.run_once()
+            completed_steps.append(result)
+            if result.status != "succeeded" or not result.result_version_id:
+                raise BusinessWorkflowError(f"workflow step failed closed: {step.step_key}:{result.reason or result.status}")
+            completed_refs[step.step_key] = self._result_ref(result.result_version_id)
+        return BusinessWorkflowRunResult(
+            workflow_id=definition.workflow_id,
+            workflow_version=definition.workflow_version,
+            workflow_instance_id=workflow_instance_id,
+            completed_steps=tuple(completed_steps),
+            upstream_refs=tuple(all_upstream_refs),
+        )
+
+    def _result_ref(self, result_version_id: str) -> dict[str, Any]:
+        row = self.scheduler.conn.execute(
+            """
+            SELECT formal_skill_id, result_version_id, output_hash
+              FROM formal_business_skill_result_index
+             WHERE result_version_id=?
+            """,
+            (result_version_id,),
+        ).fetchone()
+        if row is None:
+            raise BusinessWorkflowError(f"missing formal Skill result for downstream handoff: {result_version_id}")
+        return {
+            "formal_skill_id": str(row["formal_skill_id"]),
+            "result_version_id": str(row["result_version_id"]),
+            "output_hash": str(row["output_hash"]),
+        }
+
+    @staticmethod
+    def _validate_definition(definition: FormalWorkflowDefinition) -> None:
+        required = {
+            "workflow_id": definition.workflow_id,
+            "workflow_version": definition.workflow_version,
+            "entry_contract": definition.entry_contract,
+            "success_definition": definition.success_definition,
+            "failure_definition": definition.failure_definition,
+            "cancellation_policy": definition.cancellation_policy,
+            "retry_policy": definition.retry_policy,
+            "materialization_contract": definition.materialization_contract,
+            "outbox_contract": definition.outbox_contract,
+        }
+        missing = sorted(key for key, value in required.items() if not value)
+        if missing:
+            raise BusinessWorkflowError(f"workflow definition missing required fields: {missing}")
+        if not definition.step_graph:
+            raise BusinessWorkflowError("workflow definition must contain at least one step")
+        seen: set[str] = set()
+        for step in definition.step_graph:
+            if step.step_key in seen:
+                raise BusinessWorkflowError(f"duplicate workflow step_key: {step.step_key}")
+            seen.add(step.step_key)
+            if step.formal_skill_id not in FORMAL_BUSINESS_WORKFLOW_SKILLS:
+                raise BusinessWorkflowError(f"unknown workflow formal Skill: {step.formal_skill_id}")
+            unknown_dependencies = sorted(set(step.depends_on) - seen)
+            if unknown_dependencies:
+                raise BusinessWorkflowError(f"step depends on unknown or future steps: {unknown_dependencies}")
 
 
 def build_formal_business_workflow_steps(

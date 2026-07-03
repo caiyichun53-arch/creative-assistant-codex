@@ -1,8 +1,8 @@
 schema_version: phase5.business_workflow_foundation_status.v1
 goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
 phase: 5
-checkpoint: formal_skill_dispatcher
-status: COMPLETED_DISPATCHER_CHECKPOINT
+checkpoint: formal_workflow_definitions_and_step_handoff
+status: COMPLETED_WORKFLOW_DEFINITION_CHECKPOINT
 updated_at: '2026-07-03'
 implemented:
   workflow_skill_order:
@@ -61,6 +61,32 @@ implemented:
     old_script_execution_path: false
     hermes_direct_skill_invocation: false
     fallback_or_alternate_path: false
+  workflow_definitions:
+    definition_count: 7
+    versioned_entry_contracts: true
+    content_learning_analysis_chain: true
+    source_to_topic_chain: true
+    research_chain: true
+    creation_chain: true
+    review_chain: true
+    experiment_review_chain: true
+    experience_revision_candidate_chain: true
+    no_workflow_forces_all_12_skills: true
+    covers_all_12_skills_across_task_specific_chains: true
+    required_artifacts_declared: true
+    optional_artifacts_declared: true
+    success_definition_declared: true
+    failure_definition_declared: true
+    cancellation_policy_declared: true
+    retry_policy_declared: true
+    materialization_contract_declared: true
+    outbox_contract_declared: true
+  core_step_state:
+    downstream_scheduled_after_upstream_success: true
+    upstream_result_version_handoff: true
+    upstream_output_hash_handoff: true
+    downstream_input_assembly_records_upstream_ref: true
+    failed_upstream_stops_downstream_scheduling: true
   scheduler_workflow:
     uses_goal05_orchestrator: true
     uses_formal_skill_job_kind: formal_skill.execute
@@ -77,7 +103,7 @@ validation:
   tests:
     - command: python -m unittest tests.core.test_phase5_business_workflow
       result: PASS
-      tests: 14
+      tests: 16
     - command: python scripts\core\workflow\verify_goal_05.py
       result: PASS
     - command: python -m unittest tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters
@@ -85,13 +111,18 @@ validation:
       tests: 63
     - command: python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters
       result: PASS
-      tests: 77
+      tests: 79
     - command: formal dispatcher synthetic matrix
       result: PASS
       formal_skills_covered: 12
       real_provider_called: false
       gpt_called: false
       deepseek_called: false
+    - command: creation chain synthetic handoff
+      result: PASS
+      steps: 2
+      upstream_refs_recorded: true
+      downstream_input_assembly_contains_upstream_result: true
     - command: py_compile phase5 workflow files
       result: PASS
     - command: python scripts\validation\clean_room_empty_db.py --health
@@ -101,7 +132,6 @@ validation:
     - command: git diff --check
       result: PASS
 remaining_phase5_work:
-  - Establish formal workflow definitions and versioned entry contracts for the required task chains.
-  - Add Core-driven step state transitions and upstream/downstream artifact handoff between workflow steps.
-  - Extend synthetic workflow coverage from dispatcher matrix to task-specific end-to-end chains.
-  - Complete failure, retry, cancellation, recovery, idempotency, concurrency, replay and full-chain audit coverage for those chains.
+  - Extend task-specific synthetic end-to-end coverage beyond the creation handoff chain.
+  - Complete failure, retry, cancellation, recovery, idempotency, concurrency, replay and full-chain audit coverage for the formal chains.
+  - Record final Phase 5 completion only after those chain-level scenarios pass.

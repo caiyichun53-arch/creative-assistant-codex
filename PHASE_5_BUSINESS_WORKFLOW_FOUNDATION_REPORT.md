@@ -1,8 +1,8 @@
 # Phase 5 Business Workflow Foundation Report
 
-status: `COMPLETED_DISPATCHER_CHECKPOINT`
+status: `COMPLETED_WORKFLOW_DEFINITION_CHECKPOINT`
 
-This report now includes the formal Skill Dispatcher checkpoint for Phase 5. It does not claim the full Phase 5 workflow is complete.
+This report now includes the formal workflow definition and step handoff checkpoint for Phase 5. It does not claim the full Phase 5 workflow is complete.
 
 ## Implemented
 
@@ -21,6 +21,13 @@ This report now includes the formal Skill Dispatcher checkpoint for Phase 5. It 
 - Dispatcher calls `FormalBusinessSkillAdapter` and `ModelGateway`, then materializes formal Skill results.
 - Dispatcher fails closed on version mismatch or missing approved model route/provider.
 - Added a synthetic dispatcher matrix covering all 12 Skills without real Provider calls.
+- Added seven versioned formal workflow definitions:
+  `business.content_learning_analysis`, `business.source_to_topic`, `business.research`, `business.creation`, `business.review`, `business.experiment_review`, and `business.experience_revision_candidate`.
+- Each workflow declares entry contract, step graph, required/optional artifacts, success/failure definitions, cancellation policy, retry policy, materialization contract and outbox contract.
+- No workflow forces all 12 Skills into one task; all 12 Skills are covered across task-specific chains.
+- Added Core-side chain runner that schedules downstream steps only after upstream success.
+- Added upstream result handoff with `result_version_id` and `output_hash` into downstream Input Assembly.
+- Added synthetic creation-chain handoff coverage.
 
 ## Safety
 
@@ -35,16 +42,15 @@ This report now includes the formal Skill Dispatcher checkpoint for Phase 5. It 
 
 ## Validation
 
-- `python -m unittest tests.core.test_phase5_business_workflow` - PASS, 14 tests
+- `python -m unittest tests.core.test_phase5_business_workflow` - PASS, 16 tests
 - `python scripts\core\workflow\verify_goal_05.py` - PASS
-- `python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters` - PASS, 77 tests
+- `python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters` - PASS, 79 tests
 - `py_compile` for Phase 5 workflow files - PASS
 - `python scripts\validation\clean_room_empty_db.py --health` - PASS, 20 tables, 0 rows
 - `git diff --check` - PASS
 
 ## Remaining
 
-- Establish formal workflow definitions and versioned entry contracts for the required task chains.
-- Add Core-driven step state transitions and upstream/downstream artifact handoff between workflow steps.
-- Extend synthetic workflow coverage from the dispatcher matrix to task-specific end-to-end chains.
-- Complete failure, retry, cancellation, recovery, idempotency, concurrency, replay and full-chain audit coverage for those chains.
+- Extend task-specific synthetic end-to-end coverage beyond the creation handoff chain.
+- Complete failure, retry, cancellation, recovery, idempotency, concurrency, replay and full-chain audit coverage for the formal chains.
+- Record final Phase 5 completion only after those chain-level scenarios pass.

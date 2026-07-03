@@ -34,12 +34,14 @@ from scripts.core.model_gateway.goal07_model_gateway import ModelProviderResult
 from scripts.core.model_gateway.goal07_model_gateway import ModelRunMaterializer
 from scripts.core.workflow.goal_phase5_business_workflow import (
     BusinessWorkflowError,
+    BusinessWorkflowChainRunner,
     BusinessWorkflowMaterializer,
     BusinessWorkflowWorker,
     ExperienceSelector,
     ExperienceUsageValidator,
     ExperienceVersion,
     FORMAL_BUSINESS_WORKFLOW_SKILLS,
+    FORMAL_WORKFLOW_DEFINITIONS,
     FormalSkillDispatcher,
     FormalSkillRegistry,
     InputAssembly,
@@ -672,6 +674,96 @@ class Phase5BusinessWorkflowTests(unittest.TestCase):
             scheduler.conn.execute("SELECT count(*) FROM formal_business_skill_result_index").fetchone()[0],
             0,
         )
+
+    def test_formal_workflow_definitions_are_versioned_and_task_specific(self) -> None:
+        expected = {
+            "business.content_learning_analysis",
+            "business.source_to_topic",
+            "business.research",
+            "business.creation",
+            "business.review",
+            "business.experiment_review",
+            "business.experience_revision_candidate",
+        }
+
+        self.assertEqual(set(FORMAL_WORKFLOW_DEFINITIONS), expected)
+        covered_skills = set()
+        for definition in FORMAL_WORKFLOW_DEFINITIONS.values():
+            self.assertTrue(definition.workflow_id)
+            self.assertTrue(definition.workflow_version)
+            self.assertTrue(definition.entry_contract)
+            self.assertTrue(definition.required_artifacts)
+            self.assertTrue(definition.success_definition)
+            self.assertTrue(definition.failure_definition)
+            self.assertTrue(definition.cancellation_policy)
+            self.assertTrue(definition.retry_policy)
+            self.assertTrue(definition.materialization_contract)
+            self.assertTrue(definition.outbox_contract)
+            self.assertLess(len(definition.step_graph), len(FORMAL_BUSINESS_WORKFLOW_SKILLS))
+            seen = set()
+            for step in definition.step_graph:
+                self.assertFalse(set(step.depends_on) - seen)
+                seen.add(step.step_key)
+                covered_skills.add(step.formal_skill_id)
+
+        self.assertEqual(covered_skills, set(FORMAL_BUSINESS_WORKFLOW_SKILLS))
+
+    def test_chain_runner_schedules_downstream_only_after_upstream_result_handoff(self) -> None:
+        generator = UUIDv7Generator(now_ms=lambda: 1_770_000_000_000, randbits=lambda bits: 42)
+        scheduler = Goal03Scheduler.in_memory(id_factory=generator.new, now_ms=lambda: 1_770_000_000_000)
+        self.addCleanup(scheduler.store.conn.close)
+        gateway, _provider = make_dispatch_gateway(scheduler.store)
+        dispatcher = FormalSkillDispatcher(store=scheduler.store, gateway=gateway, id_factory=generator.new)
+        worker = BusinessWorkflowWorker(
+            scheduler=scheduler,
+            materializer=BusinessWorkflowMaterializer(scheduler.store),
+            skill_executor=dispatcher,
+            worker_id="phase5-chain-worker",
+        )
+        runner = BusinessWorkflowChainRunner(scheduler=scheduler, worker=worker)
+        definition = FORMAL_WORKFLOW_DEFINITIONS["business.creation"]
+
+        result = runner.run(
+            definition=definition,
+            workflow_instance_id="workflow-creation-chain",
+            input_payloads={
+                "content_plan": sample_content_plan_input(request_id="phase5-chain-content-plan"),
+                "script_generate": sample_script_generate_input(request_id="phase5-chain-script-generate"),
+            },
+            domain="fan_kepu_social_life",
+            content_form="short_video_script",
+            conditions=("ordinary_life_problem",),
+            experience_candidates=[],
+            idempotency_key="phase5-creation-chain",
+        )
+
+        self.assertEqual(result.workflow_id, "business.creation")
+        self.assertEqual([step.status for step in result.completed_steps], ["succeeded", "succeeded"])
+        self.assertEqual(len(result.upstream_refs), 1)
+        self.assertEqual(result.upstream_refs[0]["formal_skill_id"], "content_plan")
+        self.assertEqual(
+            scheduler.conn.execute("SELECT count(*) FROM formal_business_skill_result_index").fetchone()[0],
+            2,
+        )
+        self.assertEqual(
+            scheduler.conn.execute(
+                "SELECT count(*) FROM object_reference WHERE relation_role='assembled_from_upstream_skill_result'"
+            ).fetchone()[0],
+            1,
+        )
+        downstream_payload = scheduler.conn.execute(
+            """
+            SELECT payload_json
+              FROM trace_version
+             WHERE version_id IN (
+                   SELECT current_version_id
+                     FROM trace_root
+                    WHERE object_kind='business_workflow_input_assembly'
+                )
+               AND payload_json LIKE '%script_generate%'
+            """
+        ).fetchone()[0]
+        self.assertIn(result.upstream_refs[0]["result_version_id"], downstream_payload)
 
 
 if __name__ == "__main__":
