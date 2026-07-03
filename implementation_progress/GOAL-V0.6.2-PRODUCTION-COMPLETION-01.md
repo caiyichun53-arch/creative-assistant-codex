@@ -224,8 +224,11 @@ Completed checkpoints:
   - Added retry drift rejection for frozen input assemblies.
   - Added `experience_usage` validation against the frozen context.
   - Added `Goal05WorkflowOrchestrator` enqueue coverage using `formal_skill.execute`.
-  - This is a foundation checkpoint only; full Phase 5 workflow wiring and persistence remain open.
+  - Added workflow Materializer for input assembly and experience usage trace artifacts.
+  - Added audit, outbox and idempotency receipts for Phase 5 workflow artifacts.
+  - This is a foundation checkpoint only; full Phase 5 workflow wiring remains open.
   - Phase 5 foundation checkpoint committed at `ad9ceae`.
+  - Phase 5 assembly artifact persistence checkpoint committed at `ab49be0`.
 
 Current HEAD:
 
@@ -360,13 +363,21 @@ Test results:
 - `git diff --check`
   - PASS
 - `python -m unittest tests.core.test_phase5_business_workflow`
-  - PASS, 7 tests
+  - PASS, 9 tests
 - `python scripts\core\workflow\verify_goal_05.py`
   - PASS, GOAL-05 verification passed
 - `python -m unittest tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters`
   - PASS, 63 tests
 - `python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters`
-  - PASS, 70 tests
+  - PASS, 72 tests
+- YAML parse check for `PHASE_5_BUSINESS_WORKFLOW_FOUNDATION_STATUS.yaml` after Materializer update
+  - PASS
+- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_phase5_materializer'; python -m py_compile scripts\core\workflow\goal_phase5_business_workflow.py tests\core\test_phase5_business_workflow.py`
+  - PASS
+- `python scripts\validation\clean_room_empty_db.py --health`
+  - PASS, 20 formal tables, 0 total rows, foreign key check passed
+- `git diff --check`
+  - PASS
 - YAML parse check for `PHASE_5_BUSINESS_WORKFLOW_FOUNDATION_STATUS.yaml`
   - PASS
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_phase5_foundation'; python -m py_compile scripts\core\workflow\goal_phase5_business_workflow.py tests\core\test_phase5_business_workflow.py`
@@ -380,7 +391,6 @@ Remaining work:
 
 - Continue Phase 5 full workflow wiring.
 - Wire frozen input assembly into actual multi-step workers for the full formal business workflow.
-- Persist workflow-level input assembly and experience usage records through formal Materializers.
 - Add synthetic workflow coverage across all 12 Skills.
 
 Blocking issues:
@@ -424,3 +434,4 @@ Internal Phase commits:
 - Phase 4 external executor Adapters: cea4c1f feat(runtime): add external executor adapters
 - Phase 4 progress record: 45b9050 docs(runtime): record phase 4 checkpoint
 - Phase 5 workflow/Input Assembly foundation: ad9ceae feat(workflow): add phase 5 input assembly foundation
+- Phase 5 assembly artifact persistence: ab49be0 feat(workflow): persist phase 5 assembly artifacts
