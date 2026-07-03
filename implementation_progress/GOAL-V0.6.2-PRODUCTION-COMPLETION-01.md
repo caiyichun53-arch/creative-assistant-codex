@@ -135,6 +135,21 @@ Completed checkpoints:
   - Deterministic test model port, harness, sample input and semantic checks in `scripts/core/model_gateway/formal_skill_adapter.py`
   - `tests/core/test_script_generate_skill.py`
 - Committed `script_generate` Phase 2 checkpoint at `01ffc35`.
+- Implemented `script_review` formal Skill:
+  - `SCRIPT_REVIEW_BUSINESS_CONTRACT.yaml`
+  - `runtime_skills/script_review/skill.yaml`
+  - `runtime_skills/script_review/input_schema.yaml`
+  - `runtime_skills/script_review/output_schema.yaml`
+  - `runtime_skills/script_review/binding.yaml`
+  - `runtime_skills/script_review/prompt.md`
+  - `runtime_skills/script_review/fixtures.yaml`
+  - `SCRIPT_REVIEW_STATUS.yaml`
+  - `SCRIPT_REVIEW_VALIDATION_REPORT.md`
+  - Formal route ownership updated in `FORMAL_SKILL_ROUTE_MAPPING.yaml`
+  - Remaining execution graph updated in `REMAINING_FORMAL_SKILL_EXECUTION_GRAPH.yaml`
+  - Deterministic three-subnode test model port, harness, sample input and semantic checks in `scripts/core/model_gateway/formal_skill_adapter.py`
+  - `tests/core/test_script_review_skill.py`
+- Committed `script_review` Phase 2 checkpoint at `a9e4a73`.
 
 Current HEAD:
 
@@ -162,6 +177,16 @@ Test results:
   - PASS, 8 tests
 - `python -m unittest tests.core.test_script_generate_skill tests.core.test_content_plan_skill tests.core.test_production_research_plan_skill tests.core.test_research_evidence_extract_skill tests.core.test_tactic_extract_skill tests.core.test_sample_deep_analyze_skill tests.core.test_source_to_topic_skill tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter`
   - PASS, 113 tests
+- `python -m unittest tests.core.test_script_review_skill`
+  - PASS, 8 tests
+- `python -m unittest tests.core.test_script_review_skill tests.core.test_script_generate_skill tests.core.test_content_plan_skill tests.core.test_production_research_plan_skill tests.core.test_research_evidence_extract_skill tests.core.test_tactic_extract_skill tests.core.test_sample_deep_analyze_skill tests.core.test_source_to_topic_skill tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter`
+  - PASS, 121 tests
+- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_script_review'; python -m py_compile scripts\core\model_gateway\formal_skill_adapter.py tests\core\test_script_review_skill.py tests\core\test_script_generate_skill.py tests\core\test_content_plan_skill.py tests\core\test_production_research_plan_skill.py tests\core\test_research_evidence_extract_skill.py tests\core\test_tactic_extract_skill.py tests\core\test_sample_deep_analyze_skill.py tests\core\test_source_to_topic_skill.py tests\core\test_remaining_formal_skill_graph.py tests\core\test_business_route_registry.py`
+  - PASS
+- `python scripts\validation\clean_room_empty_db.py --health`
+  - PASS, 20 formal tables, 0 total rows, foreign key check passed
+- `git diff --check`
+  - PASS
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_script_generate'; python -m py_compile scripts\core\model_gateway\formal_skill_adapter.py tests\core\test_script_generate_skill.py tests\core\test_content_plan_skill.py tests\core\test_production_research_plan_skill.py tests\core\test_research_evidence_extract_skill.py tests\core\test_tactic_extract_skill.py tests\core\test_sample_deep_analyze_skill.py tests\core\test_source_to_topic_skill.py tests\core\test_remaining_formal_skill_graph.py tests\core\test_business_route_registry.py`
   - PASS
 - `python scripts\validation\clean_room_empty_db.py --health`
@@ -213,7 +238,7 @@ Test results:
 
 Remaining work:
 
-- Continue automatically to `script_review` unless a formal stop condition appears.
+- Continue to Phase 2 blocker reconciliation for `experiment_review` and `experience_revision_propose`; both still lack existing `business.*` route nodes in `BUSINESS_MODEL_ROUTE_REGISTRY.yaml`.
 
 Blocking issues:
 
@@ -227,7 +252,7 @@ Next resume command:
 cd I:\Creation_assistant-codex
 git switch implementation/goal-v0.6.2-production-completion-01
 python -m unittest tests.core.test_remaining_formal_skill_graph tests.core.test_formal_skill_adapter tests.core.test_business_route_registry
-python -m unittest tests.core.test_script_generate_skill
+python -m unittest tests.core.test_script_review_skill
 ```
 
 Internal Phase commits:
@@ -247,4 +272,6 @@ Internal Phase commits:
 - Phase 2 content_plan: db0e15e feat(skill): implement content_plan
 - Phase 2 content_plan progress record: 6911e87 docs(skill): record content_plan checkpoint
 - Phase 2 script_generate: 01ffc35 feat(skill): implement script_generate
-- Phase 2 script_generate progress record: pending_current_docs_checkpoint
+- Phase 2 script_generate progress record: 9c24bf3 docs(skill): record script_generate checkpoint
+- Phase 2 script_review: a9e4a73 feat(skill): implement script_review
+- Phase 2 script_review progress record: pending_current_docs_checkpoint
