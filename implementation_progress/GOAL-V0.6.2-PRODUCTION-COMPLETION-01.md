@@ -306,6 +306,18 @@ Completed checkpoints:
   - Added `PHASE_8_AUTHORIZATION_GATE_STATUS.yaml`.
   - No GPT call, DeepSeek call, real Provider call, real platform collection, real Feishu send, production timer enablement, old data read, fallback or automatic downgrade was introduced.
   - Execution must pause here until explicit user authorization for GPT switch/real GPT regression/real new data pilot/real Feishu test/production scheduled tasks.
+- Resumed Phase 8 after user authorization:
+  - Confirmed `.env.live-gates` still binds `MODEL_PROVIDER_MODEL` to Mimo, not GPT.
+  - Confirmed no tracked `PHASE_8_REAL_NEW_DATA_APPROVAL.yaml` exists for newly approved pilot-only data sources.
+  - Confirmed live-gate Feishu event validation token remains missing/placeholder.
+  - Disabled Windows scheduled tasks `CreationAssistant_Daily` and `CreationAssistant_Listener`.
+  - Added `scripts/core/staging/verify_goal_v062_phase8_readiness.py`.
+  - Added `PHASE_8_EXTERNAL_INPUT_REQUIRED_REPORT.md`.
+  - Ran Phase 8 readiness verifier; result `WAITING_FOR_USER_INPUT` with exactly three missing items:
+    - approved GPT `MODEL_PROVIDER_MODEL` in `.env.live-gates`
+    - `PHASE_8_REAL_NEW_DATA_APPROVAL.yaml`
+    - `FEISHU_EVENT_VERIFICATION_TOKEN` or approved equivalent live Feishu event/test configuration
+  - No GPT call, DeepSeek call, real platform collection, real Feishu send, old data read, fallback or automatic downgrade was introduced.
 
 Current HEAD:
 
@@ -527,7 +539,7 @@ Remaining work:
 - Phase 5 complete.
 - Phase 6 complete.
 - Phase 7 complete.
-- Phase 8 authorization gate reached. Waiting for explicit user authorization before GPT switch, real GPT regression, real new data pilot, real Feishu test message or production scheduled tasks.
+- Phase 8 authorization received, but external input is required before live execution: GPT model config, pilot source manifest and live Feishu event/test configuration.
 
 Blocking issues:
 

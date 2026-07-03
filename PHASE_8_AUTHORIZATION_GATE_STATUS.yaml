@@ -2,17 +2,19 @@ schema_version: phase8.authorization_gate_status.v1
 goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
 phase: 8
 checkpoint: authorization_gate_plans
-status: WAITING_FOR_USER_AUTHORIZATION
+status: WAITING_FOR_USER_INPUT
 updated_at: '2026-07-03'
 generated:
   business_model_switch_to_gpt_plan: BUSINESS_MODEL_SWITCH_TO_GPT_PLAN.md
   real_new_data_pilot_plan: REAL_NEW_DATA_PILOT_PLAN.md
+  external_input_required_report: PHASE_8_EXTERNAL_INPUT_REQUIRED_REPORT.md
+  readiness_verifier: scripts/core/staging/verify_goal_v062_phase8_readiness.py
 authorization_required:
-  switch_business_primary_from_mimo_to_gpt: true
-  run_minimal_gpt_real_regression: true
-  start_real_new_data_small_pilot: true
-  send_real_feishu_test_message: true
-  enable_production_scheduled_tasks: true
+  switch_business_primary_from_mimo_to_gpt: approved_but_missing_gpt_model_config
+  run_minimal_gpt_real_regression: approved_but_missing_gpt_model_config
+  start_real_new_data_small_pilot: approved_but_missing_new_source_manifest
+  send_real_feishu_test_message: approved_but_missing_live_gate_event_token
+  enable_production_scheduled_tasks: not_authorized
 safety:
   gpt_called: false
   deepseek_called: false
@@ -30,5 +32,26 @@ current_business_model_binding:
   model_ref_source: MODEL_PROVIDER_MODEL
   active_binding_count: 1
   fallback_enabled: false
+production_scheduled_tasks:
+  CreationAssistant_Daily: disabled
+  CreationAssistant_Listener: disabled
 remaining_phase8_work:
-  - Await explicit user authorization for GPT switch and/or real new data pilot.
+  - Set .env.live-gates MODEL_PROVIDER_MODEL to the user-approved GPT model.
+  - Provide approved real new data pilot source manifest at PHASE_8_REAL_NEW_DATA_APPROVAL.yaml.
+  - Provide or confirm live Feishu event/test configuration.
+  - Rerun scripts/core/staging/verify_goal_v062_phase8_readiness.py.
+validation:
+  - command: python scripts\core\staging\verify_goal_v062_phase8_readiness.py
+    result: WAITING_FOR_USER_INPUT
+    missing_items:
+      - MODEL_PROVIDER_MODEL must be set to the user-approved GPT model in .env.live-gates
+      - PHASE_8_REAL_NEW_DATA_APPROVAL.yaml with newly approved pilot sources is required
+      - FEISHU_EVENT_VERIFICATION_TOKEN is required for real inbound Feishu event validation
+  - command: py_compile scripts\core\staging\verify_goal_v062_phase8_readiness.py
+    result: PASS
+  - command: python scripts\validation\clean_room_empty_db.py --health
+    result: PASS
+    clean_room_tables: 20
+    clean_room_total_rows: 0
+  - command: git diff --check
+    result: PASS
