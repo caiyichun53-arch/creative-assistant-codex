@@ -150,6 +150,11 @@ Completed checkpoints:
   - Deterministic three-subnode test model port, harness, sample input and semantic checks in `scripts/core/model_gateway/formal_skill_adapter.py`
   - `tests/core/test_script_review_skill.py`
 - Committed `script_review` Phase 2 checkpoint at `a9e4a73`.
+- Recorded Phase 2 remaining Skill blockers:
+  - `PHASE_2_REMAINING_SKILL_BLOCKERS.md`
+  - `experiment_review` remains blocked because no approved `business.*` ModelGateway route exists.
+  - `experience_revision_propose` remains blocked because no approved `business.*` ModelGateway route exists.
+  - No legacy logic, old data, direct CLI path, or fake route was introduced to fill the missing formal business semantics.
 
 Current HEAD:
 
@@ -181,6 +186,8 @@ Test results:
   - PASS, 8 tests
 - `python -m unittest tests.core.test_script_review_skill tests.core.test_script_generate_skill tests.core.test_content_plan_skill tests.core.test_production_research_plan_skill tests.core.test_research_evidence_extract_skill tests.core.test_tactic_extract_skill tests.core.test_sample_deep_analyze_skill tests.core.test_source_to_topic_skill tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter`
   - PASS, 121 tests
+- `python -m unittest tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter`
+  - PASS, 55 tests after Phase 2 blocker recording
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_script_review'; python -m py_compile scripts\core\model_gateway\formal_skill_adapter.py tests\core\test_script_review_skill.py tests\core\test_script_generate_skill.py tests\core\test_content_plan_skill.py tests\core\test_production_research_plan_skill.py tests\core\test_research_evidence_extract_skill.py tests\core\test_tactic_extract_skill.py tests\core\test_sample_deep_analyze_skill.py tests\core\test_source_to_topic_skill.py tests\core\test_remaining_formal_skill_graph.py tests\core\test_business_route_registry.py`
   - PASS
 - `python scripts\validation\clean_room_empty_db.py --health`
@@ -242,8 +249,7 @@ Remaining work:
 
 Blocking issues:
 
-- None for completed Phase 1 and current `source_to_topic` implementation.
-- `experiment_review` and `experience_revision_propose` have no existing `business.*` route in `BUSINESS_MODEL_ROUTE_REGISTRY.yaml`; Phase 1 records this as an implementation prerequisite, not a stop condition.
+- `experiment_review` and `experience_revision_propose` have no existing `business.*` route in `BUSINESS_MODEL_ROUTE_REGISTRY.yaml`; all other Phase 2 Skills that have approved routes are implemented and checkpointed.
 - `target-architecture.md` and `rebuild-direction.md` were unavailable in current repo/memory search; existing formal route files already record the same source unavailability and Phase 1 remains verifiable from available governing sources.
 
 Next resume command:
@@ -274,4 +280,4 @@ Internal Phase commits:
 - Phase 2 script_generate: 01ffc35 feat(skill): implement script_generate
 - Phase 2 script_generate progress record: 9c24bf3 docs(skill): record script_generate checkpoint
 - Phase 2 script_review: a9e4a73 feat(skill): implement script_review
-- Phase 2 script_review progress record: pending_current_docs_checkpoint
+- Phase 2 script_review progress record: 50ee2e7 docs(skill): record script_review checkpoint

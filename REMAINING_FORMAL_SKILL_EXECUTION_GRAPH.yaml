@@ -282,8 +282,8 @@ remaining_skills:
     deterministic_or_llm: llm
     schema_status: planned_requires_formal_input_output_schema
     contract_status: planned_requires_business_contract
-    implementation_status: pending_phase_2_requires_business_route_node
-    fixture_status: pending_phase_2
+    implementation_status: blocked_phase_2_missing_business_route_node
+    fixture_status: blocked_phase_2_missing_business_route_node
     live_validation_status: pending_phase_3_centralized_provider_matrix
     workflow_phase: experiment_signal_review
     route_status: planned_no_existing_business_node
@@ -306,8 +306,8 @@ remaining_skills:
     deterministic_or_llm: llm
     schema_status: planned_requires_formal_input_output_schema
     contract_status: planned_requires_business_contract
-    implementation_status: pending_phase_2_requires_business_route_node
-    fixture_status: pending_phase_2
+    implementation_status: blocked_phase_2_missing_business_route_node
+    fixture_status: blocked_phase_2_missing_business_route_node
     live_validation_status: pending_phase_3_centralized_provider_matrix
     workflow_phase: candidate_experience_revision
     route_status: planned_no_existing_business_node
