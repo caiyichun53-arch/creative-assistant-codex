@@ -105,6 +105,21 @@ Completed checkpoints:
   - Deterministic test model port, harness, sample input and semantic checks in `scripts/core/model_gateway/formal_skill_adapter.py`
   - `tests/core/test_production_research_plan_skill.py`
 - Committed `production_research_plan` Phase 2 checkpoint at `6a43bc4`.
+- Implemented `content_plan` formal Skill:
+  - `CONTENT_PLAN_BUSINESS_CONTRACT.yaml`
+  - `runtime_skills/content_plan/skill.yaml`
+  - `runtime_skills/content_plan/input_schema.yaml`
+  - `runtime_skills/content_plan/output_schema.yaml`
+  - `runtime_skills/content_plan/binding.yaml`
+  - `runtime_skills/content_plan/prompt.md`
+  - `runtime_skills/content_plan/fixtures.yaml`
+  - `CONTENT_PLAN_STATUS.yaml`
+  - `CONTENT_PLAN_VALIDATION_REPORT.md`
+  - Formal route ownership updated in `FORMAL_SKILL_ROUTE_MAPPING.yaml`
+  - Remaining execution graph updated in `REMAINING_FORMAL_SKILL_EXECUTION_GRAPH.yaml`
+  - Deterministic two-subnode test model port, harness, sample input and semantic checks in `scripts/core/model_gateway/formal_skill_adapter.py`
+  - `tests/core/test_content_plan_skill.py`
+- Committed `content_plan` Phase 2 checkpoint at `db0e15e`.
 
 Current HEAD:
 
@@ -124,6 +139,16 @@ Test results:
   - PASS, 89 tests
 - `python -m unittest tests.core.test_production_research_plan_skill tests.core.test_research_evidence_extract_skill tests.core.test_tactic_extract_skill tests.core.test_sample_deep_analyze_skill tests.core.test_source_to_topic_skill tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter`
   - PASS, 97 tests
+- `python -m unittest tests.core.test_content_plan_skill`
+  - PASS, 8 tests
+- `python -m unittest tests.core.test_content_plan_skill tests.core.test_production_research_plan_skill tests.core.test_research_evidence_extract_skill tests.core.test_tactic_extract_skill tests.core.test_sample_deep_analyze_skill tests.core.test_source_to_topic_skill tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter`
+  - PASS, 105 tests
+- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_content_plan'; python -m py_compile scripts\core\model_gateway\formal_skill_adapter.py tests\core\test_content_plan_skill.py tests\core\test_production_research_plan_skill.py tests\core\test_research_evidence_extract_skill.py tests\core\test_tactic_extract_skill.py tests\core\test_sample_deep_analyze_skill.py tests\core\test_source_to_topic_skill.py tests\core\test_remaining_formal_skill_graph.py tests\core\test_business_route_registry.py`
+  - PASS
+- `python scripts\validation\clean_room_empty_db.py --health`
+  - PASS, 20 formal tables, 0 total rows, foreign key check passed
+- `git diff --check`
+  - PASS
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_production_research_plan'; python -m py_compile scripts\core\model_gateway\formal_skill_adapter.py tests\core\test_production_research_plan_skill.py tests\core\test_research_evidence_extract_skill.py tests\core\test_tactic_extract_skill.py tests\core\test_sample_deep_analyze_skill.py tests\core\test_source_to_topic_skill.py tests\core\test_remaining_formal_skill_graph.py tests\core\test_business_route_registry.py`
   - PASS
 - `python scripts\validation\clean_room_empty_db.py --health`
@@ -163,7 +188,7 @@ Test results:
 
 Remaining work:
 
-- Continue automatically to `content_plan` unless a formal stop condition appears.
+- Continue automatically to `script_generate` unless a formal stop condition appears.
 
 Blocking issues:
 
@@ -177,7 +202,7 @@ Next resume command:
 cd I:\Creation_assistant-codex
 git switch implementation/goal-v0.6.2-production-completion-01
 python -m unittest tests.core.test_remaining_formal_skill_graph tests.core.test_formal_skill_adapter tests.core.test_business_route_registry
-python -m unittest tests.core.test_source_to_topic_skill
+python -m unittest tests.core.test_content_plan_skill
 ```
 
 Internal Phase commits:
@@ -193,3 +218,6 @@ Internal Phase commits:
 - Phase 2 research_evidence_extract: 6b89e45 feat(skill): implement research_evidence_extract
 - Phase 2 research_evidence_extract progress record: 8578aa9 docs(skill): record research_evidence_extract checkpoint
 - Phase 2 production_research_plan: 6a43bc4 feat(skill): implement production_research_plan
+- Phase 2 production_research_plan progress record: 08d6119 docs(skill): record production_research_plan checkpoint
+- Phase 2 content_plan: db0e15e feat(skill): implement content_plan
+- Phase 2 content_plan progress record: pending_current_docs_checkpoint
