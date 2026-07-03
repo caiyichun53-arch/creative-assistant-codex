@@ -278,15 +278,16 @@ remaining_skills:
       - experiment_review.v1
     output_consumers:
       - experience_revision_propose
-    model_nodes: []
+    model_nodes:
+      - business.experiment_review
     deterministic_or_llm: llm
-    schema_status: planned_requires_formal_input_output_schema
-    contract_status: planned_requires_business_contract
-    implementation_status: blocked_phase_2_missing_business_route_node
-    fixture_status: blocked_phase_2_missing_business_route_node
+    schema_status: completed
+    contract_status: completed
+    implementation_status: completed_phase_2
+    fixture_status: passed
     live_validation_status: pending_phase_3_centralized_provider_matrix
     workflow_phase: experiment_signal_review
-    route_status: planned_no_existing_business_node
+    route_status: mapped_planned
 
   - skill_id: experience_revision_propose
     responsibility: Propose candidate experience revisions without directly publishing them.
@@ -302,15 +303,16 @@ remaining_skills:
       - experience_revision_candidate.v1
     output_consumers:
       - candidate_only_experience_writeback
-    model_nodes: []
+    model_nodes:
+      - business.experience_revision_propose
     deterministic_or_llm: llm
-    schema_status: planned_requires_formal_input_output_schema
-    contract_status: planned_requires_business_contract
-    implementation_status: blocked_phase_2_missing_business_route_node
-    fixture_status: blocked_phase_2_missing_business_route_node
+    schema_status: completed
+    contract_status: completed
+    implementation_status: completed_phase_2
+    fixture_status: passed
     live_validation_status: pending_phase_3_centralized_provider_matrix
     workflow_phase: candidate_experience_revision
-    route_status: planned_no_existing_business_node
+    route_status: mapped_planned
 phase_1_completion_definition:
   - all_remaining_formal_skills_listed
   - completed_skills_not_reexecuted

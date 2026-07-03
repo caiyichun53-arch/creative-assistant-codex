@@ -2,30 +2,26 @@
 
 goal: `GOAL-V0.6.2-PRODUCTION-COMPLETION-01`
 
-status: `BLOCKED_ON_FORMAL_BUSINESS_ROUTE_DECISION`
+status: `RESOLVED_BY_LATEST_GOAL_INSTRUCTION`
 
-## Blocked Skills
+## Resolution
+
+The previous blocker was the absence of approved `business.*` ModelGateway routes for:
 
 - `experiment_review`
-  - current mapping status: `planned_no_existing_business_node`
-  - missing requirement: no approved `business.*` ModelGateway route exists in `BUSINESS_MODEL_ROUTE_REGISTRY.yaml`
-  - why blocked: the Skill is declared as model-required, but there is no formal model node to own the review semantics
-
 - `experience_revision_propose`
-  - current mapping status: `planned_no_existing_business_node`
-  - missing requirement: no approved `business.*` ModelGateway route exists in `BUSINESS_MODEL_ROUTE_REGISTRY.yaml`
-  - why blocked: the Skill is declared as model-required, but there is no formal model node to own candidate experience revision semantics
 
-## Minimal Decision Needed
+The latest pasted Goal instruction explicitly approved the two formal semantic routes:
 
-Approve one of these formal routes:
+- `business.experiment_review`
+- `business.experience_revision_propose`
 
-- Add `business.experiment_review` for `experiment_review`.
-- Add `business.experience_revision_propose` for `experience_revision_propose`.
-- Or explicitly change either Skill to deterministic/non-model or remove it from the V0.6.2 production completion scope.
+Both routes now exist in `BUSINESS_MODEL_ROUTE_REGISTRY.yaml`, are owned exactly once in `FORMAL_SKILL_ROUTE_MAPPING.yaml`, and are recorded in `REMAINING_FORMAL_SKILL_EXECUTION_GRAPH.yaml`.
 
-## Boundary
+## Boundary Preserved
 
-- Old business scripts and old data were not used to define these missing semantics.
+- Old business scripts and old data were not used to define these semantics.
 - No direct Codex/Claude/legacy CLI path was introduced.
-- No fake route was added to make tests pass.
+- No fake route was added as production fallback.
+- fake/test Model Port remains limited to Phase 2 unit and integration tests.
+- Real Provider validation remains pending for Phase 3 centralized Mimo matrix.

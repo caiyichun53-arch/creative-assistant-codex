@@ -1,0 +1,20 @@
+goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
+skill_id: experience_revision_propose
+status: COMPLETED_PHASE_2
+route: business.experience_revision_propose
+model_binding: business.primary
+real_provider_validation: pending_phase_3_centralized_mimo_matrix
+gpt_called: false
+fallback_added: false
+old_data_read: false
+assets:
+  business_contract: EXPERIENCE_REVISION_PROPOSE_BUSINESS_CONTRACT.yaml
+  manifest: runtime_skills/experience_revision_propose/skill.yaml
+  input_schema: runtime_skills/experience_revision_propose/input_schema.yaml
+  output_schema: runtime_skills/experience_revision_propose/output_schema.yaml
+  binding: runtime_skills/experience_revision_propose/binding.yaml
+  prompt: runtime_skills/experience_revision_propose/prompt.md
+  fixtures: runtime_skills/experience_revision_propose/fixtures.yaml
+tests:
+  unit_and_integration: PASS
+  command: python -m unittest tests.core.test_experience_revision_propose_skill

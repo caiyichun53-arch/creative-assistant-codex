@@ -1,0 +1,48 @@
+schema_version: formal_skill_binding.v1
+binding_name: experiment_review_public_input_to_review
+binding_version: 1.0.0
+route_name: business.experiment_review
+input_map:
+  fixture_id:
+    source: input
+    key: request_id
+  experiment_design:
+    source: input
+    key: experiment_design
+  execution_summary:
+    source: input
+    key: execution_summary
+  result_metrics:
+    source: input
+    key: result_metrics
+  evidence_refs:
+    source: input
+    key: evidence_items
+  tested_experience_refs:
+    source: input
+    key: tested_experience_refs
+output_map:
+  review_status:
+    source: model_output
+    key: review_status
+  supported_experience_refs:
+    source: model_output
+    key: supported_experience_refs
+  refuted_experience_refs:
+    source: model_output
+    key: refuted_experience_refs
+  inconclusive_experience_refs:
+    source: model_output
+    key: inconclusive_experience_refs
+  key_findings:
+    source: model_output
+    key: key_findings
+  evidence_used:
+    source: model_output
+    key: evidence_used
+  next_actions:
+    source: model_output
+    key: next_actions
+  schema_version:
+    source: model_output
+    key: schema_version

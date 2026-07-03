@@ -1,0 +1,367 @@
+schema_version: experience_revision_propose.business_contract.v1
+goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
+status: active_formal_business_contract
+skill_id: experience_revision_propose
+skill_version: 1.0.0
+source_documents:
+  - C:\Users\15891\.codex\attachments\6b5c993c-a2d1-460d-adc8-cf2142efd403\pasted-text-1.txt
+  - AGENTS.md
+  - BUILD_PLAN.md
+  - FORMAL_SKILL_ROUTE_MAPPING.yaml
+  - REMAINING_FORMAL_SKILL_EXECUTION_GRAPH.yaml
+responsibility: Propose candidate experience creation or revision records from frozen formal experience versions, experiment review and new evidence without publishing or modifying formal experience.
+non_responsibilities:
+  - experiment_review
+  - formal_experience_publication
+  - formal_experience_modification
+  - portable_skill_modification
+  - hermes_memory_writeback
+  - database_query
+  - file_read_write
+  - feishu_messaging
+  - other_skill_invocation
+allowed_inputs:
+  source: public_input_binding_only
+  required_fields:
+    - request_id
+    - correlation_id
+    - frozen_experience_versions
+    - experiment_review
+    - new_evidence_items
+    - tactic_candidates
+    - domain_label
+    - schema_version
+forbidden_inputs:
+  - database_connection
+  - orm_object
+  - internal_table_name
+  - legacy_database_id
+  - local_file_path
+  - source_url_to_fetch
+  - cookie_or_token
+  - hermes_chat_memory
+  - cold_backup_reference
+proposal_policy:
+  candidate_only: true
+  must_not_publish_experience: true
+  must_not_modify_formal_experience: true
+  must_not_modify_portable_skill: true
+  must_not_call_experiment_review: true
+  must_use_only_frozen_experience_versions: true
+  route: business.experience_revision_propose
+evidence_requirements:
+  frozen_experience_versions_min: 0
+  frozen_experience_versions_max: 8
+  new_evidence_items_min: 1
+  new_evidence_items_max: 12
+  tactic_candidates_max: 12
+  output_evidence_refs_must_reference_input_source_refs: true
+input_length_limits:
+  request_id_max: 80
+  correlation_id_max: 80
+context_budget:
+  max_input_tokens: 8000
+token_budget:
+  max_output_tokens: 2000
+timeout:
+  milliseconds: 60000
+retry:
+  provider_max_attempts_per_job: 1
+  scheduler_max_attempts: 3
+  retry_on:
+    - provider_error
+    - output_schema_error
+idempotency:
+  key: experience_revision_propose:{request_id}
+  duplicate_same_request: replay_existing_job
+  duplicate_different_request: reject
+error_contract:
+  validation_error: fail_without_formal_result
+  provider_error: fail_attempt_and_retry_if_attempts_remain
+  model_empty_result: technical_failure_without_formal_result
+  non_json_output: technical_failure_without_formal_result
+  schema_error: fail_without_formal_result
+  materializer_error: fail_without_success_outbox
+materialization_contract:
+  object_kind: formal_business_skill_result
+  projection_version: formal_business_skill_result.v1
+  result_index: formal_business_skill_result_index
+  success_outbox_topic: formal_business_skill.result.materialized
+  failed_runs_record_attempt: true
+  failed_runs_create_formal_result: false
+fixture_cases:
+  required_fixture_ids:
+    - fan_kepu_social_life
+    - music_entertainment
+    - third_domain_neutral
+    - create_candidate
+    - no_change
+    - model_empty_result
+    - non_json_output
+    - missing_output_field
+    - unseen_target
+    - unseen_evidence_ref
+    - illegal_publish
+completion_definition:
+  - business_contract_complete
+  - no_missing_requirement_for_current_formal_sources
+  - formal_skill_package_active
+  - fake_fixture_matrix_passed
+  - adapter_job_worker_materializer_passed
+  - idempotent_replay_passed
+  - retry_failure_path_passed
+  - failure_does_not_write_formal_result
+  - clean_room_formal_db_all_zero
+  - formal_production_direct_cli_model_calls_zero
+missing_requirements: []
+allowed_model_nodes:
+  - business.experience_revision_propose
+whether_model_is_required: true
+target_runner: FormalBusinessSkillAdapter
+materializer_contract: formal_business_skill_result.v1
+model_binding:
+  route_name: business.experience_revision_propose
+  binding_name: experience_revision_propose_public_input_to_candidate
+  binding_version: 1.0.0
+  input_map:
+    fixture_id:
+      source: input
+      key: request_id
+    frozen_experience_versions:
+      source: input
+      key: frozen_experience_versions
+    experiment_review:
+      source: input
+      key: experiment_review
+    new_evidence_refs:
+      source: input
+      key: new_evidence_items
+    tactic_candidates:
+      source: input
+      key: tactic_candidates
+  model_input_schema:
+    type: object
+    required:
+      - fixture_id
+      - frozen_experience_versions
+      - experiment_review
+      - new_evidence_refs
+      - tactic_candidates
+    properties:
+      fixture_id: string
+      frozen_experience_versions:
+        type: array
+        items:
+          type: object
+      experiment_review: object
+      new_evidence_refs:
+        type: array
+        items:
+          type: object
+      tactic_candidates:
+        type: array
+        items:
+          type: string
+    additional_properties: false
+  prompt_template: >-
+    Return only JSON with keys proposal_status, candidate_type,
+    target_experience_ref, candidate_summary, change_rationale, evidence_refs,
+    governance_warnings, schema_version. Propose candidate-only experience
+    creation or revision from supplied frozen experience versions, experiment
+    review and evidence. Do not publish, overwrite, or modify formal
+    experience. Do not call another Skill or read memory. evidence_refs must
+    come only from new_evidence_refs source_ref values. Use schema_version
+    experience_revision_propose.output.v1.
+  model_output_schema:
+    type: object
+    required:
+      - proposal_status
+      - candidate_type
+      - target_experience_ref
+      - candidate_summary
+      - change_rationale
+      - evidence_refs
+      - governance_warnings
+      - schema_version
+    properties:
+      proposal_status:
+        type: string
+        enum:
+          - candidate_created
+          - no_change
+          - needs_human_review
+      candidate_type:
+        type: string
+        enum:
+          - create
+          - revise
+          - no_change
+      target_experience_ref:
+        type: string
+        minLength: 1
+        maxLength: 160
+      candidate_summary:
+        type: string
+        maxLength: 1000
+      change_rationale:
+        type: array
+        minItems: 0
+        maxItems: 8
+        items:
+          type: string
+          minLength: 1
+          maxLength: 240
+      evidence_refs:
+        type: array
+        minItems: 0
+        maxItems: 12
+        items:
+          type: string
+      governance_warnings:
+        type: array
+        minItems: 0
+        maxItems: 8
+        items:
+          type: string
+          minLength: 1
+          maxLength: 240
+      schema_version:
+        type: string
+        const: experience_revision_propose.output.v1
+    additional_properties: false
+  output_map:
+    proposal_status:
+      source: model_output
+      key: proposal_status
+    candidate_type:
+      source: model_output
+      key: candidate_type
+    target_experience_ref:
+      source: model_output
+      key: target_experience_ref
+    candidate_summary:
+      source: model_output
+      key: candidate_summary
+    change_rationale:
+      source: model_output
+      key: change_rationale
+    evidence_refs:
+      source: model_output
+      key: evidence_refs
+    governance_warnings:
+      source: model_output
+      key: governance_warnings
+    schema_version:
+      source: model_output
+      key: schema_version
+input_schema:
+  type: object
+  required:
+    - request_id
+    - correlation_id
+    - frozen_experience_versions
+    - experiment_review
+    - new_evidence_items
+    - tactic_candidates
+    - domain_label
+    - schema_version
+  properties:
+    request_id:
+      type: string
+      minLength: 1
+      maxLength: 80
+    correlation_id:
+      type: string
+      minLength: 1
+      maxLength: 80
+    frozen_experience_versions:
+      type: array
+      minItems: 0
+      maxItems: 8
+      items:
+        type: object
+    experiment_review:
+      type: object
+    new_evidence_items:
+      type: array
+      minItems: 1
+      maxItems: 12
+      items:
+        type: object
+    tactic_candidates:
+      type: array
+      minItems: 0
+      maxItems: 12
+      items:
+        type: string
+        minLength: 1
+        maxLength: 160
+    domain_label:
+      type: string
+      enum:
+        - fan_kepu_social_life
+        - music_entertainment
+        - third_domain_neutral
+        - cross_domain
+        - unknown
+    schema_version:
+      type: string
+      const: experience_revision_propose.input.v1
+  additional_properties: false
+output_schema:
+  type: object
+  required:
+    - proposal_status
+    - candidate_type
+    - target_experience_ref
+    - candidate_summary
+    - change_rationale
+    - evidence_refs
+    - governance_warnings
+    - schema_version
+  properties:
+    proposal_status:
+      type: string
+      enum:
+        - candidate_created
+        - no_change
+        - needs_human_review
+    candidate_type:
+      type: string
+      enum:
+        - create
+        - revise
+        - no_change
+    target_experience_ref:
+      type: string
+      minLength: 1
+      maxLength: 160
+    candidate_summary:
+      type: string
+      maxLength: 1000
+    change_rationale:
+      type: array
+      minItems: 0
+      maxItems: 8
+      items:
+        type: string
+        minLength: 1
+        maxLength: 240
+    evidence_refs:
+      type: array
+      minItems: 0
+      maxItems: 12
+      items:
+        type: string
+    governance_warnings:
+      type: array
+      minItems: 0
+      maxItems: 8
+      items:
+        type: string
+        minLength: 1
+        maxLength: 240
+    schema_version:
+      type: string
+      const: experience_revision_propose.output.v1
+  additional_properties: false

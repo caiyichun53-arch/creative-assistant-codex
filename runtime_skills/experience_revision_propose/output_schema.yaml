@@ -1,0 +1,56 @@
+type: object
+required:
+  - proposal_status
+  - candidate_type
+  - target_experience_ref
+  - candidate_summary
+  - change_rationale
+  - evidence_refs
+  - governance_warnings
+  - schema_version
+properties:
+  proposal_status:
+    type: string
+    enum:
+      - candidate_created
+      - no_change
+      - needs_human_review
+  candidate_type:
+    type: string
+    enum:
+      - create
+      - revise
+      - no_change
+  target_experience_ref:
+    type: string
+    minLength: 1
+    maxLength: 160
+  candidate_summary:
+    type: string
+    maxLength: 1000
+  change_rationale:
+    type: array
+    minItems: 0
+    maxItems: 8
+    items:
+      type: string
+      minLength: 1
+      maxLength: 240
+  evidence_refs:
+    type: array
+    minItems: 0
+    maxItems: 12
+    items:
+      type: string
+  governance_warnings:
+    type: array
+    minItems: 0
+    maxItems: 8
+    items:
+      type: string
+      minLength: 1
+      maxLength: 240
+  schema_version:
+    type: string
+    const: experience_revision_propose.output.v1
+additional_properties: false

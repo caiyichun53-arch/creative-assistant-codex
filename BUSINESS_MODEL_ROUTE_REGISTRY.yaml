@@ -476,3 +476,86 @@ nodes:
         revision_targets: array
         schema_version: string
       additional_properties: false
+
+  - node_id: experiment_review
+    logical_route: business.experiment_review
+    capability_tier: critique_reasoning
+    source_evidence:
+      - GOAL-V0.6.2-PRODUCTION-COMPLETION-01 explicitly approves business.experiment_review.
+      - AGENTS.md: LLM allowed only inside fixed generated judgement routes.
+    timeout_ms: 60000
+    retry:
+      max_attempts: 1
+      retry_on: []
+    token_context_budget:
+      max_input_tokens: 7000
+      max_output_tokens: 1800
+    allowed_provider_policy:
+      inherit: provider_policy_defaults
+    fallback_policy:
+      inherit: provider_policy_defaults.fallback_policy
+    input_schema:
+      type: object
+      required: [fixture_id, experiment_design, execution_summary, result_metrics, evidence_refs, tested_experience_refs]
+      properties:
+        fixture_id: string
+        experiment_design: string
+        execution_summary: string
+        result_metrics: object
+        evidence_refs: array
+        tested_experience_refs: array
+      additional_properties: false
+    output_schema:
+      type: object
+      required: [review_status, supported_experience_refs, refuted_experience_refs, inconclusive_experience_refs, key_findings, evidence_used, next_actions, schema_version]
+      properties:
+        review_status: string
+        supported_experience_refs: array
+        refuted_experience_refs: array
+        inconclusive_experience_refs: array
+        key_findings: array
+        evidence_used: array
+        next_actions: array
+        schema_version: string
+      additional_properties: false
+
+  - node_id: experience_revision_propose
+    logical_route: business.experience_revision_propose
+    capability_tier: critique_reasoning
+    source_evidence:
+      - GOAL-V0.6.2-PRODUCTION-COMPLETION-01 explicitly approves business.experience_revision_propose.
+      - AGENTS.md: experience evolution creates candidates; formal publication is outside the Skill.
+    timeout_ms: 60000
+    retry:
+      max_attempts: 1
+      retry_on: []
+    token_context_budget:
+      max_input_tokens: 8000
+      max_output_tokens: 2000
+    allowed_provider_policy:
+      inherit: provider_policy_defaults
+    fallback_policy:
+      inherit: provider_policy_defaults.fallback_policy
+    input_schema:
+      type: object
+      required: [fixture_id, frozen_experience_versions, experiment_review, new_evidence_refs, tactic_candidates]
+      properties:
+        fixture_id: string
+        frozen_experience_versions: array
+        experiment_review: object
+        new_evidence_refs: array
+        tactic_candidates: array
+      additional_properties: false
+    output_schema:
+      type: object
+      required: [proposal_status, candidate_type, target_experience_ref, candidate_summary, change_rationale, evidence_refs, governance_warnings, schema_version]
+      properties:
+        proposal_status: string
+        candidate_type: string
+        target_experience_ref: string
+        candidate_summary: string
+        change_rationale: array
+        evidence_refs: array
+        governance_warnings: array
+        schema_version: string
+      additional_properties: false

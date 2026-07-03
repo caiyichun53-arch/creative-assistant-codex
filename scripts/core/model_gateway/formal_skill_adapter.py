@@ -62,6 +62,12 @@ SCRIPT_GENERATE_CONTRACT_PATH = ROOT / "SCRIPT_GENERATE_BUSINESS_CONTRACT.yaml"
 SCRIPT_GENERATE_FIXTURES_PATH = ROOT / "runtime_skills" / "script_generate" / "fixtures.yaml"
 SCRIPT_REVIEW_CONTRACT_PATH = ROOT / "SCRIPT_REVIEW_BUSINESS_CONTRACT.yaml"
 SCRIPT_REVIEW_FIXTURES_PATH = ROOT / "runtime_skills" / "script_review" / "fixtures.yaml"
+EXPERIMENT_REVIEW_CONTRACT_PATH = ROOT / "EXPERIMENT_REVIEW_BUSINESS_CONTRACT.yaml"
+EXPERIMENT_REVIEW_FIXTURES_PATH = ROOT / "runtime_skills" / "experiment_review" / "fixtures.yaml"
+EXPERIENCE_REVISION_PROPOSE_CONTRACT_PATH = ROOT / "EXPERIENCE_REVISION_PROPOSE_BUSINESS_CONTRACT.yaml"
+EXPERIENCE_REVISION_PROPOSE_FIXTURES_PATH = (
+    ROOT / "runtime_skills" / "experience_revision_propose" / "fixtures.yaml"
+)
 STATUS_PATH = ROOT / "CONTENT_CLASSIFY_STATUS.yaml"
 REPORT_PATH = ROOT / f"{GOAL_ID}_VALIDATION_REPORT.md"
 PROGRESS_PATH = ROOT / "implementation_progress" / f"{GOAL_ID}.md"
@@ -82,6 +88,8 @@ PRODUCTION_RESEARCH_PLAN_OUTPUT_SCHEMA_VERSION = "production_research_plan.outpu
 CONTENT_PLAN_OUTPUT_SCHEMA_VERSION = "content_plan.output.v1"
 SCRIPT_GENERATE_OUTPUT_SCHEMA_VERSION = "script_generate.output.v1"
 SCRIPT_REVIEW_OUTPUT_SCHEMA_VERSION = "script_review.output.v1"
+EXPERIMENT_REVIEW_OUTPUT_SCHEMA_VERSION = "experiment_review.output.v1"
+EXPERIENCE_REVISION_PROPOSE_OUTPUT_SCHEMA_VERSION = "experience_revision_propose.output.v1"
 
 BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "skill_id",
@@ -321,6 +329,48 @@ SCRIPT_REVIEW_BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "fixture_cases",
     "completion_definition",
 }
+EXPERIMENT_REVIEW_BUSINESS_CONTRACT_REQUIRED_KEYS = {
+    "skill_id",
+    "skill_version",
+    "source_documents",
+    "responsibility",
+    "non_responsibilities",
+    "allowed_inputs",
+    "forbidden_inputs",
+    "review_policy",
+    "evidence_requirements",
+    "input_length_limits",
+    "context_budget",
+    "token_budget",
+    "timeout",
+    "retry",
+    "idempotency",
+    "error_contract",
+    "materialization_contract",
+    "fixture_cases",
+    "completion_definition",
+}
+EXPERIENCE_REVISION_PROPOSE_BUSINESS_CONTRACT_REQUIRED_KEYS = {
+    "skill_id",
+    "skill_version",
+    "source_documents",
+    "responsibility",
+    "non_responsibilities",
+    "allowed_inputs",
+    "forbidden_inputs",
+    "proposal_policy",
+    "evidence_requirements",
+    "input_length_limits",
+    "context_budget",
+    "token_budget",
+    "timeout",
+    "retry",
+    "idempotency",
+    "error_contract",
+    "materialization_contract",
+    "fixture_cases",
+    "completion_definition",
+}
 CONCRETE_LABELS = {
     "fan_kepu_social_life",
     "music_entertainment",
@@ -463,6 +513,10 @@ class FormalSkillContract:
             validate_script_generate_business_contract(load_script_generate_business_contract())
         if self.formal_skill_id == "script_review":
             validate_script_review_business_contract(load_script_review_business_contract())
+        if self.formal_skill_id == "experiment_review":
+            validate_experiment_review_business_contract(load_experiment_review_business_contract())
+        if self.formal_skill_id == "experience_revision_propose":
+            validate_experience_revision_propose_business_contract(load_experience_revision_propose_business_contract())
         if self.formal_skill_id == "content_relation_judge":
             validate_content_relation_judge_business_contract(load_content_relation_judge_business_contract())
 
@@ -574,6 +628,10 @@ class FormalBusinessSkillAdapter:
             validate_script_generate_output_semantics(input_payload, output_payload)
         elif self.contract.formal_skill_id == "script_review":
             validate_script_review_output_semantics(input_payload, output_payload)
+        elif self.contract.formal_skill_id == "experiment_review":
+            validate_experiment_review_output_semantics(input_payload, output_payload)
+        elif self.contract.formal_skill_id == "experience_revision_propose":
+            validate_experience_revision_propose_output_semantics(input_payload, output_payload)
         return FormalSkillRunResult(
             formal_skill_id=self.contract.formal_skill_id,
             output_payload=output_payload,
@@ -870,6 +928,16 @@ def load_script_review_business_contract(path: Path = SCRIPT_REVIEW_CONTRACT_PAT
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
+def load_experiment_review_business_contract(path: Path = EXPERIMENT_REVIEW_CONTRACT_PATH) -> dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def load_experience_revision_propose_business_contract(
+    path: Path = EXPERIENCE_REVISION_PROPOSE_CONTRACT_PATH,
+) -> dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
 def load_content_classify_fixtures(path: Path = CONTENT_CLASSIFY_FIXTURES_PATH) -> list[dict[str, Any]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     fixtures = data.get("fixtures") or []
@@ -940,6 +1008,18 @@ def load_script_generate_fixtures(path: Path = SCRIPT_GENERATE_FIXTURES_PATH) ->
 
 
 def load_script_review_fixtures(path: Path = SCRIPT_REVIEW_FIXTURES_PATH) -> list[dict[str, Any]]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return list(data.get("fixtures") or [])
+
+
+def load_experiment_review_fixtures(path: Path = EXPERIMENT_REVIEW_FIXTURES_PATH) -> list[dict[str, Any]]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return list(data.get("fixtures") or [])
+
+
+def load_experience_revision_propose_fixtures(
+    path: Path = EXPERIENCE_REVISION_PROPOSE_FIXTURES_PATH,
+) -> list[dict[str, Any]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return list(data.get("fixtures") or [])
 
@@ -1187,6 +1267,50 @@ def validate_script_review_business_contract(data: dict[str, Any]) -> dict[str, 
         "source_document_count": len(data.get("source_documents") or []),
         "missing_requirement_count": len(data.get("missing_requirements") or []),
         "subnode_count": len(allowed_nodes),
+    }
+
+
+def validate_experiment_review_business_contract(data: dict[str, Any]) -> dict[str, Any]:
+    missing = sorted(EXPERIMENT_REVIEW_BUSINESS_CONTRACT_REQUIRED_KEYS - set(data))
+    if missing:
+        raise FormalSkillValidationError(f"experiment_review business contract missing keys: {missing}")
+    if data.get("schema_version") != "experiment_review.business_contract.v1":
+        raise FormalSkillValidationError("unexpected experiment_review business contract schema_version")
+    if data.get("missing_requirements"):
+        raise FormalSkillValidationError("experiment_review business contract has missing_requirement entries")
+    if data.get("skill_id") != "experiment_review":
+        raise FormalSkillValidationError("experiment_review business contract skill_id mismatch")
+    allowed_nodes = data.get("allowed_model_nodes") or []
+    if allowed_nodes != ["business.experiment_review"]:
+        raise FormalSkillValidationError("experiment_review must use only business.experiment_review")
+    return {
+        "skill_id": data["skill_id"],
+        "skill_version": data["skill_version"],
+        "source_document_count": len(data.get("source_documents") or []),
+        "missing_requirement_count": len(data.get("missing_requirements") or []),
+    }
+
+
+def validate_experience_revision_propose_business_contract(data: dict[str, Any]) -> dict[str, Any]:
+    missing = sorted(EXPERIENCE_REVISION_PROPOSE_BUSINESS_CONTRACT_REQUIRED_KEYS - set(data))
+    if missing:
+        raise FormalSkillValidationError(f"experience_revision_propose business contract missing keys: {missing}")
+    if data.get("schema_version") != "experience_revision_propose.business_contract.v1":
+        raise FormalSkillValidationError("unexpected experience_revision_propose business contract schema_version")
+    if data.get("missing_requirements"):
+        raise FormalSkillValidationError("experience_revision_propose business contract has missing_requirement entries")
+    if data.get("skill_id") != "experience_revision_propose":
+        raise FormalSkillValidationError("experience_revision_propose business contract skill_id mismatch")
+    allowed_nodes = data.get("allowed_model_nodes") or []
+    if allowed_nodes != ["business.experience_revision_propose"]:
+        raise FormalSkillValidationError(
+            "experience_revision_propose must use only business.experience_revision_propose"
+        )
+    return {
+        "skill_id": data["skill_id"],
+        "skill_version": data["skill_version"],
+        "source_document_count": len(data.get("source_documents") or []),
+        "missing_requirement_count": len(data.get("missing_requirements") or []),
     }
 
 
@@ -1483,6 +1607,81 @@ def validate_script_review_output_semantics(input_payload: dict[str, Any], outpu
             raise FormalSkillValidationError("script_review revision_targets must be non-empty strings")
     if not input_payload.get("human_reference_refs"):
         raise FormalSkillValidationError("script_review requires human_reference_refs")
+
+
+def validate_experiment_review_output_semantics(input_payload: dict[str, Any], output_payload: dict[str, Any]) -> None:
+    if output_payload["schema_version"] != EXPERIMENT_REVIEW_OUTPUT_SCHEMA_VERSION:
+        raise FormalSkillValidationError("experiment_review output schema_version mismatch")
+    if output_payload["review_status"] not in {
+        "supports_hypothesis",
+        "refutes_hypothesis",
+        "inconclusive",
+        "needs_more_data",
+    }:
+        raise FormalSkillValidationError("experiment_review review_status is unsupported")
+    tested_refs = set(input_payload["tested_experience_refs"])
+    for key in ("supported_experience_refs", "refuted_experience_refs", "inconclusive_experience_refs"):
+        refs = output_payload[key]
+        if not set(refs).issubset(tested_refs):
+            raise FormalSkillValidationError(f"experiment_review {key} must come from tested_experience_refs")
+    evidence_claims = {
+        str(item.get("claim", ""))
+        for item in input_payload.get("evidence_items", [])
+        if isinstance(item, dict)
+    }
+    if not set(output_payload["evidence_used"]).issubset(evidence_claims):
+        raise FormalSkillValidationError("experiment_review evidence_used must come from input evidence claims")
+    if not output_payload["key_findings"]:
+        raise FormalSkillValidationError("experiment_review requires key_findings")
+    forbidden_terms = ("publish", "writeback", "正式发布", "写入经验库", "修改正式经验")
+    for value in output_payload["key_findings"] + output_payload["next_actions"]:
+        if not isinstance(value, str) or not value.strip():
+            raise FormalSkillValidationError("experiment_review findings and actions must be non-empty strings")
+        if any(term in value.lower() for term in forbidden_terms):
+            raise FormalSkillValidationError("experiment_review must not publish or modify formal experience")
+
+
+def validate_experience_revision_propose_output_semantics(
+    input_payload: dict[str, Any], output_payload: dict[str, Any]
+) -> None:
+    if output_payload["schema_version"] != EXPERIENCE_REVISION_PROPOSE_OUTPUT_SCHEMA_VERSION:
+        raise FormalSkillValidationError("experience_revision_propose output schema_version mismatch")
+    status = output_payload["proposal_status"]
+    candidate_type = output_payload["candidate_type"]
+    if status not in {"candidate_created", "no_change", "needs_human_review"}:
+        raise FormalSkillValidationError("experience_revision_propose proposal_status is unsupported")
+    if candidate_type not in {"create", "revise", "no_change"}:
+        raise FormalSkillValidationError("experience_revision_propose candidate_type is unsupported")
+    frozen_refs = {
+        str(item.get("experience_ref", ""))
+        for item in input_payload.get("frozen_experience_versions", [])
+        if isinstance(item, dict)
+    }
+    target_ref = output_payload["target_experience_ref"]
+    if candidate_type == "revise" and target_ref not in frozen_refs:
+        raise FormalSkillValidationError("revision candidate target_experience_ref must be frozen in input")
+    if candidate_type == "create" and target_ref != "new":
+        raise FormalSkillValidationError("create candidate must use target_experience_ref=new")
+    if status == "no_change" and candidate_type != "no_change":
+        raise FormalSkillValidationError("no_change proposal must use candidate_type no_change")
+    if status == "candidate_created" and candidate_type == "no_change":
+        raise FormalSkillValidationError("candidate_created requires create or revise candidate_type")
+    source_refs = {
+        str(item.get("source_ref", ""))
+        for item in input_payload.get("new_evidence_items", [])
+        if isinstance(item, dict)
+    }
+    if not set(output_payload["evidence_refs"]).issubset(source_refs):
+        raise FormalSkillValidationError("experience_revision_propose evidence_refs must come from new_evidence_items")
+    if status == "candidate_created" and not str(output_payload["candidate_summary"]).strip():
+        raise FormalSkillValidationError("candidate_created requires candidate_summary")
+    forbidden_terms = ("published", "active_formal", "正式发布", "直接覆盖", "写入正式经验")
+    text_values = [output_payload["candidate_summary"]] + output_payload["change_rationale"] + output_payload["governance_warnings"]
+    for value in text_values:
+        if not isinstance(value, str):
+            raise FormalSkillValidationError("experience_revision_propose text fields must be strings")
+        if any(term in value.lower() for term in forbidden_terms):
+            raise FormalSkillValidationError("experience_revision_propose must only propose candidate changes")
 
 
 def parse_model_json(output_text: str) -> dict[str, Any]:
@@ -2636,6 +2835,151 @@ class DeterministicScriptReviewModelPort:
         )
 
 
+class DeterministicExperimentReviewModelPort:
+    provider_name = "formal_business_skill_test_port"
+
+    def __init__(self, *, behavior: str = "success"):
+        self.behavior = behavior
+        self.call_count = 0
+
+    def complete(self, request: ModelRequest, route: ModelRoute) -> ModelProviderResult:
+        self.call_count += 1
+        behavior = self.behavior
+        if behavior == "fail_once" and self.call_count == 1:
+            raise RuntimeError("synthetic experiment_review model port failure")
+        if behavior == "failure":
+            raise RuntimeError("synthetic experiment_review model port failure")
+        if behavior == "empty":
+            return self._result("", request)
+        if behavior == "not_json":
+            return self._result("not-json", request)
+        if behavior == "missing_field":
+            return self._result(json.dumps({"review_status": "supports_hypothesis"}, ensure_ascii=False), request)
+        refs = [str(item) for item in request.input_payload.get("tested_experience_refs", [])]
+        evidence_items = [item for item in request.input_payload.get("evidence_refs", []) if isinstance(item, dict)]
+        evidence_claim = str(evidence_items[0].get("claim", "")) if evidence_items else ""
+        supported = refs[:1]
+        refuted: list[str] = []
+        inconclusive = refs[1:2]
+        status = "supports_hypothesis"
+        if behavior == "refutes":
+            status = "refutes_hypothesis"
+            supported = []
+            refuted = refs[:1]
+        if behavior == "inconclusive":
+            status = "inconclusive"
+            supported = []
+            inconclusive = refs[:1]
+        if behavior == "unseen_experience":
+            supported = ["experience:unseen"]
+        if behavior == "unseen_evidence":
+            evidence_claim = "unseen evidence claim"
+        finding = f"Supplied experiment evidence supports review status {status}."
+        next_actions = ["Keep formal experience unchanged until candidate review."]
+        if behavior == "illegal_publish":
+            next_actions = ["publish this result directly to the formal experience library"]
+        payload = {
+            "review_status": status,
+            "supported_experience_refs": supported,
+            "refuted_experience_refs": refuted,
+            "inconclusive_experience_refs": inconclusive,
+            "key_findings": [finding],
+            "evidence_used": [evidence_claim] if evidence_claim else [],
+            "next_actions": next_actions,
+            "schema_version": EXPERIMENT_REVIEW_OUTPUT_SCHEMA_VERSION,
+        }
+        return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+
+    @staticmethod
+    def _result(output_text: str, request: ModelRequest) -> ModelProviderResult:
+        return ModelProviderResult(
+            output_text=output_text,
+            usage=ModelUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            cost={"test": 0},
+            provider_request_id=f"fake-{request.input_payload.get('fixture_id', 'missing')}",
+            metadata={
+                "fixture": True,
+                "tools_enabled": False,
+                "memory_enabled": False,
+                "messaging_enabled": False,
+                "nested_job_orchestration_enabled": False,
+                "file_or_terminal_side_effects_enabled": False,
+            },
+        )
+
+
+class DeterministicExperienceRevisionProposeModelPort:
+    provider_name = "formal_business_skill_test_port"
+
+    def __init__(self, *, behavior: str = "success"):
+        self.behavior = behavior
+        self.call_count = 0
+
+    def complete(self, request: ModelRequest, route: ModelRoute) -> ModelProviderResult:
+        self.call_count += 1
+        behavior = self.behavior
+        if behavior == "fail_once" and self.call_count == 1:
+            raise RuntimeError("synthetic experience_revision_propose model port failure")
+        if behavior == "failure":
+            raise RuntimeError("synthetic experience_revision_propose model port failure")
+        if behavior == "empty":
+            return self._result("", request)
+        if behavior == "not_json":
+            return self._result("not-json", request)
+        if behavior == "missing_field":
+            return self._result(json.dumps({"proposal_status": "candidate_created"}, ensure_ascii=False), request)
+        frozen = [item for item in request.input_payload.get("frozen_experience_versions", []) if isinstance(item, dict)]
+        evidence_items = [item for item in request.input_payload.get("new_evidence_refs", []) if isinstance(item, dict)]
+        target = str(frozen[0].get("experience_ref", "experience:missing")) if frozen else "new"
+        source_ref = str(evidence_items[0].get("source_ref", "")) if evidence_items else ""
+        status = "candidate_created"
+        candidate_type = "revise" if frozen else "create"
+        if behavior == "create":
+            candidate_type = "create"
+            target = "new"
+        if behavior == "no_change":
+            status = "no_change"
+            candidate_type = "no_change"
+            target = "none"
+        if behavior == "unseen_target":
+            target = "experience:unseen"
+        if behavior == "unseen_evidence_ref":
+            source_ref = "unseen-source"
+        summary = "Candidate revises experience wording based on frozen review evidence."
+        rationale = ["Experiment review supports a candidate-only revision proposal."]
+        warnings = ["candidate_only_no_publication"]
+        if behavior == "illegal_publish":
+            summary = "Published active_formal experience update"
+        payload = {
+            "proposal_status": status,
+            "candidate_type": candidate_type,
+            "target_experience_ref": target,
+            "candidate_summary": summary,
+            "change_rationale": rationale,
+            "evidence_refs": [source_ref] if source_ref else [],
+            "governance_warnings": warnings,
+            "schema_version": EXPERIENCE_REVISION_PROPOSE_OUTPUT_SCHEMA_VERSION,
+        }
+        return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+
+    @staticmethod
+    def _result(output_text: str, request: ModelRequest) -> ModelProviderResult:
+        return ModelProviderResult(
+            output_text=output_text,
+            usage=ModelUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            cost={"test": 0},
+            provider_request_id=f"fake-{request.input_payload.get('fixture_id', 'missing')}",
+            metadata={
+                "fixture": True,
+                "tools_enabled": False,
+                "memory_enabled": False,
+                "messaging_enabled": False,
+                "nested_job_orchestration_enabled": False,
+                "file_or_terminal_side_effects_enabled": False,
+            },
+        )
+
+
 class FormalBusinessSkillMaterializer:
     def __init__(self, store: PersistenceStore, *, id_factory: Callable[[], str] = uuid7):
         self.store = store
@@ -3540,6 +3884,106 @@ def make_script_review_harness(
     )
 
 
+def make_experiment_review_harness(
+    *,
+    id_factory: Callable[[], str] = uuid7,
+    now_ms: Callable[[], int] | None = None,
+    monotonic_ms: Callable[[], int] | None = None,
+    provider: ModelProvider | None = None,
+    route: ModelRoute | None = None,
+) -> FormalBusinessSkillHarness:
+    contract = FormalSkillContract.from_yaml(EXPERIMENT_REVIEW_CONTRACT_PATH)
+    store = PersistenceStore.in_memory(id_factory=id_factory)
+    scheduler = Goal03Scheduler(store, id_factory=id_factory, now_ms=now_ms)
+    materializer = FormalBusinessSkillMaterializer(store, id_factory=id_factory)
+    provider = provider or DeterministicExperimentReviewModelPort()
+    if route is None:
+        route = ModelRoute(
+            route_name=contract.route_name,
+            provider_name=provider.provider_name,
+            model_name="deterministic-experiment-review",
+            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+            config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
+            timeout_ms=1000,
+        )
+    gateway = ModelGateway(
+        routes={route.route_name: route},
+        providers={route.provider_name: provider},
+        materializer=ModelRunMaterializer(store),
+        monotonic_ms=monotonic_ms,
+    )
+    adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
+    worker = FormalBusinessSkillWorker(
+        scheduler=scheduler,
+        adapter=adapter,
+        materializer=materializer,
+        contract=contract,
+        worker_id="formal-business-skill-worker",
+    )
+    api = FormalBusinessSkillCoreAPI(scheduler, contract)
+    return FormalBusinessSkillHarness(
+        store=store,
+        scheduler=scheduler,
+        api=api,
+        worker=worker,
+        gateway=gateway,
+        materializer=materializer,
+        adapter=adapter,
+        contract=contract,
+        provider=provider,
+    )
+
+
+def make_experience_revision_propose_harness(
+    *,
+    id_factory: Callable[[], str] = uuid7,
+    now_ms: Callable[[], int] | None = None,
+    monotonic_ms: Callable[[], int] | None = None,
+    provider: ModelProvider | None = None,
+    route: ModelRoute | None = None,
+) -> FormalBusinessSkillHarness:
+    contract = FormalSkillContract.from_yaml(EXPERIENCE_REVISION_PROPOSE_CONTRACT_PATH)
+    store = PersistenceStore.in_memory(id_factory=id_factory)
+    scheduler = Goal03Scheduler(store, id_factory=id_factory, now_ms=now_ms)
+    materializer = FormalBusinessSkillMaterializer(store, id_factory=id_factory)
+    provider = provider or DeterministicExperienceRevisionProposeModelPort()
+    if route is None:
+        route = ModelRoute(
+            route_name=contract.route_name,
+            provider_name=provider.provider_name,
+            model_name="deterministic-experience-revision-propose",
+            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+            config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
+            timeout_ms=1000,
+        )
+    gateway = ModelGateway(
+        routes={route.route_name: route},
+        providers={route.provider_name: provider},
+        materializer=ModelRunMaterializer(store),
+        monotonic_ms=monotonic_ms,
+    )
+    adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
+    worker = FormalBusinessSkillWorker(
+        scheduler=scheduler,
+        adapter=adapter,
+        materializer=materializer,
+        contract=contract,
+        worker_id="formal-business-skill-worker",
+    )
+    api = FormalBusinessSkillCoreAPI(scheduler, contract)
+    return FormalBusinessSkillHarness(
+        store=store,
+        scheduler=scheduler,
+        api=api,
+        worker=worker,
+        gateway=gateway,
+        materializer=materializer,
+        adapter=adapter,
+        contract=contract,
+        provider=provider,
+    )
+
+
 def sample_content_classify_input(**overrides: Any) -> dict[str, Any]:
     payload = {
         "request_id": "content-classify-001",
@@ -3720,6 +4164,62 @@ def sample_script_review_input(**overrides: Any) -> dict[str, Any]:
         "human_reference_refs": ["human-reference-scene-to-system-001"],
         "domain_label": "fan_kepu_social_life",
         "schema_version": "script_review.input.v1",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def sample_experiment_review_input(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "request_id": "experiment-review-001",
+        "correlation_id": "experiment-review-correlation-001",
+        "experiment_id": "experiment-001",
+        "experiment_design": "Compare two approved hook structures on the same synthetic content brief.",
+        "execution_summary": "The scene-first hook had higher completion signal in the synthetic review packet.",
+        "result_metrics": {"completion_signal": "higher", "sample_size": 3},
+        "evidence_items": [
+            {
+                "claim": "scene-first hook improved completion signal",
+                "source_ref": "experiment-src-001",
+                "supporting_text": "scene-first hook had higher completion signal",
+            }
+        ],
+        "tested_experience_refs": ["experience:scene_first_hook", "experience:abstract_hook"],
+        "domain_label": "fan_kepu_social_life",
+        "schema_version": "experiment_review.input.v1",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def sample_experience_revision_propose_input(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "request_id": "experience-revision-propose-001",
+        "correlation_id": "experience-revision-propose-correlation-001",
+        "frozen_experience_versions": [
+            {
+                "experience_ref": "experience:scene_first_hook",
+                "experience_version": "1.0.0",
+                "status": "published",
+                "content_hash": "hash-scene-first-hook-v1",
+            }
+        ],
+        "experiment_review": {
+            "review_status": "supports_hypothesis",
+            "supported_experience_refs": ["experience:scene_first_hook"],
+            "refuted_experience_refs": [],
+            "inconclusive_experience_refs": [],
+        },
+        "new_evidence_items": [
+            {
+                "claim": "scene-first hook improved completion signal",
+                "source_ref": "experiment-src-001",
+                "supporting_text": "scene-first hook had higher completion signal",
+            }
+        ],
+        "tactic_candidates": ["ordinary_life_problem_hidden_system"],
+        "domain_label": "fan_kepu_social_life",
+        "schema_version": "experience_revision_propose.input.v1",
     }
     payload.update(overrides)
     return payload

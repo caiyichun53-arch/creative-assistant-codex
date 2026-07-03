@@ -2,7 +2,7 @@
 
 Status: IN_PROGRESS
 
-Current Phase: Phase 2 - implement remaining formal Skills
+Current Phase: Phase 3 - centralized formal Skill validation pending
 
 Current branch: implementation/goal-v0.6.2-production-completion-01
 
@@ -150,11 +150,42 @@ Completed checkpoints:
   - Deterministic three-subnode test model port, harness, sample input and semantic checks in `scripts/core/model_gateway/formal_skill_adapter.py`
   - `tests/core/test_script_review_skill.py`
 - Committed `script_review` Phase 2 checkpoint at `a9e4a73`.
-- Recorded Phase 2 remaining Skill blockers:
+- Resolved previous Phase 2 remaining Skill blockers from the latest pasted Goal instruction:
   - `PHASE_2_REMAINING_SKILL_BLOCKERS.md`
-  - `experiment_review` remains blocked because no approved `business.*` ModelGateway route exists.
-  - `experience_revision_propose` remains blocked because no approved `business.*` ModelGateway route exists.
-  - No legacy logic, old data, direct CLI path, or fake route was introduced to fill the missing formal business semantics.
+  - Added approved `business.experiment_review` route.
+  - Added approved `business.experience_revision_propose` route.
+  - No legacy logic, old data, direct CLI path, GPT call, or fallback route was introduced.
+- Implemented `experiment_review` formal Skill:
+  - `EXPERIMENT_REVIEW_BUSINESS_CONTRACT.yaml`
+  - `runtime_skills/experiment_review/skill.yaml`
+  - `runtime_skills/experiment_review/input_schema.yaml`
+  - `runtime_skills/experiment_review/output_schema.yaml`
+  - `runtime_skills/experiment_review/binding.yaml`
+  - `runtime_skills/experiment_review/prompt.md`
+  - `runtime_skills/experiment_review/fixtures.yaml`
+  - `EXPERIMENT_REVIEW_STATUS.yaml`
+  - `EXPERIMENT_REVIEW_VALIDATION_REPORT.md`
+  - `business.experiment_review` route in `BUSINESS_MODEL_ROUTE_REGISTRY.yaml`
+  - Formal route ownership updated in `FORMAL_SKILL_ROUTE_MAPPING.yaml`
+  - Remaining execution graph updated in `REMAINING_FORMAL_SKILL_EXECUTION_GRAPH.yaml`
+  - Deterministic test model port, harness, sample input and semantic checks in `scripts/core/model_gateway/formal_skill_adapter.py`
+  - `tests/core/test_experiment_review_skill.py`
+- Implemented `experience_revision_propose` formal Skill:
+  - `EXPERIENCE_REVISION_PROPOSE_BUSINESS_CONTRACT.yaml`
+  - `runtime_skills/experience_revision_propose/skill.yaml`
+  - `runtime_skills/experience_revision_propose/input_schema.yaml`
+  - `runtime_skills/experience_revision_propose/output_schema.yaml`
+  - `runtime_skills/experience_revision_propose/binding.yaml`
+  - `runtime_skills/experience_revision_propose/prompt.md`
+  - `runtime_skills/experience_revision_propose/fixtures.yaml`
+  - `EXPERIENCE_REVISION_PROPOSE_STATUS.yaml`
+  - `EXPERIENCE_REVISION_PROPOSE_VALIDATION_REPORT.md`
+  - `business.experience_revision_propose` route in `BUSINESS_MODEL_ROUTE_REGISTRY.yaml`
+  - Formal route ownership updated in `FORMAL_SKILL_ROUTE_MAPPING.yaml`
+  - Remaining execution graph updated in `REMAINING_FORMAL_SKILL_EXECUTION_GRAPH.yaml`
+  - Deterministic test model port, harness, sample input and semantic checks in `scripts/core/model_gateway/formal_skill_adapter.py`
+  - `tests/core/test_experience_revision_propose_skill.py`
+- Phase 2 now has 12 formal Skills implemented; real Provider validation remains deferred to Phase 3 centralized Mimo matrix.
 
 Current HEAD:
 
@@ -188,6 +219,20 @@ Test results:
   - PASS, 121 tests
 - `python -m unittest tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter`
   - PASS, 55 tests after Phase 2 blocker recording
+- `python -m unittest tests.core.test_experiment_review_skill tests.core.test_experience_revision_propose_skill`
+  - PASS, 18 tests
+- `python -m unittest tests.core.test_experiment_review_skill tests.core.test_experience_revision_propose_skill tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter`
+  - PASS, 73 tests
+- `python -m unittest tests.core.test_source_to_topic_skill tests.core.test_sample_deep_analyze_skill tests.core.test_tactic_extract_skill tests.core.test_research_evidence_extract_skill tests.core.test_production_research_plan_skill tests.core.test_content_plan_skill tests.core.test_script_generate_skill tests.core.test_script_review_skill tests.core.test_experiment_review_skill tests.core.test_experience_revision_propose_skill tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter`
+  - PASS, 139 tests
+- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_remaining_phase2'; python -m py_compile scripts\core\model_gateway\formal_skill_adapter.py tests\core\test_experiment_review_skill.py tests\core\test_experience_revision_propose_skill.py tests\core\test_business_route_registry.py tests\core\test_remaining_formal_skill_graph.py tests\core\test_formal_skill_adapter.py`
+  - PASS
+- `python scripts\validation\clean_room_empty_db.py --health`
+  - PASS, 20 formal tables, 0 total rows, foreign key check passed
+- `git diff --check`
+  - PASS
+- YAML parse check for route registry, formal mapping, remaining execution graph and two new contracts
+  - PASS
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_script_review'; python -m py_compile scripts\core\model_gateway\formal_skill_adapter.py tests\core\test_script_review_skill.py tests\core\test_script_generate_skill.py tests\core\test_content_plan_skill.py tests\core\test_production_research_plan_skill.py tests\core\test_research_evidence_extract_skill.py tests\core\test_tactic_extract_skill.py tests\core\test_sample_deep_analyze_skill.py tests\core\test_source_to_topic_skill.py tests\core\test_remaining_formal_skill_graph.py tests\core\test_business_route_registry.py`
   - PASS
 - `python scripts\validation\clean_room_empty_db.py --health`
@@ -245,20 +290,20 @@ Test results:
 
 Remaining work:
 
-- Continue to Phase 2 blocker reconciliation for `experiment_review` and `experience_revision_propose`; both still lack existing `business.*` route nodes in `BUSINESS_MODEL_ROUTE_REGISTRY.yaml`.
+- Commit the remaining Phase 2 Skill checkpoint.
+- Continue to Phase 3 centralized Skill validation after Phase 2 closeout commit.
 
 Blocking issues:
 
-- `experiment_review` and `experience_revision_propose` have no existing `business.*` route in `BUSINESS_MODEL_ROUTE_REGISTRY.yaml`; all other Phase 2 Skills that have approved routes are implemented and checkpointed.
-- `target-architecture.md` and `rebuild-direction.md` were unavailable in current repo/memory search; existing formal route files already record the same source unavailability and Phase 1 remains verifiable from available governing sources.
+- No active Phase 2 Skill blocker remains after the latest pasted Goal instruction approved the two missing formal business routes.
+- `target-architecture.md` and `rebuild-direction.md` remain unavailable in current repo/memory search; existing formal route files already record the same source unavailability and Phase 1 remains verifiable from available governing sources.
 
 Next resume command:
 
 ```powershell
 cd I:\Creation_assistant-codex
 git switch implementation/goal-v0.6.2-production-completion-01
-python -m unittest tests.core.test_remaining_formal_skill_graph tests.core.test_formal_skill_adapter tests.core.test_business_route_registry
-python -m unittest tests.core.test_script_review_skill
+python -m unittest tests.core.test_source_to_topic_skill tests.core.test_sample_deep_analyze_skill tests.core.test_tactic_extract_skill tests.core.test_research_evidence_extract_skill tests.core.test_production_research_plan_skill tests.core.test_content_plan_skill tests.core.test_script_generate_skill tests.core.test_script_review_skill tests.core.test_experiment_review_skill tests.core.test_experience_revision_propose_skill tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter
 ```
 
 Internal Phase commits:

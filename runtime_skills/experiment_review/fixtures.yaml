@@ -1,0 +1,76 @@
+schema_version: experiment_review.fixtures.v1
+fixtures:
+  - fixture_id: fan_kepu_social_life
+    input:
+      request_id: experiment-review-fan-kepu
+      correlation_id: experiment-review-fan-kepu-correlation
+      experiment_id: experiment-fan-kepu
+      experiment_design: Compare two approved hook structures on the same synthetic social-life brief.
+      execution_summary: The scene-first hook had higher completion signal in the synthetic review packet.
+      result_metrics:
+        completion_signal: higher
+        sample_size: 3
+      evidence_items:
+        - claim: scene-first hook improved completion signal
+          source_ref: experiment-src-001
+          supporting_text: scene-first hook had higher completion signal
+      tested_experience_refs:
+        - experience:scene_first_hook
+        - experience:abstract_hook
+      domain_label: fan_kepu_social_life
+      schema_version: experiment_review.input.v1
+  - fixture_id: music_entertainment
+    input:
+      request_id: experiment-review-music
+      correlation_id: experiment-review-music-correlation
+      experiment_id: experiment-music
+      experiment_design: Compare memory-first and trivia-first openings for a synthetic music topic.
+      execution_summary: The memory-first opening produced clearer evidence alignment.
+      result_metrics:
+        evidence_alignment: higher
+        sample_size: 3
+      evidence_items:
+        - claim: memory-first opening improved evidence alignment
+          source_ref: experiment-src-002
+          supporting_text: memory-first opening produced clearer evidence alignment
+      tested_experience_refs:
+        - experience:music_memory_opening
+        - experience:music_trivia_opening
+      domain_label: music_entertainment
+      schema_version: experiment_review.input.v1
+  - fixture_id: third_domain_neutral
+    input:
+      request_id: experiment-review-third-domain
+      correlation_id: experiment-review-third-domain-correlation
+      experiment_id: experiment-third-domain
+      experiment_design: Compare two neutral third-domain explanation structures.
+      execution_summary: The packet is sufficient for fixture validation only.
+      result_metrics:
+        validation_signal: present
+        sample_size: 2
+      evidence_items:
+        - claim: neutral fixture structure stayed within supplied evidence
+          source_ref: experiment-src-003
+          supporting_text: neutral fixture structure stayed within supplied evidence
+      tested_experience_refs:
+        - experience:neutral_fixture_structure
+      domain_label: third_domain_neutral
+      schema_version: experiment_review.input.v1
+  - fixture_id: inconclusive
+    input:
+      request_id: experiment-review-inconclusive
+      correlation_id: experiment-review-inconclusive-correlation
+      experiment_id: experiment-inconclusive
+      experiment_design: Compare two approved hook structures with incomplete synthetic signals.
+      execution_summary: The signal was mixed and cannot support a stable review.
+      result_metrics:
+        completion_signal: mixed
+        sample_size: 1
+      evidence_items:
+        - claim: hook result was mixed
+          source_ref: experiment-src-004
+          supporting_text: signal was mixed
+      tested_experience_refs:
+        - experience:mixed_hook
+      domain_label: fan_kepu_social_life
+      schema_version: experiment_review.input.v1
