@@ -294,6 +294,12 @@ Completed checkpoints:
   - Business model binding summary returns non-sensitive metadata only; actual model value stays redacted.
   - No real Provider call, GPT call, DeepSeek call, old data read, fallback or automatic downgrade was introduced.
   - Phase 6 Hermes whitelist Tool checkpoint committed at `cb796d8`.
+- Completed Phase 7 synthetic end-to-end acceptance checkpoint:
+  - Added `scripts/core/staging/verify_goal_v062_phase7.py`.
+  - Added `tests/core/test_phase7_synthetic_acceptance.py`.
+  - Covered two formal domains, multi-domain extension fixtures, normal path, insufficient info, no valid result, model failure, adapter failure, skill failure, materializer failure, outbox failure, idempotency, concurrency, retry, cancel, recovery, human confirmation, workflow replay, experience empty/single/multiple/conflict/rejection/freeze/usage cases, Hermes chat model isolation and no fallback.
+  - Ran disposable PostgreSQL smoke with `postgres:16-alpine`; no host port was exposed and the container was removed.
+  - No real Provider call, GPT call, DeepSeek call, old data read, real platform collection, real Feishu send, fallback or automatic downgrade was introduced.
 
 Current HEAD:
 
@@ -514,7 +520,8 @@ Remaining work:
 
 - Phase 5 complete.
 - Phase 6 complete.
-- Continue Phase 7 complete synthetic end-to-end acceptance.
+- Phase 7 complete.
+- Continue Phase 8 authorization-gated production pilot preparation.
 
 Blocking issues:
 
