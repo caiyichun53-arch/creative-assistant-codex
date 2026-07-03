@@ -1,0 +1,38 @@
+type: object
+required:
+  - summary
+  - claims
+  - plan_steps
+  - open_questions
+  - schema_version
+properties:
+  summary:
+    type: string
+    minLength: 1
+    maxLength: 800
+  claims:
+    type: array
+    minItems: 1
+    maxItems: 12
+    items:
+      type: string
+      minLength: 1
+      maxLength: 240
+  plan_steps:
+    type: array
+    minItems: 1
+    maxItems: 10
+    items:
+      type: object
+  open_questions:
+    type: array
+    minItems: 0
+    maxItems: 8
+    items:
+      type: string
+      minLength: 1
+      maxLength: 240
+  schema_version:
+    type: string
+    const: production_research_plan.output.v1
+additional_properties: false

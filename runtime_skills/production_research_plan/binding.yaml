@@ -1,0 +1,33 @@
+schema_version: formal_skill_binding.v1
+binding_name: production_research_plan_public_input_to_research_synthesis
+binding_version: 1.0.0
+route_name: business.research_synthesis
+input_map:
+  fixture_id:
+    source: input
+    key: request_id
+  research_question:
+    source: input
+    key: candidate_topic
+  evidence_refs:
+    source: input
+    key: evidence_items
+  tactic_candidates:
+    source: input
+    key: tactic_candidates
+output_map:
+  summary:
+    source: model_output
+    key: summary
+  claims:
+    source: model_output
+    key: claims
+  plan_steps:
+    source: model_output
+    key: plan_steps
+  open_questions:
+    source: model_output
+    key: open_questions
+  schema_version:
+    source: model_output
+    key: schema_version

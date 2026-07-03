@@ -1,0 +1,41 @@
+schema_version: production_research_plan.fixtures.v1
+fixtures:
+  - fixture_id: fan_kepu_social_life
+    input:
+      request_id: production-research-plan-fan-kepu
+      correlation_id: production-research-plan-fan-kepu-correlation
+      candidate_topic: 为什么小区电梯总在早高峰堵住
+      evidence_items:
+        - claim: 早高峰电梯拥堵与通勤集中、楼层分布有关
+          source_ref: research-src-fan-001
+          supporting_text: 早高峰电梯拥堵与通勤集中、楼层分布有关
+      tactic_candidates:
+        - ordinary_life_problem_hidden_system
+      domain_label: fan_kepu_social_life
+      schema_version: production_research_plan.input.v1
+  - fixture_id: music_entertainment
+    input:
+      request_id: production-research-plan-music
+      correlation_id: production-research-plan-music-correlation
+      candidate_topic: 一首老歌为什么会重新被年轻人翻出来
+      evidence_items:
+        - claim: 老歌传播与演唱会现场和个人记忆评论有关
+          source_ref: research-src-music-001
+          supporting_text: 老歌传播与演唱会现场和个人记忆评论有关
+      tactic_candidates:
+        - music_memory_reactivation
+      domain_label: music_entertainment
+      schema_version: production_research_plan.input.v1
+  - fixture_id: third_domain_neutral
+    input:
+      request_id: production-research-plan-neutral
+      correlation_id: production-research-plan-neutral-correlation
+      candidate_topic: 冷冻面包复烤后口感为什么变化
+      evidence_items:
+        - claim: 冷冻保存会改变水分分布
+          source_ref: research-src-neutral-001
+          supporting_text: 冷冻保存会改变水分分布
+      tactic_candidates:
+        - third_domain_reduction_candidate
+      domain_label: third_domain_neutral
+      schema_version: production_research_plan.input.v1

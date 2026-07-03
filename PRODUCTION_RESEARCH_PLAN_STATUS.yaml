@@ -1,0 +1,31 @@
+goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
+phase: Phase 2
+formal_skill_id: production_research_plan
+status: LOCAL_PASSED_PENDING_COMMIT
+contract_status: completed
+schema_status: completed
+runtime_skill_package: runtime_skills/production_research_plan
+route_name: business.research_synthesis
+runner: FormalBusinessSkillAdapter
+materializer_contract: formal_business_skill_result.v1
+fixture_status: passed
+local_validation:
+  command: python -m unittest tests.core.test_production_research_plan_skill tests.core.test_research_evidence_extract_skill tests.core.test_tactic_extract_skill tests.core.test_sample_deep_analyze_skill tests.core.test_source_to_topic_skill tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter
+  result: PASS
+  test_count: 97
+live_validation_status: pending_phase_3_centralized_provider_matrix
+postgres_gate_status: not_rerun_shared_storage_unchanged
+formal_production_direct_cli_model_calls_added: 0
+clean_room_formal_db_status: verified_zero_rows
+final_local_gates:
+  unittest:
+    result: PASS
+    test_count: 97
+  py_compile:
+    result: PASS
+  clean_room_formal_db:
+    result: PASS
+    table_count: 20
+    total_rows: 0
+  git_diff_check:
+    result: PASS

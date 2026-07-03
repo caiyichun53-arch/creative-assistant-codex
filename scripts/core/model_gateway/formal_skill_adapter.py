@@ -54,6 +54,8 @@ TACTIC_EXTRACT_CONTRACT_PATH = ROOT / "TACTIC_EXTRACT_BUSINESS_CONTRACT.yaml"
 TACTIC_EXTRACT_FIXTURES_PATH = ROOT / "runtime_skills" / "tactic_extract" / "fixtures.yaml"
 RESEARCH_EVIDENCE_EXTRACT_CONTRACT_PATH = ROOT / "RESEARCH_EVIDENCE_EXTRACT_BUSINESS_CONTRACT.yaml"
 RESEARCH_EVIDENCE_EXTRACT_FIXTURES_PATH = ROOT / "runtime_skills" / "research_evidence_extract" / "fixtures.yaml"
+PRODUCTION_RESEARCH_PLAN_CONTRACT_PATH = ROOT / "PRODUCTION_RESEARCH_PLAN_BUSINESS_CONTRACT.yaml"
+PRODUCTION_RESEARCH_PLAN_FIXTURES_PATH = ROOT / "runtime_skills" / "production_research_plan" / "fixtures.yaml"
 STATUS_PATH = ROOT / "CONTENT_CLASSIFY_STATUS.yaml"
 REPORT_PATH = ROOT / f"{GOAL_ID}_VALIDATION_REPORT.md"
 PROGRESS_PATH = ROOT / "implementation_progress" / f"{GOAL_ID}.md"
@@ -70,6 +72,7 @@ SOURCE_TO_TOPIC_OUTPUT_SCHEMA_VERSION = "source_to_topic.output.v1"
 SAMPLE_DEEP_ANALYZE_OUTPUT_SCHEMA_VERSION = "sample_deep_analyze.output.v1"
 TACTIC_EXTRACT_OUTPUT_SCHEMA_VERSION = "tactic_extract.output.v1"
 RESEARCH_EVIDENCE_EXTRACT_OUTPUT_SCHEMA_VERSION = "research_evidence_extract.output.v1"
+PRODUCTION_RESEARCH_PLAN_OUTPUT_SCHEMA_VERSION = "production_research_plan.output.v1"
 
 BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "skill_id",
@@ -225,6 +228,27 @@ RESEARCH_EVIDENCE_EXTRACT_BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "fixture_cases",
     "completion_definition",
 }
+PRODUCTION_RESEARCH_PLAN_BUSINESS_CONTRACT_REQUIRED_KEYS = {
+    "skill_id",
+    "skill_version",
+    "source_documents",
+    "responsibility",
+    "non_responsibilities",
+    "allowed_inputs",
+    "forbidden_inputs",
+    "planning_policy",
+    "evidence_requirements",
+    "input_length_limits",
+    "context_budget",
+    "token_budget",
+    "timeout",
+    "retry",
+    "idempotency",
+    "error_contract",
+    "materialization_contract",
+    "fixture_cases",
+    "completion_definition",
+}
 CONCRETE_LABELS = {
     "fan_kepu_social_life",
     "music_entertainment",
@@ -359,6 +383,8 @@ class FormalSkillContract:
             validate_tactic_extract_business_contract(load_tactic_extract_business_contract())
         if self.formal_skill_id == "research_evidence_extract":
             validate_research_evidence_extract_business_contract(load_research_evidence_extract_business_contract())
+        if self.formal_skill_id == "production_research_plan":
+            validate_production_research_plan_business_contract(load_production_research_plan_business_contract())
         if self.formal_skill_id == "content_relation_judge":
             validate_content_relation_judge_business_contract(load_content_relation_judge_business_contract())
 
@@ -460,6 +486,8 @@ class FormalBusinessSkillAdapter:
             validate_tactic_extract_output_semantics(input_payload, output_payload)
         elif self.contract.formal_skill_id == "research_evidence_extract":
             validate_research_evidence_extract_output_semantics(input_payload, output_payload)
+        elif self.contract.formal_skill_id == "production_research_plan":
+            validate_production_research_plan_output_semantics(input_payload, output_payload)
         return FormalSkillRunResult(
             formal_skill_id=self.contract.formal_skill_id,
             output_payload=output_payload,
@@ -573,6 +601,12 @@ def load_research_evidence_extract_business_contract(
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
+def load_production_research_plan_business_contract(
+    path: Path = PRODUCTION_RESEARCH_PLAN_CONTRACT_PATH,
+) -> dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
 def load_content_classify_fixtures(path: Path = CONTENT_CLASSIFY_FIXTURES_PATH) -> list[dict[str, Any]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     fixtures = data.get("fixtures") or []
@@ -620,6 +654,13 @@ def load_tactic_extract_fixtures(path: Path = TACTIC_EXTRACT_FIXTURES_PATH) -> l
 
 def load_research_evidence_extract_fixtures(
     path: Path = RESEARCH_EVIDENCE_EXTRACT_FIXTURES_PATH,
+) -> list[dict[str, Any]]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return list(data.get("fixtures") or [])
+
+
+def load_production_research_plan_fixtures(
+    path: Path = PRODUCTION_RESEARCH_PLAN_FIXTURES_PATH,
 ) -> list[dict[str, Any]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return list(data.get("fixtures") or [])
@@ -771,6 +812,27 @@ def validate_research_evidence_extract_business_contract(data: dict[str, Any]) -
     allowed_nodes = data.get("allowed_model_nodes") or []
     if allowed_nodes != ["business.research_evidence_extract"]:
         raise FormalSkillValidationError("research_evidence_extract must use only business.research_evidence_extract")
+    return {
+        "skill_id": data["skill_id"],
+        "skill_version": data["skill_version"],
+        "source_document_count": len(data.get("source_documents") or []),
+        "missing_requirement_count": len(data.get("missing_requirements") or []),
+    }
+
+
+def validate_production_research_plan_business_contract(data: dict[str, Any]) -> dict[str, Any]:
+    missing = sorted(PRODUCTION_RESEARCH_PLAN_BUSINESS_CONTRACT_REQUIRED_KEYS - set(data))
+    if missing:
+        raise FormalSkillValidationError(f"production_research_plan business contract missing keys: {missing}")
+    if data.get("schema_version") != "production_research_plan.business_contract.v1":
+        raise FormalSkillValidationError("unexpected production_research_plan business contract schema_version")
+    if data.get("missing_requirements"):
+        raise FormalSkillValidationError("production_research_plan business contract has missing_requirement entries")
+    if data.get("skill_id") != "production_research_plan":
+        raise FormalSkillValidationError("production_research_plan business contract skill_id mismatch")
+    allowed_nodes = data.get("allowed_model_nodes") or []
+    if allowed_nodes != ["business.research_synthesis"]:
+        raise FormalSkillValidationError("production_research_plan must use only business.research_synthesis")
     return {
         "skill_id": data["skill_id"],
         "skill_version": data["skill_version"],
@@ -972,6 +1034,46 @@ def validate_research_evidence_extract_output_semantics(
     for note in uncertainty_notes:
         if not isinstance(note, str) or not note.strip():
             raise FormalSkillValidationError("research_evidence_extract uncertainty_notes must be non-empty strings")
+
+
+def validate_production_research_plan_output_semantics(
+    input_payload: dict[str, Any], output_payload: dict[str, Any]
+) -> None:
+    if output_payload["schema_version"] != PRODUCTION_RESEARCH_PLAN_OUTPUT_SCHEMA_VERSION:
+        raise FormalSkillValidationError("production_research_plan output schema_version mismatch")
+    summary = str(output_payload["summary"]).strip()
+    claims = output_payload["claims"]
+    plan_steps = output_payload["plan_steps"]
+    open_questions = output_payload["open_questions"]
+    if not summary:
+        raise FormalSkillValidationError("production_research_plan summary must not be empty")
+    if not claims or not plan_steps:
+        raise FormalSkillValidationError("production_research_plan requires claims and plan_steps")
+    if len(claims) > 12 or len(plan_steps) > 10 or len(open_questions) > 8:
+        raise FormalSkillValidationError("production_research_plan output arrays exceed max size")
+    input_claims = {
+        str(item.get("claim", ""))
+        for item in input_payload.get("evidence_items", [])
+        if isinstance(item, dict)
+    }
+    tactic_candidates = set(str(item) for item in input_payload.get("tactic_candidates", []))
+    for claim in claims:
+        if not isinstance(claim, str) or not claim.strip():
+            raise FormalSkillValidationError("production_research_plan claims must be non-empty strings")
+        if claim not in input_claims:
+            raise FormalSkillValidationError("production_research_plan claims must come from evidence_items")
+    for step in plan_steps:
+        if not isinstance(step, dict):
+            raise FormalSkillValidationError("production_research_plan plan_steps must be objects")
+        for key in ("step", "purpose", "uses"):
+            if not str(step.get(key, "")).strip():
+                raise FormalSkillValidationError(f"production_research_plan plan step missing {key}")
+        uses = step["uses"]
+        if uses not in input_claims and uses not in tactic_candidates:
+            raise FormalSkillValidationError("production_research_plan plan step uses must reference evidence claim or tactic candidate")
+    for question in open_questions:
+        if not isinstance(question, str) or not question.strip():
+            raise FormalSkillValidationError("production_research_plan open_questions must be non-empty strings")
 
 
 def parse_model_json(output_text: str) -> dict[str, Any]:
@@ -1850,6 +1952,73 @@ class DeterministicResearchEvidenceExtractModelPort:
         )
 
 
+class DeterministicProductionResearchPlanModelPort:
+    provider_name = "formal_business_skill_test_port"
+
+    def __init__(self, *, behavior: str = "success"):
+        self.behavior = behavior
+        self.call_count = 0
+
+    def complete(self, request: ModelRequest, route: ModelRoute) -> ModelProviderResult:
+        self.call_count += 1
+        behavior = self.behavior
+        if behavior == "fail_once" and self.call_count == 1:
+            raise RuntimeError("synthetic production_research_plan model port failure")
+        if behavior == "failure":
+            raise RuntimeError("synthetic production_research_plan model port failure")
+        if behavior == "empty":
+            return self._result("", request)
+        if behavior == "not_json":
+            return self._result("not-json", request)
+        if behavior == "missing_field":
+            return self._result(json.dumps({"summary": "missing fields"}, ensure_ascii=False), request)
+
+        evidence_items = [item for item in request.input_payload.get("evidence_refs", []) if isinstance(item, dict)]
+        tactic_candidates = [str(item) for item in request.input_payload.get("tactic_candidates", [])]
+        first_claim = str(evidence_items[0].get("claim", "")) if evidence_items else ""
+        first_tactic = tactic_candidates[0] if tactic_candidates else first_claim
+        if behavior == "unseen_claim":
+            first_claim = "unseen evidence claim"
+        if behavior == "unseen_use":
+            first_tactic = "unseen tactic"
+        payload = {
+            "summary": f"Plan around {request.input_payload.get('candidate_topic', 'candidate topic')}",
+            "claims": [first_claim],
+            "plan_steps": [
+                {
+                    "step": "anchor_research_boundary",
+                    "purpose": "Keep the production brief grounded in supplied evidence.",
+                    "uses": first_claim,
+                },
+                {
+                    "step": "select_tactic_angle",
+                    "purpose": "Choose one reusable tactic candidate for downstream planning.",
+                    "uses": first_tactic,
+                },
+            ],
+            "open_questions": [] if behavior != "with_open_question" else ["Need one more source before live production."],
+            "schema_version": PRODUCTION_RESEARCH_PLAN_OUTPUT_SCHEMA_VERSION,
+        }
+        return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+
+    @staticmethod
+    def _result(output_text: str, request: ModelRequest) -> ModelProviderResult:
+        return ModelProviderResult(
+            output_text=output_text,
+            usage=ModelUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            cost={"test": 0},
+            provider_request_id=f"fake-{request.input_payload.get('fixture_id', 'missing')}",
+            metadata={
+                "fixture": True,
+                "tools_enabled": False,
+                "memory_enabled": False,
+                "messaging_enabled": False,
+                "nested_job_orchestration_enabled": False,
+                "file_or_terminal_side_effects_enabled": False,
+            },
+        )
+
+
 class FormalBusinessSkillMaterializer:
     def __init__(self, store: PersistenceStore, *, id_factory: Callable[[], str] = uuid7):
         self.store = store
@@ -2547,6 +2716,56 @@ def make_research_evidence_extract_harness(
     )
 
 
+def make_production_research_plan_harness(
+    *,
+    id_factory: Callable[[], str] = uuid7,
+    now_ms: Callable[[], int] | None = None,
+    monotonic_ms: Callable[[], int] | None = None,
+    provider: ModelProvider | None = None,
+    route: ModelRoute | None = None,
+) -> FormalBusinessSkillHarness:
+    contract = FormalSkillContract.from_yaml(PRODUCTION_RESEARCH_PLAN_CONTRACT_PATH)
+    store = PersistenceStore.in_memory(id_factory=id_factory)
+    scheduler = Goal03Scheduler(store, id_factory=id_factory, now_ms=now_ms)
+    materializer = FormalBusinessSkillMaterializer(store, id_factory=id_factory)
+    provider = provider or DeterministicProductionResearchPlanModelPort()
+    if route is None:
+        route = ModelRoute(
+            route_name=contract.route_name,
+            provider_name=provider.provider_name,
+            model_name="deterministic-production-research-plan",
+            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+            config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
+            timeout_ms=1000,
+        )
+    gateway = ModelGateway(
+        routes={route.route_name: route},
+        providers={route.provider_name: provider},
+        materializer=ModelRunMaterializer(store),
+        monotonic_ms=monotonic_ms,
+    )
+    adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
+    worker = FormalBusinessSkillWorker(
+        scheduler=scheduler,
+        adapter=adapter,
+        materializer=materializer,
+        contract=contract,
+        worker_id="formal-business-skill-worker",
+    )
+    api = FormalBusinessSkillCoreAPI(scheduler, contract)
+    return FormalBusinessSkillHarness(
+        store=store,
+        scheduler=scheduler,
+        api=api,
+        worker=worker,
+        gateway=gateway,
+        materializer=materializer,
+        adapter=adapter,
+        contract=contract,
+        provider=provider,
+    )
+
+
 def sample_content_classify_input(**overrides: Any) -> dict[str, Any]:
     payload = {
         "request_id": "content-classify-001",
@@ -2618,6 +2837,26 @@ def sample_research_evidence_extract_input(**overrides: Any) -> dict[str, Any]:
         "source_refs": ["research-src-001", "research-src-002"],
         "domain_label": "fan_kepu_social_life",
         "schema_version": "research_evidence_extract.input.v1",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def sample_production_research_plan_input(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "request_id": "production-research-plan-001",
+        "correlation_id": "production-research-plan-correlation-001",
+        "candidate_topic": "为什么小区电梯总在早高峰堵住",
+        "evidence_items": [
+            {
+                "claim": "早高峰电梯拥堵与通勤集中、楼层分布有关",
+                "source_ref": "research-src-001",
+                "supporting_text": "早高峰电梯拥堵与通勤集中、楼层分布有关",
+            }
+        ],
+        "tactic_candidates": ["ordinary_life_problem_hidden_system"],
+        "domain_label": "fan_kepu_social_life",
+        "schema_version": "production_research_plan.input.v1",
     }
     payload.update(overrides)
     return payload
