@@ -55,6 +55,7 @@ Completed checkpoints:
   - `source_to_topic` route ownership in `FORMAL_SKILL_ROUTE_MAPPING.yaml`
   - Deterministic test model port, harness, sample input and semantic checks in `scripts/core/model_gateway/formal_skill_adapter.py`
   - `tests/core/test_source_to_topic_skill.py`
+- Committed `source_to_topic` Phase 2 checkpoint at `e4eefb7`.
 
 Current HEAD:
 
@@ -81,7 +82,6 @@ Test results:
 
 Remaining work:
 
-- Commit the `source_to_topic` Phase 2 checkpoint.
 - Continue automatically to `sample_deep_analyze` unless a formal stop condition appears.
 
 Blocking issues:
@@ -103,4 +103,4 @@ Internal Phase commits:
 
 - Phase 1 implementation checkpoint: b9d0cb6 docs(runtime): freeze remaining formal skill graph
 - Phase 1 progress-record checkpoint: d00ac01 docs(runtime): record production completion phase 1 progress
-- Phase 2 source_to_topic: pending
+- Phase 2 source_to_topic: e4eefb7 feat(skill): implement source_to_topic
