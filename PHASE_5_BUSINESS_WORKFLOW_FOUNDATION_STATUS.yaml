@@ -1,8 +1,8 @@
 schema_version: phase5.business_workflow_foundation_status.v1
 goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
 phase: 5
-checkpoint: workflow_input_assembly_foundation
-status: COMPLETED_FOUNDATION_CHECKPOINT
+checkpoint: formal_skill_dispatcher
+status: COMPLETED_DISPATCHER_CHECKPOINT
 updated_at: '2026-07-03'
 implemented:
   workflow_skill_order:
@@ -48,6 +48,19 @@ implemented:
     records_input_assembly_before_skill_execution: true
     records_experience_usage_after_skill_execution: true
     fails_closed_when_required_usage_missing: true
+    passes_job_and_attempt_context_to_skill_port: true
+  dispatcher:
+    resolves_skill_id_and_version_from_formal_registry: true
+    active_formal_skill_count: 12
+    uses_formal_business_skill_adapter: true
+    uses_model_gateway: true
+    materializes_formal_skill_result: true
+    rejects_unknown_skill: true
+    rejects_version_mismatch: true
+    rejects_missing_approved_route_or_provider: true
+    old_script_execution_path: false
+    hermes_direct_skill_invocation: false
+    fallback_or_alternate_path: false
   scheduler_workflow:
     uses_goal05_orchestrator: true
     uses_formal_skill_job_kind: formal_skill.execute
@@ -64,7 +77,7 @@ validation:
   tests:
     - command: python -m unittest tests.core.test_phase5_business_workflow
       result: PASS
-      tests: 11
+      tests: 14
     - command: python scripts\core\workflow\verify_goal_05.py
       result: PASS
     - command: python -m unittest tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters
@@ -72,7 +85,13 @@ validation:
       tests: 63
     - command: python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters
       result: PASS
-      tests: 74
+      tests: 77
+    - command: formal dispatcher synthetic matrix
+      result: PASS
+      formal_skills_covered: 12
+      real_provider_called: false
+      gpt_called: false
+      deepseek_called: false
     - command: py_compile phase5 workflow files
       result: PASS
     - command: python scripts\validation\clean_room_empty_db.py --health
@@ -82,5 +101,7 @@ validation:
     - command: git diff --check
       result: PASS
 remaining_phase5_work:
-  - Replace synthetic worker runner with the formal Skill dispatcher across all 12 Skills.
-  - Add end-to-end synthetic workflow coverage across all 12 Skills.
+  - Establish formal workflow definitions and versioned entry contracts for the required task chains.
+  - Add Core-driven step state transitions and upstream/downstream artifact handoff between workflow steps.
+  - Extend synthetic workflow coverage from dispatcher matrix to task-specific end-to-end chains.
+  - Complete failure, retry, cancellation, recovery, idempotency, concurrency, replay and full-chain audit coverage for those chains.

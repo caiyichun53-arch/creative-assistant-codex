@@ -2,7 +2,36 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.core.model_gateway.formal_skill_adapter import FORMAL_SKILL_JOB_KIND, sample_content_plan_input
+from scripts.core.model_gateway.formal_skill_adapter import (
+    FORMAL_SKILL_JOB_KIND,
+    DeterministicContentClassifyModelPort,
+    DeterministicContentPlanModelPort,
+    DeterministicContentRelationJudgeModelPort,
+    DeterministicExperienceRevisionProposeModelPort,
+    DeterministicExperimentReviewModelPort,
+    DeterministicProductionResearchPlanModelPort,
+    DeterministicResearchEvidenceExtractModelPort,
+    DeterministicSampleDeepAnalyzeModelPort,
+    DeterministicScriptGenerateModelPort,
+    DeterministicScriptReviewModelPort,
+    DeterministicSourceToTopicModelPort,
+    DeterministicTacticExtractModelPort,
+    sample_content_classify_input,
+    sample_content_plan_input,
+    sample_content_relation_judge_input,
+    sample_experience_revision_propose_input,
+    sample_experiment_review_input,
+    sample_production_research_plan_input,
+    sample_research_evidence_extract_input,
+    sample_sample_deep_analyze_input,
+    sample_script_generate_input,
+    sample_script_review_input,
+    sample_source_to_topic_input,
+    sample_tactic_extract_input,
+)
+from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelRequest, ModelRoute
+from scripts.core.model_gateway.goal07_model_gateway import ModelProviderResult
+from scripts.core.model_gateway.goal07_model_gateway import ModelRunMaterializer
 from scripts.core.workflow.goal_phase5_business_workflow import (
     BusinessWorkflowError,
     BusinessWorkflowMaterializer,
@@ -11,11 +40,13 @@ from scripts.core.workflow.goal_phase5_business_workflow import (
     ExperienceUsageValidator,
     ExperienceVersion,
     FORMAL_BUSINESS_WORKFLOW_SKILLS,
+    FormalSkillDispatcher,
+    FormalSkillRegistry,
     InputAssembly,
     SkillExecutionOutput,
     build_formal_business_workflow_steps,
 )
-from scripts.core.persistence.goal01_store import PersistenceStore, UUIDv7Generator
+from scripts.core.persistence.goal01_store import PersistenceStore, UUIDv7Generator, content_hash
 from scripts.core.scheduler.goal03_scheduler import Goal03Scheduler
 from scripts.core.workflow.goal05_workflow import Goal05WorkflowOrchestrator
 
@@ -57,6 +88,92 @@ def frozen_content_plan_input():
         content_form="short_video_script",
         conditions=("ordinary_life_problem",),
         experience_candidates=[published_experience()],
+    )
+
+
+SAMPLE_INPUTS = {
+    "content_classify": sample_content_classify_input,
+    "content_relation_judge": sample_content_relation_judge_input,
+    "source_to_topic": sample_source_to_topic_input,
+    "sample_deep_analyze": sample_sample_deep_analyze_input,
+    "tactic_extract": sample_tactic_extract_input,
+    "research_evidence_extract": sample_research_evidence_extract_input,
+    "production_research_plan": sample_production_research_plan_input,
+    "content_plan": sample_content_plan_input,
+    "script_generate": sample_script_generate_input,
+    "script_review": sample_script_review_input,
+    "experiment_review": sample_experiment_review_input,
+    "experience_revision_propose": sample_experience_revision_propose_input,
+}
+
+
+class CompositePhase5Provider:
+    provider_name = "phase5_formal_dispatch_test_port"
+
+    def __init__(self):
+        self.calls: list[tuple[str | None, str]] = []
+        self.delegates = {
+            "content_classify": DeterministicContentClassifyModelPort(),
+            "content_relation_judge": DeterministicContentRelationJudgeModelPort(),
+            "source_to_topic": DeterministicSourceToTopicModelPort(),
+            "sample_deep_analyze": DeterministicSampleDeepAnalyzeModelPort(),
+            "tactic_extract": DeterministicTacticExtractModelPort(),
+            "research_evidence_extract": DeterministicResearchEvidenceExtractModelPort(),
+            "production_research_plan": DeterministicProductionResearchPlanModelPort(),
+            "content_plan": DeterministicContentPlanModelPort(),
+            "script_generate": DeterministicScriptGenerateModelPort(),
+            "script_review": DeterministicScriptReviewModelPort(),
+            "experiment_review": DeterministicExperimentReviewModelPort(),
+            "experience_revision_propose": DeterministicExperienceRevisionProposeModelPort(),
+        }
+
+    def complete(self, request: ModelRequest, route: ModelRoute) -> ModelProviderResult:
+        self.calls.append((request.skill_name, route.route_name))
+        delegate = self.delegates.get(str(request.skill_name))
+        if delegate is None:
+            raise RuntimeError(f"unexpected formal Skill dispatch: {request.skill_name}")
+        return delegate.complete(request, route)
+
+
+def make_dispatch_gateway(store: PersistenceStore, *, omit_route: str | None = None) -> tuple[ModelGateway, CompositePhase5Provider]:
+    provider = CompositePhase5Provider()
+    registry = FormalSkillRegistry()
+    routes = {}
+    for entry in registry.entries.values():
+        for route_name in entry.allowed_model_nodes:
+            if route_name == omit_route:
+                continue
+            routes[route_name] = ModelRoute(
+                route_name=route_name,
+                provider_name=provider.provider_name,
+                model_name=f"deterministic-{route_name.replace('.', '-')}",
+                config_version="GOAL-V0.6.2-PRODUCTION-COMPLETION-01.phase5.dispatch.test.v1",
+                config_hash=content_hash({"route": route_name, "provider": provider.provider_name}),
+                timeout_ms=1000,
+            )
+    return (
+        ModelGateway(
+            routes=routes,
+            providers={provider.provider_name: provider},
+            materializer=ModelRunMaterializer(store),
+        ),
+        provider,
+    )
+
+
+def frozen_sample_input(skill_id: str, *, workflow_id: str = "workflow-dispatch", version: str | None = None):
+    payload = SAMPLE_INPUTS[skill_id](request_id=f"phase5-{skill_id}")
+    return InputAssembly().freeze_skill_input(
+        workflow_id=workflow_id,
+        step_key=skill_id,
+        formal_skill_id=skill_id,
+        formal_skill_version=version,
+        input_payload=payload,
+        upstream_refs=[],
+        domain="fan_kepu_social_life",
+        content_form="short_video_script",
+        conditions=("ordinary_life_problem",),
+        experience_candidates=[],
     )
 
 
@@ -373,7 +490,7 @@ class Phase5BusinessWorkflowTests(unittest.TestCase):
             idempotency_key="phase5-worker-success",
         )
 
-        def runner(received):
+        def runner(received, *, job_id: str, attempt_id: str):
             self.assertEqual(received.assembly_hash, frozen.assembly_hash)
             return SkillExecutionOutput(
                 result_version_id="result-version-1",
@@ -427,7 +544,7 @@ class Phase5BusinessWorkflowTests(unittest.TestCase):
             idempotency_key="phase5-worker-missing-usage",
         )
 
-        def runner(_received):
+        def runner(_received, *, job_id: str, attempt_id: str):
             return SkillExecutionOutput(result_version_id="result-version-1", output_payload={})
 
         worker = BusinessWorkflowWorker(
@@ -446,6 +563,113 @@ class Phase5BusinessWorkflowTests(unittest.TestCase):
             scheduler.conn.execute(
                 "SELECT count(*) FROM trace_root WHERE object_kind='business_workflow_experience_usage'"
             ).fetchone()[0],
+            0,
+        )
+
+    def test_formal_skill_dispatcher_runs_all_twelve_skills_through_adapter_and_gateway(self) -> None:
+        generator = UUIDv7Generator(now_ms=lambda: 1_770_000_000_000, randbits=lambda bits: 42)
+        scheduler = Goal03Scheduler.in_memory(id_factory=generator.new, now_ms=lambda: 1_770_000_000_000)
+        self.addCleanup(scheduler.store.conn.close)
+        gateway, provider = make_dispatch_gateway(scheduler.store)
+        dispatcher = FormalSkillDispatcher(store=scheduler.store, gateway=gateway, id_factory=generator.new)
+        frozen_inputs = [frozen_sample_input(skill_id) for skill_id in FORMAL_BUSINESS_WORKFLOW_SKILLS]
+        steps = build_formal_business_workflow_steps(workflow_id="workflow-dispatch", frozen_inputs=frozen_inputs, max_attempts=1)
+        Goal05WorkflowOrchestrator(scheduler).start_workflow(
+            workflow_name="business.formal.dispatcher_matrix",
+            steps=steps,
+            idempotency_key="phase5-dispatch-all-skills",
+        )
+        worker = BusinessWorkflowWorker(
+            scheduler=scheduler,
+            materializer=BusinessWorkflowMaterializer(scheduler.store),
+            skill_executor=dispatcher,
+            worker_id="phase5-dispatch-worker",
+        )
+
+        results = [worker.run_once() for _ in FORMAL_BUSINESS_WORKFLOW_SKILLS]
+
+        self.assertEqual({result.status for result in results}, {"succeeded"})
+        self.assertEqual(
+            scheduler.conn.execute("SELECT count(*) FROM formal_business_skill_result_index").fetchone()[0],
+            12,
+        )
+        self.assertEqual(
+            scheduler.conn.execute(
+                "SELECT count(*) FROM trace_root WHERE object_kind='business_workflow_input_assembly'"
+            ).fetchone()[0],
+            12,
+        )
+        self.assertEqual(
+            scheduler.conn.execute(
+                "SELECT count(*) FROM trace_root WHERE object_kind='business_workflow_experience_usage'"
+            ).fetchone()[0],
+            12,
+        )
+        self.assertEqual(
+            set(row[0] for row in scheduler.conn.execute("SELECT DISTINCT formal_skill_id FROM formal_business_skill_result_index")),
+            set(FORMAL_BUSINESS_WORKFLOW_SKILLS),
+        )
+        self.assertGreaterEqual(len(provider.calls), 12)
+        self.assertIn(("content_plan", "business.creation_hook"), provider.calls)
+        self.assertIn(("script_review", "business.ai_flavor_judge"), provider.calls)
+
+    def test_formal_skill_dispatcher_fails_closed_on_version_mismatch(self) -> None:
+        generator = UUIDv7Generator(now_ms=lambda: 1_770_000_000_000, randbits=lambda bits: 42)
+        scheduler = Goal03Scheduler.in_memory(id_factory=generator.new, now_ms=lambda: 1_770_000_000_000)
+        self.addCleanup(scheduler.store.conn.close)
+        gateway, _provider = make_dispatch_gateway(scheduler.store)
+        dispatcher = FormalSkillDispatcher(store=scheduler.store, gateway=gateway, id_factory=generator.new)
+        frozen = frozen_sample_input("content_classify", workflow_id="workflow-version", version="9.9.9")
+        steps = build_formal_business_workflow_steps(workflow_id="workflow-version", frozen_inputs=[frozen], max_attempts=1)
+        Goal05WorkflowOrchestrator(scheduler).start_workflow(
+            workflow_name="business.formal.dispatcher_version_guard",
+            steps=steps,
+            idempotency_key="phase5-dispatch-version-mismatch",
+        )
+        worker = BusinessWorkflowWorker(
+            scheduler=scheduler,
+            materializer=BusinessWorkflowMaterializer(scheduler.store),
+            skill_executor=dispatcher,
+            worker_id="phase5-dispatch-worker",
+        )
+
+        step = worker.run_once()
+
+        self.assertEqual(step.status, "failed")
+        self.assertEqual(step.reason, "dead")
+        self.assertEqual(scheduler.conn.execute("SELECT status FROM scheduler_job").fetchone()["status"], "dead")
+        self.assertEqual(
+            scheduler.conn.execute("SELECT count(*) FROM formal_business_skill_result_index").fetchone()[0],
+            0,
+        )
+
+    def test_formal_skill_dispatcher_fails_closed_when_approved_route_is_missing(self) -> None:
+        generator = UUIDv7Generator(now_ms=lambda: 1_770_000_000_000, randbits=lambda bits: 42)
+        scheduler = Goal03Scheduler.in_memory(id_factory=generator.new, now_ms=lambda: 1_770_000_000_000)
+        self.addCleanup(scheduler.store.conn.close)
+        gateway, _provider = make_dispatch_gateway(scheduler.store, omit_route="business.creation_outline")
+        dispatcher = FormalSkillDispatcher(store=scheduler.store, gateway=gateway, id_factory=generator.new)
+        frozen = frozen_sample_input("content_plan", workflow_id="workflow-missing-route")
+        steps = build_formal_business_workflow_steps(workflow_id="workflow-missing-route", frozen_inputs=[frozen], max_attempts=1)
+        Goal05WorkflowOrchestrator(scheduler).start_workflow(
+            workflow_name="business.formal.dispatcher_route_guard",
+            steps=steps,
+            idempotency_key="phase5-dispatch-missing-route",
+        )
+        worker = BusinessWorkflowWorker(
+            scheduler=scheduler,
+            materializer=BusinessWorkflowMaterializer(scheduler.store),
+            skill_executor=dispatcher,
+            worker_id="phase5-dispatch-worker",
+        )
+
+        step = worker.run_once()
+
+        self.assertEqual(step.status, "failed")
+        self.assertEqual(step.reason, "dead")
+        self.assertEqual(scheduler.conn.execute("SELECT status FROM scheduler_job").fetchone()["status"], "dead")
+        self.assertEqual(
+            scheduler.conn.execute("SELECT count(*) FROM formal_business_skill_result_index").fetchone()[0],
             0,
         )
 

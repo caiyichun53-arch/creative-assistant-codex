@@ -2,9 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
 
-from scripts.core.model_gateway.formal_skill_adapter import FORMAL_SKILL_JOB_KIND
+import yaml
+
+from scripts.core.model_gateway.formal_skill_adapter import (
+    FORMAL_MAPPING_PATH,
+    FORMAL_SKILL_JOB_KIND,
+    FormalBusinessSkillAdapter,
+    FormalBusinessSkillMaterializer,
+    FormalSkillAdapterError,
+    FormalSkillContract,
+)
+from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelGatewayError
+from scripts.core.model_gateway.goal07_skill_runner import SkillContractError
 from scripts.core.persistence.goal01_store import PersistenceStore, content_hash, uuid7
 from scripts.core.scheduler.goal03_scheduler import Goal03Scheduler, NoClaimableJob
 from scripts.core.workflow.goal05_workflow import WorkflowStepSpec
@@ -127,6 +139,7 @@ class FrozenSkillInput:
     workflow_id: str
     step_key: str
     formal_skill_id: str
+    formal_skill_version: str
     input_payload: dict[str, Any]
     upstream_refs: tuple[dict[str, Any], ...]
     experience_context: ExperienceContext
@@ -143,6 +156,7 @@ class FrozenSkillInput:
                 "workflow_id": self.workflow_id,
                 "step_key": self.step_key,
                 "formal_skill_id": self.formal_skill_id,
+                "formal_skill_version": self.formal_skill_version,
                 "input_hash": self.input_hash,
                 "assembly_hash": self.assembly_hash,
                 "upstream_refs": list(self.upstream_refs),
@@ -172,6 +186,7 @@ class FrozenSkillInput:
             workflow_id=str(assembly["workflow_id"]),
             step_key=str(assembly["step_key"]),
             formal_skill_id=str(assembly["formal_skill_id"]),
+            formal_skill_version=str(assembly["formal_skill_version"]),
             input_payload=dict(payload.get("input") or {}),
             upstream_refs=tuple(dict(item) for item in assembly.get("upstream_refs", [])),
             experience_context=context,
@@ -207,7 +222,7 @@ class BusinessWorkflowStepResult:
 
 
 class SkillExecutionPort(Protocol):
-    def __call__(self, frozen: FrozenSkillInput) -> SkillExecutionOutput:
+    def __call__(self, frozen: FrozenSkillInput, *, job_id: str, attempt_id: str) -> SkillExecutionOutput:
         ...
 
 
@@ -286,6 +301,7 @@ class InputAssembly:
         workflow_id: str,
         step_key: str,
         formal_skill_id: str,
+        formal_skill_version: str | None = None,
         input_payload: dict[str, Any],
         upstream_refs: Iterable[dict[str, Any]],
         domain: str,
@@ -296,6 +312,7 @@ class InputAssembly:
     ) -> FrozenSkillInput:
         if formal_skill_id not in FORMAL_BUSINESS_WORKFLOW_SKILLS:
             raise BusinessWorkflowError(f"unknown formal skill: {formal_skill_id}")
+        resolved_version = formal_skill_version or FormalSkillRegistry().resolve(formal_skill_id).version
         self._validate_public_input(input_payload)
         upstream = tuple(dict(item) for item in upstream_refs)
         self._validate_upstream_refs(upstream)
@@ -312,6 +329,7 @@ class InputAssembly:
             "workflow_id": workflow_id,
             "step_key": step_key,
             "formal_skill_id": formal_skill_id,
+            "formal_skill_version": resolved_version,
             "input_hash": input_hash,
             "upstream_refs": upstream,
             "experience_context": context.as_payload(),
@@ -321,6 +339,7 @@ class InputAssembly:
             workflow_id=workflow_id,
             step_key=step_key,
             formal_skill_id=formal_skill_id,
+            formal_skill_version=resolved_version,
             input_payload=dict(input_payload),
             upstream_refs=upstream,
             experience_context=context,
@@ -396,6 +415,7 @@ class BusinessWorkflowMaterializer:
             "workflow_id": frozen.workflow_id,
             "step_key": frozen.step_key,
             "formal_skill_id": frozen.formal_skill_id,
+            "formal_skill_version": frozen.formal_skill_version,
             "input_hash": frozen.input_hash,
             "assembly_hash": frozen.assembly_hash,
             "upstream_refs": list(frozen.upstream_refs),
@@ -411,6 +431,7 @@ class BusinessWorkflowMaterializer:
                     "workflow_id": frozen.workflow_id,
                     "step_key": frozen.step_key,
                     "formal_skill_id": frozen.formal_skill_id,
+                    "formal_skill_version": frozen.formal_skill_version,
                     "assembly_hash": frozen.assembly_hash,
                 },
             )
@@ -501,6 +522,7 @@ class BusinessWorkflowMaterializer:
             "workflow_id": frozen.workflow_id,
             "step_key": frozen.step_key,
             "formal_skill_id": frozen.formal_skill_id,
+            "formal_skill_version": frozen.formal_skill_version,
             "result_version_id": result_version_id,
             "experience_context_hash": frozen.experience_context.context_hash,
             "experience_usage": usage,
@@ -603,6 +625,127 @@ class BusinessWorkflowMaterializer:
         return str(row["version_id"]) if row is not None else None
 
 
+@dataclass(frozen=True)
+class FormalSkillRegistryEntry:
+    formal_skill_id: str
+    version: str
+    contract_path: Path
+    allowed_model_nodes: tuple[str, ...]
+
+
+class FormalSkillRegistry:
+    def __init__(self, *, mapping_path: Path = FORMAL_MAPPING_PATH):
+        self.mapping_path = Path(mapping_path)
+        self.root = self.mapping_path.resolve().parent
+        self.entries = self._load_entries()
+
+    def resolve(self, formal_skill_id: str) -> FormalSkillRegistryEntry:
+        entry = self.entries.get(formal_skill_id)
+        if entry is None:
+            raise BusinessWorkflowError(f"unknown formal skill: {formal_skill_id}")
+        return entry
+
+    def _load_entries(self) -> dict[str, FormalSkillRegistryEntry]:
+        data = yaml.safe_load(self.mapping_path.read_text(encoding="utf-8")) or {}
+        if data.get("schema_version") != "formal_skill_route_mapping.v1":
+            raise BusinessWorkflowError("unsupported formal Skill registry schema")
+        entries: dict[str, FormalSkillRegistryEntry] = {}
+        for raw in data.get("formal_skills") or []:
+            formal_skill_id = str(raw.get("formal_skill_id") or "")
+            status = str(raw.get("status") or "")
+            if status != "active_formal_business_skill":
+                continue
+            if formal_skill_id in entries:
+                raise BusinessWorkflowError(f"duplicate formal skill in registry: {formal_skill_id}")
+            source_document = str(raw.get("source_document") or "")
+            contract_path = (self.root / source_document).resolve()
+            entries[formal_skill_id] = FormalSkillRegistryEntry(
+                formal_skill_id=formal_skill_id,
+                version=str(raw.get("version") or ""),
+                contract_path=contract_path,
+                allowed_model_nodes=tuple(str(node) for node in raw.get("allowed_model_nodes") or ()),
+            )
+        missing = sorted(set(FORMAL_BUSINESS_WORKFLOW_SKILLS) - set(entries))
+        if missing:
+            raise BusinessWorkflowError(f"formal Skill registry missing active entries: {missing}")
+        return entries
+
+
+class FormalSkillDispatcher:
+    def __init__(
+        self,
+        *,
+        store: PersistenceStore,
+        gateway: ModelGateway,
+        registry: FormalSkillRegistry | None = None,
+        id_factory: Callable[[], str] = uuid7,
+    ):
+        self.store = store
+        self.gateway = gateway
+        self.registry = registry or FormalSkillRegistry()
+        self.materializer = FormalBusinessSkillMaterializer(store, id_factory=id_factory)
+        self._contracts: dict[str, FormalSkillContract] = {}
+
+    def __call__(self, frozen: FrozenSkillInput, *, job_id: str, attempt_id: str) -> SkillExecutionOutput:
+        contract = self._resolve_contract(frozen)
+        adapter = FormalBusinessSkillAdapter(contract=contract, gateway=self.gateway)
+        try:
+            run_result = adapter.run(frozen.input_payload)
+            _root_id, version_id, _skill_run_id, _outbox_id = self.materializer.materialize_success(
+                job_id=job_id,
+                attempt_id=attempt_id,
+                frozen_payload={
+                    "formal_skill_id": frozen.formal_skill_id,
+                    "input": frozen.input_payload,
+                    "idempotency_key": f"{frozen.workflow_id}:{frozen.step_key}:{frozen.input_hash}",
+                },
+                run_result=run_result,
+                contract=contract,
+                model_port=self._model_port_name(contract),
+            )
+            return SkillExecutionOutput(result_version_id=version_id, output_payload=run_result.output_payload)
+        except (FormalSkillAdapterError, ModelGatewayError, SkillContractError) as exc:
+            self.materializer.record_failed_run(
+                job_id=job_id,
+                attempt_id=attempt_id,
+                frozen_payload={"formal_skill_id": frozen.formal_skill_id, "input": frozen.input_payload},
+                contract=contract,
+                model_port=self._model_port_name(contract),
+                error={"code": type(exc).__name__, "message": str(exc)},
+            )
+            raise
+
+    def _resolve_contract(self, frozen: FrozenSkillInput) -> FormalSkillContract:
+        entry = self.registry.resolve(frozen.formal_skill_id)
+        if frozen.formal_skill_version != entry.version:
+            raise BusinessWorkflowError("formal Skill version mismatch")
+        contract = self._contracts.get(frozen.formal_skill_id)
+        if contract is None:
+            contract = FormalSkillContract.from_yaml(entry.contract_path)
+            self._contracts[frozen.formal_skill_id] = contract
+        if contract.formal_skill_id != entry.formal_skill_id or contract.version != entry.version:
+            raise BusinessWorkflowError("formal Skill contract does not match registry")
+        for route_name in entry.allowed_model_nodes:
+            if route_name not in self.gateway.routes:
+                raise BusinessWorkflowError(f"missing approved model route: {route_name}")
+            provider_name = self.gateway.routes[route_name].provider_name
+            if provider_name not in self.gateway.providers:
+                raise BusinessWorkflowError(f"missing provider for approved model route: {route_name}")
+        return contract
+
+    def _model_port_name(self, contract: FormalSkillContract) -> str:
+        route = self.gateway.routes.get(contract.route_name)
+        if route is None:
+            entry = self.registry.resolve(contract.formal_skill_id)
+            for route_name in entry.allowed_model_nodes:
+                route = self.gateway.routes.get(route_name)
+                if route is not None:
+                    break
+        if route is None:
+            return "unconfigured"
+        return route.provider_name
+
+
 class BusinessWorkflowWorker:
     def __init__(
         self,
@@ -643,7 +786,7 @@ class BusinessWorkflowWorker:
                 actor=self.worker_id,
                 idempotency_key=f"assembly:{frozen.workflow_id}:{frozen.step_key}:{frozen.assembly_hash}",
             )
-            execution = self.skill_executor(frozen)
+            execution = self.skill_executor(frozen, job_id=claim.job_id, attempt_id=claim.attempt_id)
             usage = self.materializer.record_experience_usage(
                 frozen=frozen,
                 output_payload=execution.output_payload,
