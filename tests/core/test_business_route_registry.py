@@ -22,17 +22,18 @@ class BusinessRouteRegistryTests(unittest.TestCase):
     def test_registry_defines_formal_business_nodes(self) -> None:
         registry = load_registry()
         result = validate_registry(registry)
-        self.assertEqual(result["node_count"], 11)
+        self.assertEqual(result["node_count"], 12)
         self.assertIn("business.topic_judgement", result["logical_routes"])
         self.assertIn("business.content_relation_judgement", result["logical_routes"])
+        self.assertIn("business.source_to_topic", result["logical_routes"])
         self.assertIn("business.creation_draft", result["logical_routes"])
         self.assertIn("business.ai_flavor_judge", result["logical_routes"])
 
     def test_fixture_routes_execute_through_model_gateway_without_outbox(self) -> None:
         registry = load_registry()
         result = run_fixture_route_tests(registry)
-        self.assertEqual(len(result["tested_nodes"]), 11)
-        self.assertEqual(result["fixture_provider_call_count"], 11)
+        self.assertEqual(len(result["tested_nodes"]), 12)
+        self.assertEqual(result["fixture_provider_call_count"], 12)
         self.assertEqual(result["outbox_count"], 0)
         self.assertTrue(all(item["provider_name"] == "hermes" for item in result["tested_nodes"]))
 
@@ -87,7 +88,7 @@ class BusinessRouteRegistryTests(unittest.TestCase):
     def test_full_verification_status_is_completed(self) -> None:
         status = run_verification()
         self.assertEqual(status["status"], "COMPLETED")
-        self.assertEqual(status["registry"]["node_count"], 11)
+        self.assertEqual(status["registry"]["node_count"], 12)
         self.assertEqual(status["clean_room_formal_db"]["total_rows"], 0)
 
 

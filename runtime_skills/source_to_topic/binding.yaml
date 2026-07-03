@@ -1,0 +1,45 @@
+schema_version: formal_skill_binding.v1
+binding_name: source_to_topic_public_input_to_topic_generation
+binding_version: 1.0.0
+route_name: business.source_to_topic
+input_map:
+  fixture_id:
+    source: input
+    key: request_id
+  source_content:
+    source: preprocessed
+    key: source_text
+  source_evidence_refs:
+    source: input
+    key: source_evidence_items
+  domain_label:
+    source: input
+    key: domain_label
+  relation_summary:
+    source: preprocessed
+    key: relation_text
+output_map:
+  topic_status:
+    source: model_output
+    key: topic_status
+  candidate_topic:
+    source: model_output
+    key: candidate_topic
+  topic_angle:
+    source: model_output
+    key: topic_angle
+  supporting_evidence:
+    source: model_output
+    key: supporting_evidence
+  source_constraints:
+    source: model_output
+    key: source_constraints
+  no_result_reason:
+    source: model_output
+    key: no_result_reason
+  confidence:
+    source: model_output
+    key: confidence
+  schema_version:
+    source: model_output
+    key: schema_version

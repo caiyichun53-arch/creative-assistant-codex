@@ -1,0 +1,53 @@
+type: object
+required:
+  - topic_status
+  - candidate_topic
+  - topic_angle
+  - supporting_evidence
+  - source_constraints
+  - no_result_reason
+  - confidence
+  - schema_version
+properties:
+  topic_status:
+    type: string
+    enum:
+      - generated
+      - needs_review
+      - no_result
+  candidate_topic:
+    type: string
+    maxLength: 120
+  topic_angle:
+    type: string
+    maxLength: 240
+  supporting_evidence:
+    type: array
+    minItems: 0
+    maxItems: 8
+    items:
+      type: string
+  source_constraints:
+    type: array
+    minItems: 0
+    maxItems: 8
+    items:
+      type: string
+  no_result_reason:
+    type: string
+    enum:
+      - none
+      - empty_source
+      - insufficient_source_evidence
+      - unsupported_source
+  confidence:
+    type: string
+    enum:
+      - high
+      - medium
+      - low
+      - none
+  schema_version:
+    type: string
+    const: source_to_topic.output.v1
+additional_properties: false

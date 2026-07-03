@@ -1,0 +1,52 @@
+schema_version: source_to_topic.fixtures.v1
+fixtures:
+  - fixture_id: fan_kepu_social_life
+    input:
+      request_id: source-topic-fan-kepu
+      correlation_id: source-topic-fan-kepu-correlation
+      source_id: source-fan-kepu
+      source_content: 社区电梯早高峰拥堵来自通勤集中、楼层分布不均和维保停梯。
+      source_evidence_items:
+        - 社区电梯早高峰拥堵
+        - 通勤集中
+        - 楼层分布不均
+        - 维保停梯
+      domain_label: fan_kepu_social_life
+      relation_summary: source is related_distinct to prior social-life evidence
+      schema_version: source_to_topic.input.v1
+  - fixture_id: music_entertainment
+    input:
+      request_id: source-topic-music
+      correlation_id: source-topic-music-correlation
+      source_id: source-music
+      source_content: 一首老歌在演唱会后被年轻观众重新翻唱，评论集中在个人记忆和当下情绪。
+      source_evidence_items:
+        - 老歌被年轻观众翻唱
+        - 评论集中在个人记忆
+        - 演唱会后重新传播
+      domain_label: music_entertainment
+      relation_summary: source is complementary to prior music-entertainment evidence
+      schema_version: source_to_topic.input.v1
+  - fixture_id: third_domain_neutral
+    input:
+      request_id: source-topic-third-domain
+      correlation_id: source-topic-third-domain-correlation
+      source_id: source-third-domain
+      source_content: 冷冻面包复烤后口感变化，评论集中在保存方式。
+      source_evidence_items:
+        - 冷冻面包复烤
+        - 保存方式
+      domain_label: third_domain_neutral
+      relation_summary: source belongs to a neutral third-domain fixture
+      schema_version: source_to_topic.input.v1
+  - fixture_id: needs_review_unknown_domain
+    input:
+      request_id: source-topic-needs-review
+      correlation_id: source-topic-needs-review-correlation
+      source_id: source-needs-review
+      source_content: 输入材料有现象但领域边界不清。
+      source_evidence_items:
+        - 领域边界不清
+      domain_label: unknown
+      relation_summary: insufficient relation boundary
+      schema_version: source_to_topic.input.v1

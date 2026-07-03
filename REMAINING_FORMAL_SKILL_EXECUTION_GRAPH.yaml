@@ -71,15 +71,16 @@ remaining_skills:
       - research_evidence_extract
       - production_research_plan
       - content_plan
-    model_nodes: []
+    model_nodes:
+      - business.source_to_topic
     deterministic_or_llm: llm
-    schema_status: planned_requires_formal_input_output_schema
-    contract_status: planned_requires_business_contract
-    implementation_status: pending_phase_2
-    fixture_status: pending_phase_2
+    schema_status: completed
+    contract_status: completed
+    implementation_status: completed_phase_2
+    fixture_status: passed
     live_validation_status: pending_phase_3_centralized_provider_matrix
     workflow_phase: source_topic_generation
-    route_status: planned_requires_route_split
+    route_status: mapped_planned
 
   - skill_id: sample_deep_analyze
     responsibility: Analyze one validated winner sample into deep DNA notes.

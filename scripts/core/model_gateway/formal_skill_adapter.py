@@ -46,6 +46,8 @@ CONTENT_CLASSIFY_CONTRACT_PATH = ROOT / "CONTENT_CLASSIFY_BUSINESS_CONTRACT.yaml
 CONTENT_CLASSIFY_FIXTURES_PATH = ROOT / "runtime_skills" / "content_classify" / "fixtures.yaml"
 CONTENT_RELATION_JUDGE_CONTRACT_PATH = ROOT / "CONTENT_RELATION_JUDGE_BUSINESS_CONTRACT.yaml"
 CONTENT_RELATION_JUDGE_FIXTURES_PATH = ROOT / "runtime_skills" / "content_relation_judge" / "fixtures.yaml"
+SOURCE_TO_TOPIC_CONTRACT_PATH = ROOT / "SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml"
+SOURCE_TO_TOPIC_FIXTURES_PATH = ROOT / "runtime_skills" / "source_to_topic" / "fixtures.yaml"
 STATUS_PATH = ROOT / "CONTENT_CLASSIFY_STATUS.yaml"
 REPORT_PATH = ROOT / f"{GOAL_ID}_VALIDATION_REPORT.md"
 PROGRESS_PATH = ROOT / "implementation_progress" / f"{GOAL_ID}.md"
@@ -57,6 +59,8 @@ FORMAL_SKILL_RESULT_SCHEMA_VERSION = "formal_business_skill_result.v1"
 CONTENT_CLASSIFY_OUTPUT_SCHEMA_VERSION = "content_classify.output.v1"
 CONTENT_RELATION_JUDGE_GOAL_ID = "GOAL-BUSINESS-SKILL-CONTENT-RELATION-JUDGE-01"
 CONTENT_RELATION_JUDGE_OUTPUT_SCHEMA_VERSION = "content_relation_judge.output.v1"
+SOURCE_TO_TOPIC_GOAL_ID = "GOAL-V0.6.2-PRODUCTION-COMPLETION-01"
+SOURCE_TO_TOPIC_OUTPUT_SCHEMA_VERSION = "source_to_topic.output.v1"
 
 BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "skill_id",
@@ -121,6 +125,30 @@ RELATION_BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "idempotency",
     "error_contract",
     "technical_failure_contract",
+    "materialization_contract",
+    "fixture_cases",
+    "completion_definition",
+}
+SOURCE_TO_TOPIC_BUSINESS_CONTRACT_REQUIRED_KEYS = {
+    "skill_id",
+    "skill_version",
+    "source_documents",
+    "responsibility",
+    "non_responsibilities",
+    "allowed_inputs",
+    "forbidden_inputs",
+    "topic_status_values",
+    "topic_generation_policy",
+    "evidence_requirements",
+    "confidence_policy",
+    "domain_scope",
+    "input_length_limits",
+    "context_budget",
+    "token_budget",
+    "timeout",
+    "retry",
+    "idempotency",
+    "error_contract",
     "materialization_contract",
     "fixture_cases",
     "completion_definition",
@@ -251,6 +279,8 @@ class FormalSkillContract:
         validate_schema_definition(self.model_output_schema, "model_output_schema")
         if self.formal_skill_id == "content_classify":
             validate_content_classify_business_contract(load_content_classify_business_contract())
+        if self.formal_skill_id == "source_to_topic":
+            validate_source_to_topic_business_contract(load_source_to_topic_business_contract())
         if self.formal_skill_id == "content_relation_judge":
             validate_content_relation_judge_business_contract(load_content_relation_judge_business_contract())
 
@@ -344,6 +374,8 @@ class FormalBusinessSkillAdapter:
             validate_content_classify_output_semantics(input_payload, output_payload)
         elif self.contract.formal_skill_id == "content_relation_judge":
             validate_content_relation_judge_output_semantics(input_payload, output_payload)
+        elif self.contract.formal_skill_id == "source_to_topic":
+            validate_source_to_topic_output_semantics(input_payload, output_payload)
         return FormalSkillRunResult(
             formal_skill_id=self.contract.formal_skill_id,
             output_payload=output_payload,
@@ -401,11 +433,23 @@ def preprocess_content_relation_judge_input(input_payload: dict[str, Any]) -> di
     }
 
 
+def preprocess_source_to_topic_input(input_payload: dict[str, Any]) -> dict[str, Any]:
+    source = " ".join(str(input_payload.get("source_content", "")).split())
+    relation = " ".join(str(input_payload.get("relation_summary", "")).split())
+    return {
+        "source_text": source,
+        "relation_text": relation,
+        "source_length": len(source),
+    }
+
+
 def preprocess_formal_skill_input(formal_skill_id: str, input_payload: dict[str, Any]) -> dict[str, Any]:
     if formal_skill_id == "content_classify":
         return preprocess_content_classify_input(input_payload)
     if formal_skill_id == "content_relation_judge":
         return preprocess_content_relation_judge_input(input_payload)
+    if formal_skill_id == "source_to_topic":
+        return preprocess_source_to_topic_input(input_payload)
     return {}
 
 
@@ -414,6 +458,10 @@ def load_content_classify_business_contract(path: Path = CONTENT_CLASSIFY_CONTRA
 
 
 def load_content_relation_judge_business_contract(path: Path = CONTENT_RELATION_JUDGE_CONTRACT_PATH) -> dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def load_source_to_topic_business_contract(path: Path = SOURCE_TO_TOPIC_CONTRACT_PATH) -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
@@ -445,6 +493,11 @@ def load_content_relation_judge_fixtures(path: Path = CONTENT_RELATION_JUDGE_FIX
         item["input"] = input_payload
         expanded.append(item)
     return expanded
+
+
+def load_source_to_topic_fixtures(path: Path = SOURCE_TO_TOPIC_FIXTURES_PATH) -> list[dict[str, Any]]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return list(data.get("fixtures") or [])
 
 
 def validate_content_classify_business_contract(data: dict[str, Any]) -> dict[str, Any]:
@@ -510,6 +563,31 @@ def validate_content_relation_judge_business_contract(data: dict[str, Any]) -> d
         "relation_type_count": len(relation_types),
         "symmetric_relation_count": len(symmetric),
         "asymmetric_relation_count": len(asymmetric),
+    }
+
+
+def validate_source_to_topic_business_contract(data: dict[str, Any]) -> dict[str, Any]:
+    missing = sorted(SOURCE_TO_TOPIC_BUSINESS_CONTRACT_REQUIRED_KEYS - set(data))
+    if missing:
+        raise FormalSkillValidationError(f"source_to_topic business contract missing keys: {missing}")
+    if data.get("schema_version") != "source_to_topic.business_contract.v1":
+        raise FormalSkillValidationError("unexpected source_to_topic business contract schema_version")
+    if data.get("missing_requirements"):
+        raise FormalSkillValidationError("source_to_topic business contract has missing_requirement entries")
+    if data.get("skill_id") != "source_to_topic":
+        raise FormalSkillValidationError("source_to_topic business contract skill_id mismatch")
+    statuses = set(data.get("topic_status_values") or [])
+    if statuses != {"generated", "needs_review", "no_result"}:
+        raise FormalSkillValidationError("source_to_topic topic_status_values mismatch")
+    allowed_nodes = data.get("allowed_model_nodes") or []
+    if allowed_nodes != ["business.source_to_topic"]:
+        raise FormalSkillValidationError("source_to_topic must use only business.source_to_topic")
+    return {
+        "skill_id": data["skill_id"],
+        "skill_version": data["skill_version"],
+        "source_document_count": len(data.get("source_documents") or []),
+        "missing_requirement_count": len(data.get("missing_requirements") or []),
+        "topic_status_count": len(statuses),
     }
 
 
@@ -612,6 +690,37 @@ def validate_content_relation_judge_output_semantics(
     ):
         if "same public object" not in rationale:
             raise FormalSkillValidationError("same_item requires exact normalized text or explicit same public object rationale")
+
+
+def validate_source_to_topic_output_semantics(input_payload: dict[str, Any], output_payload: dict[str, Any]) -> None:
+    status = output_payload["topic_status"]
+    topic = output_payload["candidate_topic"]
+    angle = output_payload["topic_angle"]
+    evidence = output_payload["supporting_evidence"]
+    constraints = output_payload["source_constraints"]
+    no_result_reason = output_payload["no_result_reason"]
+    confidence = output_payload["confidence"]
+    input_evidence = set(input_payload["source_evidence_items"])
+    if not set(evidence).issubset(input_evidence):
+        raise FormalSkillValidationError("supporting_evidence must be selected from source_evidence_items")
+    if status == "no_result":
+        if topic != "" or angle != "" or evidence:
+            raise FormalSkillValidationError("no_result source_to_topic output must not include topic, angle or evidence")
+        if no_result_reason == "none" or confidence != "none":
+            raise FormalSkillValidationError("no_result source_to_topic output must include concrete reason and confidence none")
+        return
+    if no_result_reason != "none":
+        raise FormalSkillValidationError("generated source_to_topic output must use no_result_reason none")
+    if not topic or not angle:
+        raise FormalSkillValidationError("generated source_to_topic output requires candidate_topic and topic_angle")
+    if confidence not in {"high", "medium", "low"}:
+        raise FormalSkillValidationError("generated source_to_topic output requires concrete confidence")
+    if not evidence:
+        raise FormalSkillValidationError("generated source_to_topic output requires supporting_evidence")
+    if status == "needs_review" and not constraints:
+        raise FormalSkillValidationError("needs_review source_to_topic output must include source_constraints")
+    if status not in {"generated", "needs_review"}:
+        raise FormalSkillValidationError(f"unsupported topic_status: {status}")
 
 
 def parse_model_json(output_text: str) -> dict[str, Any]:
@@ -1134,6 +1243,133 @@ class DeterministicContentRelationJudgeModelPort:
         )
 
 
+class DeterministicSourceToTopicModelPort:
+    provider_name = "formal_business_skill_test_port"
+
+    def __init__(self, *, behavior: str = "success"):
+        self.behavior = behavior
+        self.call_count = 0
+
+    def complete(self, request: ModelRequest, route: ModelRoute) -> ModelProviderResult:
+        self.call_count += 1
+        behavior = self.behavior
+        if behavior == "fail_once" and self.call_count == 1:
+            raise RuntimeError("synthetic source_to_topic model port failure")
+        if behavior == "failure":
+            raise RuntimeError("synthetic source_to_topic model port failure")
+        if behavior == "empty":
+            return self._result("", request)
+        if behavior == "not_json":
+            return self._result("not-json", request)
+        if behavior == "missing_field":
+            return self._result(json.dumps({"topic_status": "generated"}), request)
+        if behavior == "evidence_not_in_input":
+            payload = self._payload(
+                "generated",
+                "陌生证据为什么突然爆火",
+                "from_source_gap",
+                ["unseen evidence"],
+                [],
+                "none",
+                "medium",
+            )
+            return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+
+        source = str(request.input_payload.get("source_content", ""))
+        evidence = list(request.input_payload.get("source_evidence_refs") or [])
+        domain = str(request.input_payload.get("domain_label", "unknown"))
+        relation = str(request.input_payload.get("relation_summary", ""))
+        if not source.strip() or not evidence:
+            payload = self._payload(
+                "no_result",
+                "",
+                "",
+                [],
+                ["missing_source_content_or_evidence"],
+                "insufficient_source_evidence",
+                "none",
+            )
+        elif domain == "unknown" or "insufficient" in relation.lower():
+            payload = self._payload(
+                "needs_review",
+                f"{evidence[0]}背后的信息缺口",
+                "source_needs_human_review",
+                evidence[:2],
+                ["domain_or_relation_boundary_unclear"],
+                "none",
+                "low",
+            )
+        elif "电梯" in source or "通勤" in source:
+            payload = self._payload(
+                "generated",
+                "为什么小区电梯总在早高峰堵住",
+                "生活现象解释",
+                evidence[:2],
+                ["must_not_claim_platform_metrics_without_evidence"],
+                "none",
+                "high",
+            )
+        elif "歌" in source or "音乐" in source or "演唱会" in source:
+            payload = self._payload(
+                "generated",
+                "一首老歌为什么会重新被年轻人翻出来",
+                "音乐记忆与当下情绪",
+                evidence[:2],
+                ["must_separate_public_evidence_from_fan_speculation"],
+                "none",
+                "high",
+            )
+        else:
+            payload = self._payload(
+                "generated",
+                f"{evidence[0]}为什么值得重新讲一遍",
+                "source_evidence_reframing",
+                evidence[:2],
+                ["must_stay_inside_supplied_source_evidence"],
+                "none",
+                "medium",
+            )
+        return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+
+    @staticmethod
+    def _payload(
+        topic_status: str,
+        candidate_topic: str,
+        topic_angle: str,
+        supporting_evidence: list[str],
+        source_constraints: list[str],
+        no_result_reason: str,
+        confidence: str,
+    ) -> dict[str, Any]:
+        return {
+            "topic_status": topic_status,
+            "candidate_topic": candidate_topic,
+            "topic_angle": topic_angle,
+            "supporting_evidence": supporting_evidence,
+            "source_constraints": source_constraints,
+            "no_result_reason": no_result_reason,
+            "confidence": confidence,
+            "schema_version": SOURCE_TO_TOPIC_OUTPUT_SCHEMA_VERSION,
+        }
+
+    @staticmethod
+    def _result(output_text: str, request: ModelRequest) -> ModelProviderResult:
+        return ModelProviderResult(
+            output_text=output_text,
+            usage=ModelUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            cost={"test": 0},
+            provider_request_id=f"fake-{request.input_payload.get('fixture_id', 'missing')}",
+            metadata={
+                "fixture": True,
+                "tools_enabled": False,
+                "memory_enabled": False,
+                "messaging_enabled": False,
+                "nested_job_orchestration_enabled": False,
+                "file_or_terminal_side_effects_enabled": False,
+            },
+        )
+
+
 class FormalBusinessSkillMaterializer:
     def __init__(self, store: PersistenceStore, *, id_factory: Callable[[], str] = uuid7):
         self.store = store
@@ -1526,6 +1762,8 @@ class FormalBusinessSkillHarness:
 def goal_for_formal_skill(formal_skill_id: str) -> str:
     if formal_skill_id == "content_relation_judge":
         return CONTENT_RELATION_JUDGE_GOAL_ID
+    if formal_skill_id == "source_to_topic":
+        return SOURCE_TO_TOPIC_GOAL_ID
     return GOAL_ID
 
 
@@ -1629,6 +1867,56 @@ def make_content_relation_judge_harness(
     )
 
 
+def make_source_to_topic_harness(
+    *,
+    id_factory: Callable[[], str] = uuid7,
+    now_ms: Callable[[], int] | None = None,
+    monotonic_ms: Callable[[], int] | None = None,
+    provider: ModelProvider | None = None,
+    route: ModelRoute | None = None,
+) -> FormalBusinessSkillHarness:
+    contract = FormalSkillContract.from_yaml(SOURCE_TO_TOPIC_CONTRACT_PATH)
+    store = PersistenceStore.in_memory(id_factory=id_factory)
+    scheduler = Goal03Scheduler(store, id_factory=id_factory, now_ms=now_ms)
+    materializer = FormalBusinessSkillMaterializer(store, id_factory=id_factory)
+    provider = provider or DeterministicSourceToTopicModelPort()
+    if route is None:
+        route = ModelRoute(
+            route_name=contract.route_name,
+            provider_name=provider.provider_name,
+            model_name="deterministic-source-to-topic",
+            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+            config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
+            timeout_ms=1000,
+        )
+    gateway = ModelGateway(
+        routes={route.route_name: route},
+        providers={route.provider_name: provider},
+        materializer=ModelRunMaterializer(store),
+        monotonic_ms=monotonic_ms,
+    )
+    adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
+    worker = FormalBusinessSkillWorker(
+        scheduler=scheduler,
+        adapter=adapter,
+        materializer=materializer,
+        contract=contract,
+        worker_id="formal-business-skill-worker",
+    )
+    api = FormalBusinessSkillCoreAPI(scheduler, contract)
+    return FormalBusinessSkillHarness(
+        store=store,
+        scheduler=scheduler,
+        api=api,
+        worker=worker,
+        gateway=gateway,
+        materializer=materializer,
+        adapter=adapter,
+        contract=contract,
+        provider=provider,
+    )
+
+
 def sample_content_classify_input(**overrides: Any) -> dict[str, Any]:
     payload = {
         "request_id": "content-classify-001",
@@ -1639,6 +1927,21 @@ def sample_content_classify_input(**overrides: Any) -> dict[str, Any]:
         "evidence_items": ["社区电梯早高峰拥堵", "通勤时间和楼层分布是解释依据"],
         "language_hint": "zh",
         "domain_hint": "fan_kepu_social_life",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def sample_source_to_topic_input(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "request_id": "source-to-topic-001",
+        "correlation_id": "source-to-topic-correlation-001",
+        "source_id": "source-001",
+        "source_content": "社区电梯早高峰拥堵来自通勤集中、楼层分布不均和维保停梯。",
+        "source_evidence_items": ["社区电梯早高峰拥堵", "通勤集中", "楼层分布不均", "维保停梯"],
+        "domain_label": "fan_kepu_social_life",
+        "relation_summary": "source is related_distinct to prior social-life evidence",
+        "schema_version": "source_to_topic.input.v1",
     }
     payload.update(overrides)
     return payload

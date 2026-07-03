@@ -102,6 +102,48 @@ nodes:
         schema_version: string
       additional_properties: false
 
+  - node_id: source_to_topic
+    logical_route: business.source_to_topic
+    capability_tier: creative_generation
+    source_evidence:
+      - GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2: source evidence to candidate topic is a remaining formal Skill.
+      - AGENTS.md: LLM allowed for topic judgement/generation inside fixed routes only.
+      - FORMAL_SKILL_ROUTE_MAPPING.yaml: source_to_topic must not reuse business.topic_judgement silently.
+    timeout_ms: 60000
+    retry:
+      max_attempts: 1
+      retry_on: []
+    token_context_budget:
+      max_input_tokens: 5000
+      max_output_tokens: 1200
+    allowed_provider_policy:
+      inherit: provider_policy_defaults
+    fallback_policy:
+      inherit: provider_policy_defaults.fallback_policy
+    input_schema:
+      type: object
+      required: [fixture_id, source_content, source_evidence_refs, domain_label, relation_summary]
+      properties:
+        fixture_id: string
+        source_content: string
+        source_evidence_refs: array
+        domain_label: string
+        relation_summary: string
+      additional_properties: false
+    output_schema:
+      type: object
+      required: [topic_status, candidate_topic, topic_angle, supporting_evidence, source_constraints, no_result_reason, confidence, schema_version]
+      properties:
+        topic_status: string
+        candidate_topic: string
+        topic_angle: string
+        supporting_evidence: array
+        source_constraints: array
+        no_result_reason: string
+        confidence: string
+        schema_version: string
+      additional_properties: false
+
   - node_id: research_synthesis
     logical_route: business.research_synthesis
     capability_tier: deep_reasoning
