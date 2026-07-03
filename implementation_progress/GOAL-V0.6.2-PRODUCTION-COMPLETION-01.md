@@ -276,6 +276,24 @@ Completed checkpoints:
   - Marked Phase 5 status as `COMPLETED_PHASE5_CHECKPOINT`.
   - No real Provider call, GPT call, DeepSeek call, old data read, fallback or automatic downgrade was introduced.
   - Phase 5 synthetic chain completion checkpoint committed at `1e2e5ec`.
+- Completed Phase 6 Hermes whitelist Tool checkpoint:
+  - `scripts/core/hermes/goal_phase6_whitelist_tool.py`
+  - `tests/core/test_phase6_hermes_whitelist_tool.py`
+  - `PHASE_6_HERMES_WHITELIST_TOOL_STATUS.yaml`
+  - `PHASE_6_HERMES_WHITELIST_TOOL_REPORT.md`
+  - Added a separate whitelist Tool surface with these approved actions:
+    - `create_controlled_task`
+    - `query_task_status`
+    - `query_task_result`
+    - `query_failure_reason`
+    - `cancel_task`
+    - `query_human_confirmation_items`
+    - `query_business_model_binding_summary`
+  - `create_controlled_task` creates a Core `production_task`, transitions it to `queued`, and enqueues the first formal workflow step as `formal_skill.execute`.
+  - Rejected non-whitelisted actions and payloads attempting shell, SQL/database, direct Skill calls, model switching, fallback enablement or direct Feishu sending.
+  - Business model binding summary returns non-sensitive metadata only; actual model value stays redacted.
+  - No real Provider call, GPT call, DeepSeek call, old data read, fallback or automatic downgrade was introduced.
+  - Phase 6 Hermes whitelist Tool checkpoint committed at `cb796d8`.
 
 Current HEAD:
 
@@ -429,6 +447,20 @@ Test results:
   - PASS, 18 tests after Phase 5 synthetic chain completion update
 - `python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters`
   - PASS, 81 tests after Phase 5 synthetic chain completion update
+- `python -m unittest tests.core.test_phase6_hermes_whitelist_tool`
+  - PASS, 7 tests
+- `python -m unittest tests.core.test_phase6_hermes_whitelist_tool tests.core.test_phase5_business_workflow`
+  - PASS, 25 tests
+- `python scripts\core\hermes\verify_goal_11.py`
+  - PASS, GOAL-11 verification passed
+- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_phase6_tool'; python -m py_compile scripts\core\hermes\goal_phase6_whitelist_tool.py tests\core\test_phase6_hermes_whitelist_tool.py`
+  - PASS
+- YAML parse check for `PHASE_6_HERMES_WHITELIST_TOOL_STATUS.yaml`
+  - PASS
+- `python scripts\validation\clean_room_empty_db.py --health`
+  - PASS, 20 formal tables, 0 total rows, foreign key check passed
+- `git diff --check`
+  - PASS
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_phase5_chain_matrix'; python -m py_compile scripts\core\workflow\goal_phase5_business_workflow.py tests\core\test_phase5_business_workflow.py`
   - PASS
 - YAML parse check for `PHASE_5_BUSINESS_WORKFLOW_FOUNDATION_STATUS.yaml` after synthetic chain completion update
@@ -481,7 +513,8 @@ Test results:
 Remaining work:
 
 - Phase 5 complete.
-- Continue Phase 6 Hermes whitelist Tool.
+- Phase 6 complete.
+- Continue Phase 7 complete synthetic end-to-end acceptance.
 
 Blocking issues:
 
@@ -529,3 +562,4 @@ Internal Phase commits:
 - Phase 5 formal Skill Dispatcher: 14a476a feat(workflow): add phase 5 formal skill dispatcher
 - Phase 5 formal workflow definitions: d732bdf feat(workflow): add phase 5 workflow definitions
 - Phase 5 synthetic chain completion: 1e2e5ec test(workflow): complete phase 5 synthetic chains
+- Phase 6 Hermes whitelist Tool: cb796d8 feat(hermes): add phase 6 whitelist tool
