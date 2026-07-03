@@ -300,6 +300,12 @@ Completed checkpoints:
   - Covered two formal domains, multi-domain extension fixtures, normal path, insufficient info, no valid result, model failure, adapter failure, skill failure, materializer failure, outbox failure, idempotency, concurrency, retry, cancel, recovery, human confirmation, workflow replay, experience empty/single/multiple/conflict/rejection/freeze/usage cases, Hermes chat model isolation and no fallback.
   - Ran disposable PostgreSQL smoke with `postgres:16-alpine`; no host port was exposed and the container was removed.
   - No real Provider call, GPT call, DeepSeek call, old data read, real platform collection, real Feishu send, fallback or automatic downgrade was introduced.
+- Reached Phase 8 authorization gate:
+  - Generated `BUSINESS_MODEL_SWITCH_TO_GPT_PLAN.md`.
+  - Generated `REAL_NEW_DATA_PILOT_PLAN.md`.
+  - Added `PHASE_8_AUTHORIZATION_GATE_STATUS.yaml`.
+  - No GPT call, DeepSeek call, real Provider call, real platform collection, real Feishu send, production timer enablement, old data read, fallback or automatic downgrade was introduced.
+  - Execution must pause here until explicit user authorization for GPT switch/real GPT regression/real new data pilot/real Feishu test/production scheduled tasks.
 
 Current HEAD:
 
@@ -521,7 +527,7 @@ Remaining work:
 - Phase 5 complete.
 - Phase 6 complete.
 - Phase 7 complete.
-- Continue Phase 8 authorization-gated production pilot preparation.
+- Phase 8 authorization gate reached. Waiting for explicit user authorization before GPT switch, real GPT regression, real new data pilot, real Feishu test message or production scheduled tasks.
 
 Blocking issues:
 
