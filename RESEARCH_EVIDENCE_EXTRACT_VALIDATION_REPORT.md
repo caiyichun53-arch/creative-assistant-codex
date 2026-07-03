@@ -4,7 +4,7 @@ Goal: `GOAL-V0.6.2-PRODUCTION-COMPLETION-01`
 
 Phase: `Phase 2 - research_evidence_extract`
 
-Status: `LOCAL_PASSED_PENDING_COMMIT`
+Status: `COMPLETED_LOCAL`
 
 ## Implemented
 
@@ -15,6 +15,7 @@ Status: `LOCAL_PASSED_PENDING_COMMIT`
 - Runner: `FormalBusinessSkillAdapter`
 - Materializer projection: `formal_business_skill_result.v1`
 - Fixture path: synthetic only
+- Implementation commit: `6b89e45`
 
 ## Validation
 
