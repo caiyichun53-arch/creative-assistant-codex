@@ -21,6 +21,7 @@ REQUIRED_PHASE_STATUSES = {
     "PHASE_7_SYNTHETIC_ACCEPTANCE_STATUS.yaml": "COMPLETED_PHASE7_CHECKPOINT",
 }
 PRODUCTION_TASK_NAMES = ("CreationAssistant_Daily", "CreationAssistant_Listener")
+PILOT_APPROVAL_PATH = ROOT / "PHASE_8_REAL_NEW_DATA_APPROVAL.yaml"
 
 
 def read_env(path: Path) -> dict[str, str]:
@@ -120,10 +121,96 @@ def feishu_config_status() -> dict[str, Any]:
 
 def pilot_source_status() -> dict[str, Any]:
     # Existing local competitor rows are intentionally not counted: Phase 8 requires newly approved data sources.
+    if not PILOT_APPROVAL_PATH.exists():
+        return {
+            "approved_new_source_manifest_present": False,
+            "manifest_valid": False,
+            "manifest_errors": ["missing PHASE_8_REAL_NEW_DATA_APPROVAL.yaml"],
+            "existing_legacy_sources_counted": False,
+        }
+    try:
+        data = yaml.safe_load(PILOT_APPROVAL_PATH.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001 - report manifest parse issue without continuing to live work.
+        return {
+            "approved_new_source_manifest_present": True,
+            "manifest_valid": False,
+            "manifest_errors": [f"manifest parse failed: {type(exc).__name__}"],
+            "existing_legacy_sources_counted": False,
+        }
+    errors = validate_pilot_approval(data)
+    budgets = data.get("budgets") or {}
     return {
-        "approved_new_source_manifest_present": (ROOT / "PHASE_8_REAL_NEW_DATA_APPROVAL.yaml").exists(),
+        "approved_new_source_manifest_present": True,
+        "manifest_valid": not errors,
+        "manifest_errors": errors,
+        "approved_source_count": len(data.get("sources") or []),
+        "domains": sorted({str(source.get("domain") or "") for source in data.get("sources") or [] if source.get("domain")}),
+        "max_collection_accounts": budgets.get("max_collection_accounts"),
+        "max_videos": budgets.get("max_videos"),
+        "max_workflow_tasks": budgets.get("max_workflow_tasks"),
+        "max_gpt_calls": budgets.get("max_gpt_calls"),
+        "max_total_tokens": budgets.get("max_total_tokens"),
         "existing_legacy_sources_counted": False,
     }
+
+
+def validate_pilot_approval(data: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    if data.get("schema_version") != "phase8.real_new_data_approval.v1":
+        errors.append("schema_version must be phase8.real_new_data_approval.v1")
+    for key in ("approval_id", "approved_by", "approved_at", "purpose"):
+        if is_placeholder(str(data.get(key) or "")):
+            errors.append(f"{key} is required")
+    sources = data.get("sources")
+    if not isinstance(sources, list) or not sources:
+        errors.append("sources must contain at least one newly approved source")
+    else:
+        if len(sources) > 4:
+            errors.append("sources must not exceed 4 entries for the small pilot")
+        for index, source in enumerate(sources, start=1):
+            if not isinstance(source, dict):
+                errors.append(f"sources[{index}] must be an object")
+                continue
+            for key in ("source_id", "platform", "domain", "account_ref"):
+                if is_placeholder(str(source.get(key) or "")):
+                    errors.append(f"sources[{index}].{key} is required")
+            if source.get("platform") not in {"douyin", "netease_music", "other_approved_platform"}:
+                errors.append(f"sources[{index}].platform must be an approved platform enum")
+            if source.get("source_age") != "new_after_phase8_approval":
+                errors.append(f"sources[{index}].source_age must be new_after_phase8_approval")
+    budgets = data.get("budgets")
+    if not isinstance(budgets, dict):
+        errors.append("budgets is required")
+    else:
+        limits = {
+            "max_collection_accounts": 4,
+            "max_videos": 20,
+            "max_detail_fetches": 20,
+            "max_workflow_tasks": 3,
+            "max_gpt_calls": 12,
+            "max_total_tokens": 60000,
+        }
+        for key, maximum in limits.items():
+            value = budgets.get(key)
+            if not isinstance(value, int) or value < 0:
+                errors.append(f"budgets.{key} must be a non-negative integer")
+            elif value > maximum:
+                errors.append(f"budgets.{key} exceeds Phase 8 pilot cap {maximum}")
+    safety = data.get("safety") or {}
+    required_false = (
+        "allow_old_database",
+        "allow_old_vault",
+        "allow_cold_backup",
+        "allow_large_scale_collection",
+        "allow_production_timers",
+        "allow_fallback",
+    )
+    for key in required_false:
+        if safety.get(key) is not False:
+            errors.append(f"safety.{key} must be false")
+    if safety.get("fresh_data_only") is not True:
+        errors.append("safety.fresh_data_only must be true")
+    return errors
 
 
 def production_task_status() -> dict[str, Any]:
@@ -171,6 +258,8 @@ def verify_phase8_readiness() -> dict[str, Any]:
         missing.append("MODEL_PROVIDER_BASE_URL must be configured in .env.live-gates")
     if not pilot["approved_new_source_manifest_present"]:
         missing.append("PHASE_8_REAL_NEW_DATA_APPROVAL.yaml with newly approved pilot sources is required")
+    elif not pilot["manifest_valid"]:
+        missing.append("PHASE_8_REAL_NEW_DATA_APPROVAL.yaml must pass pilot manifest validation")
     if not (feishu["app_id_present"] and feishu["app_secret_present"] and feishu["chat_id_present"]):
         missing.append(".env must contain FEISHU_APP_ID, FEISHU_APP_SECRET and FEISHU_CHAT_ID")
     if not feishu["event_verification_token_present"]:

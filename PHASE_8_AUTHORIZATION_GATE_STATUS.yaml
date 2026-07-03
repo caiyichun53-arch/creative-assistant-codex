@@ -9,6 +9,7 @@ generated:
   real_new_data_pilot_plan: REAL_NEW_DATA_PILOT_PLAN.md
   external_input_required_report: PHASE_8_EXTERNAL_INPUT_REQUIRED_REPORT.md
   readiness_verifier: scripts/core/staging/verify_goal_v062_phase8_readiness.py
+  real_new_data_approval_template: PHASE_8_REAL_NEW_DATA_APPROVAL.example.yaml
 authorization_required:
   switch_business_primary_from_mimo_to_gpt: approved_but_missing_gpt_model_config
   run_minimal_gpt_real_regression: approved_but_missing_gpt_model_config
@@ -37,7 +38,7 @@ production_scheduled_tasks:
   CreationAssistant_Listener: disabled
 remaining_phase8_work:
   - Set .env.live-gates MODEL_PROVIDER_MODEL to the user-approved GPT model.
-  - Provide approved real new data pilot source manifest at PHASE_8_REAL_NEW_DATA_APPROVAL.yaml.
+  - Copy PHASE_8_REAL_NEW_DATA_APPROVAL.example.yaml to PHASE_8_REAL_NEW_DATA_APPROVAL.yaml and fill approved real new data pilot sources.
   - Provide or confirm live Feishu event/test configuration.
   - Rerun scripts/core/staging/verify_goal_v062_phase8_readiness.py.
 validation:
@@ -47,7 +48,11 @@ validation:
       - MODEL_PROVIDER_MODEL must be set to the user-approved GPT model in .env.live-gates
       - PHASE_8_REAL_NEW_DATA_APPROVAL.yaml with newly approved pilot sources is required
       - FEISHU_EVENT_VERIFICATION_TOKEN is required for real inbound Feishu event validation
+    manifest_template_present: true
+    real_manifest_present: false
   - command: py_compile scripts\core\staging\verify_goal_v062_phase8_readiness.py
+    result: PASS
+  - command: YAML parse for PHASE_8_REAL_NEW_DATA_APPROVAL.example.yaml
     result: PASS
   - command: python scripts\validation\clean_room_empty_db.py --health
     result: PASS

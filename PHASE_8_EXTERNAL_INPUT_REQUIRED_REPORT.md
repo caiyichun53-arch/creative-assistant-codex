@@ -29,7 +29,13 @@ Provide or update these items, then rerun the readiness verifier:
 1. Set `.env.live-gates` `MODEL_PROVIDER_MODEL` to the user-approved GPT model.
 2. Confirm `.env.live-gates` `MODEL_PROVIDER_BASE_URL` and `MODEL_PROVIDER_API_KEY` are the intended GPT Provider endpoint and credential.
 3. Add `FEISHU_EVENT_VERIFICATION_TOKEN` and live Feishu test fields to `.env.live-gates`, or confirm that the existing `.env` app/chat credentials are the approved live test channel and inbound event validation is not required for this pilot.
-4. Create `PHASE_8_REAL_NEW_DATA_APPROVAL.yaml` with newly approved pilot sources/accounts, domain scope, max collection count and max workflow/model-call budget.
+4. Copy `PHASE_8_REAL_NEW_DATA_APPROVAL.example.yaml` to `PHASE_8_REAL_NEW_DATA_APPROVAL.yaml`, then replace placeholders with newly approved pilot sources/accounts, domain scope, max collection count and max workflow/model-call budget.
+
+## Approval Manifest Template
+
+- Added `PHASE_8_REAL_NEW_DATA_APPROVAL.example.yaml`.
+- The readiness verifier validates the real `PHASE_8_REAL_NEW_DATA_APPROVAL.yaml` before any live pilot work may start.
+- Existing competitor account rows or legacy local data are not counted as newly approved pilot sources.
 
 ## Safety State
 
@@ -45,6 +51,7 @@ Provide or update these items, then rerun the readiness verifier:
 
 - `python scripts\core\staging\verify_goal_v062_phase8_readiness.py` - `WAITING_FOR_USER_INPUT`
 - `py_compile scripts\core\staging\verify_goal_v062_phase8_readiness.py` - PASS
+- YAML parse for `PHASE_8_REAL_NEW_DATA_APPROVAL.example.yaml` - PASS
 - `python scripts\validation\clean_room_empty_db.py --health` - PASS, 20 tables and 0 rows
 - `git diff --check` - PASS
 

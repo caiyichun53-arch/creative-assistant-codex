@@ -313,6 +313,7 @@ Completed checkpoints:
   - Disabled Windows scheduled tasks `CreationAssistant_Daily` and `CreationAssistant_Listener`.
   - Added `scripts/core/staging/verify_goal_v062_phase8_readiness.py`.
   - Added `PHASE_8_EXTERNAL_INPUT_REQUIRED_REPORT.md`.
+  - Added `PHASE_8_REAL_NEW_DATA_APPROVAL.example.yaml` and upgraded the readiness verifier to validate the real pilot approval manifest before live work.
   - Ran Phase 8 readiness verifier; result `WAITING_FOR_USER_INPUT` with exactly three missing items:
     - approved GPT `MODEL_PROVIDER_MODEL` in `.env.live-gates`
     - `PHASE_8_REAL_NEW_DATA_APPROVAL.yaml`
