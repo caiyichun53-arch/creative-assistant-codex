@@ -1,0 +1,41 @@
+type: object
+required:
+  - request_id
+  - correlation_id
+  - analysis_batch_id
+  - dna_note_refs
+  - domain_label
+  - schema_version
+properties:
+  request_id:
+    type: string
+    minLength: 1
+    maxLength: 80
+  correlation_id:
+    type: string
+    minLength: 1
+    maxLength: 80
+  analysis_batch_id:
+    type: string
+    minLength: 1
+    maxLength: 80
+  dna_note_refs:
+    type: array
+    minItems: 2
+    maxItems: 12
+    items:
+      type: string
+      minLength: 1
+      maxLength: 160
+  domain_label:
+    type: string
+    enum:
+      - fan_kepu_social_life
+      - music_entertainment
+      - third_domain_neutral
+      - cross_domain
+      - unknown
+  schema_version:
+    type: string
+    const: tactic_extract.input.v1
+additional_properties: false

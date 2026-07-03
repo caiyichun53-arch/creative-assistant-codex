@@ -1,0 +1,21 @@
+schema_version: formal_skill_binding.v1
+binding_name: tactic_extract_public_input_to_reverse_pattern_reduce
+binding_version: 1.0.0
+route_name: business.reverse_pattern_reduce
+input_map:
+  fixture_id:
+    source: input
+    key: request_id
+  dna_note_refs:
+    source: input
+    key: dna_note_refs
+output_map:
+  common_patterns:
+    source: model_output
+    key: common_patterns
+  example_candidates:
+    source: model_output
+    key: example_candidates
+  schema_version:
+    source: model_output
+    key: schema_version

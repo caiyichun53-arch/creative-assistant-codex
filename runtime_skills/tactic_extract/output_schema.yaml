@@ -1,0 +1,26 @@
+type: object
+required:
+  - common_patterns
+  - example_candidates
+  - schema_version
+properties:
+  common_patterns:
+    type: array
+    minItems: 1
+    maxItems: 12
+    items:
+      type: string
+      minLength: 1
+      maxLength: 240
+  example_candidates:
+    type: array
+    minItems: 1
+    maxItems: 12
+    items:
+      type: string
+      minLength: 1
+      maxLength: 240
+  schema_version:
+    type: string
+    const: tactic_extract.output.v1
+additional_properties: false

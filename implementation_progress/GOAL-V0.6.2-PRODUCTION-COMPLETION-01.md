@@ -68,6 +68,17 @@ Completed checkpoints:
   - Deterministic test model port, harness, sample input and semantic checks in `scripts/core/model_gateway/formal_skill_adapter.py`
   - `tests/core/test_sample_deep_analyze_skill.py`
 - Committed `sample_deep_analyze` Phase 2 checkpoint at `3bd267f`.
+- Implemented `tactic_extract` formal Skill:
+  - `TACTIC_EXTRACT_BUSINESS_CONTRACT.yaml`
+  - `runtime_skills/tactic_extract/skill.yaml`
+  - `runtime_skills/tactic_extract/input_schema.yaml`
+  - `runtime_skills/tactic_extract/output_schema.yaml`
+  - `runtime_skills/tactic_extract/binding.yaml`
+  - `runtime_skills/tactic_extract/prompt.md`
+  - `runtime_skills/tactic_extract/fixtures.yaml`
+  - Formal route ownership updated in `FORMAL_SKILL_ROUTE_MAPPING.yaml`
+  - Deterministic test model port, harness, sample input and semantic checks in `scripts/core/model_gateway/formal_skill_adapter.py`
+  - `tests/core/test_tactic_extract_skill.py`
 
 Current HEAD:
 
@@ -81,6 +92,14 @@ Test results:
   - PASS, 65 tests
 - `python -m unittest tests.core.test_sample_deep_analyze_skill tests.core.test_source_to_topic_skill tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter`
   - PASS, 73 tests
+- `python -m unittest tests.core.test_tactic_extract_skill tests.core.test_sample_deep_analyze_skill tests.core.test_source_to_topic_skill tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter`
+  - PASS, 81 tests
+- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_tactic'; python -m py_compile scripts\core\model_gateway\formal_skill_adapter.py tests\core\test_tactic_extract_skill.py tests\core\test_sample_deep_analyze_skill.py tests\core\test_source_to_topic_skill.py tests\core\test_remaining_formal_skill_graph.py tests\core\test_business_route_registry.py`
+  - PASS
+- `python scripts\validation\clean_room_empty_db.py --health`
+  - PASS, 20 formal tables, 0 total rows, foreign key check passed
+- `git diff --check`
+  - PASS
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_sample_deep'; python -m py_compile scripts\core\model_gateway\formal_skill_adapter.py tests\core\test_sample_deep_analyze_skill.py tests\core\test_source_to_topic_skill.py tests\core\test_remaining_formal_skill_graph.py tests\core\test_business_route_registry.py`
   - PASS
 - `python scripts\validation\clean_room_empty_db.py --health`
@@ -102,7 +121,8 @@ Test results:
 
 Remaining work:
 
-- Continue automatically to `tactic_extract` unless a formal stop condition appears.
+- Commit the `tactic_extract` Phase 2 checkpoint.
+- Continue automatically to `research_evidence_extract` unless a formal stop condition appears.
 
 Blocking issues:
 
@@ -126,3 +146,5 @@ Internal Phase commits:
 - Phase 2 source_to_topic: e4eefb7 feat(skill): implement source_to_topic
 - Phase 2 source_to_topic progress record: 5f23789 docs(skill): record source_to_topic checkpoint
 - Phase 2 sample_deep_analyze: 3bd267f feat(skill): implement sample_deep_analyze
+- Phase 2 sample_deep_analyze progress record: bfc0eac docs(skill): record sample_deep_analyze checkpoint
+- Phase 2 tactic_extract: pending

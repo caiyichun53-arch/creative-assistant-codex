@@ -50,6 +50,8 @@ SOURCE_TO_TOPIC_CONTRACT_PATH = ROOT / "SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml"
 SOURCE_TO_TOPIC_FIXTURES_PATH = ROOT / "runtime_skills" / "source_to_topic" / "fixtures.yaml"
 SAMPLE_DEEP_ANALYZE_CONTRACT_PATH = ROOT / "SAMPLE_DEEP_ANALYZE_BUSINESS_CONTRACT.yaml"
 SAMPLE_DEEP_ANALYZE_FIXTURES_PATH = ROOT / "runtime_skills" / "sample_deep_analyze" / "fixtures.yaml"
+TACTIC_EXTRACT_CONTRACT_PATH = ROOT / "TACTIC_EXTRACT_BUSINESS_CONTRACT.yaml"
+TACTIC_EXTRACT_FIXTURES_PATH = ROOT / "runtime_skills" / "tactic_extract" / "fixtures.yaml"
 STATUS_PATH = ROOT / "CONTENT_CLASSIFY_STATUS.yaml"
 REPORT_PATH = ROOT / f"{GOAL_ID}_VALIDATION_REPORT.md"
 PROGRESS_PATH = ROOT / "implementation_progress" / f"{GOAL_ID}.md"
@@ -64,6 +66,7 @@ CONTENT_RELATION_JUDGE_OUTPUT_SCHEMA_VERSION = "content_relation_judge.output.v1
 SOURCE_TO_TOPIC_GOAL_ID = "GOAL-V0.6.2-PRODUCTION-COMPLETION-01"
 SOURCE_TO_TOPIC_OUTPUT_SCHEMA_VERSION = "source_to_topic.output.v1"
 SAMPLE_DEEP_ANALYZE_OUTPUT_SCHEMA_VERSION = "sample_deep_analyze.output.v1"
+TACTIC_EXTRACT_OUTPUT_SCHEMA_VERSION = "tactic_extract.output.v1"
 
 BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "skill_id",
@@ -165,6 +168,27 @@ SAMPLE_DEEP_ANALYZE_BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "allowed_inputs",
     "forbidden_inputs",
     "analysis_policy",
+    "evidence_requirements",
+    "input_length_limits",
+    "context_budget",
+    "token_budget",
+    "timeout",
+    "retry",
+    "idempotency",
+    "error_contract",
+    "materialization_contract",
+    "fixture_cases",
+    "completion_definition",
+}
+TACTIC_EXTRACT_BUSINESS_CONTRACT_REQUIRED_KEYS = {
+    "skill_id",
+    "skill_version",
+    "source_documents",
+    "responsibility",
+    "non_responsibilities",
+    "allowed_inputs",
+    "forbidden_inputs",
+    "reduction_policy",
     "evidence_requirements",
     "input_length_limits",
     "context_budget",
@@ -307,6 +331,8 @@ class FormalSkillContract:
             validate_source_to_topic_business_contract(load_source_to_topic_business_contract())
         if self.formal_skill_id == "sample_deep_analyze":
             validate_sample_deep_analyze_business_contract(load_sample_deep_analyze_business_contract())
+        if self.formal_skill_id == "tactic_extract":
+            validate_tactic_extract_business_contract(load_tactic_extract_business_contract())
         if self.formal_skill_id == "content_relation_judge":
             validate_content_relation_judge_business_contract(load_content_relation_judge_business_contract())
 
@@ -404,6 +430,8 @@ class FormalBusinessSkillAdapter:
             validate_source_to_topic_output_semantics(input_payload, output_payload)
         elif self.contract.formal_skill_id == "sample_deep_analyze":
             validate_sample_deep_analyze_output_semantics(input_payload, output_payload)
+        elif self.contract.formal_skill_id == "tactic_extract":
+            validate_tactic_extract_output_semantics(input_payload, output_payload)
         return FormalSkillRunResult(
             formal_skill_id=self.contract.formal_skill_id,
             output_payload=output_payload,
@@ -507,6 +535,10 @@ def load_sample_deep_analyze_business_contract(path: Path = SAMPLE_DEEP_ANALYZE_
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
+def load_tactic_extract_business_contract(path: Path = TACTIC_EXTRACT_CONTRACT_PATH) -> dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
 def load_content_classify_fixtures(path: Path = CONTENT_CLASSIFY_FIXTURES_PATH) -> list[dict[str, Any]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     fixtures = data.get("fixtures") or []
@@ -543,6 +575,11 @@ def load_source_to_topic_fixtures(path: Path = SOURCE_TO_TOPIC_FIXTURES_PATH) ->
 
 
 def load_sample_deep_analyze_fixtures(path: Path = SAMPLE_DEEP_ANALYZE_FIXTURES_PATH) -> list[dict[str, Any]]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return list(data.get("fixtures") or [])
+
+
+def load_tactic_extract_fixtures(path: Path = TACTIC_EXTRACT_FIXTURES_PATH) -> list[dict[str, Any]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return list(data.get("fixtures") or [])
 
@@ -651,6 +688,27 @@ def validate_sample_deep_analyze_business_contract(data: dict[str, Any]) -> dict
     allowed_nodes = data.get("allowed_model_nodes") or []
     if allowed_nodes != ["business.reverse_dna_analysis"]:
         raise FormalSkillValidationError("sample_deep_analyze must use only business.reverse_dna_analysis")
+    return {
+        "skill_id": data["skill_id"],
+        "skill_version": data["skill_version"],
+        "source_document_count": len(data.get("source_documents") or []),
+        "missing_requirement_count": len(data.get("missing_requirements") or []),
+    }
+
+
+def validate_tactic_extract_business_contract(data: dict[str, Any]) -> dict[str, Any]:
+    missing = sorted(TACTIC_EXTRACT_BUSINESS_CONTRACT_REQUIRED_KEYS - set(data))
+    if missing:
+        raise FormalSkillValidationError(f"tactic_extract business contract missing keys: {missing}")
+    if data.get("schema_version") != "tactic_extract.business_contract.v1":
+        raise FormalSkillValidationError("unexpected tactic_extract business contract schema_version")
+    if data.get("missing_requirements"):
+        raise FormalSkillValidationError("tactic_extract business contract has missing_requirement entries")
+    if data.get("skill_id") != "tactic_extract":
+        raise FormalSkillValidationError("tactic_extract business contract skill_id mismatch")
+    allowed_nodes = data.get("allowed_model_nodes") or []
+    if allowed_nodes != ["business.reverse_pattern_reduce"]:
+        raise FormalSkillValidationError("tactic_extract must use only business.reverse_pattern_reduce")
     return {
         "skill_id": data["skill_id"],
         "skill_version": data["skill_version"],
@@ -803,6 +861,27 @@ def validate_sample_deep_analyze_output_semantics(input_payload: dict[str, Any],
         raise FormalSkillValidationError("sample_deep_analyze requires transcript_excerpt")
     if output_payload["schema_version"] != SAMPLE_DEEP_ANALYZE_OUTPUT_SCHEMA_VERSION:
         raise FormalSkillValidationError("sample_deep_analyze output schema_version mismatch")
+
+
+def validate_tactic_extract_output_semantics(input_payload: dict[str, Any], output_payload: dict[str, Any]) -> None:
+    common_patterns = output_payload["common_patterns"]
+    example_candidates = output_payload["example_candidates"]
+    if output_payload["schema_version"] != TACTIC_EXTRACT_OUTPUT_SCHEMA_VERSION:
+        raise FormalSkillValidationError("tactic_extract output schema_version mismatch")
+    if not common_patterns:
+        raise FormalSkillValidationError("tactic_extract requires common_patterns")
+    if not example_candidates:
+        raise FormalSkillValidationError("tactic_extract requires example_candidates")
+    if len(common_patterns) > 12 or len(example_candidates) > 12:
+        raise FormalSkillValidationError("tactic_extract output arrays exceed max size")
+    for value in common_patterns + example_candidates:
+        if not isinstance(value, str) or not value.strip():
+            raise FormalSkillValidationError("tactic_extract output arrays must contain non-empty strings")
+        lowered = value.lower()
+        if "publish" in lowered or "writeback" in lowered or "直接发布" in value or "写入经验库" in value:
+            raise FormalSkillValidationError("tactic_extract must not publish or write back experience")
+    if len(input_payload["dna_note_refs"]) < 2:
+        raise FormalSkillValidationError("tactic_extract requires at least two sample analysis refs")
 
 
 def parse_model_json(output_text: str) -> dict[str, Any]:
@@ -1527,6 +1606,95 @@ class DeterministicSampleDeepAnalyzeModelPort:
         )
 
 
+class DeterministicTacticExtractModelPort:
+    provider_name = "formal_business_skill_test_port"
+
+    def __init__(self, *, behavior: str = "success"):
+        self.behavior = behavior
+        self.call_count = 0
+
+    def complete(self, request: ModelRequest, route: ModelRoute) -> ModelProviderResult:
+        self.call_count += 1
+        behavior = self.behavior
+        if behavior == "fail_once" and self.call_count == 1:
+            raise RuntimeError("synthetic tactic_extract model port failure")
+        if behavior == "failure":
+            raise RuntimeError("synthetic tactic_extract model port failure")
+        if behavior == "empty":
+            return self._result("", request)
+        if behavior == "not_json":
+            return self._result("not-json", request)
+        if behavior == "missing_field":
+            return self._result(json.dumps({"common_patterns": ["missing fields"]}, ensure_ascii=False), request)
+        if behavior == "illegal_writeback":
+            payload = self._payload(
+                common_patterns=["publish this tactic directly"],
+                example_candidates=["写入经验库"],
+            )
+            return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+        refs = [str(item) for item in request.input_payload.get("dna_note_refs", [])]
+        joined = " ".join(refs).lower()
+        if "music" in joined or "song" in joined:
+            payload = self._payload(
+                common_patterns=[
+                    "music_memory_reactivation",
+                    "public_scene_to_private_emotion",
+                ],
+                example_candidates=[
+                    "old_song_returns_after_live_context",
+                    "audience_comment_memory_cluster",
+                ],
+            )
+        elif "elevator" in joined or "life" in joined:
+            payload = self._payload(
+                common_patterns=[
+                    "ordinary_life_problem_hidden_system",
+                    "daily_pain_scene_to_mechanism",
+                ],
+                example_candidates=[
+                    "elevator_peak_hour_system_explainer",
+                    "neighborhood_problem_reframed_as_pattern",
+                ],
+            )
+        else:
+            payload = self._payload(
+                common_patterns=[
+                    "source_tension_to_reusable_angle",
+                    "evidence_cluster_to_topic_method",
+                ],
+                example_candidates=[
+                    "neutral_fixture_pattern_candidate",
+                    "third_domain_reduction_candidate",
+                ],
+            )
+        return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+
+    @staticmethod
+    def _payload(*, common_patterns: list[str], example_candidates: list[str]) -> dict[str, Any]:
+        return {
+            "common_patterns": common_patterns,
+            "example_candidates": example_candidates,
+            "schema_version": TACTIC_EXTRACT_OUTPUT_SCHEMA_VERSION,
+        }
+
+    @staticmethod
+    def _result(output_text: str, request: ModelRequest) -> ModelProviderResult:
+        return ModelProviderResult(
+            output_text=output_text,
+            usage=ModelUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            cost={"test": 0},
+            provider_request_id=f"fake-{request.input_payload.get('fixture_id', 'missing')}",
+            metadata={
+                "fixture": True,
+                "tools_enabled": False,
+                "memory_enabled": False,
+                "messaging_enabled": False,
+                "nested_job_orchestration_enabled": False,
+                "file_or_terminal_side_effects_enabled": False,
+            },
+        )
+
+
 class FormalBusinessSkillMaterializer:
     def __init__(self, store: PersistenceStore, *, id_factory: Callable[[], str] = uuid7):
         self.store = store
@@ -2124,6 +2292,56 @@ def make_sample_deep_analyze_harness(
     )
 
 
+def make_tactic_extract_harness(
+    *,
+    id_factory: Callable[[], str] = uuid7,
+    now_ms: Callable[[], int] | None = None,
+    monotonic_ms: Callable[[], int] | None = None,
+    provider: ModelProvider | None = None,
+    route: ModelRoute | None = None,
+) -> FormalBusinessSkillHarness:
+    contract = FormalSkillContract.from_yaml(TACTIC_EXTRACT_CONTRACT_PATH)
+    store = PersistenceStore.in_memory(id_factory=id_factory)
+    scheduler = Goal03Scheduler(store, id_factory=id_factory, now_ms=now_ms)
+    materializer = FormalBusinessSkillMaterializer(store, id_factory=id_factory)
+    provider = provider or DeterministicTacticExtractModelPort()
+    if route is None:
+        route = ModelRoute(
+            route_name=contract.route_name,
+            provider_name=provider.provider_name,
+            model_name="deterministic-tactic-extract",
+            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+            config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
+            timeout_ms=1000,
+        )
+    gateway = ModelGateway(
+        routes={route.route_name: route},
+        providers={route.provider_name: provider},
+        materializer=ModelRunMaterializer(store),
+        monotonic_ms=monotonic_ms,
+    )
+    adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
+    worker = FormalBusinessSkillWorker(
+        scheduler=scheduler,
+        adapter=adapter,
+        materializer=materializer,
+        contract=contract,
+        worker_id="formal-business-skill-worker",
+    )
+    api = FormalBusinessSkillCoreAPI(scheduler, contract)
+    return FormalBusinessSkillHarness(
+        store=store,
+        scheduler=scheduler,
+        api=api,
+        worker=worker,
+        gateway=gateway,
+        materializer=materializer,
+        adapter=adapter,
+        contract=contract,
+        provider=provider,
+    )
+
+
 def sample_content_classify_input(**overrides: Any) -> dict[str, Any]:
     payload = {
         "request_id": "content-classify-001",
@@ -2164,6 +2382,22 @@ def sample_sample_deep_analyze_input(**overrides: Any) -> dict[str, Any]:
         "metrics": {"like_count": 120000, "comment_count": 2400, "share_count": 900},
         "domain_label": "fan_kepu_social_life",
         "schema_version": "sample_deep_analyze.input.v1",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def sample_tactic_extract_input(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "request_id": "tactic-extract-001",
+        "correlation_id": "tactic-extract-correlation-001",
+        "analysis_batch_id": "analysis-batch-001",
+        "dna_note_refs": [
+            "sample_deep_analysis:elevator-life-001",
+            "sample_deep_analysis:elevator-life-002",
+        ],
+        "domain_label": "fan_kepu_social_life",
+        "schema_version": "tactic_extract.input.v1",
     }
     payload.update(overrides)
     return payload

@@ -126,10 +126,10 @@ remaining_skills:
     model_nodes:
       - business.reverse_pattern_reduce
     deterministic_or_llm: llm
-    schema_status: planned_requires_formal_input_output_schema
-    contract_status: planned_requires_business_contract
-    implementation_status: pending_phase_2
-    fixture_status: pending_phase_2
+    schema_status: completed
+    contract_status: completed
+    implementation_status: completed_phase_2
+    fixture_status: passed
     live_validation_status: pending_phase_3_centralized_provider_matrix
     workflow_phase: tactic_reduction
     route_status: mapped_planned
