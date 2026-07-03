@@ -45,7 +45,7 @@ Completed checkpoints:
 
 Current HEAD:
 
-- ef3edac docs(runtime): freeze remaining formal skill graph
+- See `git rev-parse --short HEAD` after checkout. Phase 1 implementation checkpoint is `b9d0cb6`.
 
 Test results:
 
@@ -78,4 +78,4 @@ python -m unittest tests.core.test_remaining_formal_skill_graph tests.core.test_
 
 Internal Phase commits:
 
-- Phase 1: ef3edac docs(runtime): freeze remaining formal skill graph
+- Phase 1 implementation checkpoint: b9d0cb6 docs(runtime): freeze remaining formal skill graph
