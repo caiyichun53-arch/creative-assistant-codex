@@ -48,6 +48,8 @@ CONTENT_RELATION_JUDGE_CONTRACT_PATH = ROOT / "CONTENT_RELATION_JUDGE_BUSINESS_C
 CONTENT_RELATION_JUDGE_FIXTURES_PATH = ROOT / "runtime_skills" / "content_relation_judge" / "fixtures.yaml"
 SOURCE_TO_TOPIC_CONTRACT_PATH = ROOT / "SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml"
 SOURCE_TO_TOPIC_FIXTURES_PATH = ROOT / "runtime_skills" / "source_to_topic" / "fixtures.yaml"
+SAMPLE_DEEP_ANALYZE_CONTRACT_PATH = ROOT / "SAMPLE_DEEP_ANALYZE_BUSINESS_CONTRACT.yaml"
+SAMPLE_DEEP_ANALYZE_FIXTURES_PATH = ROOT / "runtime_skills" / "sample_deep_analyze" / "fixtures.yaml"
 STATUS_PATH = ROOT / "CONTENT_CLASSIFY_STATUS.yaml"
 REPORT_PATH = ROOT / f"{GOAL_ID}_VALIDATION_REPORT.md"
 PROGRESS_PATH = ROOT / "implementation_progress" / f"{GOAL_ID}.md"
@@ -61,6 +63,7 @@ CONTENT_RELATION_JUDGE_GOAL_ID = "GOAL-BUSINESS-SKILL-CONTENT-RELATION-JUDGE-01"
 CONTENT_RELATION_JUDGE_OUTPUT_SCHEMA_VERSION = "content_relation_judge.output.v1"
 SOURCE_TO_TOPIC_GOAL_ID = "GOAL-V0.6.2-PRODUCTION-COMPLETION-01"
 SOURCE_TO_TOPIC_OUTPUT_SCHEMA_VERSION = "source_to_topic.output.v1"
+SAMPLE_DEEP_ANALYZE_OUTPUT_SCHEMA_VERSION = "sample_deep_analyze.output.v1"
 
 BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "skill_id",
@@ -142,6 +145,27 @@ SOURCE_TO_TOPIC_BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "evidence_requirements",
     "confidence_policy",
     "domain_scope",
+    "input_length_limits",
+    "context_budget",
+    "token_budget",
+    "timeout",
+    "retry",
+    "idempotency",
+    "error_contract",
+    "materialization_contract",
+    "fixture_cases",
+    "completion_definition",
+}
+SAMPLE_DEEP_ANALYZE_BUSINESS_CONTRACT_REQUIRED_KEYS = {
+    "skill_id",
+    "skill_version",
+    "source_documents",
+    "responsibility",
+    "non_responsibilities",
+    "allowed_inputs",
+    "forbidden_inputs",
+    "analysis_policy",
+    "evidence_requirements",
     "input_length_limits",
     "context_budget",
     "token_budget",
@@ -281,6 +305,8 @@ class FormalSkillContract:
             validate_content_classify_business_contract(load_content_classify_business_contract())
         if self.formal_skill_id == "source_to_topic":
             validate_source_to_topic_business_contract(load_source_to_topic_business_contract())
+        if self.formal_skill_id == "sample_deep_analyze":
+            validate_sample_deep_analyze_business_contract(load_sample_deep_analyze_business_contract())
         if self.formal_skill_id == "content_relation_judge":
             validate_content_relation_judge_business_contract(load_content_relation_judge_business_contract())
 
@@ -376,6 +402,8 @@ class FormalBusinessSkillAdapter:
             validate_content_relation_judge_output_semantics(input_payload, output_payload)
         elif self.contract.formal_skill_id == "source_to_topic":
             validate_source_to_topic_output_semantics(input_payload, output_payload)
+        elif self.contract.formal_skill_id == "sample_deep_analyze":
+            validate_sample_deep_analyze_output_semantics(input_payload, output_payload)
         return FormalSkillRunResult(
             formal_skill_id=self.contract.formal_skill_id,
             output_payload=output_payload,
@@ -443,6 +471,14 @@ def preprocess_source_to_topic_input(input_payload: dict[str, Any]) -> dict[str,
     }
 
 
+def preprocess_sample_deep_analyze_input(input_payload: dict[str, Any]) -> dict[str, Any]:
+    transcript = " ".join(str(input_payload.get("transcript_excerpt", "")).split())
+    return {
+        "transcript_text": transcript,
+        "transcript_length": len(transcript),
+    }
+
+
 def preprocess_formal_skill_input(formal_skill_id: str, input_payload: dict[str, Any]) -> dict[str, Any]:
     if formal_skill_id == "content_classify":
         return preprocess_content_classify_input(input_payload)
@@ -450,6 +486,8 @@ def preprocess_formal_skill_input(formal_skill_id: str, input_payload: dict[str,
         return preprocess_content_relation_judge_input(input_payload)
     if formal_skill_id == "source_to_topic":
         return preprocess_source_to_topic_input(input_payload)
+    if formal_skill_id == "sample_deep_analyze":
+        return preprocess_sample_deep_analyze_input(input_payload)
     return {}
 
 
@@ -462,6 +500,10 @@ def load_content_relation_judge_business_contract(path: Path = CONTENT_RELATION_
 
 
 def load_source_to_topic_business_contract(path: Path = SOURCE_TO_TOPIC_CONTRACT_PATH) -> dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def load_sample_deep_analyze_business_contract(path: Path = SAMPLE_DEEP_ANALYZE_CONTRACT_PATH) -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
@@ -496,6 +538,11 @@ def load_content_relation_judge_fixtures(path: Path = CONTENT_RELATION_JUDGE_FIX
 
 
 def load_source_to_topic_fixtures(path: Path = SOURCE_TO_TOPIC_FIXTURES_PATH) -> list[dict[str, Any]]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return list(data.get("fixtures") or [])
+
+
+def load_sample_deep_analyze_fixtures(path: Path = SAMPLE_DEEP_ANALYZE_FIXTURES_PATH) -> list[dict[str, Any]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return list(data.get("fixtures") or [])
 
@@ -588,6 +635,27 @@ def validate_source_to_topic_business_contract(data: dict[str, Any]) -> dict[str
         "source_document_count": len(data.get("source_documents") or []),
         "missing_requirement_count": len(data.get("missing_requirements") or []),
         "topic_status_count": len(statuses),
+    }
+
+
+def validate_sample_deep_analyze_business_contract(data: dict[str, Any]) -> dict[str, Any]:
+    missing = sorted(SAMPLE_DEEP_ANALYZE_BUSINESS_CONTRACT_REQUIRED_KEYS - set(data))
+    if missing:
+        raise FormalSkillValidationError(f"sample_deep_analyze business contract missing keys: {missing}")
+    if data.get("schema_version") != "sample_deep_analyze.business_contract.v1":
+        raise FormalSkillValidationError("unexpected sample_deep_analyze business contract schema_version")
+    if data.get("missing_requirements"):
+        raise FormalSkillValidationError("sample_deep_analyze business contract has missing_requirement entries")
+    if data.get("skill_id") != "sample_deep_analyze":
+        raise FormalSkillValidationError("sample_deep_analyze business contract skill_id mismatch")
+    allowed_nodes = data.get("allowed_model_nodes") or []
+    if allowed_nodes != ["business.reverse_dna_analysis"]:
+        raise FormalSkillValidationError("sample_deep_analyze must use only business.reverse_dna_analysis")
+    return {
+        "skill_id": data["skill_id"],
+        "skill_version": data["skill_version"],
+        "source_document_count": len(data.get("source_documents") or []),
+        "missing_requirement_count": len(data.get("missing_requirements") or []),
     }
 
 
@@ -721,6 +789,20 @@ def validate_source_to_topic_output_semantics(input_payload: dict[str, Any], out
         raise FormalSkillValidationError("needs_review source_to_topic output must include source_constraints")
     if status not in {"generated", "needs_review"}:
         raise FormalSkillValidationError(f"unsupported topic_status: {status}")
+
+
+def validate_sample_deep_analyze_output_semantics(input_payload: dict[str, Any], output_payload: dict[str, Any]) -> None:
+    transcript = str(input_payload["transcript_excerpt"]).strip()
+    for key in ("topic_pattern", "hook_pattern", "structure_pattern"):
+        value = str(output_payload[key]).strip()
+        if not value:
+            raise FormalSkillValidationError(f"sample_deep_analyze {key} must not be empty")
+        if len(value) > 800:
+            raise FormalSkillValidationError(f"sample_deep_analyze {key} is too long")
+    if not transcript:
+        raise FormalSkillValidationError("sample_deep_analyze requires transcript_excerpt")
+    if output_payload["schema_version"] != SAMPLE_DEEP_ANALYZE_OUTPUT_SCHEMA_VERSION:
+        raise FormalSkillValidationError("sample_deep_analyze output schema_version mismatch")
 
 
 def parse_model_json(output_text: str) -> dict[str, Any]:
@@ -1370,6 +1452,81 @@ class DeterministicSourceToTopicModelPort:
         )
 
 
+class DeterministicSampleDeepAnalyzeModelPort:
+    provider_name = "formal_business_skill_test_port"
+
+    def __init__(self, *, behavior: str = "success"):
+        self.behavior = behavior
+        self.call_count = 0
+
+    def complete(self, request: ModelRequest, route: ModelRoute) -> ModelProviderResult:
+        self.call_count += 1
+        behavior = self.behavior
+        if behavior == "fail_once" and self.call_count == 1:
+            raise RuntimeError("synthetic sample_deep_analyze model port failure")
+        if behavior == "failure":
+            raise RuntimeError("synthetic sample_deep_analyze model port failure")
+        if behavior == "empty":
+            return self._result("", request)
+        if behavior == "not_json":
+            return self._result("not-json", request)
+        if behavior == "missing_field":
+            return self._result(json.dumps({"topic_pattern": "missing fields"}, ensure_ascii=False), request)
+        transcript = str(request.input_payload.get("transcript_excerpt", ""))
+        metrics = request.input_payload.get("metrics") or {}
+        if "演唱会" in transcript or "老歌" in transcript:
+            payload = self._payload(
+                topic_pattern="old-song-memory_reactivated_by_live_context",
+                hook_pattern="start_from_a_familiar_song_returning_in_an_unexpected_crowd",
+                structure_pattern="memory_trigger_to_public_scene_to_current_emotion",
+            )
+        elif "电梯" in transcript or "通勤" in transcript:
+            payload = self._payload(
+                topic_pattern="ordinary_life_problem_explained_by_hidden_system",
+                hook_pattern="name_a_daily_irritation_then_reveal_the_unseen_mechanism",
+                structure_pattern="pain_scene_to_mechanism_to_practical_reframe",
+            )
+        elif int(metrics.get("like_count", 0) or 0) > 100000:
+            payload = self._payload(
+                topic_pattern="high_metric_source_needs_plain_language_reframe",
+                hook_pattern="open_with_the_surprising_metric_then_ground_it_in_one_scene",
+                structure_pattern="signal_to_reason_to_reusable_topic_angle",
+            )
+        else:
+            payload = self._payload(
+                topic_pattern="source_specific_tension_to_candidate_lesson",
+                hook_pattern="surface_the_specific_tension_without_claiming_extra_facts",
+                structure_pattern="source_fact_to_tension_to_reusable_pattern",
+            )
+        return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+
+    @staticmethod
+    def _payload(*, topic_pattern: str, hook_pattern: str, structure_pattern: str) -> dict[str, Any]:
+        return {
+            "topic_pattern": topic_pattern,
+            "hook_pattern": hook_pattern,
+            "structure_pattern": structure_pattern,
+            "schema_version": SAMPLE_DEEP_ANALYZE_OUTPUT_SCHEMA_VERSION,
+        }
+
+    @staticmethod
+    def _result(output_text: str, request: ModelRequest) -> ModelProviderResult:
+        return ModelProviderResult(
+            output_text=output_text,
+            usage=ModelUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            cost={"test": 0},
+            provider_request_id=f"fake-{request.input_payload.get('fixture_id', 'missing')}",
+            metadata={
+                "fixture": True,
+                "tools_enabled": False,
+                "memory_enabled": False,
+                "messaging_enabled": False,
+                "nested_job_orchestration_enabled": False,
+                "file_or_terminal_side_effects_enabled": False,
+            },
+        )
+
+
 class FormalBusinessSkillMaterializer:
     def __init__(self, store: PersistenceStore, *, id_factory: Callable[[], str] = uuid7):
         self.store = store
@@ -1917,6 +2074,56 @@ def make_source_to_topic_harness(
     )
 
 
+def make_sample_deep_analyze_harness(
+    *,
+    id_factory: Callable[[], str] = uuid7,
+    now_ms: Callable[[], int] | None = None,
+    monotonic_ms: Callable[[], int] | None = None,
+    provider: ModelProvider | None = None,
+    route: ModelRoute | None = None,
+) -> FormalBusinessSkillHarness:
+    contract = FormalSkillContract.from_yaml(SAMPLE_DEEP_ANALYZE_CONTRACT_PATH)
+    store = PersistenceStore.in_memory(id_factory=id_factory)
+    scheduler = Goal03Scheduler(store, id_factory=id_factory, now_ms=now_ms)
+    materializer = FormalBusinessSkillMaterializer(store, id_factory=id_factory)
+    provider = provider or DeterministicSampleDeepAnalyzeModelPort()
+    if route is None:
+        route = ModelRoute(
+            route_name=contract.route_name,
+            provider_name=provider.provider_name,
+            model_name="deterministic-sample-deep-analyze",
+            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+            config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
+            timeout_ms=1000,
+        )
+    gateway = ModelGateway(
+        routes={route.route_name: route},
+        providers={route.provider_name: provider},
+        materializer=ModelRunMaterializer(store),
+        monotonic_ms=monotonic_ms,
+    )
+    adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
+    worker = FormalBusinessSkillWorker(
+        scheduler=scheduler,
+        adapter=adapter,
+        materializer=materializer,
+        contract=contract,
+        worker_id="formal-business-skill-worker",
+    )
+    api = FormalBusinessSkillCoreAPI(scheduler, contract)
+    return FormalBusinessSkillHarness(
+        store=store,
+        scheduler=scheduler,
+        api=api,
+        worker=worker,
+        gateway=gateway,
+        materializer=materializer,
+        adapter=adapter,
+        contract=contract,
+        provider=provider,
+    )
+
+
 def sample_content_classify_input(**overrides: Any) -> dict[str, Any]:
     payload = {
         "request_id": "content-classify-001",
@@ -1942,6 +2149,21 @@ def sample_source_to_topic_input(**overrides: Any) -> dict[str, Any]:
         "domain_label": "fan_kepu_social_life",
         "relation_summary": "source is related_distinct to prior social-life evidence",
         "schema_version": "source_to_topic.input.v1",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def sample_sample_deep_analyze_input(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "request_id": "sample-deep-analyze-001",
+        "correlation_id": "sample-deep-analyze-correlation-001",
+        "sample_id": "sample-001",
+        "candidate_topic": "为什么小区电梯总在早高峰堵住",
+        "transcript_excerpt": "每天早高峰电梯都挤不上，其实不是大家运气差，而是通勤时间、楼层分布和维保停梯一起叠加。",
+        "metrics": {"like_count": 120000, "comment_count": 2400, "share_count": 900},
+        "domain_label": "fan_kepu_social_life",
+        "schema_version": "sample_deep_analyze.input.v1",
     }
     payload.update(overrides)
     return payload

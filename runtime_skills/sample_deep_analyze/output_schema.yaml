@@ -1,0 +1,23 @@
+type: object
+required:
+  - topic_pattern
+  - hook_pattern
+  - structure_pattern
+  - schema_version
+properties:
+  topic_pattern:
+    type: string
+    minLength: 1
+    maxLength: 800
+  hook_pattern:
+    type: string
+    minLength: 1
+    maxLength: 800
+  structure_pattern:
+    type: string
+    minLength: 1
+    maxLength: 800
+  schema_version:
+    type: string
+    const: sample_deep_analyze.output.v1
+additional_properties: false

@@ -56,6 +56,17 @@ Completed checkpoints:
   - Deterministic test model port, harness, sample input and semantic checks in `scripts/core/model_gateway/formal_skill_adapter.py`
   - `tests/core/test_source_to_topic_skill.py`
 - Committed `source_to_topic` Phase 2 checkpoint at `e4eefb7`.
+- Implemented `sample_deep_analyze` formal Skill:
+  - `SAMPLE_DEEP_ANALYZE_BUSINESS_CONTRACT.yaml`
+  - `runtime_skills/sample_deep_analyze/skill.yaml`
+  - `runtime_skills/sample_deep_analyze/input_schema.yaml`
+  - `runtime_skills/sample_deep_analyze/output_schema.yaml`
+  - `runtime_skills/sample_deep_analyze/binding.yaml`
+  - `runtime_skills/sample_deep_analyze/prompt.md`
+  - `runtime_skills/sample_deep_analyze/fixtures.yaml`
+  - Formal route ownership updated in `FORMAL_SKILL_ROUTE_MAPPING.yaml`
+  - Deterministic test model port, harness, sample input and semantic checks in `scripts/core/model_gateway/formal_skill_adapter.py`
+  - `tests/core/test_sample_deep_analyze_skill.py`
 
 Current HEAD:
 
@@ -67,6 +78,14 @@ Test results:
   - PASS, 55 tests
 - `python -m unittest tests.core.test_source_to_topic_skill tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter`
   - PASS, 65 tests
+- `python -m unittest tests.core.test_sample_deep_analyze_skill tests.core.test_source_to_topic_skill tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter`
+  - PASS, 73 tests
+- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_sample_deep'; python -m py_compile scripts\core\model_gateway\formal_skill_adapter.py tests\core\test_sample_deep_analyze_skill.py tests\core\test_source_to_topic_skill.py tests\core\test_remaining_formal_skill_graph.py tests\core\test_business_route_registry.py`
+  - PASS
+- `python scripts\validation\clean_room_empty_db.py --health`
+  - PASS, 20 formal tables, 0 total rows, foreign key check passed
+- `git diff --check`
+  - PASS
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_source_to_topic'; python -m py_compile scripts\core\model_gateway\formal_skill_adapter.py tests\core\test_source_to_topic_skill.py tests\core\test_remaining_formal_skill_graph.py tests\core\test_business_route_registry.py`
   - PASS
 - `python scripts\validation\clean_room_empty_db.py --health`
@@ -82,7 +101,8 @@ Test results:
 
 Remaining work:
 
-- Continue automatically to `sample_deep_analyze` unless a formal stop condition appears.
+- Commit the `sample_deep_analyze` Phase 2 checkpoint.
+- Continue automatically to `tactic_extract` unless a formal stop condition appears.
 
 Blocking issues:
 
@@ -104,3 +124,5 @@ Internal Phase commits:
 - Phase 1 implementation checkpoint: b9d0cb6 docs(runtime): freeze remaining formal skill graph
 - Phase 1 progress-record checkpoint: d00ac01 docs(runtime): record production completion phase 1 progress
 - Phase 2 source_to_topic: e4eefb7 feat(skill): implement source_to_topic
+- Phase 2 source_to_topic progress record: 5f23789 docs(skill): record source_to_topic checkpoint
+- Phase 2 sample_deep_analyze: pending

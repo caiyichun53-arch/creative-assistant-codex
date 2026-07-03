@@ -1,0 +1,27 @@
+schema_version: formal_skill_binding.v1
+binding_name: sample_deep_analyze_public_input_to_reverse_dna_analysis
+binding_version: 1.0.0
+route_name: business.reverse_dna_analysis
+input_map:
+  fixture_id:
+    source: input
+    key: request_id
+  transcript_excerpt:
+    source: preprocessed
+    key: transcript_text
+  metrics:
+    source: input
+    key: metrics
+output_map:
+  topic_pattern:
+    source: model_output
+    key: topic_pattern
+  hook_pattern:
+    source: model_output
+    key: hook_pattern
+  structure_pattern:
+    source: model_output
+    key: structure_pattern
+  schema_version:
+    source: model_output
+    key: schema_version

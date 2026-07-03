@@ -73,20 +73,21 @@ formal_skills:
       - Formal source_to_topic Skill package implemented for GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2.
 
   - formal_skill_id: sample_deep_analyze
-    version: planned
-    source_document: GOAL-RUNTIME-BUSINESS-SKILL-ADAPTER-01 objective
+    version: 1.0.0
+    source_document: SAMPLE_DEEP_ANALYZE_BUSINESS_CONTRACT.yaml
     responsibility: Analyze one validated winner sample into deep DNA notes.
-    input_schema: sample_deep_analyze.input.planned
-    output_schema: sample_deep_analyze.output.planned
+    input_schema: sample_deep_analyze.input_schema.v1
+    output_schema: sample_deep_analyze.output_schema.v1
     allowed_model_nodes:
       - business.reverse_dna_analysis
     execution_order: 40
     whether_model_is_required: true
     target_runner: FormalBusinessSkillAdapter
-    materializer_contract: planned
-    status: mapped_planned
+    materializer_contract: formal_business_skill_result.v1
+    status: active_formal_business_skill
     evidence:
       - AGENTS.md separates deterministic prep from LLM reverse DNA analysis.
+      - Formal sample_deep_analyze Skill package implemented for GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2.
 
   - formal_skill_id: tactic_extract
     version: planned
