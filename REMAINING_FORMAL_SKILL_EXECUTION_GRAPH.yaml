@@ -149,15 +149,16 @@ remaining_skills:
       - content_plan
       - script_generate
       - script_review
-    model_nodes: []
+    model_nodes:
+      - business.research_evidence_extract
     deterministic_or_llm: llm
-    schema_status: planned_requires_formal_input_output_schema
-    contract_status: planned_requires_business_contract
-    implementation_status: pending_phase_2
-    fixture_status: pending_phase_2
+    schema_status: completed
+    contract_status: completed
+    implementation_status: completed_phase_2
+    fixture_status: passed
     live_validation_status: pending_phase_3_centralized_provider_matrix
     workflow_phase: research_evidence_extraction
-    route_status: planned_requires_route_split
+    route_status: mapped_planned
 
   - skill_id: production_research_plan
     responsibility: Synthesize source material into a production research plan.

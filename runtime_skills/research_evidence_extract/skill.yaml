@@ -1,0 +1,27 @@
+schema_version: formal_skill_manifest.v1
+formal_skill_id: research_evidence_extract
+skill_version: 1.0.0
+source_contract: RESEARCH_EVIDENCE_EXTRACT_BUSINESS_CONTRACT.yaml
+responsibility: Extract bounded evidence items from a supplied research packet.
+non_responsibilities:
+  - search_provider_fetching
+  - production_research_plan
+  - content_plan
+  - database_query
+  - file_read_write
+  - feishu_messaging
+runner: FormalBusinessSkillAdapter
+route_name: business.research_evidence_extract
+input_schema: input_schema.yaml
+output_schema: output_schema.yaml
+binding: binding.yaml
+prompt: prompt.md
+fixtures: fixtures.yaml
+standalone_boundaries:
+  requires_database: false
+  reads_files_at_runtime: false
+  writes_files_at_runtime: false
+  calls_other_skills: false
+  calls_core_api: false
+  accesses_external_url: false
+  uses_chat_memory: false

@@ -245,6 +245,42 @@ nodes:
         schema_version: string
       additional_properties: false
 
+  - node_id: research_evidence_extract
+    logical_route: business.research_evidence_extract
+    capability_tier: deep_reasoning
+    source_evidence:
+      - GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2: research evidence extraction is a remaining formal Skill.
+      - FORMAL_SKILL_ROUTE_MAPPING.yaml: research_evidence_extract must remain separate from production_research_plan.
+      - AGENTS.md: LLM allowed for research work inside fixed routes only.
+    timeout_ms: 60000
+    retry:
+      max_attempts: 1
+      retry_on: []
+    token_context_budget:
+      max_input_tokens: 9000
+      max_output_tokens: 1800
+    allowed_provider_policy:
+      inherit: provider_policy_defaults
+    fallback_policy:
+      inherit: provider_policy_defaults.fallback_policy
+    input_schema:
+      type: object
+      required: [fixture_id, research_question, research_packet, source_refs]
+      properties:
+        fixture_id: string
+        research_question: string
+        research_packet: string
+        source_refs: array
+      additional_properties: false
+    output_schema:
+      type: object
+      required: [evidence_items, uncertainty_notes, schema_version]
+      properties:
+        evidence_items: array
+        uncertainty_notes: array
+        schema_version: string
+      additional_properties: false
+
   - node_id: creation_hook
     logical_route: business.creation_hook
     capability_tier: creative_generation

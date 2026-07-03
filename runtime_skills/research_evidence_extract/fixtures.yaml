@@ -1,0 +1,37 @@
+schema_version: research_evidence_extract.fixtures.v1
+fixtures:
+  - fixture_id: fan_kepu_social_life
+    input:
+      request_id: research-evidence-fan-kepu
+      correlation_id: research-evidence-fan-kepu-correlation
+      research_packet_id: research-packet-fan-kepu
+      research_question: 为什么小区电梯总在早高峰堵住
+      research_packet: 早高峰电梯拥堵与通勤集中、楼层分布有关。维保停梯会放大等待时间。
+      source_refs:
+        - research-src-fan-001
+        - research-src-fan-002
+      domain_label: fan_kepu_social_life
+      schema_version: research_evidence_extract.input.v1
+  - fixture_id: music_entertainment
+    input:
+      request_id: research-evidence-music
+      correlation_id: research-evidence-music-correlation
+      research_packet_id: research-packet-music
+      research_question: 一首老歌为什么会重新被年轻人翻出来
+      research_packet: 老歌传播与演唱会现场和个人记忆评论有关。二次翻唱让旧作品进入新语境。
+      source_refs:
+        - research-src-music-001
+        - research-src-music-002
+      domain_label: music_entertainment
+      schema_version: research_evidence_extract.input.v1
+  - fixture_id: third_domain_neutral
+    input:
+      request_id: research-evidence-neutral
+      correlation_id: research-evidence-neutral-correlation
+      research_packet_id: research-packet-neutral
+      research_question: 冷冻面包复烤后口感为什么变化
+      research_packet: 冷冻保存会改变水分分布。复烤可以部分恢复外壳脆度。
+      source_refs:
+        - research-src-neutral-001
+      domain_label: third_domain_neutral
+      schema_version: research_evidence_extract.input.v1
