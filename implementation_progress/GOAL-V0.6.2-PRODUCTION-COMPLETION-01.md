@@ -231,6 +231,19 @@ Completed checkpoints:
   - Phase 5 foundation checkpoint committed at `ad9ceae`.
   - Phase 5 assembly artifact persistence checkpoint committed at `ab49be0`.
   - Phase 5 workflow worker checkpoint committed at `136ecbd`.
+- Completed Phase 5 formal Skill Dispatcher checkpoint:
+  - `scripts/core/workflow/goal_phase5_business_workflow.py`
+  - `tests/core/test_phase5_business_workflow.py`
+  - `PHASE_5_BUSINESS_WORKFLOW_FOUNDATION_STATUS.yaml`
+  - `PHASE_5_BUSINESS_WORKFLOW_FOUNDATION_REPORT.md`
+  - Added formal Skill version freezing in Input Assembly.
+  - Added `FormalSkillRegistry` backed by `FORMAL_SKILL_ROUTE_MAPPING.yaml`.
+  - Added `FormalSkillDispatcher` covering all 12 active formal business Skills.
+  - Dispatcher resolves `skill_id` and version from the formal registry, calls `FormalBusinessSkillAdapter` through `ModelGateway`, and materializes formal Skill results.
+  - Dispatcher fails closed for version mismatch and missing approved model route/provider.
+  - Added a synthetic dispatcher matrix covering all 12 Skills without real Provider calls.
+  - No old script execution path, Hermes direct Skill invocation, GPT call, DeepSeek call, old data read, fallback or automatic downgrade was introduced.
+  - Phase 5 formal Skill Dispatcher checkpoint committed at `14a476a`.
 
 Current HEAD:
 
@@ -372,6 +385,18 @@ Test results:
   - PASS, 63 tests
 - `python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters`
   - PASS, 74 tests
+- `python -m unittest tests.core.test_phase5_business_workflow`
+  - PASS, 14 tests after Phase 5 Dispatcher update
+- `python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters`
+  - PASS, 77 tests after Phase 5 Dispatcher update
+- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_phase5_dispatcher'; python -m py_compile scripts\core\workflow\goal_phase5_business_workflow.py tests\core\test_phase5_business_workflow.py`
+  - PASS
+- YAML parse check for `PHASE_5_BUSINESS_WORKFLOW_FOUNDATION_STATUS.yaml` after Dispatcher update
+  - PASS
+- `python scripts\validation\clean_room_empty_db.py --health`
+  - PASS, 20 formal tables, 0 total rows, foreign key check passed
+- `git diff --check`
+  - PASS
 - YAML parse check for `PHASE_5_BUSINESS_WORKFLOW_FOUNDATION_STATUS.yaml` after worker update
   - PASS
 - `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_phase5_worker'; python -m py_compile scripts\core\workflow\goal_phase5_business_workflow.py tests\core\test_phase5_business_workflow.py`
@@ -400,8 +425,10 @@ Test results:
 Remaining work:
 
 - Continue Phase 5 full workflow wiring.
-- Replace the synthetic Skill execution port with a formal Skill dispatcher across all 12 Skills.
-- Add synthetic workflow coverage across all 12 Skills.
+- Establish formal workflow definitions and versioned entry contracts for the required task chains.
+- Add Core-driven step state transitions and upstream/downstream artifact handoff between workflow steps.
+- Extend synthetic workflow coverage from the dispatcher matrix to task-specific end-to-end chains.
+- Complete failure, retry, cancellation, recovery, idempotency, concurrency, replay and full-chain audit coverage for those chains.
 
 Blocking issues:
 
@@ -446,3 +473,4 @@ Internal Phase commits:
 - Phase 5 workflow/Input Assembly foundation: ad9ceae feat(workflow): add phase 5 input assembly foundation
 - Phase 5 assembly artifact persistence: ab49be0 feat(workflow): persist phase 5 assembly artifacts
 - Phase 5 workflow worker: 136ecbd feat(workflow): add phase 5 workflow worker
+- Phase 5 formal Skill Dispatcher: 14a476a feat(workflow): add phase 5 formal skill dispatcher
