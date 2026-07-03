@@ -2,7 +2,7 @@
 
 Status: IN_PROGRESS
 
-Current Phase: Phase 5 - formal business workflow and Input Assembly pending
+Current Phase: Phase 5 - formal business workflow and Input Assembly in progress
 
 Current branch: implementation/goal-v0.6.2-production-completion-01
 
@@ -213,6 +213,19 @@ Completed checkpoints:
   - Updated live-gate dry-run harness to exercise formal Adapter boundaries with fixtures/stubs.
   - No old data, old business state, real platform collection, GPT call, DeepSeek call or fallback path was introduced.
   - Phase 4 implementation checkpoint committed at `cea4c1f`.
+- Completed Phase 5 foundation checkpoint for workflow/Input Assembly:
+  - `scripts/core/workflow/goal_phase5_business_workflow.py`
+  - `tests/core/test_phase5_business_workflow.py`
+  - `PHASE_5_BUSINESS_WORKFLOW_FOUNDATION_STATUS.yaml`
+  - `PHASE_5_BUSINESS_WORKFLOW_FOUNDATION_REPORT.md`
+  - Added fixed formal workflow order for all 12 business Skills.
+  - Added `ExperienceContext` selection/freeze rules.
+  - Added public Input Assembly freeze for Skill input, upstream refs and experience context.
+  - Added retry drift rejection for frozen input assemblies.
+  - Added `experience_usage` validation against the frozen context.
+  - Added `Goal05WorkflowOrchestrator` enqueue coverage using `formal_skill.execute`.
+  - This is a foundation checkpoint only; full Phase 5 workflow wiring and persistence remain open.
+  - Phase 5 foundation checkpoint committed at `ad9ceae`.
 
 Current HEAD:
 
@@ -346,12 +359,29 @@ Test results:
   - PASS, 20 formal tables, 0 total rows, foreign key check passed
 - `git diff --check`
   - PASS
+- `python -m unittest tests.core.test_phase5_business_workflow`
+  - PASS, 7 tests
+- `python scripts\core\workflow\verify_goal_05.py`
+  - PASS, GOAL-05 verification passed
+- `python -m unittest tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters`
+  - PASS, 63 tests
+- `python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters`
+  - PASS, 70 tests
+- YAML parse check for `PHASE_5_BUSINESS_WORKFLOW_FOUNDATION_STATUS.yaml`
+  - PASS
+- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_phase5_foundation'; python -m py_compile scripts\core\workflow\goal_phase5_business_workflow.py tests\core\test_phase5_business_workflow.py`
+  - PASS
+- `python scripts\validation\clean_room_empty_db.py --health`
+  - PASS, 20 formal tables, 0 total rows, foreign key check passed
+- `git diff --check`
+  - PASS
 
 Remaining work:
 
-- Continue to Phase 5 formal business workflow and Input Assembly.
-- Build formal workflow from Core API -> Job / Worker -> Input Assembly -> Portable Skill -> ModelGateway -> Materializer -> Outbox.
-- Implement ExperienceContext selection, conflict handling, version freezing and `experience_usage` tracing in the formal workflow.
+- Continue Phase 5 full workflow wiring.
+- Wire frozen input assembly into actual multi-step workers for the full formal business workflow.
+- Persist workflow-level input assembly and experience usage records through formal Materializers.
+- Add synthetic workflow coverage across all 12 Skills.
 
 Blocking issues:
 
@@ -364,7 +394,7 @@ Next resume command:
 ```powershell
 cd I:\Creation_assistant-codex
 git switch implementation/goal-v0.6.2-production-completion-01
-python -m unittest tests.core.test_external_executor_adapters tests.validation.test_live_gates tests.core.test_runtime_vertical_slice tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter
+python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters
 ```
 
 Internal Phase commits:
@@ -392,3 +422,5 @@ Internal Phase commits:
 - Phase 3 centralized validation: 3b435c6 test(runtime): record phase 3 centralized validation
 - Phase 3 progress record: 9f2b0fe docs(runtime): record phase 3 checkpoint
 - Phase 4 external executor Adapters: cea4c1f feat(runtime): add external executor adapters
+- Phase 4 progress record: 45b9050 docs(runtime): record phase 4 checkpoint
+- Phase 5 workflow/Input Assembly foundation: ad9ceae feat(workflow): add phase 5 input assembly foundation
