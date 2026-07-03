@@ -14,6 +14,7 @@ This checkpoint adds the formal workflow and Input Assembly foundation for Phase
 - Added `Goal05WorkflowOrchestrator` enqueue coverage using `formal_skill.execute`.
 - Added a workflow Materializer for input assembly and experience usage trace artifacts.
 - Added audit, outbox and idempotency receipts for those workflow artifacts.
+- Added a workflow worker that records frozen assembly, calls an injected Skill execution port, records usage, and fails closed when required usage is missing.
 
 ## Safety
 
@@ -27,14 +28,14 @@ This checkpoint adds the formal workflow and Input Assembly foundation for Phase
 
 ## Validation
 
-- `python -m unittest tests.core.test_phase5_business_workflow` - PASS, 9 tests
+- `python -m unittest tests.core.test_phase5_business_workflow` - PASS, 11 tests
 - `python scripts\core\workflow\verify_goal_05.py` - PASS
-- `python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters` - PASS, 72 tests
+- `python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters` - PASS, 74 tests
 - `py_compile` for Phase 5 workflow files - PASS
 - `python scripts\validation\clean_room_empty_db.py --health` - PASS, 20 tables, 0 rows
 - `git diff --check` - PASS
 
 ## Remaining
 
-- Wire this frozen assembly into full multi-step workers.
+- Replace the synthetic Skill execution port with a formal Skill dispatcher across all 12 Skills.
 - Add synthetic end-to-end coverage across all 12 Skills.

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Protocol
 
 from scripts.core.model_gateway.formal_skill_adapter import FORMAL_SKILL_JOB_KIND
 from scripts.core.persistence.goal01_store import PersistenceStore, content_hash, uuid7
+from scripts.core.scheduler.goal03_scheduler import Goal03Scheduler, NoClaimableJob
 from scripts.core.workflow.goal05_workflow import WorkflowStepSpec
 
 
@@ -149,6 +150,35 @@ class FrozenSkillInput:
             },
         }
 
+    @classmethod
+    def from_scheduler_payload(cls, payload: dict[str, Any]) -> "FrozenSkillInput":
+        assembly = payload.get("input_assembly")
+        if not isinstance(assembly, dict):
+            raise BusinessWorkflowError("scheduler payload missing input_assembly")
+        context_payload = assembly.get("experience_context")
+        if not isinstance(context_payload, dict):
+            raise BusinessWorkflowError("input_assembly missing experience_context")
+        context = ExperienceContext(
+            schema_version=str(context_payload["schema_version"]),
+            skill_id=str(context_payload["skill_id"]),
+            domain=str(context_payload["domain"]),
+            content_form=str(context_payload["content_form"]),
+            token_budget=int(context_payload["token_budget"]),
+            items=tuple(dict(item) for item in context_payload.get("items", [])),
+            context_hash=str(context_payload["context_hash"]),
+        )
+        return cls(
+            schema_version=str(assembly["schema_version"]),
+            workflow_id=str(assembly["workflow_id"]),
+            step_key=str(assembly["step_key"]),
+            formal_skill_id=str(assembly["formal_skill_id"]),
+            input_payload=dict(payload.get("input") or {}),
+            upstream_refs=tuple(dict(item) for item in assembly.get("upstream_refs", [])),
+            experience_context=context,
+            input_hash=str(assembly["input_hash"]),
+            assembly_hash=str(assembly["assembly_hash"]),
+        )
+
 
 @dataclass(frozen=True)
 class WorkflowArtifactResult:
@@ -157,6 +187,28 @@ class WorkflowArtifactResult:
     receipt_id: str
     outbox_id: str
     replayed: bool = False
+
+
+@dataclass(frozen=True)
+class SkillExecutionOutput:
+    result_version_id: str
+    output_payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class BusinessWorkflowStepResult:
+    status: str
+    job_id: str | None = None
+    attempt_id: str | None = None
+    step_key: str | None = None
+    formal_skill_id: str | None = None
+    result_version_id: str | None = None
+    reason: str | None = None
+
+
+class SkillExecutionPort(Protocol):
+    def __call__(self, frozen: FrozenSkillInput) -> SkillExecutionOutput:
+        ...
 
 
 class ExperienceSelector:
@@ -549,6 +601,89 @@ class BusinessWorkflowMaterializer:
             return None
         row = self.conn.execute("SELECT version_id FROM trace_version WHERE version_id=?", (version_id,)).fetchone()
         return str(row["version_id"]) if row is not None else None
+
+
+class BusinessWorkflowWorker:
+    def __init__(
+        self,
+        *,
+        scheduler: Goal03Scheduler,
+        materializer: BusinessWorkflowMaterializer,
+        skill_executor: SkillExecutionPort,
+        worker_id: str,
+    ):
+        self.scheduler = scheduler
+        self.materializer = materializer
+        self.skill_executor = skill_executor
+        self.worker_id = worker_id
+
+    def run_once(self) -> BusinessWorkflowStepResult:
+        try:
+            claim = self.scheduler.claim_next(worker_id=self.worker_id, lease_seconds=60)
+        except NoClaimableJob:
+            return BusinessWorkflowStepResult(status="idle")
+        job = self.scheduler.get_job(claim.job_id)
+        if job["job_kind"] != FORMAL_SKILL_JOB_KIND:
+            self.scheduler.fail(
+                attempt_id=claim.attempt_id,
+                worker_id=self.worker_id,
+                error={"code": "unsupported_job_kind", "job_kind": job["job_kind"]},
+                retry=False,
+            )
+            return BusinessWorkflowStepResult(
+                status="failed",
+                job_id=claim.job_id,
+                attempt_id=claim.attempt_id,
+                reason="unsupported_job_kind",
+            )
+        try:
+            frozen = FrozenSkillInput.from_scheduler_payload(claim.payload)
+            self.materializer.record_input_assembly(
+                frozen,
+                actor=self.worker_id,
+                idempotency_key=f"assembly:{frozen.workflow_id}:{frozen.step_key}:{frozen.assembly_hash}",
+            )
+            execution = self.skill_executor(frozen)
+            usage = self.materializer.record_experience_usage(
+                frozen=frozen,
+                output_payload=execution.output_payload,
+                result_version_id=execution.result_version_id,
+                actor=self.worker_id,
+                idempotency_key=f"usage:{frozen.workflow_id}:{frozen.step_key}:{execution.result_version_id}",
+                require_usage=frozen.formal_skill_id in EXPERIENCE_REQUIRED_SKILLS,
+            )
+            self.scheduler.complete(
+                attempt_id=claim.attempt_id,
+                worker_id=self.worker_id,
+                result={
+                    "workflow_id": frozen.workflow_id,
+                    "step_key": frozen.step_key,
+                    "formal_skill_id": frozen.formal_skill_id,
+                    "result_version_id": execution.result_version_id,
+                    "experience_usage_version_id": usage.version_id,
+                },
+            )
+            return BusinessWorkflowStepResult(
+                status="succeeded",
+                job_id=claim.job_id,
+                attempt_id=claim.attempt_id,
+                step_key=frozen.step_key,
+                formal_skill_id=frozen.formal_skill_id,
+                result_version_id=execution.result_version_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - workflow worker must record fail-closed errors.
+            next_status = self.scheduler.fail(
+                attempt_id=claim.attempt_id,
+                worker_id=self.worker_id,
+                error={"code": type(exc).__name__, "message": str(exc)},
+                retry=True,
+            )
+            return BusinessWorkflowStepResult(
+                status="failed",
+                job_id=claim.job_id,
+                attempt_id=claim.attempt_id,
+                reason=next_status,
+            )
 
 
 def build_formal_business_workflow_steps(

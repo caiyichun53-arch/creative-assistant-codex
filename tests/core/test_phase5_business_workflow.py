@@ -6,11 +6,13 @@ from scripts.core.model_gateway.formal_skill_adapter import FORMAL_SKILL_JOB_KIN
 from scripts.core.workflow.goal_phase5_business_workflow import (
     BusinessWorkflowError,
     BusinessWorkflowMaterializer,
+    BusinessWorkflowWorker,
     ExperienceSelector,
     ExperienceUsageValidator,
     ExperienceVersion,
     FORMAL_BUSINESS_WORKFLOW_SKILLS,
     InputAssembly,
+    SkillExecutionOutput,
     build_formal_business_workflow_steps,
 )
 from scripts.core.persistence.goal01_store import PersistenceStore, UUIDv7Generator
@@ -357,6 +359,94 @@ class Phase5BusinessWorkflowTests(unittest.TestCase):
                 "SELECT count(*) FROM trace_root WHERE object_kind='business_workflow_experience_usage'"
             ).fetchone()[0],
             1,
+        )
+
+    def test_business_workflow_worker_records_assembly_usage_and_completes_job(self) -> None:
+        generator = UUIDv7Generator(now_ms=lambda: 1_770_000_000_000, randbits=lambda bits: 42)
+        scheduler = Goal03Scheduler.in_memory(id_factory=generator.new, now_ms=lambda: 1_770_000_000_000)
+        self.addCleanup(scheduler.store.conn.close)
+        frozen = frozen_content_plan_input()
+        steps = build_formal_business_workflow_steps(workflow_id="workflow-1", frozen_inputs=[frozen])
+        Goal05WorkflowOrchestrator(scheduler).start_workflow(
+            workflow_name="business.formal.content_creation",
+            steps=steps,
+            idempotency_key="phase5-worker-success",
+        )
+
+        def runner(received):
+            self.assertEqual(received.assembly_hash, frozen.assembly_hash)
+            return SkillExecutionOutput(
+                result_version_id="result-version-1",
+                output_payload={
+                    "experience_usage": [
+                        {
+                            "experience_ref": "experience:scene_first_hook",
+                            "experience_version": "v1",
+                            "usage_status": "applied",
+                            "influence_scope": "opening",
+                            "usage_summary": "used the scene-first opening principle",
+                        }
+                    ]
+                },
+            )
+
+        worker = BusinessWorkflowWorker(
+            scheduler=scheduler,
+            materializer=BusinessWorkflowMaterializer(scheduler.store),
+            skill_executor=runner,
+            worker_id="phase5-worker",
+        )
+
+        step = worker.run_once()
+
+        self.assertEqual(step.status, "succeeded")
+        self.assertEqual(step.step_key, "content_plan")
+        self.assertEqual(
+            scheduler.conn.execute(
+                "SELECT count(*) FROM trace_root WHERE object_kind='business_workflow_input_assembly'"
+            ).fetchone()[0],
+            1,
+        )
+        self.assertEqual(
+            scheduler.conn.execute(
+                "SELECT count(*) FROM trace_root WHERE object_kind='business_workflow_experience_usage'"
+            ).fetchone()[0],
+            1,
+        )
+        self.assertEqual(scheduler.conn.execute("SELECT status FROM scheduler_job").fetchone()["status"], "succeeded")
+
+    def test_business_workflow_worker_fails_closed_when_required_usage_is_missing(self) -> None:
+        generator = UUIDv7Generator(now_ms=lambda: 1_770_000_000_000, randbits=lambda bits: 42)
+        scheduler = Goal03Scheduler.in_memory(id_factory=generator.new, now_ms=lambda: 1_770_000_000_000)
+        self.addCleanup(scheduler.store.conn.close)
+        frozen = frozen_content_plan_input()
+        steps = build_formal_business_workflow_steps(workflow_id="workflow-1", frozen_inputs=[frozen], max_attempts=1)
+        Goal05WorkflowOrchestrator(scheduler).start_workflow(
+            workflow_name="business.formal.content_creation",
+            steps=steps,
+            idempotency_key="phase5-worker-missing-usage",
+        )
+
+        def runner(_received):
+            return SkillExecutionOutput(result_version_id="result-version-1", output_payload={})
+
+        worker = BusinessWorkflowWorker(
+            scheduler=scheduler,
+            materializer=BusinessWorkflowMaterializer(scheduler.store),
+            skill_executor=runner,
+            worker_id="phase5-worker",
+        )
+
+        step = worker.run_once()
+
+        self.assertEqual(step.status, "failed")
+        self.assertEqual(step.reason, "dead")
+        self.assertEqual(scheduler.conn.execute("SELECT status FROM scheduler_job").fetchone()["status"], "dead")
+        self.assertEqual(
+            scheduler.conn.execute(
+                "SELECT count(*) FROM trace_root WHERE object_kind='business_workflow_experience_usage'"
+            ).fetchone()[0],
+            0,
         )
 
 

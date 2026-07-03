@@ -43,6 +43,11 @@ implemented:
     outbox_events: true
     idempotency_receipts: true
     unresolved_business_refs_stay_in_locator_until_trace_version_exists: true
+  worker:
+    claims_formal_skill_execute_jobs: true
+    records_input_assembly_before_skill_execution: true
+    records_experience_usage_after_skill_execution: true
+    fails_closed_when_required_usage_missing: true
   scheduler_workflow:
     uses_goal05_orchestrator: true
     uses_formal_skill_job_kind: formal_skill.execute
@@ -59,7 +64,7 @@ validation:
   tests:
     - command: python -m unittest tests.core.test_phase5_business_workflow
       result: PASS
-      tests: 9
+      tests: 11
     - command: python scripts\core\workflow\verify_goal_05.py
       result: PASS
     - command: python -m unittest tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters
@@ -67,7 +72,7 @@ validation:
       tests: 63
     - command: python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters
       result: PASS
-      tests: 72
+      tests: 74
     - command: py_compile phase5 workflow files
       result: PASS
     - command: python scripts\validation\clean_room_empty_db.py --health
@@ -77,5 +82,5 @@ validation:
     - command: git diff --check
       result: PASS
 remaining_phase5_work:
-  - Wire frozen input assembly into actual multi-step workers for the full formal business workflow.
+  - Replace synthetic worker runner with the formal Skill dispatcher across all 12 Skills.
   - Add end-to-end synthetic workflow coverage across all 12 Skills.
