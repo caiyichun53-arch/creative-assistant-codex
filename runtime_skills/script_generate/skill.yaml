@@ -1,0 +1,29 @@
+schema_version: formal_skill_manifest.v1
+formal_skill_id: script_generate
+skill_version: 1.0.0
+source_contract: SCRIPT_GENERATE_BUSINESS_CONTRACT.yaml
+responsibility: Generate one draft script from a supplied content plan and brief.
+non_responsibilities:
+  - content_plan
+  - script_review
+  - script_polish
+  - ai_flavor_judge
+  - banned_word_check
+  - database_query
+  - file_read_write
+  - feishu_messaging
+runner: FormalBusinessSkillAdapter
+route_name: business.creation_draft
+input_schema: input_schema.yaml
+output_schema: output_schema.yaml
+binding: binding.yaml
+prompt: prompt.md
+fixtures: fixtures.yaml
+standalone_boundaries:
+  requires_database: false
+  reads_files_at_runtime: false
+  writes_files_at_runtime: false
+  calls_other_skills: false
+  calls_core_api: false
+  accesses_external_url: false
+  uses_chat_memory: false

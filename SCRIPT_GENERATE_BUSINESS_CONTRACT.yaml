@@ -1,0 +1,258 @@
+schema_version: script_generate.business_contract.v1
+goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
+status: active_formal_business_contract
+skill_id: script_generate
+skill_version: 1.0.0
+source_documents:
+  - C:\Users\15891\.codex\attachments\4ebd5a12-206f-401e-b0b6-0c3878e47996\pasted-text-1.txt
+  - AGENTS.md
+  - BUILD_PLAN.md
+  - FORMAL_SKILL_ROUTE_MAPPING.yaml
+  - REMAINING_FORMAL_SKILL_EXECUTION_GRAPH.yaml
+responsibility: Generate one draft script from supplied content plan, brief, and research summary.
+non_responsibilities:
+  - content_plan
+  - production_research_plan
+  - script_review
+  - script_polish
+  - ai_flavor_judge
+  - banned_word_check
+  - publication
+  - database_query
+  - file_read_write
+  - feishu_messaging
+  - other_skill_invocation
+allowed_inputs:
+  source: public_input_binding_only
+  required_fields:
+    - request_id
+    - correlation_id
+    - brief
+    - selected_hook
+    - beats
+    - research_summary
+    - evidence_items
+    - domain_label
+    - schema_version
+forbidden_inputs:
+  - database_connection
+  - orm_object
+  - internal_table_name
+  - legacy_database_id
+  - local_file_path
+  - source_url_to_fetch
+  - cookie_or_token
+  - hermes_chat_memory
+  - cold_backup_reference
+generation_policy:
+  consumes_supplied_plan_only: true
+  must_not_fetch_or_verify_externally: true
+  must_not_review_or_polish: true
+  must_not_run_banned_word_check: true
+  must_not_call_other_skills: true
+  draft_must_use_selected_hook: true
+  draft_must_follow_beats: true
+evidence_requirements:
+  beats_min: 1
+  beats_max: 8
+  evidence_items_min: 1
+  evidence_items_max: 12
+  output_draft_min_length: 50
+  output_draft_max_length: 6000
+input_length_limits:
+  request_id_max: 80
+  correlation_id_max: 80
+  brief_max: 3000
+  selected_hook_max: 240
+  beat_max: 360
+  research_summary_max: 1000
+context_budget:
+  max_input_tokens: 12000
+token_budget:
+  max_output_tokens: 4500
+timeout:
+  milliseconds: 120000
+retry:
+  provider_max_attempts_per_job: 1
+  scheduler_max_attempts: 3
+  retry_on:
+    - provider_error
+    - output_schema_error
+idempotency:
+  key: script_generate:{request_id}
+  duplicate_same_request: replay_existing_job
+  duplicate_different_request: reject
+error_contract:
+  validation_error: fail_without_formal_result
+  provider_error: fail_attempt_and_retry_if_attempts_remain
+  model_empty_result: technical_failure_without_formal_result
+  non_json_output: technical_failure_without_formal_result
+  schema_error: fail_without_formal_result
+  materializer_error: fail_without_success_outbox
+materialization_contract:
+  object_kind: formal_business_skill_result
+  projection_version: formal_business_skill_result.v1
+  result_index: formal_business_skill_result_index
+  success_outbox_topic: formal_business_skill.result.materialized
+  failed_runs_record_attempt: true
+  failed_runs_create_formal_result: false
+fixture_cases:
+  required_fixture_ids:
+    - fan_kepu_social_life
+    - music_entertainment
+    - third_domain_neutral
+    - model_empty_result
+    - non_json_output
+    - missing_output_field
+    - empty_draft
+completion_definition:
+  - business_contract_complete
+  - no_missing_requirement_for_current_formal_sources
+  - formal_skill_package_active
+  - fake_fixture_matrix_passed
+  - adapter_job_worker_materializer_passed
+  - idempotent_replay_passed
+  - retry_failure_path_passed
+  - clean_room_formal_db_all_zero
+  - formal_production_direct_cli_model_calls_zero
+missing_requirements: []
+allowed_model_nodes:
+  - business.creation_draft
+whether_model_is_required: true
+target_runner: FormalBusinessSkillAdapter
+materializer_contract: formal_business_skill_result.v1
+model_binding:
+  route_name: business.creation_draft
+  binding_name: script_generate_public_input_to_creation_draft
+  binding_version: 1.0.0
+  input_map:
+    fixture_id:
+      source: input
+      key: request_id
+    outline:
+      source: input
+      key: beats
+    brief:
+      source: input
+      key: brief
+  model_input_schema:
+    type: object
+    required:
+      - fixture_id
+      - outline
+      - brief
+    properties:
+      fixture_id: string
+      outline:
+        type: array
+        minItems: 1
+        maxItems: 8
+        items:
+          type: string
+          minLength: 1
+          maxLength: 360
+      brief:
+        type: string
+        minLength: 1
+        maxLength: 3000
+    additional_properties: false
+  prompt_template: >-
+    Return only JSON with keys draft_text and schema_version. Generate one
+    draft script from the supplied brief and outline only. Do not review,
+    polish, run banned-word checks, fetch sources, send messages, write files,
+    or call another Skill. Use schema_version script_generate.output.v1.
+    brief={brief}; outline={outline}
+  model_output_schema:
+    type: object
+    required:
+      - draft_text
+      - schema_version
+    properties:
+      draft_text:
+        type: string
+        minLength: 50
+        maxLength: 6000
+      schema_version:
+        type: string
+        const: script_generate.output.v1
+    additional_properties: false
+  output_map:
+    draft_text:
+      source: model_output
+      key: draft_text
+    schema_version:
+      source: model_output
+      key: schema_version
+input_schema:
+  type: object
+  required:
+    - request_id
+    - correlation_id
+    - brief
+    - selected_hook
+    - beats
+    - research_summary
+    - evidence_items
+    - domain_label
+    - schema_version
+  properties:
+    request_id:
+      type: string
+      minLength: 1
+      maxLength: 80
+    correlation_id:
+      type: string
+      minLength: 1
+      maxLength: 80
+    brief:
+      type: string
+      minLength: 1
+      maxLength: 3000
+    selected_hook:
+      type: string
+      minLength: 1
+      maxLength: 240
+    beats:
+      type: array
+      minItems: 1
+      maxItems: 8
+      items:
+        type: string
+        minLength: 1
+        maxLength: 360
+    research_summary:
+      type: string
+      minLength: 1
+      maxLength: 1000
+    evidence_items:
+      type: array
+      minItems: 1
+      maxItems: 12
+      items:
+        type: object
+    domain_label:
+      type: string
+      enum:
+        - fan_kepu_social_life
+        - music_entertainment
+        - third_domain_neutral
+        - cross_domain
+        - unknown
+    schema_version:
+      type: string
+      const: script_generate.input.v1
+  additional_properties: false
+output_schema:
+  type: object
+  required:
+    - draft_text
+    - schema_version
+  properties:
+    draft_text:
+      type: string
+      minLength: 50
+      maxLength: 6000
+    schema_version:
+      type: string
+      const: script_generate.output.v1
+  additional_properties: false

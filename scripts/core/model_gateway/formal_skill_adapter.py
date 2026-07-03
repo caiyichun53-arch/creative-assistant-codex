@@ -58,6 +58,8 @@ PRODUCTION_RESEARCH_PLAN_CONTRACT_PATH = ROOT / "PRODUCTION_RESEARCH_PLAN_BUSINE
 PRODUCTION_RESEARCH_PLAN_FIXTURES_PATH = ROOT / "runtime_skills" / "production_research_plan" / "fixtures.yaml"
 CONTENT_PLAN_CONTRACT_PATH = ROOT / "CONTENT_PLAN_BUSINESS_CONTRACT.yaml"
 CONTENT_PLAN_FIXTURES_PATH = ROOT / "runtime_skills" / "content_plan" / "fixtures.yaml"
+SCRIPT_GENERATE_CONTRACT_PATH = ROOT / "SCRIPT_GENERATE_BUSINESS_CONTRACT.yaml"
+SCRIPT_GENERATE_FIXTURES_PATH = ROOT / "runtime_skills" / "script_generate" / "fixtures.yaml"
 STATUS_PATH = ROOT / "CONTENT_CLASSIFY_STATUS.yaml"
 REPORT_PATH = ROOT / f"{GOAL_ID}_VALIDATION_REPORT.md"
 PROGRESS_PATH = ROOT / "implementation_progress" / f"{GOAL_ID}.md"
@@ -76,6 +78,7 @@ TACTIC_EXTRACT_OUTPUT_SCHEMA_VERSION = "tactic_extract.output.v1"
 RESEARCH_EVIDENCE_EXTRACT_OUTPUT_SCHEMA_VERSION = "research_evidence_extract.output.v1"
 PRODUCTION_RESEARCH_PLAN_OUTPUT_SCHEMA_VERSION = "production_research_plan.output.v1"
 CONTENT_PLAN_OUTPUT_SCHEMA_VERSION = "content_plan.output.v1"
+SCRIPT_GENERATE_OUTPUT_SCHEMA_VERSION = "script_generate.output.v1"
 
 BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "skill_id",
@@ -273,6 +276,27 @@ CONTENT_PLAN_BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "fixture_cases",
     "completion_definition",
 }
+SCRIPT_GENERATE_BUSINESS_CONTRACT_REQUIRED_KEYS = {
+    "skill_id",
+    "skill_version",
+    "source_documents",
+    "responsibility",
+    "non_responsibilities",
+    "allowed_inputs",
+    "forbidden_inputs",
+    "generation_policy",
+    "evidence_requirements",
+    "input_length_limits",
+    "context_budget",
+    "token_budget",
+    "timeout",
+    "retry",
+    "idempotency",
+    "error_contract",
+    "materialization_contract",
+    "fixture_cases",
+    "completion_definition",
+}
 CONCRETE_LABELS = {
     "fan_kepu_social_life",
     "music_entertainment",
@@ -411,6 +435,8 @@ class FormalSkillContract:
             validate_production_research_plan_business_contract(load_production_research_plan_business_contract())
         if self.formal_skill_id == "content_plan":
             validate_content_plan_business_contract(load_content_plan_business_contract())
+        if self.formal_skill_id == "script_generate":
+            validate_script_generate_business_contract(load_script_generate_business_contract())
         if self.formal_skill_id == "content_relation_judge":
             validate_content_relation_judge_business_contract(load_content_relation_judge_business_contract())
 
@@ -516,6 +542,8 @@ class FormalBusinessSkillAdapter:
             validate_research_evidence_extract_output_semantics(input_payload, output_payload)
         elif self.contract.formal_skill_id == "production_research_plan":
             validate_production_research_plan_output_semantics(input_payload, output_payload)
+        elif self.contract.formal_skill_id == "script_generate":
+            validate_script_generate_output_semantics(input_payload, output_payload)
         return FormalSkillRunResult(
             formal_skill_id=self.contract.formal_skill_id,
             output_payload=output_payload,
@@ -713,6 +741,10 @@ def load_content_plan_business_contract(path: Path = CONTENT_PLAN_CONTRACT_PATH)
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
+def load_script_generate_business_contract(path: Path = SCRIPT_GENERATE_CONTRACT_PATH) -> dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
 def load_content_classify_fixtures(path: Path = CONTENT_CLASSIFY_FIXTURES_PATH) -> list[dict[str, Any]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     fixtures = data.get("fixtures") or []
@@ -773,6 +805,11 @@ def load_production_research_plan_fixtures(
 
 
 def load_content_plan_fixtures(path: Path = CONTENT_PLAN_FIXTURES_PATH) -> list[dict[str, Any]]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return list(data.get("fixtures") or [])
+
+
+def load_script_generate_fixtures(path: Path = SCRIPT_GENERATE_FIXTURES_PATH) -> list[dict[str, Any]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return list(data.get("fixtures") or [])
 
@@ -975,6 +1012,27 @@ def validate_content_plan_business_contract(data: dict[str, Any]) -> dict[str, A
         "source_document_count": len(data.get("source_documents") or []),
         "missing_requirement_count": len(data.get("missing_requirements") or []),
         "subnode_count": len(allowed_nodes),
+    }
+
+
+def validate_script_generate_business_contract(data: dict[str, Any]) -> dict[str, Any]:
+    missing = sorted(SCRIPT_GENERATE_BUSINESS_CONTRACT_REQUIRED_KEYS - set(data))
+    if missing:
+        raise FormalSkillValidationError(f"script_generate business contract missing keys: {missing}")
+    if data.get("schema_version") != "script_generate.business_contract.v1":
+        raise FormalSkillValidationError("unexpected script_generate business contract schema_version")
+    if data.get("missing_requirements"):
+        raise FormalSkillValidationError("script_generate business contract has missing_requirement entries")
+    if data.get("skill_id") != "script_generate":
+        raise FormalSkillValidationError("script_generate business contract skill_id mismatch")
+    allowed_nodes = data.get("allowed_model_nodes") or []
+    if allowed_nodes != ["business.creation_draft"]:
+        raise FormalSkillValidationError("script_generate must use only business.creation_draft")
+    return {
+        "skill_id": data["skill_id"],
+        "skill_version": data["skill_version"],
+        "source_document_count": len(data.get("source_documents") or []),
+        "missing_requirement_count": len(data.get("missing_requirements") or []),
     }
 
 
@@ -1235,6 +1293,18 @@ def validate_content_plan_output_semantics(input_payload: dict[str, Any], output
             raise FormalSkillValidationError("content_plan beats must be non-empty strings")
     if not str(input_payload.get("brief", "")).strip():
         raise FormalSkillValidationError("content_plan requires brief")
+
+
+def validate_script_generate_output_semantics(input_payload: dict[str, Any], output_payload: dict[str, Any]) -> None:
+    if output_payload["schema_version"] != SCRIPT_GENERATE_OUTPUT_SCHEMA_VERSION:
+        raise FormalSkillValidationError("script_generate output schema_version mismatch")
+    draft_text = str(output_payload["draft_text"]).strip()
+    if len(draft_text) < 50:
+        raise FormalSkillValidationError("script_generate draft_text is too short")
+    if len(draft_text) > 6000:
+        raise FormalSkillValidationError("script_generate draft_text exceeds max length")
+    if not input_payload.get("beats"):
+        raise FormalSkillValidationError("script_generate requires beats")
 
 
 def parse_model_json(output_text: str) -> dict[str, Any]:
@@ -2252,6 +2322,57 @@ class DeterministicContentPlanModelPort:
         )
 
 
+class DeterministicScriptGenerateModelPort:
+    provider_name = "formal_business_skill_test_port"
+
+    def __init__(self, *, behavior: str = "success"):
+        self.behavior = behavior
+        self.call_count = 0
+
+    def complete(self, request: ModelRequest, route: ModelRoute) -> ModelProviderResult:
+        self.call_count += 1
+        behavior = self.behavior
+        if behavior == "fail_once" and self.call_count == 1:
+            raise RuntimeError("synthetic script_generate model port failure")
+        if behavior == "failure":
+            raise RuntimeError("synthetic script_generate model port failure")
+        if behavior == "empty":
+            return self._result("", request)
+        if behavior == "not_json":
+            return self._result("not-json", request)
+        if behavior == "missing_field":
+            return self._result(json.dumps({"schema_version": SCRIPT_GENERATE_OUTPUT_SCHEMA_VERSION}, ensure_ascii=False), request)
+        outline = [str(item) for item in request.input_payload.get("outline", [])]
+        brief = str(request.input_payload.get("brief", ""))
+        if behavior == "empty_draft":
+            draft_text = ""
+        else:
+            outline_text = " ".join(outline)
+            draft_text = (
+                f"{outline_text} {brief} This draft follows the supplied outline, keeps the explanation concrete, "
+                "and stops before review, polish, publication, or deterministic banned-word checks."
+            )
+        payload = {"draft_text": draft_text, "schema_version": SCRIPT_GENERATE_OUTPUT_SCHEMA_VERSION}
+        return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+
+    @staticmethod
+    def _result(output_text: str, request: ModelRequest) -> ModelProviderResult:
+        return ModelProviderResult(
+            output_text=output_text,
+            usage=ModelUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            cost={"test": 0},
+            provider_request_id=f"fake-{request.input_payload.get('fixture_id', 'missing')}",
+            metadata={
+                "fixture": True,
+                "tools_enabled": False,
+                "memory_enabled": False,
+                "messaging_enabled": False,
+                "nested_job_orchestration_enabled": False,
+                "file_or_terminal_side_effects_enabled": False,
+            },
+        )
+
+
 class FormalBusinessSkillMaterializer:
     def __init__(self, store: PersistenceStore, *, id_factory: Callable[[], str] = uuid7):
         self.store = store
@@ -3055,6 +3176,56 @@ def make_content_plan_harness(
     )
 
 
+def make_script_generate_harness(
+    *,
+    id_factory: Callable[[], str] = uuid7,
+    now_ms: Callable[[], int] | None = None,
+    monotonic_ms: Callable[[], int] | None = None,
+    provider: ModelProvider | None = None,
+    route: ModelRoute | None = None,
+) -> FormalBusinessSkillHarness:
+    contract = FormalSkillContract.from_yaml(SCRIPT_GENERATE_CONTRACT_PATH)
+    store = PersistenceStore.in_memory(id_factory=id_factory)
+    scheduler = Goal03Scheduler(store, id_factory=id_factory, now_ms=now_ms)
+    materializer = FormalBusinessSkillMaterializer(store, id_factory=id_factory)
+    provider = provider or DeterministicScriptGenerateModelPort()
+    if route is None:
+        route = ModelRoute(
+            route_name=contract.route_name,
+            provider_name=provider.provider_name,
+            model_name="deterministic-script-generate",
+            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+            config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
+            timeout_ms=1000,
+        )
+    gateway = ModelGateway(
+        routes={route.route_name: route},
+        providers={route.provider_name: provider},
+        materializer=ModelRunMaterializer(store),
+        monotonic_ms=monotonic_ms,
+    )
+    adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
+    worker = FormalBusinessSkillWorker(
+        scheduler=scheduler,
+        adapter=adapter,
+        materializer=materializer,
+        contract=contract,
+        worker_id="formal-business-skill-worker",
+    )
+    api = FormalBusinessSkillCoreAPI(scheduler, contract)
+    return FormalBusinessSkillHarness(
+        store=store,
+        scheduler=scheduler,
+        api=api,
+        worker=worker,
+        gateway=gateway,
+        materializer=materializer,
+        adapter=adapter,
+        contract=contract,
+        provider=provider,
+    )
+
+
 def sample_content_classify_input(**overrides: Any) -> dict[str, Any]:
     payload = {
         "request_id": "content-classify-001",
@@ -3173,6 +3344,39 @@ def sample_content_plan_input(**overrides: Any) -> dict[str, Any]:
         "style_examples": ["Start from a scene people recognize, then reveal the quiet system behind it."],
         "domain_label": "fan_kepu_social_life",
         "schema_version": "content_plan.input.v1",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def sample_script_generate_input(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "request_id": "script-generate-001",
+        "correlation_id": "script-generate-correlation-001",
+        "brief": (
+            "Explain a familiar morning elevator wait as a system problem using commuting time, "
+            "floor distribution, and maintenance windows."
+        ),
+        "selected_hook": "Open with the familiar wait, then reveal the hidden system.",
+        "beats": [
+            "Use the selected hook to start from a morning wait.",
+            "Explain synchronized commute time and uneven floor distribution.",
+            "Close with the practical system insight.",
+        ],
+        "research_summary": (
+            "Morning elevator crowding can be explained through synchronized commute time and floor distribution."
+        ),
+        "evidence_items": [
+            {
+                "claim": "morning elevator crowding relates to synchronized commute time and uneven floor distribution",
+                "source_ref": "research-src-001",
+                "supporting_text": (
+                    "morning elevator crowding relates to synchronized commute time and uneven floor distribution"
+                ),
+            }
+        ],
+        "domain_label": "fan_kepu_social_life",
+        "schema_version": "script_generate.input.v1",
     }
     payload.update(overrides)
     return payload

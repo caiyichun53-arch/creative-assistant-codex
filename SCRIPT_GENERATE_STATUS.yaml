@@ -1,0 +1,16 @@
+goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
+formal_skill_id: script_generate
+status: in_progress
+phase: phase_2_remaining_formal_skill
+contract: SCRIPT_GENERATE_BUSINESS_CONTRACT.yaml
+runtime_skill: runtime_skills/script_generate/skill.yaml
+implementation_commit: pending
+progress_record_commit: pending
+validation:
+  unit_tests: pending
+  py_compile: pending
+  clean_room_empty_db: pending
+  diff_check: pending
+notes:
+  - script_generate uses business.creation_draft only through ModelGateway.
+  - This status file is updated after the checkpoint gates pass.
