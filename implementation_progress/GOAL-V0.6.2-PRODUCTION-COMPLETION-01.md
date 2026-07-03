@@ -1,8 +1,8 @@
 # GOAL-V0.6.2-PRODUCTION-COMPLETION-01
 
-Status: IN_PROGRESS
+Status: COMPLETED
 
-Current Phase: Phase 5 - formal business workflow and Input Assembly in progress
+Current Phase: Phase 8 - engineering handoff completed; production activation not started
 
 Current branch: implementation/goal-v0.6.2-production-completion-01
 
@@ -300,13 +300,13 @@ Completed checkpoints:
   - Covered two formal domains, multi-domain extension fixtures, normal path, insufficient info, no valid result, model failure, adapter failure, skill failure, materializer failure, outbox failure, idempotency, concurrency, retry, cancel, recovery, human confirmation, workflow replay, experience empty/single/multiple/conflict/rejection/freeze/usage cases, Hermes chat model isolation and no fallback.
   - Ran disposable PostgreSQL smoke with `postgres:16-alpine`; no host port was exposed and the container was removed.
   - No real Provider call, GPT call, DeepSeek call, old data read, real platform collection, real Feishu send, fallback or automatic downgrade was introduced.
-- Reached Phase 8 authorization gate:
+- Historical Phase 8 authorization-gate record, superseded by the later user scope correction:
   - Generated `BUSINESS_MODEL_SWITCH_TO_GPT_PLAN.md`.
   - Generated `REAL_NEW_DATA_PILOT_PLAN.md`.
   - Added `PHASE_8_AUTHORIZATION_GATE_STATUS.yaml`.
   - No GPT call, DeepSeek call, real Provider call, real platform collection, real Feishu send, production timer enablement, old data read, fallback or automatic downgrade was introduced.
-  - Execution must pause here until explicit user authorization for GPT switch/real GPT regression/real new data pilot/real Feishu test/production scheduled tasks.
-- Resumed Phase 8 after user authorization:
+  - At that time, execution was recorded as pausing for GPT switch/real GPT regression/real new data pilot/real Feishu test/production scheduled tasks.
+- Historical Phase 8 pre-correction continuation, superseded by the later user scope correction:
   - Confirmed `.env.live-gates` still binds `MODEL_PROVIDER_MODEL` to Mimo, not GPT.
   - Confirmed no tracked `PHASE_8_REAL_NEW_DATA_APPROVAL.yaml` exists for newly approved pilot-only data sources.
   - Confirmed live-gate Feishu event validation token remains missing/placeholder.
@@ -314,7 +314,7 @@ Completed checkpoints:
   - Added `scripts/core/staging/verify_goal_v062_phase8_readiness.py`.
   - Added `PHASE_8_EXTERNAL_INPUT_REQUIRED_REPORT.md`.
   - Added `PHASE_8_REAL_NEW_DATA_APPROVAL.example.yaml` and upgraded the readiness verifier to validate the real pilot approval manifest before live work.
-  - Ran Phase 8 readiness verifier; result `WAITING_FOR_USER_INPUT` with exactly three missing items:
+  - Ran the earlier Phase 8 readiness verifier; historical result `WAITING_FOR_USER_INPUT` with exactly three missing items:
     - approved GPT `MODEL_PROVIDER_MODEL` in `.env.live-gates`
     - `PHASE_8_REAL_NEW_DATA_APPROVAL.yaml`
     - `FEISHU_EVENT_VERIFICATION_TOKEN` or approved equivalent live Feishu event/test configuration
@@ -535,26 +535,67 @@ Test results:
 - `git diff --check`
   - PASS
 
-Remaining work:
+Final Phase 8 engineering handoff:
 
-- Phase 5 complete.
-- Phase 6 complete.
-- Phase 7 complete.
-- Phase 8 authorization received, but external input is required before live execution: GPT model config, pilot source manifest and live Feishu event/test configuration.
+- Phase 8 complete.
+- Corrected Phase 8 scope after the user's latest instruction:
+  - GPT switch is a future user-initiated manual operation, not a current Goal blocker.
+  - Real new data pilot is a future user-approved manual operation, not a current Goal blocker.
+  - Live Feishu activation is a future user-approved manual operation, not a current Goal blocker.
+  - Production scheduled tasks remain disabled and are not enabled by this Goal.
+- Updated `scripts/core/staging/verify_goal_v062_phase8_readiness.py` to return `ENGINEERING_READY` for local engineering readiness.
+- Added `tests/core/test_phase8_engineering_readiness.py`.
+- Repositioned `BUSINESS_MODEL_SWITCH_TO_GPT_PLAN.md` as a future model-switch manual.
+- Repositioned `REAL_NEW_DATA_PILOT_PLAN.md` as a future small real-new-data pilot manual.
+- Added `FEISHU_PRODUCTION_ACTIVATION_RUNBOOK.md`.
+- Added `PHASE_8_ENGINEERING_READY_REPORT.md`.
+- Updated `PHASE_8_AUTHORIZATION_GATE_STATUS.yaml`:
+  - `engineering_goal_status: completed`
+  - `production_activation_status: not_started`
+  - `business_model_switch_status: not_started`
+  - `real_data_pilot_status: not_started`
+  - `feishu_live_activation_status: not_started`
+  - `production_schedules_status: disabled`
+- Current business model binding remains Mimo.
+- GPT calls in Phase 8: 0.
+- DeepSeek calls in Phase 8: 0.
+- Real platform collection started: false.
+- Real Feishu message sent: false.
+- Old data read for acceptance: false.
+- Fallback or automatic downgrade added: false.
+- Production scheduled tasks:
+  - `CreationAssistant_Daily`: Disabled
+  - `CreationAssistant_Listener`: Disabled
 
 Blocking issues:
 
-- No active Phase 2 or Phase 3 blocker remains after the latest pasted Goal instruction approved the two missing formal business routes.
+- No active Phase 2 or Phase 3 blocker remains after the pasted Goal instruction approved the two missing formal business routes.
 - No active Phase 4 blocker remains after controlled Adapter fixture/stub validation.
+- No active Phase 8 engineering blocker remains. GPT configuration, GPT calls, real new data pilots, real Feishu sends and production schedule enablement are future manual production activation items only.
 - `target-architecture.md` and `rebuild-direction.md` remain unavailable in current repo/memory search; existing formal route files already record the same source unavailability and Phase 1 remains verifiable from available governing sources.
+
+Final validation:
+
+- `python scripts\core\staging\verify_goal_v062_phase8_readiness.py`
+  - PASS, `ENGINEERING_READY`
+- `python -m unittest tests.core.test_phase8_engineering_readiness`
+  - PASS, 1 test
+- `python -m unittest tests.core.test_phase5_business_workflow tests.core.test_phase6_hermes_whitelist_tool tests.core.test_phase7_synthetic_acceptance tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter`
+  - PASS, 81 tests
+- `python -m unittest tests.core.test_source_to_topic_skill tests.core.test_sample_deep_analyze_skill tests.core.test_tactic_extract_skill tests.core.test_research_evidence_extract_skill tests.core.test_production_research_plan_skill tests.core.test_content_plan_skill tests.core.test_script_generate_skill tests.core.test_script_review_skill tests.core.test_experiment_review_skill tests.core.test_experience_revision_propose_skill`
+  - PASS, 84 tests
+- `python scripts\validation\production_startup_smoke.py --require-legacy-absent`
+  - PASS, 20 clean-room tables, 0 rows, no legacy production paths
+- `python scripts\validation\clean_room_empty_db.py --health`
+  - PASS, 20 clean-room tables, 0 rows, foreign key check passed
+- `py_compile` for Phase 8, Phase 5, Phase 6 and Phase 7 validation files
+  - PASS
+- `git diff --check`
+  - PASS
 
 Next resume command:
 
-```powershell
-cd I:\Creation_assistant-codex
-git switch implementation/goal-v0.6.2-production-completion-01
-python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters
-```
+- None. `GOAL-V0.6.2-PRODUCTION-COMPLETION-01` is completed as an engineering Goal. Future production activation requires separate user action using the three handoff manuals.
 
 Internal Phase commits:
 

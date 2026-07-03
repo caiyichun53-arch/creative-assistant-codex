@@ -2,9 +2,9 @@
 
 goal: `GOAL-V0.6.2-PRODUCTION-COMPLETION-01`
 
-status: `AUTHORIZATION_REQUIRED`
+status: `FUTURE_USER_INITIATED_MANUAL`
 
-This plan is a gate document only. It does not start real collection, does not send Feishu messages and does not enable production schedules.
+This is a post-engineering operating manual for a future user-approved small pilot. It is not a current Phase 8 blocker. It does not create a live approval file, does not choose real URLs, does not start real collection, does not send Feishu messages and does not enable production schedules.
 
 ## Scope
 
@@ -12,7 +12,7 @@ The pilot must use only brand-new data collected after explicit approval. It mus
 
 ## Fresh Data Sources
 
-Allowed only after approval:
+Allowed only after future explicit user approval:
 
 - Newly selected competitor account URLs or platform IDs supplied for the pilot.
 - Newly collected latest videos after the pilot starts.
@@ -40,7 +40,7 @@ Pilot range must be small and reversible:
 - Feishu: no real send unless separately approved.
 - Timers: no production scheduled task unless separately approved.
 
-## Required User Approvals
+## Required Future User Approvals
 
 The following operations require explicit approval before execution:
 
@@ -89,13 +89,14 @@ Stop immediately if any of the following is required:
 - Any attempt to read old data because new data is absent.
 - Any fallback/alternate path proposal.
 
-## Authorization Questions
+## Future Manual Activation Inputs
 
-Phase 8 must stop here until the user approves:
+These items are intentionally not required for the current engineering Goal to complete:
 
-1. Whether to start the real new data small pilot.
-2. Which new data sources/accounts are approved.
-3. Whether to send a real Feishu test message.
-4. Whether to enable any production scheduled task.
-5. Whether the pilot may write any formal production records beyond disposable/sanitized evidence.
+1. Explicit approval to start the small real new data pilot.
+2. User-supplied new data sources/accounts for the pilot.
+3. Explicit approval for any real Feishu test message.
+4. Explicit approval for any production scheduled task enablement.
+5. Explicit approval for any formal production writes beyond disposable/sanitized evidence.
 
+Until those future inputs exist, the correct current state remains: no real collection has started, no real Feishu message has been sent, no production schedule has been enabled, and no old data may be used as pilot evidence.

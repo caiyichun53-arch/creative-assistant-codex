@@ -2,9 +2,9 @@
 
 goal: `GOAL-V0.6.2-PRODUCTION-COMPLETION-01`
 
-status: `AUTHORIZATION_REQUIRED`
+status: `FUTURE_USER_INITIATED_MANUAL`
 
-This plan is a gate document only. It does not switch `business.primary`, does not call GPT, and does not create any fallback path.
+This is a post-engineering operating manual for a future user-initiated model switch. It is not a current Phase 8 blocker. It does not switch `business.primary`, does not call GPT, does not configure credentials, and does not create any fallback path.
 
 ## Current Binding
 
@@ -20,8 +20,11 @@ This plan is a gate document only. It does not switch `business.primary`, does n
 
 The switch must be a single authorized change to the model reference behind `business.primary`; Skill code and workflow code must not hard-code GPT model names.
 
-Required configuration changes after approval:
+Required configuration changes after a future explicit user approval:
 
+- The user first completes GPT authorization and model configuration in Hermes.
+- Codex does not configure credentials, copy credentials, infer credentials, or choose the GPT model for the user.
+- The user explicitly chooses the target GPT model.
 - Set the approved GPT model reference through the same model reference mechanism currently used by `business.primary`.
 - Create a new `model_config_version` for the GPT binding.
 - Record the config hash, route registry version, operator, timestamp and approval reference.
@@ -43,7 +46,7 @@ Required checks:
 
 ## Minimal GPT Regression Matrix
 
-Run only after explicit approval.
+Run only after future explicit user approval and after the user has completed Hermes-side GPT authorization/configuration.
 
 Required matrix:
 
@@ -127,11 +130,14 @@ The same flow applies to any future approved model:
 6. Keep previous model as inactive history only.
 7. Verify no fallback and no existing job mutation.
 
-## Authorization Questions
+## Future Manual Activation Inputs
 
-Phase 8 must stop here until the user approves:
+These items are intentionally not required for the current engineering Goal to complete:
 
-1. Whether to switch the unique business model from Mimo to GPT.
-2. Whether to execute the minimal GPT real regression.
-3. Whether any GPT provider credential/config value may be used.
+1. User-confirmed Hermes GPT authorization and provider configuration.
+2. User-selected GPT model reference.
+3. Explicit approval to run the isolated GPT precheck.
+4. Explicit approval to run the minimal GPT regression.
+5. Explicit approval to atomically switch `business.primary`.
 
+Until those future inputs exist, the correct current state remains: `business.primary` uses the approved Mimo binding, active binding count is one, no GPT call has been made, and no fallback exists.

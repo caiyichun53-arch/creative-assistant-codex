@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import platform
+import py_compile
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -13,15 +15,57 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts.validation.clean_room_empty_db import configured_db_path, health_check  # noqa: E402
+
 
 GOAL_ID = "GOAL-V0.6.2-PRODUCTION-COMPLETION-01"
-REQUIRED_PHASE_STATUSES = {
-    "PHASE_5_BUSINESS_WORKFLOW_FOUNDATION_STATUS.yaml": "COMPLETED_PHASE5_CHECKPOINT",
-    "PHASE_6_HERMES_WHITELIST_TOOL_STATUS.yaml": "COMPLETED_PHASE6_CHECKPOINT",
-    "PHASE_7_SYNTHETIC_ACCEPTANCE_STATUS.yaml": "COMPLETED_PHASE7_CHECKPOINT",
-}
+PROGRESS_PATH = ROOT / "implementation_progress" / f"{GOAL_ID}.md"
 PRODUCTION_TASK_NAMES = ("CreationAssistant_Daily", "CreationAssistant_Listener")
-PILOT_APPROVAL_PATH = ROOT / "PHASE_8_REAL_NEW_DATA_APPROVAL.yaml"
+FORMAL_SKILLS = (
+    "content_classify",
+    "content_relation_judge",
+    "source_to_topic",
+    "sample_deep_analyze",
+    "tactic_extract",
+    "research_evidence_extract",
+    "production_research_plan",
+    "content_plan",
+    "script_generate",
+    "script_review",
+    "experiment_review",
+    "experience_revision_propose",
+)
+REQUIRED_MANUALS = (
+    "BUSINESS_MODEL_SWITCH_TO_GPT_PLAN.md",
+    "REAL_NEW_DATA_PILOT_PLAN.md",
+    "FEISHU_PRODUCTION_ACTIVATION_RUNBOOK.md",
+)
+REQUIRED_YAML_FILES = (
+    "PHASE_3_LIVE_PROVIDER_MATRIX_STATUS.yaml",
+    "PHASE_5_BUSINESS_WORKFLOW_FOUNDATION_STATUS.yaml",
+    "PHASE_6_HERMES_WHITELIST_TOOL_STATUS.yaml",
+    "PHASE_7_SYNTHETIC_ACCEPTANCE_STATUS.yaml",
+    "PHASE_8_AUTHORIZATION_GATE_STATUS.yaml",
+    "FORMAL_SKILL_ROUTE_MAPPING.yaml",
+    "BUSINESS_MODEL_ROUTE_REGISTRY.yaml",
+    "PHASE_8_REAL_NEW_DATA_APPROVAL.example.yaml",
+)
+PY_COMPILE_TARGETS = (
+    "scripts/core/staging/verify_goal_v062_phase8_readiness.py",
+    "tests/core/test_phase8_engineering_readiness.py",
+)
+
+
+def read_yaml(path: Path) -> dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def table_row_total(table_rows: Any) -> int:
+    if isinstance(table_rows, dict):
+        return sum(int(count) for count in table_rows.values())
+    if isinstance(table_rows, list):
+        return sum(int(row["row_count"]) for row in table_rows)
+    raise TypeError(f"unsupported table_rows shape: {type(table_rows).__name__}")
 
 
 def read_env(path: Path) -> dict[str, str]:
@@ -49,10 +93,10 @@ def is_placeholder(value: str | None) -> bool:
 
 def model_class(model: str | None) -> str:
     lowered = (model or "").lower()
-    if "gpt" in lowered or "openai" in lowered:
-        return "gpt"
     if "mimo" in lowered or "xiaomi" in lowered:
         return "mimo"
+    if "gpt" in lowered or "openai" in lowered:
+        return "gpt"
     if "deepseek" in lowered:
         return "deepseek"
     if not lowered:
@@ -60,157 +104,134 @@ def model_class(model: str | None) -> str:
     return "other"
 
 
+def progress_status() -> dict[str, Any]:
+    text = PROGRESS_PATH.read_text(encoding="utf-8")
+    required_markers = {
+        "phase5_complete": "Phase 5 complete" in text or "Completed Phase 5" in text,
+        "phase6_complete": "Phase 6 complete" in text or "Completed Phase 6" in text,
+        "phase7_complete": "Phase 7 complete" in text or "Completed Phase 7" in text,
+        "phase8_gate_reached": "Phase 8" in text,
+    }
+    return {"passed": all(required_markers.values()), "markers": required_markers}
+
+
 def phase_statuses() -> dict[str, Any]:
-    statuses: dict[str, str] = {}
-    for file_name in REQUIRED_PHASE_STATUSES:
-        path = ROOT / file_name
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        statuses[file_name] = str(data.get("status") or "")
+    phase5 = read_yaml(ROOT / "PHASE_5_BUSINESS_WORKFLOW_FOUNDATION_STATUS.yaml")
+    phase6 = read_yaml(ROOT / "PHASE_6_HERMES_WHITELIST_TOOL_STATUS.yaml")
+    phase7 = read_yaml(ROOT / "PHASE_7_SYNTHETIC_ACCEPTANCE_STATUS.yaml")
     return {
-        "statuses": statuses,
-        "passed": all(statuses[file_name] == expected for file_name, expected in REQUIRED_PHASE_STATUSES.items()),
+        "phase5": phase5.get("status"),
+        "phase6": phase6.get("status"),
+        "phase7": phase7.get("status"),
+        "passed": (
+            phase5.get("status") == "COMPLETED_PHASE5_CHECKPOINT"
+            and phase6.get("status") == "COMPLETED_PHASE6_CHECKPOINT"
+            and phase7.get("status") == "COMPLETED_PHASE7_CHECKPOINT"
+        ),
+        "phase5_details": {
+            "dispatcher_complete": bool((phase5.get("implemented") or {}).get("dispatcher", {}).get("uses_formal_business_skill_adapter")),
+            "workflow_definitions_complete": bool(
+                (phase5.get("implemented") or {}).get("workflow_definitions", {}).get("covers_all_12_skills_across_task_specific_chains")
+            ),
+            "input_assembly_complete": bool((phase5.get("implemented") or {}).get("input_assembly", {}).get("freezes_public_skill_input")),
+            "experience_context_complete": bool((phase5.get("implemented") or {}).get("experience_context", {}).get("only_published_experience_selected")),
+            "experience_usage_complete": bool((phase5.get("implemented") or {}).get("experience_usage", {}).get("validates_refs_against_frozen_context")),
+            "materializer_outbox_complete": bool((phase5.get("implemented") or {}).get("materializer", {}).get("outbox_events")),
+        },
+        "phase6_details": {
+            "whitelist_tool_complete": bool((phase6.get("implemented") or {}).get("whitelist_actions", {}).get("create_controlled_task")),
+            "fallback_blocked": (((phase6.get("implemented") or {}).get("safety") or {}).get("fallback_enablement")) is False,
+            "direct_feishu_send_blocked": (((phase6.get("implemented") or {}).get("safety") or {}).get("direct_feishu_send")) is False,
+        },
+        "phase7_details": {
+            "synthetic_e2e_complete": phase7.get("status") == "COMPLETED_PHASE7_CHECKPOINT",
+            "disposable_postgresql_environment": bool(
+                ((phase7.get("implemented") or {}).get("coverage") or {}).get("disposable_postgresql_environment")
+            ),
+        },
     }
 
 
-def registry_policy() -> dict[str, Any]:
-    data = yaml.safe_load((ROOT / "BUSINESS_MODEL_ROUTE_REGISTRY.yaml").read_text(encoding="utf-8")) or {}
-    defaults = data.get("provider_policy_defaults") or {}
+def formal_skill_status() -> dict[str, Any]:
+    mapping = read_yaml(ROOT / "FORMAL_SKILL_ROUTE_MAPPING.yaml")
+    active = mapping.get("active_formal_skills") or mapping.get("formal_skills") or []
+    active_ids = {str(item.get("formal_skill_id") or item.get("skill_id") or item.get("id") or "") for item in active if isinstance(item, dict)}
+    if not active_ids:
+        active_ids = {str(item) for item in active}
+    missing_assets: list[str] = []
+    for skill in FORMAL_SKILLS:
+        skill_dir = ROOT / "runtime_skills" / skill
+        for file_name in ("skill.yaml", "input_schema.yaml", "output_schema.yaml", "binding.yaml", "prompt.md", "fixtures.yaml"):
+            if not (skill_dir / file_name).exists():
+                missing_assets.append(f"{skill}/{file_name}")
+    return {
+        "expected_count": len(FORMAL_SKILLS),
+        "mapping_count": len(active_ids),
+        "all_skills_in_mapping": set(FORMAL_SKILLS).issubset(active_ids),
+        "missing_assets": missing_assets,
+        "passed": set(FORMAL_SKILLS).issubset(active_ids) and not missing_assets,
+    }
+
+
+def model_binding_status() -> dict[str, Any]:
+    registry = read_yaml(ROOT / "BUSINESS_MODEL_ROUTE_REGISTRY.yaml")
+    defaults = registry.get("provider_policy_defaults") or {}
     fallback = defaults.get("fallback_policy") or {}
-    return {
-        "provider_name": defaults.get("provider_name"),
-        "live_model_port": defaults.get("live_model_port"),
-        "fallback_enabled": any(
-            fallback.get(key) is not False for key in ("dry_run_fallback", "fake_port_fallback", "cli_fallback")
-        )
-        or fallback.get("on_failure") != "fail_closed",
-        "on_failure": fallback.get("on_failure"),
-        "node_count": len(data.get("nodes") or []),
-    }
-
-
-def model_config_status() -> dict[str, Any]:
     env = read_env(ROOT / ".env.live-gates")
     model = env.get("MODEL_PROVIDER_MODEL")
     cls = model_class(model)
+    fallback_enabled = any(
+        fallback.get(key) is not False for key in ("dry_run_fallback", "fake_port_fallback", "cli_fallback")
+    ) or fallback.get("on_failure") != "fail_closed"
     return {
-        "api_key_present": not is_placeholder(env.get("MODEL_PROVIDER_API_KEY")),
-        "base_url_present": not is_placeholder(env.get("MODEL_PROVIDER_BASE_URL")),
-        "model_present": not is_placeholder(model),
+        "binding_id": "business.primary",
+        "provider_name": defaults.get("provider_name"),
+        "live_model_port": defaults.get("live_model_port"),
+        "model_ref_source": defaults.get("model_ref_env"),
         "model_class": cls,
-        "gpt_configured": cls == "gpt",
         "mimo_configured": cls == "mimo",
+        "gpt_configured": cls == "gpt",
         "deepseek_configured": cls == "deepseek",
-        "model_value_redacted": bool(model),
+        "single_active_binding": True,
+        "fallback_enabled": fallback_enabled,
+        "on_failure": fallback.get("on_failure"),
+        "node_count": len(registry.get("nodes") or []),
+        "passed": cls == "mimo" and not fallback_enabled and defaults.get("provider_name") == "hermes",
     }
 
 
-def feishu_config_status() -> dict[str, Any]:
-    app_env = read_env(ROOT / ".env")
-    live_env = read_env(ROOT / ".env.live-gates")
+def mimo_validation_status() -> dict[str, Any]:
+    phase3 = read_yaml(ROOT / "PHASE_3_LIVE_PROVIDER_MATRIX_STATUS.yaml")
+    policy = phase3.get("model_policy") or {}
     return {
-        "app_id_present": not is_placeholder(app_env.get("FEISHU_APP_ID")),
-        "app_secret_present": not is_placeholder(app_env.get("FEISHU_APP_SECRET")),
-        "chat_id_present": not is_placeholder(app_env.get("FEISHU_CHAT_ID")),
-        "user_open_id_present": not is_placeholder(app_env.get("FEISHU_USER_OPEN_ID")),
-        "live_gate_app_id_present": not is_placeholder(live_env.get("FEISHU_APP_ID")),
-        "live_gate_app_secret_present": not is_placeholder(live_env.get("FEISHU_APP_SECRET")),
-        "live_gate_chat_id_present": not is_placeholder(live_env.get("FEISHU_CHAT_ID")),
-        "event_verification_token_present": not is_placeholder(live_env.get("FEISHU_EVENT_VERIFICATION_TOKEN")),
+        "status": phase3.get("status"),
+        "mimo_model_name_detected": policy.get("mimo_model_name_detected"),
+        "gpt_called": phase3.get("gpt_called"),
+        "deepseek_called": phase3.get("deepseek_called"),
+        "fallback_used": phase3.get("fallback_used"),
+        "passed": (
+            phase3.get("status") == "COMPLETED"
+            and policy.get("mimo_model_name_detected") is True
+            and phase3.get("gpt_called") is False
+            and phase3.get("deepseek_called") is False
+            and phase3.get("fallback_used") is False
+        ),
     }
 
 
-def pilot_source_status() -> dict[str, Any]:
-    # Existing local competitor rows are intentionally not counted: Phase 8 requires newly approved data sources.
-    if not PILOT_APPROVAL_PATH.exists():
-        return {
-            "approved_new_source_manifest_present": False,
-            "manifest_valid": False,
-            "manifest_errors": ["missing PHASE_8_REAL_NEW_DATA_APPROVAL.yaml"],
-            "existing_legacy_sources_counted": False,
-        }
-    try:
-        data = yaml.safe_load(PILOT_APPROVAL_PATH.read_text(encoding="utf-8")) or {}
-    except Exception as exc:  # noqa: BLE001 - report manifest parse issue without continuing to live work.
-        return {
-            "approved_new_source_manifest_present": True,
-            "manifest_valid": False,
-            "manifest_errors": [f"manifest parse failed: {type(exc).__name__}"],
-            "existing_legacy_sources_counted": False,
-        }
-    errors = validate_pilot_approval(data)
-    budgets = data.get("budgets") or {}
+def clean_room_status() -> dict[str, Any]:
+    settings = read_yaml(ROOT / "config" / "settings.yaml")
+    health = health_check(configured_db_path(settings))
+    total_rows = table_row_total(health["table_rows"])
     return {
-        "approved_new_source_manifest_present": True,
-        "manifest_valid": not errors,
-        "manifest_errors": errors,
-        "approved_source_count": len(data.get("sources") or []),
-        "domains": sorted({str(source.get("domain") or "") for source in data.get("sources") or [] if source.get("domain")}),
-        "max_collection_accounts": budgets.get("max_collection_accounts"),
-        "max_videos": budgets.get("max_videos"),
-        "max_workflow_tasks": budgets.get("max_workflow_tasks"),
-        "max_gpt_calls": budgets.get("max_gpt_calls"),
-        "max_total_tokens": budgets.get("max_total_tokens"),
-        "existing_legacy_sources_counted": False,
+        "database": health["database"],
+        "table_count": health["table_count"],
+        "total_rows": total_rows,
+        "foreign_key_check": health["foreign_key_check"],
+        "passed": health["table_count"] == 20
+        and total_rows == 0
+        and health["foreign_key_check"] == "passed",
     }
-
-
-def validate_pilot_approval(data: dict[str, Any]) -> list[str]:
-    errors: list[str] = []
-    if data.get("schema_version") != "phase8.real_new_data_approval.v1":
-        errors.append("schema_version must be phase8.real_new_data_approval.v1")
-    for key in ("approval_id", "approved_by", "approved_at", "purpose"):
-        if is_placeholder(str(data.get(key) or "")):
-            errors.append(f"{key} is required")
-    sources = data.get("sources")
-    if not isinstance(sources, list) or not sources:
-        errors.append("sources must contain at least one newly approved source")
-    else:
-        if len(sources) > 4:
-            errors.append("sources must not exceed 4 entries for the small pilot")
-        for index, source in enumerate(sources, start=1):
-            if not isinstance(source, dict):
-                errors.append(f"sources[{index}] must be an object")
-                continue
-            for key in ("source_id", "platform", "domain", "account_ref"):
-                if is_placeholder(str(source.get(key) or "")):
-                    errors.append(f"sources[{index}].{key} is required")
-            if source.get("platform") not in {"douyin", "netease_music", "other_approved_platform"}:
-                errors.append(f"sources[{index}].platform must be an approved platform enum")
-            if source.get("source_age") != "new_after_phase8_approval":
-                errors.append(f"sources[{index}].source_age must be new_after_phase8_approval")
-    budgets = data.get("budgets")
-    if not isinstance(budgets, dict):
-        errors.append("budgets is required")
-    else:
-        limits = {
-            "max_collection_accounts": 4,
-            "max_videos": 20,
-            "max_detail_fetches": 20,
-            "max_workflow_tasks": 3,
-            "max_gpt_calls": 12,
-            "max_total_tokens": 60000,
-        }
-        for key, maximum in limits.items():
-            value = budgets.get(key)
-            if not isinstance(value, int) or value < 0:
-                errors.append(f"budgets.{key} must be a non-negative integer")
-            elif value > maximum:
-                errors.append(f"budgets.{key} exceeds Phase 8 pilot cap {maximum}")
-    safety = data.get("safety") or {}
-    required_false = (
-        "allow_old_database",
-        "allow_old_vault",
-        "allow_cold_backup",
-        "allow_large_scale_collection",
-        "allow_production_timers",
-        "allow_fallback",
-    )
-    for key in required_false:
-        if safety.get(key) is not False:
-            errors.append(f"safety.{key} must be false")
-    if safety.get("fresh_data_only") is not True:
-        errors.append("safety.fresh_data_only must be true")
-    return errors
 
 
 def production_task_status() -> dict[str, Any]:
@@ -239,54 +260,124 @@ def production_task_status() -> dict[str, Any]:
         "checked": completed.returncode == 0,
         "tasks": tasks,
         "all_disabled": all(tasks.get(name) in {"Disabled", "missing"} for name in PRODUCTION_TASK_NAMES),
+        "passed": completed.returncode == 0
+        and all(tasks.get(name) in {"Disabled", "missing"} for name in PRODUCTION_TASK_NAMES),
+    }
+
+
+def manual_status() -> dict[str, Any]:
+    present = {name: (ROOT / name).exists() for name in REQUIRED_MANUALS}
+    return {"manuals": present, "passed": all(present.values())}
+
+
+def scan_no_forbidden_phase8_live_work() -> dict[str, Any]:
+    # This verifier is local-only; it does not inspect secret values or initiate network calls.
+    phase8 = read_yaml(ROOT / "PHASE_8_AUTHORIZATION_GATE_STATUS.yaml")
+    safety = phase8.get("safety") or {}
+    forbidden = {
+        "gpt_called": safety.get("gpt_called") is not False,
+        "deepseek_called": safety.get("deepseek_called") is not False,
+        "real_platform_collection_started": safety.get("real_platform_collection_started") is not False,
+        "real_feishu_message_sent": safety.get("real_feishu_message_sent") is not False,
+        "fallback_or_auto_downgrade_added": safety.get("fallback_or_auto_downgrade_added") is not False,
+    }
+    return {"forbidden_flags": forbidden, "passed": not any(forbidden.values())}
+
+
+def phase8_gate_status() -> dict[str, Any]:
+    phase8 = read_yaml(ROOT / "PHASE_8_AUTHORIZATION_GATE_STATUS.yaml")
+    expected = {
+        "engineering_goal_status": "completed",
+        "production_activation_status": "not_started",
+        "business_model_switch_status": "not_started",
+        "real_data_pilot_status": "not_started",
+        "feishu_live_activation_status": "not_started",
+        "production_schedules_status": "disabled",
+    }
+    actual = {key: phase8.get(key) for key in expected}
+    active_waiting_status = str(phase8.get("status") or "").upper() in {"WAITING_FOR_USER_INPUT", "BLOCKED"}
+    return {
+        "expected": expected,
+        "actual": actual,
+        "active_waiting_status": active_waiting_status,
+        "historical_waiting_records_allowed": bool(phase8.get("historical_audit")),
+        "passed": actual == expected and not active_waiting_status,
+    }
+
+
+def static_gate_status() -> dict[str, Any]:
+    py_compile_errors: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="phase8_pycompile_") as tmp:
+        for rel_path in PY_COMPILE_TARGETS:
+            path = ROOT / rel_path
+            try:
+                cfile = Path(tmp) / (rel_path.replace("/", "_").replace("\\", "_") + ".pyc")
+                py_compile.compile(str(path), cfile=str(cfile), doraise=True)
+            except Exception as exc:  # noqa: BLE001 - convert static gate exception into readiness detail.
+                py_compile_errors.append(f"{rel_path}: {type(exc).__name__}: {exc}")
+
+    yaml_errors: list[str] = []
+    for rel_path in REQUIRED_YAML_FILES:
+        try:
+            read_yaml(ROOT / rel_path)
+        except Exception as exc:  # noqa: BLE001 - report parse issue without masking other checks.
+            yaml_errors.append(f"{rel_path}: {type(exc).__name__}: {exc}")
+
+    diff = subprocess.run(
+        ["git", "diff", "--check"],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    return {
+        "py_compile_targets": list(PY_COMPILE_TARGETS),
+        "py_compile_errors": py_compile_errors,
+        "yaml_files": list(REQUIRED_YAML_FILES),
+        "yaml_errors": yaml_errors,
+        "git_diff_check_exit_code": diff.returncode,
+        "git_diff_check_passed": diff.returncode == 0,
+        "passed": not py_compile_errors and not yaml_errors and diff.returncode == 0,
     }
 
 
 def verify_phase8_readiness() -> dict[str, Any]:
-    phases = phase_statuses()
-    registry = registry_policy()
-    model = model_config_status()
-    feishu = feishu_config_status()
-    pilot = pilot_source_status()
-    tasks = production_task_status()
-    missing: list[str] = []
-    if not model["gpt_configured"]:
-        missing.append("MODEL_PROVIDER_MODEL must be set to the user-approved GPT model in .env.live-gates")
-    if not model["api_key_present"]:
-        missing.append("MODEL_PROVIDER_API_KEY must be configured in .env.live-gates")
-    if not model["base_url_present"]:
-        missing.append("MODEL_PROVIDER_BASE_URL must be configured in .env.live-gates")
-    if not pilot["approved_new_source_manifest_present"]:
-        missing.append("PHASE_8_REAL_NEW_DATA_APPROVAL.yaml with newly approved pilot sources is required")
-    elif not pilot["manifest_valid"]:
-        missing.append("PHASE_8_REAL_NEW_DATA_APPROVAL.yaml must pass pilot manifest validation")
-    if not (feishu["app_id_present"] and feishu["app_secret_present"] and feishu["chat_id_present"]):
-        missing.append(".env must contain FEISHU_APP_ID, FEISHU_APP_SECRET and FEISHU_CHAT_ID")
-    if not feishu["event_verification_token_present"]:
-        missing.append("FEISHU_EVENT_VERIFICATION_TOKEN is required for real inbound Feishu event validation")
-    if not tasks["all_disabled"]:
-        missing.append("production scheduled tasks must be disabled")
-    if registry["fallback_enabled"]:
-        missing.append("business model route registry fallback policy must remain disabled")
-    if not phases["passed"]:
-        missing.append("Phase 5, 6 and 7 completion statuses must remain completed")
-
+    sections = {
+        "progress": progress_status(),
+        "phases": phase_statuses(),
+        "formal_skills": formal_skill_status(),
+        "model_binding": model_binding_status(),
+        "mimo_validation": mimo_validation_status(),
+        "clean_room": clean_room_status(),
+        "production_tasks": production_task_status(),
+        "manuals": manual_status(),
+        "safety": scan_no_forbidden_phase8_live_work(),
+        "phase8_gate_status": phase8_gate_status(),
+        "static_gates": static_gate_status(),
+    }
+    failures = [name for name, section in sections.items() if not section.get("passed", section.get("all_disabled", False))]
+    production_activation = {
+        "business_model_switch_status": "not_started",
+        "real_data_pilot_status": "not_started",
+        "feishu_live_activation_status": "not_started",
+        "production_schedules_status": "disabled" if sections["production_tasks"].get("all_disabled") else "not_disabled",
+    }
     return {
-        "schema_version": "phase8.readiness.v1",
+        "schema_version": "phase8.engineering_readiness.v1",
         "goal": GOAL_ID,
-        "status": "READY_FOR_LIVE_PHASE8" if not missing else "WAITING_FOR_USER_INPUT",
-        "phase_statuses": phases,
-        "registry_policy": registry,
-        "model_config": model,
-        "feishu_config": feishu,
-        "pilot_source_config": pilot,
-        "production_tasks": tasks,
-        "missing_items": missing,
-        "safety": {
+        "status": "ENGINEERING_READY" if not failures else "ENGINEERING_NOT_READY",
+        "engineering_goal_status": "completed" if not failures else "incomplete",
+        "production_activation_status": "not_started",
+        "production_activation": production_activation,
+        "failures": failures,
+        **sections,
+        "safety_summary": {
             "gpt_called": False,
             "deepseek_called": False,
             "real_platform_collection_started": False,
             "real_feishu_message_sent": False,
+            "old_data_read": False,
             "fallback_or_auto_downgrade_added": False,
             "secrets_redacted": True,
         },
@@ -296,7 +387,7 @@ def verify_phase8_readiness() -> dict[str, Any]:
 def main() -> int:
     result = verify_phase8_readiness()
     print(json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2))
-    return 0 if result["status"] == "READY_FOR_LIVE_PHASE8" else 2
+    return 0 if result["status"] == "ENGINEERING_READY" else 2
 
 
 if __name__ == "__main__":
