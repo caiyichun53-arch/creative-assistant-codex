@@ -177,11 +177,11 @@ formal_skills:
       - Formal script_generate Skill package implemented for GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2.
 
   - formal_skill_id: script_review
-    version: planned
-    source_document: GOAL-RUNTIME-BUSINESS-SKILL-ADAPTER-01 objective
+    version: 1.0.0
+    source_document: SCRIPT_REVIEW_BUSINESS_CONTRACT.yaml
     responsibility: Review, polish, and AI-flavor judge a generated script before deterministic gates.
-    input_schema: script_review.input.planned
-    output_schema: script_review.output.planned
+    input_schema: script_review.input.v1
+    output_schema: script_review.output.v1
     allowed_model_nodes:
       - business.creation_review
       - business.creation_polish
@@ -189,10 +189,11 @@ formal_skills:
     execution_order: 100
     whether_model_is_required: true
     target_runner: FormalBusinessSkillAdapter
-    materializer_contract: planned
-    status: mapped_planned_multi_subnode
+    materializer_contract: formal_business_skill_result.v1
+    status: active_formal_business_skill
     evidence:
       - These nodes are critique/revision subnodes in one script review Skill, followed by code-based banned checks.
+      - Formal script_review Skill package implemented for GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2.
 
   - formal_skill_id: experiment_review
     version: planned

@@ -60,6 +60,8 @@ CONTENT_PLAN_CONTRACT_PATH = ROOT / "CONTENT_PLAN_BUSINESS_CONTRACT.yaml"
 CONTENT_PLAN_FIXTURES_PATH = ROOT / "runtime_skills" / "content_plan" / "fixtures.yaml"
 SCRIPT_GENERATE_CONTRACT_PATH = ROOT / "SCRIPT_GENERATE_BUSINESS_CONTRACT.yaml"
 SCRIPT_GENERATE_FIXTURES_PATH = ROOT / "runtime_skills" / "script_generate" / "fixtures.yaml"
+SCRIPT_REVIEW_CONTRACT_PATH = ROOT / "SCRIPT_REVIEW_BUSINESS_CONTRACT.yaml"
+SCRIPT_REVIEW_FIXTURES_PATH = ROOT / "runtime_skills" / "script_review" / "fixtures.yaml"
 STATUS_PATH = ROOT / "CONTENT_CLASSIFY_STATUS.yaml"
 REPORT_PATH = ROOT / f"{GOAL_ID}_VALIDATION_REPORT.md"
 PROGRESS_PATH = ROOT / "implementation_progress" / f"{GOAL_ID}.md"
@@ -79,6 +81,7 @@ RESEARCH_EVIDENCE_EXTRACT_OUTPUT_SCHEMA_VERSION = "research_evidence_extract.out
 PRODUCTION_RESEARCH_PLAN_OUTPUT_SCHEMA_VERSION = "production_research_plan.output.v1"
 CONTENT_PLAN_OUTPUT_SCHEMA_VERSION = "content_plan.output.v1"
 SCRIPT_GENERATE_OUTPUT_SCHEMA_VERSION = "script_generate.output.v1"
+SCRIPT_REVIEW_OUTPUT_SCHEMA_VERSION = "script_review.output.v1"
 
 BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "skill_id",
@@ -297,6 +300,27 @@ SCRIPT_GENERATE_BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "fixture_cases",
     "completion_definition",
 }
+SCRIPT_REVIEW_BUSINESS_CONTRACT_REQUIRED_KEYS = {
+    "skill_id",
+    "skill_version",
+    "source_documents",
+    "responsibility",
+    "non_responsibilities",
+    "allowed_inputs",
+    "forbidden_inputs",
+    "review_policy",
+    "evidence_requirements",
+    "input_length_limits",
+    "context_budget",
+    "token_budget",
+    "timeout",
+    "retry",
+    "idempotency",
+    "error_contract",
+    "materialization_contract",
+    "fixture_cases",
+    "completion_definition",
+}
 CONCRETE_LABELS = {
     "fan_kepu_social_life",
     "music_entertainment",
@@ -437,6 +461,8 @@ class FormalSkillContract:
             validate_content_plan_business_contract(load_content_plan_business_contract())
         if self.formal_skill_id == "script_generate":
             validate_script_generate_business_contract(load_script_generate_business_contract())
+        if self.formal_skill_id == "script_review":
+            validate_script_review_business_contract(load_script_review_business_contract())
         if self.formal_skill_id == "content_relation_judge":
             validate_content_relation_judge_business_contract(load_content_relation_judge_business_contract())
 
@@ -496,6 +522,8 @@ class FormalBusinessSkillAdapter:
         validate_payload(input_payload, self.contract.input_schema)
         if self.contract.formal_skill_id == "content_plan":
             return self._run_content_plan(input_payload)
+        if self.contract.formal_skill_id == "script_review":
+            return self._run_script_review(input_payload)
         preprocessed = preprocess_formal_skill_input(self.contract.formal_skill_id, input_payload)
         model_input = apply_binding(self.contract.input_map, input_payload, {}, preprocessed)
         validate_payload(model_input, self.contract.model_input_schema)
@@ -544,6 +572,8 @@ class FormalBusinessSkillAdapter:
             validate_production_research_plan_output_semantics(input_payload, output_payload)
         elif self.contract.formal_skill_id == "script_generate":
             validate_script_generate_output_semantics(input_payload, output_payload)
+        elif self.contract.formal_skill_id == "script_review":
+            validate_script_review_output_semantics(input_payload, output_payload)
         return FormalSkillRunResult(
             formal_skill_id=self.contract.formal_skill_id,
             output_payload=output_payload,
@@ -623,6 +653,97 @@ class FormalBusinessSkillAdapter:
             output_payload=output_payload,
             model_input_payload={"hook_input": hook_input, "outline_input": outline_input},
             model_run_envelope_version_id=outline_run.envelope_version_id,
+            skill_hash=self.contract.skill_hash,
+            binding_hash=self.contract.binding_hash,
+            model_route=self.contract.route_name,
+        )
+
+    def _run_script_review(self, input_payload: dict[str, Any]) -> FormalSkillRunResult:
+        for route_name in ("business.creation_review", "business.creation_polish", "business.ai_flavor_judge"):
+            if route_name not in self.gateway.routes:
+                raise FormalSkillValidationError(f"missing approved model route: {route_name}")
+        contract_data = load_script_review_business_contract()
+        review_input = {
+            "fixture_id": input_payload["request_id"],
+            "draft_text": input_payload["draft_text"],
+            "brief": input_payload["brief"],
+        }
+        review_run = self.gateway.complete(
+            ModelRequest(
+                route_name="business.creation_review",
+                prompt="Return only JSON with verdict, issues, schema_version.",
+                input_payload=review_input,
+                correlation_id=input_payload["correlation_id"],
+                skill_name=self.contract.formal_skill_id,
+                skill_version=self.contract.version,
+                skill_hash=self.contract.skill_hash,
+                binding_name="script_review_review_subnode",
+                binding_version=self.contract.binding_version,
+                binding_hash=self.contract.binding_hash,
+                metadata={"formal_skill_id": self.contract.formal_skill_id, "subnode": "review"},
+            )
+        )
+        review_output = parse_model_json(review_run.output_text)
+        validate_payload(review_output, contract_data["review_model_output_schema"])
+        polish_input = {
+            "fixture_id": input_payload["request_id"],
+            "draft_text": input_payload["draft_text"],
+            "edit_notes": review_output["issues"],
+        }
+        polish_run = self.gateway.complete(
+            ModelRequest(
+                route_name="business.creation_polish",
+                prompt="Return only JSON with polished_text, schema_version.",
+                input_payload=polish_input,
+                correlation_id=input_payload["correlation_id"],
+                skill_name=self.contract.formal_skill_id,
+                skill_version=self.contract.version,
+                skill_hash=self.contract.skill_hash,
+                binding_name="script_review_polish_subnode",
+                binding_version=self.contract.binding_version,
+                binding_hash=self.contract.binding_hash,
+                metadata={"formal_skill_id": self.contract.formal_skill_id, "subnode": "polish"},
+            )
+        )
+        polish_output = parse_model_json(polish_run.output_text)
+        validate_payload(polish_output, contract_data["polish_model_output_schema"])
+        ai_input = {
+            "fixture_id": input_payload["request_id"],
+            "draft_text": polish_output["polished_text"],
+            "human_reference_refs": input_payload["human_reference_refs"],
+        }
+        ai_run = self.gateway.complete(
+            ModelRequest(
+                route_name="business.ai_flavor_judge",
+                prompt="Return only JSON with ai_flavor_risk, revision_targets, schema_version.",
+                input_payload=ai_input,
+                correlation_id=input_payload["correlation_id"],
+                skill_name=self.contract.formal_skill_id,
+                skill_version=self.contract.version,
+                skill_hash=self.contract.skill_hash,
+                binding_name=self.contract.binding_name,
+                binding_version=self.contract.binding_version,
+                binding_hash=self.contract.binding_hash,
+                metadata={"formal_skill_id": self.contract.formal_skill_id, "subnode": "ai_flavor"},
+            )
+        )
+        ai_output = parse_model_json(ai_run.output_text)
+        validate_payload(ai_output, contract_data["ai_flavor_model_output_schema"])
+        output_payload = {
+            "verdict": review_output["verdict"],
+            "issues": review_output["issues"],
+            "polished_text": polish_output["polished_text"],
+            "ai_flavor_risk": ai_output["ai_flavor_risk"],
+            "revision_targets": ai_output["revision_targets"],
+            "schema_version": SCRIPT_REVIEW_OUTPUT_SCHEMA_VERSION,
+        }
+        validate_payload(output_payload, self.contract.output_schema)
+        validate_script_review_output_semantics(input_payload, output_payload)
+        return FormalSkillRunResult(
+            formal_skill_id=self.contract.formal_skill_id,
+            output_payload=output_payload,
+            model_input_payload={"review_input": review_input, "polish_input": polish_input, "ai_input": ai_input},
+            model_run_envelope_version_id=ai_run.envelope_version_id,
             skill_hash=self.contract.skill_hash,
             binding_hash=self.contract.binding_hash,
             model_route=self.contract.route_name,
@@ -745,6 +866,10 @@ def load_script_generate_business_contract(path: Path = SCRIPT_GENERATE_CONTRACT
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
+def load_script_review_business_contract(path: Path = SCRIPT_REVIEW_CONTRACT_PATH) -> dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
 def load_content_classify_fixtures(path: Path = CONTENT_CLASSIFY_FIXTURES_PATH) -> list[dict[str, Any]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     fixtures = data.get("fixtures") or []
@@ -810,6 +935,11 @@ def load_content_plan_fixtures(path: Path = CONTENT_PLAN_FIXTURES_PATH) -> list[
 
 
 def load_script_generate_fixtures(path: Path = SCRIPT_GENERATE_FIXTURES_PATH) -> list[dict[str, Any]]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return list(data.get("fixtures") or [])
+
+
+def load_script_review_fixtures(path: Path = SCRIPT_REVIEW_FIXTURES_PATH) -> list[dict[str, Any]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return list(data.get("fixtures") or [])
 
@@ -1033,6 +1163,30 @@ def validate_script_generate_business_contract(data: dict[str, Any]) -> dict[str
         "skill_version": data["skill_version"],
         "source_document_count": len(data.get("source_documents") or []),
         "missing_requirement_count": len(data.get("missing_requirements") or []),
+    }
+
+
+def validate_script_review_business_contract(data: dict[str, Any]) -> dict[str, Any]:
+    missing = sorted(SCRIPT_REVIEW_BUSINESS_CONTRACT_REQUIRED_KEYS - set(data))
+    if missing:
+        raise FormalSkillValidationError(f"script_review business contract missing keys: {missing}")
+    if data.get("schema_version") != "script_review.business_contract.v1":
+        raise FormalSkillValidationError("unexpected script_review business contract schema_version")
+    if data.get("missing_requirements"):
+        raise FormalSkillValidationError("script_review business contract has missing_requirement entries")
+    if data.get("skill_id") != "script_review":
+        raise FormalSkillValidationError("script_review business contract skill_id mismatch")
+    allowed_nodes = data.get("allowed_model_nodes") or []
+    if allowed_nodes != ["business.creation_review", "business.creation_polish", "business.ai_flavor_judge"]:
+        raise FormalSkillValidationError("script_review must use review, polish and ai_flavor subnodes only")
+    for key in ("review_model_output_schema", "polish_model_output_schema", "ai_flavor_model_output_schema"):
+        validate_schema_definition(data.get(key) or {}, f"script_review_{key}")
+    return {
+        "skill_id": data["skill_id"],
+        "skill_version": data["skill_version"],
+        "source_document_count": len(data.get("source_documents") or []),
+        "missing_requirement_count": len(data.get("missing_requirements") or []),
+        "subnode_count": len(allowed_nodes),
     }
 
 
@@ -1305,6 +1459,30 @@ def validate_script_generate_output_semantics(input_payload: dict[str, Any], out
         raise FormalSkillValidationError("script_generate draft_text exceeds max length")
     if not input_payload.get("beats"):
         raise FormalSkillValidationError("script_generate requires beats")
+
+
+def validate_script_review_output_semantics(input_payload: dict[str, Any], output_payload: dict[str, Any]) -> None:
+    if output_payload["schema_version"] != SCRIPT_REVIEW_OUTPUT_SCHEMA_VERSION:
+        raise FormalSkillValidationError("script_review output schema_version mismatch")
+    if output_payload["verdict"] not in {"pass", "revise", "fail"}:
+        raise FormalSkillValidationError("script_review verdict is unsupported")
+    polished_text = str(output_payload["polished_text"]).strip()
+    if len(polished_text) < 50:
+        raise FormalSkillValidationError("script_review polished_text is too short")
+    if len(polished_text) > 6000:
+        raise FormalSkillValidationError("script_review polished_text exceeds max length")
+    if output_payload["ai_flavor_risk"] not in {"low", "medium", "high"}:
+        raise FormalSkillValidationError("script_review ai_flavor_risk is unsupported")
+    if not output_payload["revision_targets"]:
+        raise FormalSkillValidationError("script_review requires revision_targets")
+    for issue in output_payload["issues"]:
+        if not isinstance(issue, str) or not issue.strip():
+            raise FormalSkillValidationError("script_review issues must be non-empty strings")
+    for target in output_payload["revision_targets"]:
+        if not isinstance(target, str) or not target.strip():
+            raise FormalSkillValidationError("script_review revision_targets must be non-empty strings")
+    if not input_payload.get("human_reference_refs"):
+        raise FormalSkillValidationError("script_review requires human_reference_refs")
 
 
 def parse_model_json(output_text: str) -> dict[str, Any]:
@@ -2373,6 +2551,91 @@ class DeterministicScriptGenerateModelPort:
         )
 
 
+class DeterministicScriptReviewModelPort:
+    provider_name = "formal_business_skill_test_port"
+
+    def __init__(self, *, behavior: str = "success"):
+        self.behavior = behavior
+        self.call_count = 0
+        self.routes_seen: list[str] = []
+
+    def complete(self, request: ModelRequest, route: ModelRoute) -> ModelProviderResult:
+        self.call_count += 1
+        self.routes_seen.append(route.route_name)
+        behavior = self.behavior
+        is_review = route.route_name == "business.creation_review"
+        is_polish = route.route_name == "business.creation_polish"
+        is_ai = route.route_name == "business.ai_flavor_judge"
+        if behavior == "fail_once" and self.call_count == 1:
+            raise RuntimeError("synthetic script_review model port failure")
+        if behavior == "failure":
+            raise RuntimeError("synthetic script_review model port failure")
+        if behavior == "polish_failure" and is_polish:
+            raise RuntimeError("synthetic script_review polish failure")
+        if behavior == "ai_failure" and is_ai:
+            raise RuntimeError("synthetic script_review ai failure")
+        if behavior in {"empty", "review_empty"} and is_review:
+            return self._result("", request)
+        if behavior == "polish_empty" and is_polish:
+            return self._result("", request)
+        if behavior == "ai_empty" and is_ai:
+            return self._result("", request)
+        if behavior in {"not_json", "review_not_json"} and is_review:
+            return self._result("not-json", request)
+        if behavior == "polish_not_json" and is_polish:
+            return self._result("not-json", request)
+        if behavior == "ai_not_json" and is_ai:
+            return self._result("not-json", request)
+        if behavior in {"missing_field", "review_missing_field"} and is_review:
+            return self._result(json.dumps({"verdict": "revise"}, ensure_ascii=False), request)
+        if behavior == "polish_missing_field" and is_polish:
+            return self._result(json.dumps({"schema_version": "script_review.polish_output.v1"}, ensure_ascii=False), request)
+        if behavior == "ai_missing_field" and is_ai:
+            return self._result(json.dumps({"ai_flavor_risk": "low"}, ensure_ascii=False), request)
+        if is_review:
+            issues = ["Tighten the opening scene and remove broad claims."]
+            if behavior == "empty_issues":
+                issues = []
+            payload = {"verdict": "revise", "issues": issues, "schema_version": "script_review.review_output.v1"}
+            return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+        if is_polish:
+            text = str(request.input_payload.get("draft_text", ""))
+            if behavior == "empty_polished_text":
+                polished = ""
+            else:
+                polished = f"{text} Polished pass: the scene is clearer, the claim stays bounded, and no publishing action is taken."
+            payload = {"polished_text": polished, "schema_version": "script_review.polish_output.v1"}
+            return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+        if is_ai:
+            targets = ["Keep scene-first wording and avoid generic uplift language."]
+            if behavior == "empty_revision_targets":
+                targets = []
+            payload = {
+                "ai_flavor_risk": "low",
+                "revision_targets": targets,
+                "schema_version": "script_review.ai_flavor_output.v1",
+            }
+            return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+        raise RuntimeError(f"unexpected script_review route: {route.route_name}")
+
+    @staticmethod
+    def _result(output_text: str, request: ModelRequest) -> ModelProviderResult:
+        return ModelProviderResult(
+            output_text=output_text,
+            usage=ModelUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            cost={"test": 0},
+            provider_request_id=f"fake-{request.input_payload.get('fixture_id', 'missing')}",
+            metadata={
+                "fixture": True,
+                "tools_enabled": False,
+                "memory_enabled": False,
+                "messaging_enabled": False,
+                "nested_job_orchestration_enabled": False,
+                "file_or_terminal_side_effects_enabled": False,
+            },
+        )
+
+
 class FormalBusinessSkillMaterializer:
     def __init__(self, store: PersistenceStore, *, id_factory: Callable[[], str] = uuid7):
         self.store = store
@@ -3226,6 +3489,57 @@ def make_script_generate_harness(
     )
 
 
+def make_script_review_harness(
+    *,
+    id_factory: Callable[[], str] = uuid7,
+    now_ms: Callable[[], int] | None = None,
+    monotonic_ms: Callable[[], int] | None = None,
+    provider: ModelProvider | None = None,
+) -> FormalBusinessSkillHarness:
+    contract = FormalSkillContract.from_yaml(SCRIPT_REVIEW_CONTRACT_PATH)
+    store = PersistenceStore.in_memory(id_factory=id_factory)
+    scheduler = Goal03Scheduler(store, id_factory=id_factory, now_ms=now_ms)
+    materializer = FormalBusinessSkillMaterializer(store, id_factory=id_factory)
+    provider = provider or DeterministicScriptReviewModelPort()
+    routes = {}
+    for route_name in ("business.creation_review", "business.creation_polish", "business.ai_flavor_judge"):
+        route = ModelRoute(
+            route_name=route_name,
+            provider_name=provider.provider_name,
+            model_name=f"deterministic-{route_name.replace('.', '-')}",
+            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+            config_hash=content_hash({"route": route_name, "formal_skill_id": contract.formal_skill_id}),
+            timeout_ms=1000,
+        )
+        routes[route.route_name] = route
+    gateway = ModelGateway(
+        routes=routes,
+        providers={provider.provider_name: provider},
+        materializer=ModelRunMaterializer(store),
+        monotonic_ms=monotonic_ms,
+    )
+    adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
+    worker = FormalBusinessSkillWorker(
+        scheduler=scheduler,
+        adapter=adapter,
+        materializer=materializer,
+        contract=contract,
+        worker_id="formal-business-skill-worker",
+    )
+    api = FormalBusinessSkillCoreAPI(scheduler, contract)
+    return FormalBusinessSkillHarness(
+        store=store,
+        scheduler=scheduler,
+        api=api,
+        worker=worker,
+        gateway=gateway,
+        materializer=materializer,
+        adapter=adapter,
+        contract=contract,
+        provider=provider,
+    )
+
+
 def sample_content_classify_input(**overrides: Any) -> dict[str, Any]:
     payload = {
         "request_id": "content-classify-001",
@@ -3377,6 +3691,35 @@ def sample_script_generate_input(**overrides: Any) -> dict[str, Any]:
         ],
         "domain_label": "fan_kepu_social_life",
         "schema_version": "script_generate.input.v1",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def sample_script_review_input(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "request_id": "script-review-001",
+        "correlation_id": "script-review-correlation-001",
+        "draft_text": (
+            "Morning elevator waits are not just bad luck. The same commute window, uneven floor distribution, "
+            "and maintenance timing turn a small building into a queueing system."
+        ),
+        "brief": (
+            "Explain a familiar morning elevator wait as a system problem using commuting time, "
+            "floor distribution, and maintenance windows."
+        ),
+        "evidence_items": [
+            {
+                "claim": "morning elevator crowding relates to synchronized commute time and uneven floor distribution",
+                "source_ref": "research-src-001",
+                "supporting_text": (
+                    "morning elevator crowding relates to synchronized commute time and uneven floor distribution"
+                ),
+            }
+        ],
+        "human_reference_refs": ["human-reference-scene-to-system-001"],
+        "domain_label": "fan_kepu_social_life",
+        "schema_version": "script_review.input.v1",
     }
     payload.update(overrides)
     return payload
