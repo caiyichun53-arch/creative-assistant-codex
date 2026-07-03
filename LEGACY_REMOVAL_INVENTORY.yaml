@@ -1,0 +1,2109 @@
+schema_version: legacy_removal_inventory.v1
+goal: GOAL-V0.6.2-LEGACY-REMOVAL-01
+baseline_tag: v0.6.2-engineering-ready
+items:
+- path: scripts/analyze/cluster_hits.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 11
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal Core workflow plus future deterministic scoring adapter
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/analyze/judge_hits.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 11
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal Core workflow plus future deterministic scoring adapter
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/collect/common.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - .agents/skills/register-competitor-account/SKILL.md
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - EXTERNAL_LIVE_GATE_CHECKLIST.yaml
+  - EXTERNAL_LIVE_GATE_PLAN.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/external_adapters CollectorAdapter boundary
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/collect/crawl_competitors.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - .agents/skills/register-competitor-account/SKILL.md
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - EXTERNAL_LIVE_GATE_CHECKLIST.yaml
+  - EXTERNAL_LIVE_GATE_PLAN.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/external_adapters CollectorAdapter boundary
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/collect/register_competitor.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - .agents/skills/register-competitor-account/SKILL.md
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - EXTERNAL_LIVE_GATE_CHECKLIST.yaml
+  - EXTERNAL_LIVE_GATE_PLAN.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/external_adapters CollectorAdapter boundary
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/collect/register_full.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - .agents/skills/register-competitor-account/SKILL.md
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - EXTERNAL_LIVE_GATE_CHECKLIST.yaml
+  - EXTERNAL_LIVE_GATE_PLAN.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/external_adapters CollectorAdapter boundary
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/collect/register_seeds.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - .agents/skills/register-competitor-account/SKILL.md
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - EXTERNAL_LIVE_GATE_CHECKLIST.yaml
+  - EXTERNAL_LIVE_GATE_PLAN.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/external_adapters CollectorAdapter boundary
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/content/build_writer_dispatch.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 15
+  referenced_by:
+  - .agents/skills/creation-banned-check/SKILL.md
+  - .agents/skills/creation-save-draft/SKILL.md
+  - .claude/commands/创作.md
+  - BUILD_PLAN.md
+  - BUSINESS_RULE_CATALOG.yaml
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/script_review plus formal Materializer/Outbox
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/content/check_banned.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 15
+  referenced_by:
+  - .agents/skills/creation-banned-check/SKILL.md
+  - .agents/skills/creation-save-draft/SKILL.md
+  - .claude/commands/创作.md
+  - BUILD_PLAN.md
+  - BUSINESS_RULE_CATALOG.yaml
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/script_review plus formal Materializer/Outbox
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/content/diff_draft.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 15
+  referenced_by:
+  - .agents/skills/creation-banned-check/SKILL.md
+  - .agents/skills/creation-save-draft/SKILL.md
+  - .claude/commands/创作.md
+  - BUILD_PLAN.md
+  - BUSINESS_RULE_CATALOG.yaml
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/script_review plus formal Materializer/Outbox
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/content/save_draft.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 15
+  referenced_by:
+  - .agents/skills/creation-banned-check/SKILL.md
+  - .agents/skills/creation-save-draft/SKILL.md
+  - .claude/commands/创作.md
+  - BUILD_PLAN.md
+  - BUSINESS_RULE_CATALOG.yaml
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/script_review plus formal Materializer/Outbox
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/db/init_db.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - UNDOCUMENTED_LEGACY_BEHAVIOR.md
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/persistence formal schema chain
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/db/migrate_001_videos.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - UNDOCUMENTED_LEGACY_BEHAVIOR.md
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/persistence formal schema chain
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/db/migrate_002_checks.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - UNDOCUMENTED_LEGACY_BEHAVIOR.md
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/persistence formal schema chain
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/db/migrate_003_clusters.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - UNDOCUMENTED_LEGACY_BEHAVIOR.md
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/persistence formal schema chain
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/db/migrate_004_music_sources.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - UNDOCUMENTED_LEGACY_BEHAVIOR.md
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/persistence formal schema chain
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/db/migrate_005_language_fuel.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - UNDOCUMENTED_LEGACY_BEHAVIOR.md
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/persistence formal schema chain
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/db/migrate_006_language_fuel_douban.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - UNDOCUMENTED_LEGACY_BEHAVIOR.md
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/persistence formal schema chain
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/db/migrate_007_language_fuel_insights.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - UNDOCUMENTED_LEGACY_BEHAVIOR.md
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/persistence formal schema chain
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/db/migrate_008_comments_and_atoms.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - UNDOCUMENTED_LEGACY_BEHAVIOR.md
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/persistence formal schema chain
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/db/migrate_009_language_texture_observations.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - UNDOCUMENTED_LEGACY_BEHAVIOR.md
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/persistence formal schema chain
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/db/migrate_010_topic_derive_source.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - UNDOCUMENTED_LEGACY_BEHAVIOR.md
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/persistence formal schema chain
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/db/schema.sql
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - UNDOCUMENTED_LEGACY_BEHAVIOR.md
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/persistence formal schema chain
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/db/seed_mvp.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - UNDOCUMENTED_LEGACY_BEHAVIOR.md
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/persistence formal schema chain
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/feishu/client.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - EXTERNAL_LIVE_GATE_CHECKLIST.yaml
+  - EXTERNAL_LIVE_GATE_PLAN.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MIGRATION_EXECUTION_PLAN.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/hermes whitelist Tool and Outbox
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/feishu/listener.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - EXTERNAL_LIVE_GATE_CHECKLIST.yaml
+  - EXTERNAL_LIVE_GATE_PLAN.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MIGRATION_EXECUTION_PLAN.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/hermes whitelist Tool and Outbox
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/feishu/push.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - EXTERNAL_LIVE_GATE_CHECKLIST.yaml
+  - EXTERNAL_LIVE_GATE_PLAN.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MIGRATION_EXECUTION_PLAN.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/hermes whitelist Tool and Outbox
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/humanize/comment_voice.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 15
+  referenced_by:
+  - .claude/skills/真人写作基石/SKILL.md
+  - .claude/skills/评论真人味/SKILL.md
+  - BUSINESS_MODEL_ROUTE_CUTOVER_STATUS.yaml
+  - CONTENT_CLASSIFY_STATUS.yaml
+  - CURRENT_REPOSITORY_BASELINE.md
+  - FORMAL_SKILL_ADAPTER_STATUS.yaml
+  - GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01_VALIDATION_REPORT.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/script_review and experience_revision_propose
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/humanize/extract.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 15
+  referenced_by:
+  - .claude/skills/真人写作基石/SKILL.md
+  - .claude/skills/评论真人味/SKILL.md
+  - BUSINESS_MODEL_ROUTE_CUTOVER_STATUS.yaml
+  - CONTENT_CLASSIFY_STATUS.yaml
+  - CURRENT_REPOSITORY_BASELINE.md
+  - FORMAL_SKILL_ADAPTER_STATUS.yaml
+  - GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01_VALIDATION_REPORT.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/script_review and experience_revision_propose
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/language_fuel/backfill_comments.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal experience/evidence pipeline
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/language_fuel/collect_douban.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal experience/evidence pipeline
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/language_fuel/collect_mediacrawler.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal experience/evidence pipeline
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/language_fuel/douban/README.md
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal experience/evidence pipeline
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/language_fuel/douban/__init__.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal experience/evidence pipeline
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/language_fuel/douban/collect.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal experience/evidence pipeline
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/language_fuel/douban/collect_comments.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal experience/evidence pipeline
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/language_fuel/douban/collect_group_topics.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal experience/evidence pipeline
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/language_fuel/douban/collect_reviews.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal experience/evidence pipeline
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/language_fuel/douban/common.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal experience/evidence pipeline
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/language_fuel/extract_hit_comments.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal experience/evidence pipeline
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/language_fuel/extract_texture_base.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal experience/evidence pipeline
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/language_fuel/obsidian.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal experience/evidence pipeline
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/language_fuel/probe_platforms.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal experience/evidence pipeline
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/language_fuel/select_for_topic.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal experience/evidence pipeline
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/language_fuel/store_atoms.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: formal experience/evidence pipeline
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/llm/call.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 21
+  referenced_by:
+  - .agents/skills/analyze-hit-dna/SKILL.md
+  - .claude/README_LEGACY.md
+  - BUSINESS_MODEL_ROUTE_CUTOVER_STATUS.yaml
+  - BUSINESS_MODEL_ROUTE_REGISTRY.yaml
+  - BUSINESS_RULE_CATALOG.yaml
+  - CONTENT_CLASSIFY_STATUS.yaml
+  - CURRENT_REPOSITORY_BASELINE.md
+  - FORMAL_SKILL_ADAPTER_STATUS.yaml
+  - GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01_VALIDATION_REPORT.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MIGRATION_EXECUTION_PLAN.md
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - UNDOCUMENTED_LEGACY_BEHAVIOR.md
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: true
+  replacement: scripts/core/model_gateway
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/music/collect_netease.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 8
+  referenced_by:
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/external_adapters NetEase adapter boundary
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/project_check.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 17
+  referenced_by:
+  - CLEAN_ROOM_ACCEPTANCE.yaml
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-00_VALIDATION_REPORT.md
+  - GOAL-RUNTIME-VERTICAL-SLICE-01_VALIDATION_REPORT.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - implementation_progress/GOAL-00.md
+  - implementation_progress/GOAL-DATA-RESET-01.md
+  - implementation_progress/GOAL-RUNTIME-VERTICAL-SLICE-01.md
+  - implementation_progress/GOAL-V0.6.2-LEGACY-REMOVAL-01.md
+  - scripts/validation/clean_room_readiness.py
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: true
+  replacement: V0.6.2 formal runtime
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/research/research.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - .claude/skills/研究/SKILL.md
+  - BUSINESS_MODEL_ROUTE_CUTOVER_STATUS.yaml
+  - CONTENT_CLASSIFY_STATUS.yaml
+  - CURRENT_REPOSITORY_BASELINE.md
+  - FORMAL_SKILL_ADAPTER_STATUS.yaml
+  - GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01_VALIDATION_REPORT.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/research
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/reverse/backfill_links.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 24
+  referenced_by:
+  - .agents/skills/analyze-hit-dna/SKILL.md
+  - .claude/skills/归纳/SKILL.md
+  - .claude/skills/拆解/SKILL.md
+  - .claude/skills/范例升级/SKILL.md
+  - BUILD_PLAN.md
+  - BUSINESS_MODEL_ROUTE_CUTOVER_STATUS.yaml
+  - BUSINESS_RULE_CATALOG.yaml
+  - CONTENT_CLASSIFY_STATUS.yaml
+  - CURRENT_REPOSITORY_BASELINE.md
+  - FORMAL_SKILL_ADAPTER_STATUS.yaml
+  - GOAL-00_VALIDATION_REPORT.md
+  - GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01_VALIDATION_REPORT.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MIGRATION_EXECUTION_PLAN.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/sample_deep_analyze and tactic_extract
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/reverse/build_card_digest.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 24
+  referenced_by:
+  - .agents/skills/analyze-hit-dna/SKILL.md
+  - .claude/skills/归纳/SKILL.md
+  - .claude/skills/拆解/SKILL.md
+  - .claude/skills/范例升级/SKILL.md
+  - BUILD_PLAN.md
+  - BUSINESS_MODEL_ROUTE_CUTOVER_STATUS.yaml
+  - BUSINESS_RULE_CATALOG.yaml
+  - CONTENT_CLASSIFY_STATUS.yaml
+  - CURRENT_REPOSITORY_BASELINE.md
+  - FORMAL_SKILL_ADAPTER_STATUS.yaml
+  - GOAL-00_VALIDATION_REPORT.md
+  - GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01_VALIDATION_REPORT.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MIGRATION_EXECUTION_PLAN.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/sample_deep_analyze and tactic_extract
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/reverse/collect_openings.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 24
+  referenced_by:
+  - .agents/skills/analyze-hit-dna/SKILL.md
+  - .claude/skills/归纳/SKILL.md
+  - .claude/skills/拆解/SKILL.md
+  - .claude/skills/范例升级/SKILL.md
+  - BUILD_PLAN.md
+  - BUSINESS_MODEL_ROUTE_CUTOVER_STATUS.yaml
+  - BUSINESS_RULE_CATALOG.yaml
+  - CONTENT_CLASSIFY_STATUS.yaml
+  - CURRENT_REPOSITORY_BASELINE.md
+  - FORMAL_SKILL_ADAPTER_STATUS.yaml
+  - GOAL-00_VALIDATION_REPORT.md
+  - GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01_VALIDATION_REPORT.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MIGRATION_EXECUTION_PLAN.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/sample_deep_analyze and tactic_extract
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/reverse/comment_filter.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 24
+  referenced_by:
+  - .agents/skills/analyze-hit-dna/SKILL.md
+  - .claude/skills/归纳/SKILL.md
+  - .claude/skills/拆解/SKILL.md
+  - .claude/skills/范例升级/SKILL.md
+  - BUILD_PLAN.md
+  - BUSINESS_MODEL_ROUTE_CUTOVER_STATUS.yaml
+  - BUSINESS_RULE_CATALOG.yaml
+  - CONTENT_CLASSIFY_STATUS.yaml
+  - CURRENT_REPOSITORY_BASELINE.md
+  - FORMAL_SKILL_ADAPTER_STATUS.yaml
+  - GOAL-00_VALIDATION_REPORT.md
+  - GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01_VALIDATION_REPORT.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MIGRATION_EXECUTION_PLAN.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/sample_deep_analyze and tactic_extract
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/reverse/dna.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 24
+  referenced_by:
+  - .agents/skills/analyze-hit-dna/SKILL.md
+  - .claude/skills/归纳/SKILL.md
+  - .claude/skills/拆解/SKILL.md
+  - .claude/skills/范例升级/SKILL.md
+  - BUILD_PLAN.md
+  - BUSINESS_MODEL_ROUTE_CUTOVER_STATUS.yaml
+  - BUSINESS_RULE_CATALOG.yaml
+  - CONTENT_CLASSIFY_STATUS.yaml
+  - CURRENT_REPOSITORY_BASELINE.md
+  - FORMAL_SKILL_ADAPTER_STATUS.yaml
+  - GOAL-00_VALIDATION_REPORT.md
+  - GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01_VALIDATION_REPORT.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MIGRATION_EXECUTION_PLAN.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/sample_deep_analyze and tactic_extract
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/reverse/fetch_comments.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 24
+  referenced_by:
+  - .agents/skills/analyze-hit-dna/SKILL.md
+  - .claude/skills/归纳/SKILL.md
+  - .claude/skills/拆解/SKILL.md
+  - .claude/skills/范例升级/SKILL.md
+  - BUILD_PLAN.md
+  - BUSINESS_MODEL_ROUTE_CUTOVER_STATUS.yaml
+  - BUSINESS_RULE_CATALOG.yaml
+  - CONTENT_CLASSIFY_STATUS.yaml
+  - CURRENT_REPOSITORY_BASELINE.md
+  - FORMAL_SKILL_ADAPTER_STATUS.yaml
+  - GOAL-00_VALIDATION_REPORT.md
+  - GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01_VALIDATION_REPORT.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MIGRATION_EXECUTION_PLAN.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/sample_deep_analyze and tactic_extract
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/reverse/reduce.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 24
+  referenced_by:
+  - .agents/skills/analyze-hit-dna/SKILL.md
+  - .claude/skills/归纳/SKILL.md
+  - .claude/skills/拆解/SKILL.md
+  - .claude/skills/范例升级/SKILL.md
+  - BUILD_PLAN.md
+  - BUSINESS_MODEL_ROUTE_CUTOVER_STATUS.yaml
+  - BUSINESS_RULE_CATALOG.yaml
+  - CONTENT_CLASSIFY_STATUS.yaml
+  - CURRENT_REPOSITORY_BASELINE.md
+  - FORMAL_SKILL_ADAPTER_STATUS.yaml
+  - GOAL-00_VALIDATION_REPORT.md
+  - GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01_VALIDATION_REPORT.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MIGRATION_EXECUTION_PLAN.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/sample_deep_analyze and tactic_extract
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/reverse/upgrade_examples.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 24
+  referenced_by:
+  - .agents/skills/analyze-hit-dna/SKILL.md
+  - .claude/skills/归纳/SKILL.md
+  - .claude/skills/拆解/SKILL.md
+  - .claude/skills/范例升级/SKILL.md
+  - BUILD_PLAN.md
+  - BUSINESS_MODEL_ROUTE_CUTOVER_STATUS.yaml
+  - BUSINESS_RULE_CATALOG.yaml
+  - CONTENT_CLASSIFY_STATUS.yaml
+  - CURRENT_REPOSITORY_BASELINE.md
+  - FORMAL_SKILL_ADAPTER_STATUS.yaml
+  - GOAL-00_VALIDATION_REPORT.md
+  - GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01_VALIDATION_REPORT.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MIGRATION_EXECUTION_PLAN.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - implementation_progress/GOAL-00.md
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/sample_deep_analyze and tactic_extract
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/run_daily.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 14
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  - MIGRATION_EXECUTION_PLAN.md
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - implementation_progress/GOAL-V0.6.2-LEGACY-REMOVAL-01.md
+  - scripts/validation/clean_room_readiness.py
+  - scripts/validation/legacy_removal_gate.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: true
+  replacement: scripts/core/scheduler and Hermes whitelist Tool controlled task creation
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/setup/create_domain_account.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 9
+  referenced_by:
+  - .agents/skills/create-domain-account/SKILL.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: V0.6.2 formal runtime
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/topics/daily_topics.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 11
+  referenced_by:
+  - .agents/skills/creation-prepare-topic/SKILL.md
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/source_to_topic and scripts/core/production
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/topics/new_topic.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 11
+  referenced_by:
+  - .agents/skills/creation-prepare-topic/SKILL.md
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/source_to_topic and scripts/core/production
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/topics/prepare_topic.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 11
+  referenced_by:
+  - .agents/skills/creation-prepare-topic/SKILL.md
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/source_to_topic and scripts/core/production
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: scripts/topics/spinoff.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 11
+  referenced_by:
+  - .agents/skills/creation-prepare-topic/SKILL.md
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_DATA_INVENTORY.yaml
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: runtime_skills/source_to_topic and scripts/core/production
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: tools/asr/asr_test.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 15
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - EXTERNAL_ENVIRONMENT_REQUIREMENTS.md
+  - EXTERNAL_LIVE_GATE_CHECKLIST.yaml
+  - EXTERNAL_LIVE_GATE_PLAN.md
+  - EXTERNAL_LIVE_GATE_VALIDATION_REPORT.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - implementation_progress/GOAL-V0.6.2-LEGACY-REMOVAL-01.md
+  - scripts/validation/live_gates.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/external_adapters ASR adapter boundary
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: tools/asr/reverse_prep_worker.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 15
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - EXTERNAL_ENVIRONMENT_REQUIREMENTS.md
+  - EXTERNAL_LIVE_GATE_CHECKLIST.yaml
+  - EXTERNAL_LIVE_GATE_PLAN.md
+  - EXTERNAL_LIVE_GATE_VALIDATION_REPORT.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - implementation_progress/GOAL-V0.6.2-LEGACY-REMOVAL-01.md
+  - scripts/validation/live_gates.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/external_adapters ASR adapter boundary
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: tools/asr/transcribe.py
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 15
+  referenced_by:
+  - BUILD_PLAN.md
+  - CURRENT_REPOSITORY_BASELINE.md
+  - EXTERNAL_ENVIRONMENT_REQUIREMENTS.md
+  - EXTERNAL_LIVE_GATE_CHECKLIST.yaml
+  - EXTERNAL_LIVE_GATE_PLAN.md
+  - EXTERNAL_LIVE_GATE_VALIDATION_REPORT.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_CODE_AUDIT.md
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - MODULE_BEHAVIOR_CONTRACTS.yaml
+  - MODULE_REUSE_MATRIX.yaml
+  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - implementation_progress/GOAL-V0.6.2-LEGACY-REMOVAL-01.md
+  - scripts/validation/live_gates.py
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: false
+  replacement: scripts/core/external_adapters ASR adapter boundary
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: tools/start_listener.vbs
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 4
+  referenced_by:
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  - LEGACY_RETIREMENT_REPORT.md
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: true
+  replacement: no direct launcher; use future user-approved Hermes/Core activation
+    path
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: 启动真人写作提炼.bat
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 3
+  referenced_by:
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: true
+  replacement: no direct launcher; use future user-approved Hermes/Core activation
+    path
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+- path: 启动逆向拆DNA.bat
+  type: legacy_executable_or_business_runtime_asset
+  original_purpose: Legacy MVP business/runtime path before V0.6.2 formal runtime
+  current_reference_count: 4
+  referenced_by:
+  - BUILD_PLAN.md
+  - GOAL-V0.6.2-LEGACY-REMOVAL-01_VALIDATION_REPORT.md
+  - LEGACY_REMOVAL_INVENTORY.yaml
+  - LEGACY_RETIREMENT_MATRIX.yaml
+  production_reachable: false
+  test_reachable: false
+  documentation_reachable: true
+  replacement: no direct launcher; use future user-approved Hermes/Core activation
+    path
+  removal_decision: remove_from_active_repository
+  removal_reason: Not part of the V0.6.2 formal production chain and superseded by
+    Core/Adapter/Formal Skill boundaries
+  preservation_reason: ''
+  removed_from_worktree: true
+  risk: medium
+  verification_method: git ls-files plus legacy_removal_gate active/historical reference
+    scan
+summary:
+  legacy_executable_path_count: 69
+  production_legacy_reference_count: 0
+  historical_documentation_reference_count: 66

@@ -209,7 +209,7 @@ class ExternalExecutorAdapterTests(unittest.TestCase):
 
         self.assertEqual(result.item_count, 1)
         self.assertEqual(result.payload["comments"][0]["platform"], "netease_music")
-        self.assertEqual(executor.commands[0].executable, "scripts/music/collect_netease.py")
+        self.assertEqual(executor.commands[0].executable, "adapter.netease_music.comments")
 
     def test_runtime_host_rejects_external_adapter_by_default_and_allows_phase4_opt_in(self) -> None:
         executor = RecordingExecutor(

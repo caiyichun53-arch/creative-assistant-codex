@@ -59,17 +59,17 @@ gates:
   - gate_id: GATE-ASR
     adapter: ASR command boundary
     live_enabled: false
-    isolated_database: data/validation/live_gates/v0.6.2/asr/creation.db
+    isolated_database: data/validation/live_gates/v0.6.2/asr/asr_validation.sqlite
     required_env:
       - ASR_TEST_MEDIA_PATH
       - ASR_MODELS_ROOT
     required_test_env:
       - kind: isolated_database
         name: isolated ASR validation database
-        value: data/validation/live_gates/v0.6.2/asr/creation.db
+        value: data/validation/live_gates/v0.6.2/asr/asr_validation.sqlite
       - kind: path_exists
-        name: ASR entrypoint
-        value: tools/asr/transcribe.py
+        name: ASR adapter boundary
+        value: scripts/core/external_adapters/goal_phase4_external_adapters.py
 
   - gate_id: GATE-SEARCH-PROVIDER
     adapter: FormalResearchService
@@ -87,17 +87,17 @@ gates:
   - gate_id: GATE-EXTERNAL-COLLECTOR-ADAPTER
     adapter: External collector adapter boundary
     live_enabled: false
-    isolated_database: data/validation/live_gates/v0.6.2/external_collector/creation.db
+    isolated_database: data/validation/live_gates/v0.6.2/external_collector/collector_validation.sqlite
     required_env:
       - COLLECTOR_TEST_PROFILE_DIR
       - COLLECTOR_TEST_SAMPLE_URL
     required_test_env:
       - kind: isolated_database
         name: isolated collector validation database
-        value: data/validation/live_gates/v0.6.2/external_collector/creation.db
+        value: data/validation/live_gates/v0.6.2/external_collector/collector_validation.sqlite
       - kind: path_exists
-        name: collector entrypoint
-        value: scripts/collect/crawl_competitors.py
+        name: collector adapter boundary
+        value: scripts/core/external_adapters/goal_phase4_external_adapters.py
 
   - gate_id: GATE-SHADOW-E2E
     adapter: GOAL-12 staging shadow boundary

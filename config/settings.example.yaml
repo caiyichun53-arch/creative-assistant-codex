@@ -26,45 +26,13 @@ storage:
 legacy_runtime:
   enabled: false
   allow_env: CREATION_ASSISTANT_ENABLE_LEGACY_RUNTIME
-  status: read_only_quarantined
-  quarantined_entrypoints:
-    - scripts/run_daily.py
-    - scripts/collect
-    - scripts/analyze
-    - scripts/topics
-    - scripts/reverse
-    - scripts/research
-    - scripts/content
-    - scripts/language_fuel
-    - scripts/music
-    - scripts/feishu
-    - tools/asr
-    - 启动逆向拆DNA.bat
-    - 启动真人写作提炼.bat
+  status: removed_from_active_repository
+  runtime_authority: false
 
 llm:
-  provider: codex
-  default: codex-low
-  aliases:
-    codex-low: gpt-5.4-mini
-    codex-mid: gpt-5.5
-    codex-high: gpt-5.5
-    claude-haiku: haiku
-    claude-sonnet: sonnet
-    claude-opus: opus
-  codex:
-    command: codex
-    sandbox: read-only
-    skip_git_repo_check: true
-    extra_args: []
-  routes:
-    topic_judge: codex-low
-    reverse_dna: codex-mid
-    reverse_reduce: codex-mid
-    language_fuel_extract: codex-mid
-    human_flavor: codex-mid
-    ai_flavor_judge: codex-low
-    research: codex-mid
+  provider: hermes
+  route_registry: BUSINESS_MODEL_ROUTE_REGISTRY.yaml
+  direct_cli_runtime_authority: false
 
 hit_detection:
   baseline_window_days: 90

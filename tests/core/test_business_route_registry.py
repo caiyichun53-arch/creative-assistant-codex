@@ -43,7 +43,7 @@ class BusinessRouteRegistryTests(unittest.TestCase):
     def test_formal_production_roots_have_no_direct_cli_model_calls(self) -> None:
         result = scan_direct_model_calls()
         self.assertEqual(result["formal_production_direct_model_call_count"], 0)
-        self.assertGreater(result["legacy_direct_model_call_count"], 0)
+        self.assertEqual(result["legacy_direct_model_call_count"], 0)
 
     def test_hermes_isolation_policy_blocks_recursive_chain(self) -> None:
         result = verify_hermes_isolation(load_registry())

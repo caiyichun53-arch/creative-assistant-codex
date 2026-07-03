@@ -252,7 +252,7 @@ class AsrAdapter(_ExternalAdapterBase):
         command = ExternalAdapterCommand(
             adapter_id=self.adapter_id,
             capability=self.capability,
-            executable="tools/asr/transcribe.py",
+            executable="adapter.asr.sensevoice",
             args=("--media", "<controlled-media-path>", "--language", language),
             input_payload={
                 "media_ref": _require_text(media_ref, "media_ref"),
@@ -289,7 +289,7 @@ class NetEaseMusicCollectorAdapter(_ExternalAdapterBase):
         command = ExternalAdapterCommand(
             adapter_id=self.adapter_id,
             capability=self.capability,
-            executable="scripts/music/collect_netease.py",
+            executable="adapter.netease_music.comments",
             args=("comments", "--song-id", "<controlled-song-id>"),
             input_payload={"song_id": _require_text(song_id, "song_id")},
             max_items=cap,

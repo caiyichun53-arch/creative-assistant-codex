@@ -21,13 +21,14 @@ Copy-Item config/domains/example.yaml config/domains/example_domain.yaml
 - `config/domains/*.yaml`: 领域配置和对标账号种子。
 - `data/`, `outputs/`, `logs/`, `vault/`, `vendor/`: 数据、生成物、日志、Obsidian 库和第三方采集器。
 
-## 常用入口
+## 当前有效入口
 
 ```powershell
-python scripts/db/init_db.py
-python scripts/project_check.py
-python scripts/run_daily.py
-python scripts/reverse/dna.py --status
+python scripts/validation/production_startup_smoke.py --require-legacy-absent
+python scripts/core/staging/verify_goal_v062_phase8_readiness.py
+python -m unittest tests.core.test_phase5_business_workflow tests.core.test_phase6_hermes_whitelist_tool tests.core.test_phase7_synthetic_acceptance
 ```
+
+当前正式链路为: Feishu -> Hermes -> whitelist Tool -> Core API -> Job/Worker -> Input Assembly -> Workflow/Skill Dispatcher -> Portable Skill -> ModelGateway -> Materializer -> Outbox。
 
 项目约束和构建路线见 `AGENTS.md` 与 `BUILD_PLAN.md`。

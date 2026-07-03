@@ -580,7 +580,7 @@ class FormalSkillGateTests(unittest.TestCase):
     def test_formal_production_roots_have_no_direct_old_model_calls(self) -> None:
         result = scan_direct_model_calls()
         self.assertEqual(result["formal_production_direct_model_call_count"], 0)
-        self.assertGreater(result["legacy_direct_model_call_count"], 0)
+        self.assertEqual(result["legacy_direct_model_call_count"], 0)
 
     def test_clean_room_db_remains_empty(self) -> None:
         result = clean_room_status()
