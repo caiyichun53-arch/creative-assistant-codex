@@ -1,0 +1,349 @@
+schema_version: content_plan.business_contract.v1
+goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
+status: active_formal_business_contract
+skill_id: content_plan
+skill_version: 1.0.0
+source_documents:
+  - C:\Users\15891\.codex\attachments\4ebd5a12-206f-401e-b0b6-0c3878e47996\pasted-text-1.txt
+  - AGENTS.md
+  - BUILD_PLAN.md
+  - FORMAL_SKILL_ROUTE_MAPPING.yaml
+  - REMAINING_FORMAL_SKILL_EXECUTION_GRAPH.yaml
+responsibility: Plan hooks and a beat outline for one selected content item from supplied brief, evidence, and tactics.
+non_responsibilities:
+  - source_to_topic
+  - sample_deep_analyze
+  - tactic_extract
+  - research_evidence_extract
+  - production_research_plan
+  - script_generation
+  - script_review
+  - banned_word_check
+  - fact_verification_against_external_sources
+  - database_query
+  - file_read_write
+  - feishu_messaging
+  - other_skill_invocation
+allowed_inputs:
+  source: public_input_binding_only
+  required_fields:
+    - request_id
+    - correlation_id
+    - candidate_topic
+    - brief
+    - evidence_items
+    - tactic_candidates
+    - style_examples
+    - domain_label
+    - schema_version
+forbidden_inputs:
+  - database_connection
+  - orm_object
+  - internal_table_name
+  - legacy_database_id
+  - local_file_path
+  - source_url_to_fetch
+  - cookie_or_token
+  - hermes_chat_memory
+  - cold_backup_reference
+planning_policy:
+  consumes_supplied_brief_only: true
+  must_not_fetch_or_verify_externally: true
+  must_not_write_script_text: true
+  must_not_call_other_skills: true
+  hook_subnode_route: business.creation_hook
+  outline_subnode_route: business.creation_outline
+  selected_hook_policy: first_valid_hook_from_hook_subnode
+  outline_must_use_selected_hook: true
+evidence_requirements:
+  evidence_items_min: 1
+  evidence_items_max: 12
+  tactic_candidates_min: 1
+  tactic_candidates_max: 12
+  style_examples_min: 1
+  style_examples_max: 6
+  output_hooks_min: 1
+  output_hooks_max: 5
+  output_beats_min: 1
+  output_beats_max: 8
+input_length_limits:
+  request_id_max: 80
+  correlation_id_max: 80
+  candidate_topic_max: 120
+  brief_max: 3000
+  tactic_candidate_max: 240
+  style_example_max: 400
+context_budget:
+  max_input_tokens: 9000
+token_budget:
+  max_output_tokens: 1800
+timeout:
+  milliseconds: 60000
+retry:
+  provider_max_attempts_per_job: 1
+  scheduler_max_attempts: 3
+  retry_on:
+    - provider_error
+    - output_schema_error
+idempotency:
+  key: content_plan:{request_id}
+  duplicate_same_request: replay_existing_job
+  duplicate_different_request: reject
+error_contract:
+  validation_error: fail_without_formal_result
+  provider_error: fail_attempt_and_retry_if_attempts_remain
+  model_empty_result: technical_failure_without_formal_result
+  non_json_output: technical_failure_without_formal_result
+  schema_error: fail_without_formal_result
+  materializer_error: fail_without_success_outbox
+materialization_contract:
+  object_kind: formal_business_skill_result
+  projection_version: formal_business_skill_result.v1
+  result_index: formal_business_skill_result_index
+  success_outbox_topic: formal_business_skill.result.materialized
+  failed_runs_record_attempt: true
+  failed_runs_create_formal_result: false
+fixture_cases:
+  required_fixture_ids:
+    - fan_kepu_social_life
+    - music_entertainment
+    - third_domain_neutral
+    - model_empty_result
+    - non_json_output
+    - missing_output_field
+    - empty_hooks
+    - empty_beats
+completion_definition:
+  - business_contract_complete
+  - no_missing_requirement_for_current_formal_sources
+  - formal_skill_package_active
+  - fake_fixture_matrix_passed
+  - adapter_job_worker_materializer_passed
+  - idempotent_replay_passed
+  - retry_failure_path_passed
+  - both_subnodes_use_model_gateway
+  - clean_room_formal_db_all_zero
+  - formal_production_direct_cli_model_calls_zero
+missing_requirements: []
+allowed_model_nodes:
+  - business.creation_hook
+  - business.creation_outline
+whether_model_is_required: true
+target_runner: FormalBusinessSkillAdapter
+materializer_contract: formal_business_skill_result.v1
+hook_model_output_schema:
+  type: object
+  required:
+    - hooks
+    - schema_version
+  properties:
+    hooks:
+      type: array
+      minItems: 1
+      maxItems: 5
+      items:
+        type: string
+        minLength: 1
+        maxLength: 240
+    schema_version:
+      type: string
+      const: content_plan.hook_output.v1
+  additional_properties: false
+outline_model_output_schema:
+  type: object
+  required:
+    - beats
+    - schema_version
+  properties:
+    beats:
+      type: array
+      minItems: 1
+      maxItems: 8
+      items:
+        type: string
+        minLength: 1
+        maxLength: 360
+    schema_version:
+      type: string
+      const: content_plan.outline_output.v1
+  additional_properties: false
+model_binding:
+  route_name: business.creation_outline
+  binding_name: content_plan_public_input_to_hook_outline
+  binding_version: 1.0.0
+  input_map:
+    fixture_id:
+      source: input
+      key: request_id
+    brief:
+      source: input
+      key: brief
+    style_examples:
+      source: input
+      key: style_examples
+  model_input_schema:
+    type: object
+    required:
+      - fixture_id
+      - brief
+      - style_examples
+    properties:
+      fixture_id: string
+      brief: string
+      style_examples:
+        type: array
+        minItems: 1
+        maxItems: 6
+        items:
+          type: string
+          minLength: 1
+          maxLength: 400
+    additional_properties: false
+  prompt_template: >-
+    Return only JSON through the two approved content_plan subnodes. First
+    business.creation_hook returns hooks with schema_version
+    content_plan.hook_output.v1. Then business.creation_outline receives the
+    selected hook and returns beats with schema_version
+    content_plan.outline_output.v1. Use only the supplied brief and
+    style_examples; do not write script text or call other Skills.
+    brief={brief}; style_examples={style_examples}
+  model_output_schema:
+    type: object
+    required:
+      - hooks
+      - selected_hook
+      - beats
+      - schema_version
+    properties:
+      hooks:
+        type: array
+        minItems: 1
+        maxItems: 5
+        items:
+          type: string
+          minLength: 1
+          maxLength: 240
+      selected_hook:
+        type: string
+        minLength: 1
+        maxLength: 240
+      beats:
+        type: array
+        minItems: 1
+        maxItems: 8
+        items:
+          type: string
+          minLength: 1
+          maxLength: 360
+      schema_version:
+        type: string
+        const: content_plan.output.v1
+    additional_properties: false
+  output_map:
+    hooks:
+      source: model_output
+      key: hooks
+    selected_hook:
+      source: model_output
+      key: selected_hook
+    beats:
+      source: model_output
+      key: beats
+    schema_version:
+      source: model_output
+      key: schema_version
+input_schema:
+  type: object
+  required:
+    - request_id
+    - correlation_id
+    - candidate_topic
+    - brief
+    - evidence_items
+    - tactic_candidates
+    - style_examples
+    - domain_label
+    - schema_version
+  properties:
+    request_id:
+      type: string
+      minLength: 1
+      maxLength: 80
+    correlation_id:
+      type: string
+      minLength: 1
+      maxLength: 80
+    candidate_topic:
+      type: string
+      minLength: 1
+      maxLength: 120
+    brief:
+      type: string
+      minLength: 1
+      maxLength: 3000
+    evidence_items:
+      type: array
+      minItems: 1
+      maxItems: 12
+      items:
+        type: object
+    tactic_candidates:
+      type: array
+      minItems: 1
+      maxItems: 12
+      items:
+        type: string
+        minLength: 1
+        maxLength: 240
+    style_examples:
+      type: array
+      minItems: 1
+      maxItems: 6
+      items:
+        type: string
+        minLength: 1
+        maxLength: 400
+    domain_label:
+      type: string
+      enum:
+        - fan_kepu_social_life
+        - music_entertainment
+        - third_domain_neutral
+        - cross_domain
+        - unknown
+    schema_version:
+      type: string
+      const: content_plan.input.v1
+  additional_properties: false
+output_schema:
+  type: object
+  required:
+    - hooks
+    - selected_hook
+    - beats
+    - schema_version
+  properties:
+    hooks:
+      type: array
+      minItems: 1
+      maxItems: 5
+      items:
+        type: string
+        minLength: 1
+        maxLength: 240
+    selected_hook:
+      type: string
+      minLength: 1
+      maxLength: 240
+    beats:
+      type: array
+      minItems: 1
+      maxItems: 8
+      items:
+        type: string
+        minLength: 1
+        maxLength: 360
+    schema_version:
+      type: string
+      const: content_plan.output.v1
+  additional_properties: false

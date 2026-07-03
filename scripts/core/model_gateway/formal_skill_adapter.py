@@ -56,6 +56,8 @@ RESEARCH_EVIDENCE_EXTRACT_CONTRACT_PATH = ROOT / "RESEARCH_EVIDENCE_EXTRACT_BUSI
 RESEARCH_EVIDENCE_EXTRACT_FIXTURES_PATH = ROOT / "runtime_skills" / "research_evidence_extract" / "fixtures.yaml"
 PRODUCTION_RESEARCH_PLAN_CONTRACT_PATH = ROOT / "PRODUCTION_RESEARCH_PLAN_BUSINESS_CONTRACT.yaml"
 PRODUCTION_RESEARCH_PLAN_FIXTURES_PATH = ROOT / "runtime_skills" / "production_research_plan" / "fixtures.yaml"
+CONTENT_PLAN_CONTRACT_PATH = ROOT / "CONTENT_PLAN_BUSINESS_CONTRACT.yaml"
+CONTENT_PLAN_FIXTURES_PATH = ROOT / "runtime_skills" / "content_plan" / "fixtures.yaml"
 STATUS_PATH = ROOT / "CONTENT_CLASSIFY_STATUS.yaml"
 REPORT_PATH = ROOT / f"{GOAL_ID}_VALIDATION_REPORT.md"
 PROGRESS_PATH = ROOT / "implementation_progress" / f"{GOAL_ID}.md"
@@ -73,6 +75,7 @@ SAMPLE_DEEP_ANALYZE_OUTPUT_SCHEMA_VERSION = "sample_deep_analyze.output.v1"
 TACTIC_EXTRACT_OUTPUT_SCHEMA_VERSION = "tactic_extract.output.v1"
 RESEARCH_EVIDENCE_EXTRACT_OUTPUT_SCHEMA_VERSION = "research_evidence_extract.output.v1"
 PRODUCTION_RESEARCH_PLAN_OUTPUT_SCHEMA_VERSION = "production_research_plan.output.v1"
+CONTENT_PLAN_OUTPUT_SCHEMA_VERSION = "content_plan.output.v1"
 
 BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "skill_id",
@@ -249,6 +252,27 @@ PRODUCTION_RESEARCH_PLAN_BUSINESS_CONTRACT_REQUIRED_KEYS = {
     "fixture_cases",
     "completion_definition",
 }
+CONTENT_PLAN_BUSINESS_CONTRACT_REQUIRED_KEYS = {
+    "skill_id",
+    "skill_version",
+    "source_documents",
+    "responsibility",
+    "non_responsibilities",
+    "allowed_inputs",
+    "forbidden_inputs",
+    "planning_policy",
+    "evidence_requirements",
+    "input_length_limits",
+    "context_budget",
+    "token_budget",
+    "timeout",
+    "retry",
+    "idempotency",
+    "error_contract",
+    "materialization_contract",
+    "fixture_cases",
+    "completion_definition",
+}
 CONCRETE_LABELS = {
     "fan_kepu_social_life",
     "music_entertainment",
@@ -385,6 +409,8 @@ class FormalSkillContract:
             validate_research_evidence_extract_business_contract(load_research_evidence_extract_business_contract())
         if self.formal_skill_id == "production_research_plan":
             validate_production_research_plan_business_contract(load_production_research_plan_business_contract())
+        if self.formal_skill_id == "content_plan":
+            validate_content_plan_business_contract(load_content_plan_business_contract())
         if self.formal_skill_id == "content_relation_judge":
             validate_content_relation_judge_business_contract(load_content_relation_judge_business_contract())
 
@@ -442,6 +468,8 @@ class FormalBusinessSkillAdapter:
 
     def run(self, input_payload: dict[str, Any]) -> FormalSkillRunResult:
         validate_payload(input_payload, self.contract.input_schema)
+        if self.contract.formal_skill_id == "content_plan":
+            return self._run_content_plan(input_payload)
         preprocessed = preprocess_formal_skill_input(self.contract.formal_skill_id, input_payload)
         model_input = apply_binding(self.contract.input_map, input_payload, {}, preprocessed)
         validate_payload(model_input, self.contract.model_input_schema)
@@ -493,6 +521,80 @@ class FormalBusinessSkillAdapter:
             output_payload=output_payload,
             model_input_payload=model_input,
             model_run_envelope_version_id=model_run.envelope_version_id,
+            skill_hash=self.contract.skill_hash,
+            binding_hash=self.contract.binding_hash,
+            model_route=self.contract.route_name,
+        )
+
+    def _run_content_plan(self, input_payload: dict[str, Any]) -> FormalSkillRunResult:
+        for route_name in ("business.creation_hook", "business.creation_outline"):
+            if route_name not in self.gateway.routes:
+                raise FormalSkillValidationError(f"missing approved model route: {route_name}")
+        hook_input = {
+            "fixture_id": input_payload["request_id"],
+            "brief": input_payload["brief"],
+            "style_examples": input_payload["style_examples"],
+        }
+        hook_run = self.gateway.complete(
+            ModelRequest(
+                route_name="business.creation_hook",
+                prompt=(
+                    "Return only JSON with keys hooks, schema_version. "
+                    f"brief={hook_input['brief']}; style_examples={hook_input['style_examples']}"
+                ),
+                input_payload=hook_input,
+                correlation_id=input_payload["correlation_id"],
+                skill_name=self.contract.formal_skill_id,
+                skill_version=self.contract.version,
+                skill_hash=self.contract.skill_hash,
+                binding_name="content_plan_hook_subnode",
+                binding_version=self.contract.binding_version,
+                binding_hash=self.contract.binding_hash,
+                metadata={"formal_skill_id": self.contract.formal_skill_id, "subnode": "hook"},
+            )
+        )
+        hook_output = parse_model_json(hook_run.output_text)
+        validate_payload(hook_output, load_content_plan_business_contract()["hook_model_output_schema"])
+        hooks = list(hook_output["hooks"])
+        selected_hook = str(hooks[0]) if hooks else ""
+        outline_input = {
+            "fixture_id": input_payload["request_id"],
+            "selected_hook": selected_hook,
+            "brief": input_payload["brief"],
+        }
+        outline_run = self.gateway.complete(
+            ModelRequest(
+                route_name="business.creation_outline",
+                prompt=(
+                    "Return only JSON with keys beats, schema_version. "
+                    f"selected_hook={selected_hook}; brief={outline_input['brief']}"
+                ),
+                input_payload=outline_input,
+                correlation_id=input_payload["correlation_id"],
+                skill_name=self.contract.formal_skill_id,
+                skill_version=self.contract.version,
+                skill_hash=self.contract.skill_hash,
+                binding_name=self.contract.binding_name,
+                binding_version=self.contract.binding_version,
+                binding_hash=self.contract.binding_hash,
+                metadata={"formal_skill_id": self.contract.formal_skill_id, "subnode": "outline"},
+            )
+        )
+        outline_output = parse_model_json(outline_run.output_text)
+        validate_payload(outline_output, load_content_plan_business_contract()["outline_model_output_schema"])
+        output_payload = {
+            "hooks": hooks,
+            "selected_hook": selected_hook,
+            "beats": outline_output["beats"],
+            "schema_version": CONTENT_PLAN_OUTPUT_SCHEMA_VERSION,
+        }
+        validate_payload(output_payload, self.contract.output_schema)
+        validate_content_plan_output_semantics(input_payload, output_payload)
+        return FormalSkillRunResult(
+            formal_skill_id=self.contract.formal_skill_id,
+            output_payload=output_payload,
+            model_input_payload={"hook_input": hook_input, "outline_input": outline_input},
+            model_run_envelope_version_id=outline_run.envelope_version_id,
             skill_hash=self.contract.skill_hash,
             binding_hash=self.contract.binding_hash,
             model_route=self.contract.route_name,
@@ -607,6 +709,10 @@ def load_production_research_plan_business_contract(
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
+def load_content_plan_business_contract(path: Path = CONTENT_PLAN_CONTRACT_PATH) -> dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
 def load_content_classify_fixtures(path: Path = CONTENT_CLASSIFY_FIXTURES_PATH) -> list[dict[str, Any]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     fixtures = data.get("fixtures") or []
@@ -662,6 +768,11 @@ def load_research_evidence_extract_fixtures(
 def load_production_research_plan_fixtures(
     path: Path = PRODUCTION_RESEARCH_PLAN_FIXTURES_PATH,
 ) -> list[dict[str, Any]]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return list(data.get("fixtures") or [])
+
+
+def load_content_plan_fixtures(path: Path = CONTENT_PLAN_FIXTURES_PATH) -> list[dict[str, Any]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return list(data.get("fixtures") or [])
 
@@ -838,6 +949,32 @@ def validate_production_research_plan_business_contract(data: dict[str, Any]) ->
         "skill_version": data["skill_version"],
         "source_document_count": len(data.get("source_documents") or []),
         "missing_requirement_count": len(data.get("missing_requirements") or []),
+    }
+
+
+def validate_content_plan_business_contract(data: dict[str, Any]) -> dict[str, Any]:
+    missing = sorted(CONTENT_PLAN_BUSINESS_CONTRACT_REQUIRED_KEYS - set(data))
+    if missing:
+        raise FormalSkillValidationError(f"content_plan business contract missing keys: {missing}")
+    if data.get("schema_version") != "content_plan.business_contract.v1":
+        raise FormalSkillValidationError("unexpected content_plan business contract schema_version")
+    if data.get("missing_requirements"):
+        raise FormalSkillValidationError("content_plan business contract has missing_requirement entries")
+    if data.get("skill_id") != "content_plan":
+        raise FormalSkillValidationError("content_plan business contract skill_id mismatch")
+    allowed_nodes = data.get("allowed_model_nodes") or []
+    if allowed_nodes != ["business.creation_hook", "business.creation_outline"]:
+        raise FormalSkillValidationError("content_plan must use hook and outline subnodes only")
+    hook_schema = data.get("hook_model_output_schema") or {}
+    outline_schema = data.get("outline_model_output_schema") or {}
+    validate_schema_definition(hook_schema, "content_plan_hook_model_output_schema")
+    validate_schema_definition(outline_schema, "content_plan_outline_model_output_schema")
+    return {
+        "skill_id": data["skill_id"],
+        "skill_version": data["skill_version"],
+        "source_document_count": len(data.get("source_documents") or []),
+        "missing_requirement_count": len(data.get("missing_requirements") or []),
+        "subnode_count": len(allowed_nodes),
     }
 
 
@@ -1074,6 +1211,30 @@ def validate_production_research_plan_output_semantics(
     for question in open_questions:
         if not isinstance(question, str) or not question.strip():
             raise FormalSkillValidationError("production_research_plan open_questions must be non-empty strings")
+
+
+def validate_content_plan_output_semantics(input_payload: dict[str, Any], output_payload: dict[str, Any]) -> None:
+    if output_payload["schema_version"] != CONTENT_PLAN_OUTPUT_SCHEMA_VERSION:
+        raise FormalSkillValidationError("content_plan output schema_version mismatch")
+    hooks = output_payload["hooks"]
+    selected_hook = str(output_payload["selected_hook"]).strip()
+    beats = output_payload["beats"]
+    if not hooks:
+        raise FormalSkillValidationError("content_plan requires hooks")
+    if selected_hook not in hooks:
+        raise FormalSkillValidationError("content_plan selected_hook must come from hooks")
+    if not beats:
+        raise FormalSkillValidationError("content_plan requires beats")
+    if len(hooks) > 5 or len(beats) > 8:
+        raise FormalSkillValidationError("content_plan output arrays exceed max size")
+    for hook in hooks:
+        if not isinstance(hook, str) or not hook.strip():
+            raise FormalSkillValidationError("content_plan hooks must be non-empty strings")
+    for beat in beats:
+        if not isinstance(beat, str) or not beat.strip():
+            raise FormalSkillValidationError("content_plan beats must be non-empty strings")
+    if not str(input_payload.get("brief", "")).strip():
+        raise FormalSkillValidationError("content_plan requires brief")
 
 
 def parse_model_json(output_text: str) -> dict[str, Any]:
@@ -2019,6 +2180,78 @@ class DeterministicProductionResearchPlanModelPort:
         )
 
 
+class DeterministicContentPlanModelPort:
+    provider_name = "formal_business_skill_test_port"
+
+    def __init__(self, *, behavior: str = "success"):
+        self.behavior = behavior
+        self.call_count = 0
+        self.routes_seen: list[str] = []
+
+    def complete(self, request: ModelRequest, route: ModelRoute) -> ModelProviderResult:
+        self.call_count += 1
+        self.routes_seen.append(route.route_name)
+        behavior = self.behavior
+        is_hook = route.route_name == "business.creation_hook"
+        is_outline = route.route_name == "business.creation_outline"
+        if behavior == "fail_once" and self.call_count == 1:
+            raise RuntimeError("synthetic content_plan model port failure")
+        if behavior == "failure":
+            raise RuntimeError("synthetic content_plan model port failure")
+        if behavior == "outline_failure" and is_outline:
+            raise RuntimeError("synthetic content_plan outline failure")
+        if behavior in {"empty", "hook_empty"} and is_hook:
+            return self._result("", request)
+        if behavior == "outline_empty" and is_outline:
+            return self._result("", request)
+        if behavior in {"not_json", "hook_not_json"} and is_hook:
+            return self._result("not-json", request)
+        if behavior == "outline_not_json" and is_outline:
+            return self._result("not-json", request)
+        if behavior in {"missing_field", "hook_missing_field"} and is_hook:
+            return self._result(json.dumps({"schema_version": "content_plan.hook_output.v1"}, ensure_ascii=False), request)
+        if behavior == "outline_missing_field" and is_outline:
+            return self._result(json.dumps({"schema_version": "content_plan.outline_output.v1"}, ensure_ascii=False), request)
+        if is_hook:
+            hooks = [
+                "Open with the familiar wait, then reveal the hidden system.",
+                "Start from one small scene and turn it into the central question.",
+            ]
+            if behavior == "empty_hooks":
+                hooks = []
+            payload = {"hooks": hooks, "schema_version": "content_plan.hook_output.v1"}
+            return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+        if is_outline:
+            selected_hook = str(request.input_payload.get("selected_hook", "selected hook"))
+            beats = [
+                f"Beat 1: Use the selected hook: {selected_hook}",
+                "Beat 2: Ground the problem in the supplied brief.",
+                "Beat 3: Turn the tactic into a concrete structure for drafting.",
+            ]
+            if behavior == "empty_beats":
+                beats = []
+            payload = {"beats": beats, "schema_version": "content_plan.outline_output.v1"}
+            return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
+        raise RuntimeError(f"unexpected content_plan route: {route.route_name}")
+
+    @staticmethod
+    def _result(output_text: str, request: ModelRequest) -> ModelProviderResult:
+        return ModelProviderResult(
+            output_text=output_text,
+            usage=ModelUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            cost={"test": 0},
+            provider_request_id=f"fake-{request.input_payload.get('fixture_id', 'missing')}",
+            metadata={
+                "fixture": True,
+                "tools_enabled": False,
+                "memory_enabled": False,
+                "messaging_enabled": False,
+                "nested_job_orchestration_enabled": False,
+                "file_or_terminal_side_effects_enabled": False,
+            },
+        )
+
+
 class FormalBusinessSkillMaterializer:
     def __init__(self, store: PersistenceStore, *, id_factory: Callable[[], str] = uuid7):
         self.store = store
@@ -2766,6 +2999,62 @@ def make_production_research_plan_harness(
     )
 
 
+def make_content_plan_harness(
+    *,
+    id_factory: Callable[[], str] = uuid7,
+    now_ms: Callable[[], int] | None = None,
+    monotonic_ms: Callable[[], int] | None = None,
+    provider: ModelProvider | None = None,
+) -> FormalBusinessSkillHarness:
+    contract = FormalSkillContract.from_yaml(CONTENT_PLAN_CONTRACT_PATH)
+    store = PersistenceStore.in_memory(id_factory=id_factory)
+    scheduler = Goal03Scheduler(store, id_factory=id_factory, now_ms=now_ms)
+    materializer = FormalBusinessSkillMaterializer(store, id_factory=id_factory)
+    provider = provider or DeterministicContentPlanModelPort()
+    hook_route = ModelRoute(
+        route_name="business.creation_hook",
+        provider_name=provider.provider_name,
+        model_name="deterministic-content-plan-hook",
+        config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+        config_hash=content_hash({"route": "business.creation_hook", "formal_skill_id": contract.formal_skill_id}),
+        timeout_ms=1000,
+    )
+    outline_route = ModelRoute(
+        route_name="business.creation_outline",
+        provider_name=provider.provider_name,
+        model_name="deterministic-content-plan-outline",
+        config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+        config_hash=content_hash({"route": "business.creation_outline", "formal_skill_id": contract.formal_skill_id}),
+        timeout_ms=1000,
+    )
+    gateway = ModelGateway(
+        routes={hook_route.route_name: hook_route, outline_route.route_name: outline_route},
+        providers={provider.provider_name: provider},
+        materializer=ModelRunMaterializer(store),
+        monotonic_ms=monotonic_ms,
+    )
+    adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
+    worker = FormalBusinessSkillWorker(
+        scheduler=scheduler,
+        adapter=adapter,
+        materializer=materializer,
+        contract=contract,
+        worker_id="formal-business-skill-worker",
+    )
+    api = FormalBusinessSkillCoreAPI(scheduler, contract)
+    return FormalBusinessSkillHarness(
+        store=store,
+        scheduler=scheduler,
+        api=api,
+        worker=worker,
+        gateway=gateway,
+        materializer=materializer,
+        adapter=adapter,
+        contract=contract,
+        provider=provider,
+    )
+
+
 def sample_content_classify_input(**overrides: Any) -> dict[str, Any]:
     payload = {
         "request_id": "content-classify-001",
@@ -2857,6 +3146,33 @@ def sample_production_research_plan_input(**overrides: Any) -> dict[str, Any]:
         "tactic_candidates": ["ordinary_life_problem_hidden_system"],
         "domain_label": "fan_kepu_social_life",
         "schema_version": "production_research_plan.input.v1",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def sample_content_plan_input(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "request_id": "content-plan-001",
+        "correlation_id": "content-plan-correlation-001",
+        "candidate_topic": "why apartment elevators jam in morning rush",
+        "brief": (
+            "Explain a familiar morning elevator wait as a system problem using commuting time, "
+            "floor distribution, and maintenance windows."
+        ),
+        "evidence_items": [
+            {
+                "claim": "morning elevator crowding relates to synchronized commute time and uneven floor distribution",
+                "source_ref": "research-src-001",
+                "supporting_text": (
+                    "morning elevator crowding relates to synchronized commute time and uneven floor distribution"
+                ),
+            }
+        ],
+        "tactic_candidates": ["ordinary_life_problem_hidden_system"],
+        "style_examples": ["Start from a scene people recognize, then reveal the quiet system behind it."],
+        "domain_label": "fan_kepu_social_life",
+        "schema_version": "content_plan.input.v1",
     }
     payload.update(overrides)
     return payload

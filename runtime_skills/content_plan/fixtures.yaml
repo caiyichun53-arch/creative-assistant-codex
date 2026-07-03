@@ -1,0 +1,50 @@
+schema_version: content_plan.fixtures.v1
+fixtures:
+  - fixture_id: fan_kepu_social_life
+    input:
+      request_id: content-plan-fan-kepu
+      correlation_id: content-plan-fan-kepu-correlation
+      candidate_topic: why apartment elevators jam in morning rush
+      brief: Explain a familiar morning elevator wait as a system problem using commuting time, floor distribution, and maintenance windows.
+      evidence_items:
+        - claim: morning elevator crowding relates to synchronized commute time and uneven floor distribution
+          source_ref: research-src-fan-001
+          supporting_text: morning elevator crowding relates to synchronized commute time and uneven floor distribution
+      tactic_candidates:
+        - ordinary_life_problem_hidden_system
+      style_examples:
+        - Start from a scene people recognize, then reveal the quiet system behind it.
+      domain_label: fan_kepu_social_life
+      schema_version: content_plan.input.v1
+  - fixture_id: music_entertainment
+    input:
+      request_id: content-plan-music
+      correlation_id: content-plan-music-correlation
+      candidate_topic: why an old song becomes young again
+      brief: Plan a short music commentary about how live scenes and personal memories help an old song circulate again.
+      evidence_items:
+        - claim: old song circulation relates to live performance scenes and personal memory comments
+          source_ref: research-src-music-001
+          supporting_text: old song circulation relates to live performance scenes and personal memory comments
+      tactic_candidates:
+        - music_memory_reactivation
+      style_examples:
+        - Do not open with praise; open with a small listening moment.
+      domain_label: music_entertainment
+      schema_version: content_plan.input.v1
+  - fixture_id: third_domain_neutral
+    input:
+      request_id: content-plan-neutral
+      correlation_id: content-plan-neutral-correlation
+      candidate_topic: why frozen bread changes after reheating
+      brief: Plan a neutral explanation of frozen bread texture after reheating using moisture distribution.
+      evidence_items:
+        - claim: freezing changes moisture distribution in bread
+          source_ref: research-src-neutral-001
+          supporting_text: freezing changes moisture distribution in bread
+      tactic_candidates:
+        - third_domain_reduction_candidate
+      style_examples:
+        - Keep the wording concrete and avoid broad life advice.
+      domain_label: third_domain_neutral
+      schema_version: content_plan.input.v1

@@ -1,0 +1,31 @@
+schema_version: formal_skill_manifest.v1
+formal_skill_id: content_plan
+skill_version: 1.0.0
+source_contract: CONTENT_PLAN_BUSINESS_CONTRACT.yaml
+responsibility: Plan hook options and a beat outline for a selected content item.
+non_responsibilities:
+  - research_evidence_extract
+  - production_research_plan
+  - script_generation
+  - script_review
+  - database_query
+  - file_read_write
+  - feishu_messaging
+runner: FormalBusinessSkillAdapter
+route_name: business.creation_outline
+input_schema: input_schema.yaml
+output_schema: output_schema.yaml
+binding: binding.yaml
+prompt: prompt.md
+fixtures: fixtures.yaml
+standalone_boundaries:
+  requires_database: false
+  reads_files_at_runtime: false
+  writes_files_at_runtime: false
+  calls_other_skills: false
+  calls_core_api: false
+  accesses_external_url: false
+  uses_chat_memory: false
+subnodes:
+  - business.creation_hook
+  - business.creation_outline

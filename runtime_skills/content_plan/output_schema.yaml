@@ -1,0 +1,31 @@
+type: object
+required:
+  - hooks
+  - selected_hook
+  - beats
+  - schema_version
+properties:
+  hooks:
+    type: array
+    minItems: 1
+    maxItems: 5
+    items:
+      type: string
+      minLength: 1
+      maxLength: 240
+  selected_hook:
+    type: string
+    minLength: 1
+    maxLength: 240
+  beats:
+    type: array
+    minItems: 1
+    maxItems: 8
+    items:
+      type: string
+      minLength: 1
+      maxLength: 360
+  schema_version:
+    type: string
+    const: content_plan.output.v1
+additional_properties: false
