@@ -1,0 +1,72 @@
+schema_version: phase5.business_workflow_foundation_status.v1
+goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
+phase: 5
+checkpoint: workflow_input_assembly_foundation
+status: COMPLETED_FOUNDATION_CHECKPOINT
+updated_at: '2026-07-03'
+implemented:
+  workflow_skill_order:
+    count: 12
+    skills:
+      - content_classify
+      - content_relation_judge
+      - source_to_topic
+      - sample_deep_analyze
+      - tactic_extract
+      - research_evidence_extract
+      - production_research_plan
+      - content_plan
+      - script_generate
+      - script_review
+      - experiment_review
+      - experience_revision_propose
+  input_assembly:
+    freezes_public_skill_input: true
+    freezes_upstream_result_refs: true
+    freezes_experience_context: true
+    rejects_private_or_legacy_input_keys: true
+    retry_input_drift_rejected: true
+  experience_context:
+    schema_version: experience_context.v1
+    only_published_experience_selected: true
+    candidate_draft_revoked_deprecated_rejected: true
+    unresolved_conflict_rejected: true
+    domain_and_condition_matching_required: true
+  experience_usage:
+    validates_refs_against_frozen_context: true
+    requires_usage_when_context_injected_for_required_skills: true
+    unsupported_usage_status_rejected: true
+  scheduler_workflow:
+    uses_goal05_orchestrator: true
+    uses_formal_skill_job_kind: formal_skill.execute
+    idempotent_enqueue_verified: true
+safety:
+  old_data_read: false
+  real_provider_called: false
+  gpt_called: false
+  deepseek_called: false
+  fallback_or_auto_downgrade_added: false
+  formal_skill_schema_modified: false
+  production_workflow_completed: false
+validation:
+  tests:
+    - command: python -m unittest tests.core.test_phase5_business_workflow
+      result: PASS
+      tests: 7
+    - command: python scripts\core\workflow\verify_goal_05.py
+      result: PASS
+    - command: python -m unittest tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters
+      result: PASS
+      tests: 63
+    - command: py_compile phase5 workflow files
+      result: PASS
+    - command: python scripts\validation\clean_room_empty_db.py --health
+      result: PASS
+      clean_room_tables: 20
+      clean_room_total_rows: 0
+    - command: git diff --check
+      result: PASS
+remaining_phase5_work:
+  - Wire frozen input assembly into actual multi-step workers for the full formal business workflow.
+  - Persist workflow-level input assembly and experience usage records through formal Materializers.
+  - Add end-to-end synthetic workflow coverage across all 12 Skills.

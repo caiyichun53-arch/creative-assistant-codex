@@ -1,0 +1,39 @@
+# Phase 5 Business Workflow Foundation Report
+
+status: `COMPLETED_FOUNDATION_CHECKPOINT`
+
+This checkpoint adds the formal workflow and Input Assembly foundation for Phase 5. It does not claim the full Phase 5 workflow is complete.
+
+## Implemented
+
+- Fixed formal workflow order for all 12 business Skills.
+- Added `ExperienceContext` selection and freezing.
+- Added public Input Assembly freezing for Skill input, upstream result refs and experience context.
+- Added retry drift detection for frozen inputs.
+- Added `experience_usage` validation against the frozen context.
+- Added `Goal05WorkflowOrchestrator` enqueue coverage using `formal_skill.execute`.
+
+## Safety
+
+- Only `published` experience versions can enter the context.
+- `candidate`, `draft`, `revoked`, `deprecated` and unresolved-conflict experience versions are rejected.
+- Private/local keys such as database, Vault, Hermes memory, cold backup and legacy references are rejected from Skill input assembly.
+- No old data was read.
+- No real Provider was called.
+- No GPT or DeepSeek call was made.
+- No fallback or automatic downgrade path was added.
+
+## Validation
+
+- `python -m unittest tests.core.test_phase5_business_workflow` - PASS, 7 tests
+- `python scripts\core\workflow\verify_goal_05.py` - PASS
+- `python -m unittest tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters` - PASS, 63 tests
+- `py_compile` for Phase 5 workflow files - PASS
+- `python scripts\validation\clean_room_empty_db.py --health` - PASS, 20 tables, 0 rows
+- `git diff --check` - PASS
+
+## Remaining
+
+- Wire this frozen assembly into full multi-step workers.
+- Persist workflow-level assembly and experience usage records through formal Materializers.
+- Add synthetic end-to-end coverage across all 12 Skills.
