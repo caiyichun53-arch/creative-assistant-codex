@@ -1,0 +1,57 @@
+schema_version: phase4.external_executor_adapter_status.v1
+goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
+phase: 4
+status: COMPLETED_CONTROLLED_VALIDATION
+updated_at: '2026-07-03'
+scope:
+  implemented_or_verified_adapters:
+    - adapter_id: collector.mediacrawler
+      capability: platform.video_snapshot
+      validation_mode: fixture_stub
+      external_live_call: false
+    - adapter_id: collector.comments
+      capability: platform.comment_collection
+      validation_mode: fixture_stub
+      external_live_call: false
+    - adapter_id: asr.sensevoice
+      capability: media.transcription
+      validation_mode: fixture_stub
+      external_live_call: false
+    - adapter_id: search.provider
+      capability: research.search
+      validation_mode: fixture_stub_plus_FormalResearchService
+      external_live_call: false
+    - adapter_id: research.fetcher
+      capability: research.fetch
+      validation_mode: fixture_stub_plus_FormalResearchService
+      external_live_call: false
+    - adapter_id: collector.netease_music
+      capability: music.comment_collection
+      validation_mode: fixture_stub
+      external_live_call: false
+safety:
+  third_party_libraries_isolated_behind_adapter: true
+  core_and_skills_import_third_party_collectors_directly: false
+  legacy_business_state_reused: false
+  old_data_read: false
+  real_platform_collection_started: false
+  gpt_called: false
+  deepseek_called: false
+  fallback_or_auto_downgrade_added: false
+  asr_tracked_evidence_contains_full_transcript: false
+runtime_host:
+  default_external_adapter_policy: rejected
+  phase4_explicit_opt_in_policy: allow_external_adapters_true
+validation:
+  tests:
+    - command: python -m unittest tests.core.test_external_executor_adapters
+      result: PASS
+      tests: 8
+    - command: python -m unittest tests.validation.test_live_gates
+      result: PASS
+      tests: 20
+    - command: python -m unittest tests.core.test_runtime_vertical_slice
+      result: PASS
+      tests: 17
+blocking_issues: []
+next_phase: Phase 5 - formal business workflow and Input Assembly

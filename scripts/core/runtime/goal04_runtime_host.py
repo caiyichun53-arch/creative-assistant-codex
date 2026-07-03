@@ -39,9 +39,16 @@ class RuntimeStepResult:
 
 
 class RuntimeHost:
-    def __init__(self, scheduler: Goal03Scheduler, *, worker_id: str):
+    def __init__(
+        self,
+        scheduler: Goal03Scheduler,
+        *,
+        worker_id: str,
+        allow_external_adapters: bool = False,
+    ):
         self.scheduler = scheduler
         self.worker_id = worker_id
+        self.allow_external_adapters = allow_external_adapters
         self._handlers: dict[str, tuple[RuntimeHandler, RuntimeHandlerContract]] = {}
 
     def register_handler(
@@ -61,7 +68,7 @@ class RuntimeHost:
     def register_adapter(self, adapter: RuntimeAdapter) -> None:
         if not adapter.adapter_name:
             raise RuntimeHostError("adapter_name is required")
-        if adapter.uses_external_io:
+        if adapter.uses_external_io and not self.allow_external_adapters:
             raise RuntimeHostError("external adapter I/O is outside GOAL-04 current checkpoint")
         self.register_handler(
             adapter.job_kind,

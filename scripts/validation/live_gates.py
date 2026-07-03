@@ -763,6 +763,26 @@ class DryRunFetcher:
         )
 
 
+class DryRunExternalExecutor:
+    def __init__(self, fixtures: dict[str, dict[str, Any]]):
+        self.fixtures = fixtures
+        self.commands: list[Any] = []
+
+    def execute(self, command: Any) -> Any:
+        from scripts.core.external_adapters import ExternalCommandResult
+
+        self.commands.append(command)
+        payload = self.fixtures.get(command.capability)
+        if payload is None:
+            return ExternalCommandResult(status="failed", payload={"error": "missing dry-run fixture"})
+        return ExternalCommandResult(
+            status="succeeded",
+            payload=payload,
+            raw_archive_ref=f"dry-run://{command.capability}",
+            external_side_effect=False,
+        )
+
+
 class DryRunExtractor:
     extractor_name = "dry-run-extractor"
 
@@ -782,9 +802,10 @@ class DryRunExtractor:
 
 
 class SearchProviderHarness(BaseHarness):
-    adapter_name = "FormalResearchService"
+    adapter_name = "FormalResearchService external SearchProvider/Fetcher adapters"
 
     def dry_run(self) -> dict[str, Any]:
+        from scripts.core.external_adapters import ResearchFetcherAdapter, SearchProviderAdapter
         from scripts.core.persistence.goal01_store import PersistenceStore
         from scripts.core.research.goal06_formal_research import (
             FormalResearchMaterializer,
@@ -795,9 +816,31 @@ class SearchProviderHarness(BaseHarness):
         )
 
         store = PersistenceStore.in_memory()
+        executor = DryRunExternalExecutor(
+            {
+                "research.search": {
+                    "results": [
+                        {
+                            "result_id": "dry-run-source-1",
+                            "title": "Dry-run source",
+                            "url": "https://example.invalid/dry-run-source",
+                            "provider": "dry-run-search-provider",
+                            "snippet": "Evidence for dry-run query",
+                        }
+                    ]
+                },
+                "research.fetch": {
+                    "document": {
+                        "title": "Dry-run source",
+                        "text": "Dry-run fetched text.",
+                        "fetched_at": "2026-07-02T00:00:00Z",
+                    }
+                },
+            }
+        )
         service = FormalResearchService(
-            provider=DryRunSearchProvider(),
-            fetcher=DryRunFetcher(),
+            provider=SearchProviderAdapter(executor),
+            fetcher=ResearchFetcherAdapter(executor),
             extractor=DryRunExtractor(),
             materializer=FormalResearchMaterializer(store),
         )
@@ -828,6 +871,7 @@ class SearchProviderHarness(BaseHarness):
             "source_count": len(run.source_version_ids),
             "evidence_count": len(run.evidence_version_ids),
             "blocked_platform_rejected": blocked_rejected,
+            "adapter_capabilities": [command.capability for command in executor.commands],
         }
         store.conn.close()
         return response
@@ -837,10 +881,30 @@ class AsrHarness(BaseHarness):
     adapter_name = "ASR command boundary"
 
     def dry_run(self) -> dict[str, Any]:
+        from scripts.core.external_adapters import AsrAdapter
+
         entry = ROOT / "tools" / "asr" / "transcribe.py"
+        executor = DryRunExternalExecutor(
+            {
+                "media.transcription": {
+                    "transcript_ref": "dry-run://transcripts/asr-gate.txt",
+                    "transcript_hash": "sha256:dry-run-asr",
+                    "duration_seconds": 12,
+                    "segment_count": 3,
+                    "quality_status": "passed",
+                }
+            }
+        )
+        adapter_result = AsrAdapter(executor).transcribe(
+            media_ref="dry-run-hit",
+            media_path="validation_evidence/media/asr-gate.mp4",
+        )
         return {
             "entrypoint_exists": entry.exists(),
-            "planned_command": "tools/asr/.venv/Scripts/python.exe tools/asr/transcribe.py --hit <test-hit-id>",
+            "adapter_id": adapter_result.adapter_id,
+            "capability": adapter_result.capability,
+            "transcript_hash": adapter_result.payload["transcript_hash"],
+            "planned_command": "tools/asr/transcribe.py --media <controlled-media-path>",
             "requires_isolated_workspace": True,
             "external_io": False,
         }
@@ -850,13 +914,58 @@ class ExternalCollectorHarness(BaseHarness):
     adapter_name = "External collector adapter boundary"
 
     def dry_run(self) -> dict[str, Any]:
+        from scripts.core.external_adapters import (
+            CommentCollectionAdapter,
+            MediaCrawlerCollectorAdapter,
+            NetEaseMusicCollectorAdapter,
+        )
+
         entry = ROOT / "scripts" / "collect" / "crawl_competitors.py"
         common = ROOT / "scripts" / "collect" / "common.py"
+        executor = DryRunExternalExecutor(
+            {
+                "platform.video_snapshot": {
+                    "items": [
+                        {
+                            "aweme_id": "dry-run-aweme-1",
+                            "url": "https://example.invalid/video/1",
+                            "desc": "dry-run video",
+                            "like_count": 1,
+                            "comment_count": 1,
+                        }
+                    ]
+                },
+                "platform.comment_collection": {
+                    "comments": [{"comment_id": "dry-run-comment-1", "text": "dry-run comment"}]
+                },
+                "music.comment_collection": {
+                    "comments": [{"comment_id": "dry-run-music-comment-1", "text": "dry-run music comment"}]
+                },
+            }
+        )
+        video = MediaCrawlerCollectorAdapter(executor).collect_video_snapshot(
+            platform="douyin",
+            source_url="https://example.invalid/video/1",
+            max_items=1,
+        )
+        comments = CommentCollectionAdapter(executor).collect_comments(
+            platform="douyin",
+            source_id="dry-run-aweme-1",
+            source_url="https://example.invalid/video/1",
+            max_comments=1,
+        )
+        music = NetEaseMusicCollectorAdapter(executor).collect_song_comments(song_id="dry-run-song", max_comments=1)
         return {
             "entrypoint_exists": entry.exists(),
             "common_adapter_source_exists": common.exists(),
-            "planned_command": "python scripts/collect/crawl_competitors.py --mode daily",
-            "adapter_source_only": True,
+            "adapter_capabilities": [video.capability, comments.capability, music.capability],
+            "item_counts": {
+                "video_snapshot": video.item_count,
+                "comments": comments.item_count,
+                "netease_comments": music.item_count,
+            },
+            "planned_command": "external adapters use controlled fixture/stub execution in dry-run",
+            "adapter_source_only": False,
             "external_io": False,
         }
 
