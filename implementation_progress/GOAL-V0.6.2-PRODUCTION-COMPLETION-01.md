@@ -104,6 +104,7 @@ Completed checkpoints:
   - Formal route ownership updated in `FORMAL_SKILL_ROUTE_MAPPING.yaml`
   - Deterministic test model port, harness, sample input and semantic checks in `scripts/core/model_gateway/formal_skill_adapter.py`
   - `tests/core/test_production_research_plan_skill.py`
+- Committed `production_research_plan` Phase 2 checkpoint at `6a43bc4`.
 
 Current HEAD:
 
@@ -162,7 +163,6 @@ Test results:
 
 Remaining work:
 
-- Commit the `production_research_plan` Phase 2 checkpoint.
 - Continue automatically to `content_plan` unless a formal stop condition appears.
 
 Blocking issues:
@@ -192,4 +192,4 @@ Internal Phase commits:
 - Phase 2 tactic_extract progress record: 5d72a9f docs(skill): record tactic_extract checkpoint
 - Phase 2 research_evidence_extract: 6b89e45 feat(skill): implement research_evidence_extract
 - Phase 2 research_evidence_extract progress record: 8578aa9 docs(skill): record research_evidence_extract checkpoint
-- Phase 2 production_research_plan: pending
+- Phase 2 production_research_plan: 6a43bc4 feat(skill): implement production_research_plan
