@@ -79,6 +79,7 @@ Completed checkpoints:
   - Formal route ownership updated in `FORMAL_SKILL_ROUTE_MAPPING.yaml`
   - Deterministic test model port, harness, sample input and semantic checks in `scripts/core/model_gateway/formal_skill_adapter.py`
   - `tests/core/test_tactic_extract_skill.py`
+- Committed `tactic_extract` Phase 2 checkpoint at `17ceb24`.
 
 Current HEAD:
 
@@ -121,7 +122,6 @@ Test results:
 
 Remaining work:
 
-- Commit the `tactic_extract` Phase 2 checkpoint.
 - Continue automatically to `research_evidence_extract` unless a formal stop condition appears.
 
 Blocking issues:
@@ -147,4 +147,4 @@ Internal Phase commits:
 - Phase 2 source_to_topic progress record: 5f23789 docs(skill): record source_to_topic checkpoint
 - Phase 2 sample_deep_analyze: 3bd267f feat(skill): implement sample_deep_analyze
 - Phase 2 sample_deep_analyze progress record: bfc0eac docs(skill): record sample_deep_analyze checkpoint
-- Phase 2 tactic_extract: pending
+- Phase 2 tactic_extract: 17ceb24 feat(skill): implement tactic_extract
