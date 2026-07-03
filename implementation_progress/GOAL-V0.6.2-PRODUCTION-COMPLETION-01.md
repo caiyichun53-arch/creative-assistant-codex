@@ -2,7 +2,7 @@
 
 Status: IN_PROGRESS
 
-Current Phase: Phase 4 - external executor Adapter validation pending
+Current Phase: Phase 5 - formal business workflow and Input Assembly pending
 
 Current branch: implementation/goal-v0.6.2-production-completion-01
 
@@ -197,6 +197,22 @@ Completed checkpoints:
   - Actual Provider/model/endpoint remained redacted from tracked reports.
   - One same-Provider diagnostic rerun was used after a transient relation live output failure; no fallback, GPT, DeepSeek, dry-run or fake success was used.
   - Phase 3 validation checkpoint committed at `3b435c6`.
+- Completed Phase 4 external executor Adapter controlled validation:
+  - `scripts/core/external_adapters/goal_phase4_external_adapters.py`
+  - `scripts/core/external_adapters/__init__.py`
+  - `tests/core/test_external_executor_adapters.py`
+  - `PHASE_4_EXTERNAL_EXECUTOR_ADAPTER_STATUS.yaml`
+  - `PHASE_4_EXTERNAL_EXECUTOR_ADAPTER_REPORT.md`
+  - Added formal external command/fixture boundary for:
+    - MediaCrawler CollectorAdapter
+    - comment collection Adapter
+    - ASR Adapter
+    - SearchProvider / Fetcher
+    - NetEaseMusicCollectorAdapter
+  - Kept `RuntimeHost` external Adapter registration rejected by default; Phase 4 requires explicit `allow_external_adapters=True`.
+  - Updated live-gate dry-run harness to exercise formal Adapter boundaries with fixtures/stubs.
+  - No old data, old business state, real platform collection, GPT call, DeepSeek call or fallback path was introduced.
+  - Phase 4 implementation checkpoint committed at `cea4c1f`.
 
 Current HEAD:
 
@@ -310,14 +326,37 @@ Test results:
   - PASS, 20 formal tables, 0 total rows, foreign key check passed
 - `git diff --check`
   - PASS
+- `python -m unittest tests.core.test_external_executor_adapters`
+  - PASS, 8 tests
+- `python -m unittest tests.validation.test_live_gates`
+  - PASS, 20 tests
+- `python -m unittest tests.core.test_runtime_vertical_slice`
+  - PASS, 17 tests
+- `python -m unittest tests.core.test_external_executor_adapters tests.validation.test_live_gates tests.core.test_runtime_vertical_slice`
+  - PASS, 45 tests
+- `python scripts\core\runtime\verify_goal_04.py`
+  - PASS, GOAL-04 verification passed
+- `python -m unittest tests.core.test_external_executor_adapters tests.validation.test_live_gates tests.core.test_runtime_vertical_slice tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter`
+  - PASS, 100 tests
+- `$env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'codex_pycache_goal_v062_phase4'; python -m py_compile scripts\core\external_adapters\goal_phase4_external_adapters.py scripts\core\external_adapters\__init__.py scripts\core\runtime\goal04_runtime_host.py scripts\validation\live_gates.py tests\core\test_external_executor_adapters.py`
+  - PASS
+- YAML parse check for `PHASE_4_EXTERNAL_EXECUTOR_ADAPTER_STATUS.yaml`
+  - PASS
+- `python scripts\validation\clean_room_empty_db.py --health`
+  - PASS, 20 formal tables, 0 total rows, foreign key check passed
+- `git diff --check`
+  - PASS
 
 Remaining work:
 
-- Continue to Phase 4 external executor Adapter validation/implementation.
+- Continue to Phase 5 formal business workflow and Input Assembly.
+- Build formal workflow from Core API -> Job / Worker -> Input Assembly -> Portable Skill -> ModelGateway -> Materializer -> Outbox.
+- Implement ExperienceContext selection, conflict handling, version freezing and `experience_usage` tracing in the formal workflow.
 
 Blocking issues:
 
 - No active Phase 2 or Phase 3 blocker remains after the latest pasted Goal instruction approved the two missing formal business routes.
+- No active Phase 4 blocker remains after controlled Adapter fixture/stub validation.
 - `target-architecture.md` and `rebuild-direction.md` remain unavailable in current repo/memory search; existing formal route files already record the same source unavailability and Phase 1 remains verifiable from available governing sources.
 
 Next resume command:
@@ -325,7 +364,7 @@ Next resume command:
 ```powershell
 cd I:\Creation_assistant-codex
 git switch implementation/goal-v0.6.2-production-completion-01
-python -m unittest tests.core.test_source_to_topic_skill tests.core.test_sample_deep_analyze_skill tests.core.test_tactic_extract_skill tests.core.test_research_evidence_extract_skill tests.core.test_production_research_plan_skill tests.core.test_content_plan_skill tests.core.test_script_generate_skill tests.core.test_script_review_skill tests.core.test_experiment_review_skill tests.core.test_experience_revision_propose_skill tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter tests.validation.test_clean_room_readiness tests.core.test_runtime_vertical_slice
+python -m unittest tests.core.test_external_executor_adapters tests.validation.test_live_gates tests.core.test_runtime_vertical_slice tests.core.test_remaining_formal_skill_graph tests.core.test_business_route_registry tests.core.test_formal_skill_adapter
 ```
 
 Internal Phase commits:
@@ -351,3 +390,5 @@ Internal Phase commits:
 - Phase 2 remaining Skills: efd9136 feat(skill): complete remaining phase 2 skills
 - Phase 2 remaining Skills progress record: 0d7d015 docs(skill): record remaining phase 2 checkpoint
 - Phase 3 centralized validation: 3b435c6 test(runtime): record phase 3 centralized validation
+- Phase 3 progress record: 9f2b0fe docs(runtime): record phase 3 checkpoint
+- Phase 4 external executor Adapters: cea4c1f feat(runtime): add external executor adapters
