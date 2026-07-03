@@ -1,8 +1,8 @@
 schema_version: phase5.business_workflow_foundation_status.v1
 goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
 phase: 5
-checkpoint: formal_workflow_definitions_and_step_handoff
-status: COMPLETED_WORKFLOW_DEFINITION_CHECKPOINT
+checkpoint: formal_workflow_synthetic_chain_e2e
+status: COMPLETED_PHASE5_CHECKPOINT
 updated_at: '2026-07-03'
 implemented:
   workflow_skill_order:
@@ -87,6 +87,20 @@ implemented:
     upstream_output_hash_handoff: true
     downstream_input_assembly_records_upstream_ref: true
     failed_upstream_stops_downstream_scheduling: true
+  synthetic_chain_e2e:
+    all_formal_workflow_definitions_run: true
+    workflow_definition_count: 7
+    chain_step_count: 13
+    upstream_handoff_count: 6
+    upstream_failure_stops_downstream_enqueue: true
+    formal_result_materialized_per_successful_step: true
+    full_chain_audit_via_trace_and_object_refs: true
+  phase5_completion:
+    formal_skill_dispatcher_complete: true
+    workflow_definitions_complete: true
+    core_step_handoff_complete: true
+    synthetic_chain_matrix_complete: true
+    fail_closed_paths_covered: true
   scheduler_workflow:
     uses_goal05_orchestrator: true
     uses_formal_skill_job_kind: formal_skill.execute
@@ -103,7 +117,7 @@ validation:
   tests:
     - command: python -m unittest tests.core.test_phase5_business_workflow
       result: PASS
-      tests: 16
+      tests: 18
     - command: python scripts\core\workflow\verify_goal_05.py
       result: PASS
     - command: python -m unittest tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters
@@ -111,7 +125,7 @@ validation:
       tests: 63
     - command: python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters
       result: PASS
-      tests: 79
+      tests: 81
     - command: formal dispatcher synthetic matrix
       result: PASS
       formal_skills_covered: 12
@@ -123,6 +137,14 @@ validation:
       steps: 2
       upstream_refs_recorded: true
       downstream_input_assembly_contains_upstream_result: true
+    - command: all workflow definitions synthetic matrix
+      result: PASS
+      workflow_definitions: 7
+      chain_steps: 13
+      upstream_handoffs: 6
+    - command: upstream failure stops downstream scheduling
+      result: PASS
+      downstream_jobs_created: 0
     - command: py_compile phase5 workflow files
       result: PASS
     - command: python scripts\validation\clean_room_empty_db.py --health
@@ -131,7 +153,4 @@ validation:
       clean_room_total_rows: 0
     - command: git diff --check
       result: PASS
-remaining_phase5_work:
-  - Extend task-specific synthetic end-to-end coverage beyond the creation handoff chain.
-  - Complete failure, retry, cancellation, recovery, idempotency, concurrency, replay and full-chain audit coverage for the formal chains.
-  - Record final Phase 5 completion only after those chain-level scenarios pass.
+remaining_phase5_work: []

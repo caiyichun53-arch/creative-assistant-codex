@@ -179,6 +179,14 @@ def frozen_sample_input(skill_id: str, *, workflow_id: str = "workflow-dispatch"
     )
 
 
+def sample_payloads_for_definition(definition):
+    payloads = {}
+    for step in definition.step_graph:
+        safe_id = f"{definition.workflow_id}-{step.step_key}".replace(".", "-").replace("_", "-")
+        payloads[step.step_key] = SAMPLE_INPUTS[step.formal_skill_id](request_id=f"phase5-{safe_id}")
+    return payloads
+
+
 class Phase5BusinessWorkflowTests(unittest.TestCase):
     def test_formal_business_workflow_lists_all_twelve_skills(self) -> None:
         self.assertEqual(len(FORMAL_BUSINESS_WORKFLOW_SKILLS), 12)
@@ -764,6 +772,91 @@ class Phase5BusinessWorkflowTests(unittest.TestCase):
             """
         ).fetchone()[0]
         self.assertIn(result.upstream_refs[0]["result_version_id"], downstream_payload)
+
+    def test_all_formal_workflow_definitions_run_with_synthetic_inputs(self) -> None:
+        generator = UUIDv7Generator(now_ms=lambda: 1_770_000_000_000, randbits=lambda bits: 42)
+        scheduler = Goal03Scheduler.in_memory(id_factory=generator.new, now_ms=lambda: 1_770_000_000_000)
+        self.addCleanup(scheduler.store.conn.close)
+        gateway, _provider = make_dispatch_gateway(scheduler.store)
+        dispatcher = FormalSkillDispatcher(store=scheduler.store, gateway=gateway, id_factory=generator.new)
+        worker = BusinessWorkflowWorker(
+            scheduler=scheduler,
+            materializer=BusinessWorkflowMaterializer(scheduler.store),
+            skill_executor=dispatcher,
+            worker_id="phase5-chain-worker",
+        )
+        runner = BusinessWorkflowChainRunner(scheduler=scheduler, worker=worker)
+
+        completed = []
+        for definition in FORMAL_WORKFLOW_DEFINITIONS.values():
+            result = runner.run(
+                definition=definition,
+                workflow_instance_id=f"workflow-{definition.workflow_id}",
+                input_payloads=sample_payloads_for_definition(definition),
+                domain="fan_kepu_social_life",
+                content_form="short_video_script",
+                conditions=("ordinary_life_problem",),
+                experience_candidates=[],
+                idempotency_key=f"phase5-{definition.workflow_id}",
+            )
+            completed.extend(result.completed_steps)
+
+        expected_step_count = sum(len(definition.step_graph) for definition in FORMAL_WORKFLOW_DEFINITIONS.values())
+        expected_handoff_count = sum(
+            len(step.depends_on)
+            for definition in FORMAL_WORKFLOW_DEFINITIONS.values()
+            for step in definition.step_graph
+        )
+        self.assertEqual(len(completed), expected_step_count)
+        self.assertEqual({step.status for step in completed}, {"succeeded"})
+        self.assertEqual(
+            scheduler.conn.execute("SELECT count(*) FROM formal_business_skill_result_index").fetchone()[0],
+            expected_step_count,
+        )
+        self.assertEqual(
+            scheduler.conn.execute(
+                "SELECT count(*) FROM object_reference WHERE relation_role='assembled_from_upstream_skill_result'"
+            ).fetchone()[0],
+            expected_handoff_count,
+        )
+
+    def test_chain_runner_stops_downstream_scheduling_after_upstream_failure(self) -> None:
+        generator = UUIDv7Generator(now_ms=lambda: 1_770_000_000_000, randbits=lambda bits: 42)
+        scheduler = Goal03Scheduler.in_memory(id_factory=generator.new, now_ms=lambda: 1_770_000_000_000)
+        self.addCleanup(scheduler.store.conn.close)
+        gateway, _provider = make_dispatch_gateway(scheduler.store, omit_route="business.creation_hook")
+        dispatcher = FormalSkillDispatcher(store=scheduler.store, gateway=gateway, id_factory=generator.new)
+        worker = BusinessWorkflowWorker(
+            scheduler=scheduler,
+            materializer=BusinessWorkflowMaterializer(scheduler.store),
+            skill_executor=dispatcher,
+            worker_id="phase5-chain-worker",
+        )
+        runner = BusinessWorkflowChainRunner(scheduler=scheduler, worker=worker)
+        definition = FORMAL_WORKFLOW_DEFINITIONS["business.creation"]
+
+        with self.assertRaises(BusinessWorkflowError):
+            runner.run(
+                definition=definition,
+                workflow_instance_id="workflow-creation-failure",
+                input_payloads=sample_payloads_for_definition(definition),
+                domain="fan_kepu_social_life",
+                content_form="short_video_script",
+                conditions=("ordinary_life_problem",),
+                experience_candidates=[],
+                idempotency_key="phase5-creation-failure",
+            )
+
+        self.assertEqual(scheduler.conn.execute("SELECT count(*) FROM scheduler_job").fetchone()[0], 1)
+        self.assertEqual(scheduler.conn.execute("SELECT status FROM scheduler_job").fetchone()["status"], "dead")
+        self.assertEqual(
+            scheduler.conn.execute("SELECT count(*) FROM scheduler_job WHERE payload_json LIKE '%script_generate%'").fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            scheduler.conn.execute("SELECT count(*) FROM formal_business_skill_result_index").fetchone()[0],
+            0,
+        )
 
 
 if __name__ == "__main__":

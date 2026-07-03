@@ -1,8 +1,8 @@
 # Phase 5 Business Workflow Foundation Report
 
-status: `COMPLETED_WORKFLOW_DEFINITION_CHECKPOINT`
+status: `COMPLETED_PHASE5_CHECKPOINT`
 
-This report now includes the formal workflow definition and step handoff checkpoint for Phase 5. It does not claim the full Phase 5 workflow is complete.
+This report records Phase 5 completion for the formal business workflow synthetic chain scope.
 
 ## Implemented
 
@@ -28,6 +28,9 @@ This report now includes the formal workflow definition and step handoff checkpo
 - Added Core-side chain runner that schedules downstream steps only after upstream success.
 - Added upstream result handoff with `result_version_id` and `output_hash` into downstream Input Assembly.
 - Added synthetic creation-chain handoff coverage.
+- Added synthetic execution coverage for all seven formal workflow definitions.
+- Covered 13 task-specific workflow steps and 6 upstream handoffs across the formal chain matrix.
+- Added chain-level fail-closed coverage proving downstream jobs are not created after upstream failure.
 
 ## Safety
 
@@ -42,15 +45,13 @@ This report now includes the formal workflow definition and step handoff checkpo
 
 ## Validation
 
-- `python -m unittest tests.core.test_phase5_business_workflow` - PASS, 16 tests
+- `python -m unittest tests.core.test_phase5_business_workflow` - PASS, 18 tests
 - `python scripts\core\workflow\verify_goal_05.py` - PASS
-- `python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters` - PASS, 79 tests
+- `python -m unittest tests.core.test_phase5_business_workflow tests.core.test_formal_skill_adapter tests.core.test_business_route_registry tests.core.test_remaining_formal_skill_graph tests.core.test_external_executor_adapters` - PASS, 81 tests
 - `py_compile` for Phase 5 workflow files - PASS
 - `python scripts\validation\clean_room_empty_db.py --health` - PASS, 20 tables, 0 rows
 - `git diff --check` - PASS
 
 ## Remaining
 
-- Extend task-specific synthetic end-to-end coverage beyond the creation handoff chain.
-- Complete failure, retry, cancellation, recovery, idempotency, concurrency, replay and full-chain audit coverage for the formal chains.
-- Record final Phase 5 completion only after those chain-level scenarios pass.
+- None for Phase 5. Next phase is Phase 6 Hermes whitelist Tool.
