@@ -639,9 +639,10 @@ class FormalSkillGateTests(unittest.TestCase):
             (tmp / ".env.live-gates").write_text(
                 "\n".join(
                     [
-                        "MODEL_PROVIDER_API_KEY=test-model-key",
-                        "MODEL_PROVIDER_BASE_URL=https://example.invalid/v1",
-                        "MODEL_PROVIDER_MODEL=test-live-model",
+                        "HERMES_BUSINESS_MODEL_TOKEN=test-model-token",
+                        "HERMES_BUSINESS_MODEL_BASE_URL=https://example.invalid/v1",
+                        "HERMES_BUSINESS_MODEL_NAME=xiaomi/mimo-v2.5-pro",
+                        "HERMES_BUSINESS_MODEL_CLASS=mimo",
                     ]
                 ),
                 encoding="utf-8",
@@ -708,9 +709,10 @@ class FormalSkillGateTests(unittest.TestCase):
             (tmp / ".env.live-gates").write_text(
                 "\n".join(
                     [
-                        "MODEL_PROVIDER_API_KEY=test-model-key",
-                        "MODEL_PROVIDER_BASE_URL=https://example.invalid/v1",
-                        "MODEL_PROVIDER_MODEL=test-live-model",
+                        "HERMES_BUSINESS_MODEL_TOKEN=test-model-token",
+                        "HERMES_BUSINESS_MODEL_BASE_URL=https://example.invalid/v1",
+                        "HERMES_BUSINESS_MODEL_NAME=xiaomi/mimo-v2.5-pro",
+                        "HERMES_BUSINESS_MODEL_CLASS=mimo",
                     ]
                 ),
                 encoding="utf-8",

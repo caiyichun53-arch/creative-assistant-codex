@@ -1,5 +1,5 @@
-status: DRY_RUN_PASSED
-updated_at: '2026-07-02T08:58:17Z'
+status: PREFLIGHT_PASSED
+updated_at: '2026-07-04T11:49:15Z'
 gates:
   GATE-HERMES-REAL-HOST:
     status: LIVE_PASSED
@@ -36,43 +36,22 @@ gates:
       evidence_location: validation_evidence\GATE-FEISHU-THIN-BINDING\20260701T184614
       mode: dry-run
   GATE-MODEL-PROVIDER:
-    status: LIVE_PASSED
+    status: PREFLIGHT_PASSED
     latest_result:
       gate_id: GATE-MODEL-PROVIDER
-      started_at: '2026-07-01T23:55:27Z'
-      finished_at: '2026-07-01T23:55:30Z'
+      started_at: '2026-07-04T11:49:15Z'
+      finished_at: '2026-07-04T11:49:15Z'
       environment: validation
       adapter: ModelGateway
-      request_hash: 3619edf8b4c74573155d22e9341b188b430fb61cfaa66f622cb5e20cd510eca5
-      response_hash: 1bd10085b4756f20f5adec46780feb40bddc17ebcadc4e57522ba5ef6aea31ba
-      correlation_id: GATE-MODEL-PROVIDER.run.2026-07-01T23:55:27Z
+      request_hash: 647e13c671a02c9ad1c615415b69a3102e7b6b4bf674ec36dcc3eccb918a0761
+      response_hash: 28d3c18026a457fb918b29a6c4fa6e47c5f2f52d49a19bd3b4af42b21437e031
+      correlation_id: GATE-MODEL-PROVIDER.preflight.2026-07-04T11:49:15Z
       exit_code: 0
-      status: LIVE_PASSED
-      external_side_effect: true
+      status: PREFLIGHT_PASSED
+      external_side_effect: false
       failure_reason: ''
-      evidence_location: validation_evidence\GATE-MODEL-PROVIDER\20260701T235527
-      mode: run
-      provider: hermes
-      provider_adapter: HermesModelProviderAdapter
-      invocation_chain:
-      - ModelGateway
-      - HermesModelProviderAdapter
-      billing_mode: subscription
-      usage_status: available
-      cost_status: not_applicable
-      monetary_cost_cap: not_applicable
-      visible_output_status: available
-      expected_output_match: true
-      finish_reason: stop
-      actual_call_count: 1
-      retry_count: 0
-      live_call_limit: 1
-      max_retries: 0
-      timeout_ms: 30000
-      gate_max_output_tokens: 128
-      input_hash_recorded: true
-      output_hash_recorded: true
-      envelope_recorded: true
+      evidence_location: validation_evidence\GATE-MODEL-PROVIDER\20260704T114915
+      mode: preflight
   GATE-ASR:
     status: LIVE_PASSED
     latest_result:

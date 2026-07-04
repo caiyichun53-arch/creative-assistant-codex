@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import decimal
 import hashlib
 import io
 import json
@@ -105,6 +104,18 @@ class GateResult:
         return data
 
 
+@dataclass(frozen=True)
+class HermesSubscriptionProviderSettings:
+    token: str
+    base_url: str
+    model_name: str
+    model_class: str
+    token_source: str
+    base_url_source: str
+    model_name_source: str
+    model_class_source: str
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -165,79 +176,56 @@ def _required_env_value(config: "LiveGateConfig", key: str) -> str:
     return str(value)
 
 
+def _first_env_value(config: "LiveGateConfig", keys: tuple[str, ...]) -> tuple[str, str]:
+    for key in keys:
+        value = config.env_value(key)
+        if not is_placeholder(value):
+            return key, str(value)
+    raise MissingCredential(" or ".join(keys))
+
+
+def _infer_model_class(model_name: str) -> str:
+    lowered = model_name.lower()
+    if "gpt" in lowered or "openai" in lowered:
+        return "gpt"
+    if "mimo" in lowered or "xiaomi" in lowered:
+        return "mimo"
+    if "deepseek" in lowered:
+        return "deepseek"
+    return "unknown"
+
+
+def hermes_subscription_provider_settings(config: "LiveGateConfig") -> HermesSubscriptionProviderSettings:
+    token_source, token = _first_env_value(config, ("HERMES_BUSINESS_MODEL_TOKEN",))
+    base_url_source, base_url = _first_env_value(config, ("HERMES_BUSINESS_MODEL_BASE_URL",))
+    model_name_source, model_name = _first_env_value(config, ("HERMES_BUSINESS_MODEL_NAME",))
+    explicit_model_class = config.env_value("HERMES_BUSINESS_MODEL_CLASS")
+    if is_placeholder(explicit_model_class):
+        model_class_source = "inferred_from_model_name"
+        model_class = _infer_model_class(model_name)
+    else:
+        model_class_source = "HERMES_BUSINESS_MODEL_CLASS"
+        model_class = str(explicit_model_class).strip().lower()
+    if not _valid_base_url(base_url):
+        raise MissingTestEnvironment("HERMES_BUSINESS_MODEL_BASE_URL must start with http:// or https://")
+    if model_class != "mimo":
+        raise MissingTestEnvironment("HERMES_BUSINESS_MODEL_CLASS must be mimo for Hermes business runtime")
+    return HermesSubscriptionProviderSettings(
+        token=token,
+        base_url=base_url,
+        model_name=model_name,
+        model_class=model_class,
+        token_source=token_source,
+        base_url_source=base_url_source,
+        model_name_source=model_name_source,
+        model_class_source=model_class_source,
+    )
+
+
 def _valid_base_url(value: str | None) -> bool:
     if is_placeholder(value):
         return False
     return str(value).startswith(("http://", "https://"))
-
-
-def _valid_decimal(value: str | None) -> bool:
-    if is_placeholder(value):
-        return False
-    try:
-        parsed = decimal.Decimal(str(value))
-    except decimal.InvalidOperation:
-        return False
-    return parsed >= 0
-
-
-def _decimal_value(value: str | None) -> decimal.Decimal:
-    if not _valid_decimal(value):
-        raise MissingTestEnvironment("MODEL_PROVIDER_COST_CAP must be a decimal USD amount")
-    return decimal.Decimal(str(value))
-
-
-def _optional_decimal_value(value: str | None) -> decimal.Decimal | None:
-    if is_placeholder(value):
-        return None
-    return _decimal_value(value)
-
-
-def _cost_cap_result(cost: dict[str, Any], cap: decimal.Decimal | None, *, billing_mode: str = "metered") -> dict[str, Any]:
-    if billing_mode == "subscription":
-        return {
-            "billing_mode": billing_mode,
-            "monetary_cost_cap": "not_applicable",
-            "cost_cap_status": "not_applicable",
-            "cost_cap_comparison": "not_applicable",
-        }
-    if cap is None:
-        return {
-            "billing_mode": billing_mode,
-            "monetary_cost_cap": "not_configured",
-            "cost_cap_status": "not_configured",
-            "cost_cap_comparison": "not_configured",
-        }
-    currency = str(cost.get("currency", "")).upper()
-    amount = cost.get("amount")
-    if currency != "USD" or amount is None:
-        return {
-            "cost_cap_status": "not_available",
-            "cost_cap_unit": "USD",
-            "cost_cap": str(cap),
-            "cost_amount": "not_available",
-            "cost_currency": currency or "not_available",
-            "cost_cap_comparison": "not_available",
-        }
-    try:
-        actual = decimal.Decimal(str(amount))
-    except decimal.InvalidOperation:
-        return {
-            "cost_cap_status": "not_available",
-            "cost_cap_unit": "USD",
-            "cost_cap": str(cap),
-            "cost_amount": "not_available",
-            "cost_currency": currency,
-            "cost_cap_comparison": "not_available",
-        }
-    return {
-        "cost_cap_status": "within_cap" if actual <= cap else "exceeded",
-        "cost_cap_unit": "USD",
-        "cost_cap": str(cap),
-        "cost_amount": str(actual),
-        "cost_currency": currency,
-        "cost_cap_comparison": "actual_usd_amount_lte_configured_usd_cap",
-    }
 
 
 class LiveGateConfig:
@@ -570,25 +558,25 @@ class ModelProviderHarness(BaseHarness):
 
     def preflight(self) -> dict[str, Any]:
         response = super().preflight()
-        cost_cap = self.config.env_value("MODEL_PROVIDER_COST_CAP")
-        base_url = self.config.env_value("MODEL_PROVIDER_BASE_URL")
-        _optional_decimal_value(cost_cap)
-        if not _valid_base_url(base_url):
-            raise MissingTestEnvironment("MODEL_PROVIDER_BASE_URL must start with http:// or https://")
+        provider_settings = hermes_subscription_provider_settings(self.config)
         return response | {
             "provider": "hermes",
             "billing_mode": self.billing_mode,
-            "monetary_cost_cap": "not_applicable",
+            "model_class": provider_settings.model_class,
+            "model_name_source": provider_settings.model_name_source,
+            "base_url_source": provider_settings.base_url_source,
+            "token_source": provider_settings.token_source,
             "live_call_limit": self.live_call_limit,
             "max_retries": self.max_retries,
             "timeout_ms": self.timeout_ms,
             "gate_max_output_tokens": self.gate_max_output_tokens,
             "required_fields": (
-                "MODEL_PROVIDER_API_KEY",
-                "MODEL_PROVIDER_BASE_URL",
-                "MODEL_PROVIDER_MODEL",
+                "HERMES_BUSINESS_MODEL_TOKEN",
+                "HERMES_BUSINESS_MODEL_BASE_URL",
+                "HERMES_BUSINESS_MODEL_NAME",
+                "HERMES_BUSINESS_MODEL_CLASS",
             ),
-            "optional_fields": ("MODEL_PROVIDER_PROJECT_ID", "MODEL_PROVIDER_COST_CAP"),
+            "optional_fields": (),
         }
 
     def dry_run(self) -> dict[str, Any]:
@@ -630,26 +618,21 @@ class ModelProviderHarness(BaseHarness):
         from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelRequest, ModelRoute, ModelRunMaterializer
         from scripts.core.persistence.goal01_store import PersistenceStore, content_hash
 
-        api_key = _required_env_value(self.config, "MODEL_PROVIDER_API_KEY")
-        base_url = _required_env_value(self.config, "MODEL_PROVIDER_BASE_URL")
-        model = _required_env_value(self.config, "MODEL_PROVIDER_MODEL")
-        cost_cap_amount = _optional_decimal_value(self.config.env_value("MODEL_PROVIDER_COST_CAP"))
-        if not _valid_base_url(base_url):
-            raise MissingTestEnvironment("MODEL_PROVIDER_BASE_URL must start with http:// or https://")
+        provider_settings = hermes_subscription_provider_settings(self.config)
 
         store = PersistenceStore.in_memory()
         route = ModelRoute(
             route_name=self.live_route_name,
             provider_name="hermes",
-            model_name=model,
+            model_name=provider_settings.model_name,
             config_version="live-gates.hermes-model.v1",
             config_hash=content_hash(
                 {
                     "provider": "hermes",
-                    "model": model,
+                    "model": provider_settings.model_name,
+                    "model_class": provider_settings.model_class,
                     "billing_mode": self.billing_mode,
                     "base_url_configured": True,
-                    "project_id_present": not is_placeholder(self.config.env_value("MODEL_PROVIDER_PROJECT_ID")),
                     "live_call_limit": self.live_call_limit,
                     "max_retries": self.max_retries,
                     "timeout_ms": self.timeout_ms,
@@ -663,9 +646,9 @@ class ModelProviderHarness(BaseHarness):
         )
         provider = HermesModelProviderAdapter(
             HermesModelProviderConfig(
-                api_key=api_key,
-                base_url=base_url,
-                model=model,
+                api_key=provider_settings.token,
+                base_url=provider_settings.base_url,
+                model=provider_settings.model_name,
                 timeout_seconds=self.timeout_ms / 1000,
                 max_retries=self.max_retries,
             )
@@ -682,7 +665,7 @@ class ModelProviderHarness(BaseHarness):
                     prompt=f"Reply with only: {self.expected_output}",
                     input_payload={"gate_id": self.gate_id, "purpose": "model_provider_live_validation"},
                     correlation_id=f"{self.gate_id}.live",
-                    metadata={"project_id_status": "available" if self.config.env_value("MODEL_PROVIDER_PROJECT_ID") else "not_available"},
+                    metadata={"model_class": provider_settings.model_class, "billing_mode": self.billing_mode},
                 )
             )
             expected_output_match = result.output_text.strip() == self.expected_output
@@ -691,16 +674,12 @@ class ModelProviderHarness(BaseHarness):
             envelope = result.envelope
             metadata = envelope.metadata or {}
             billing_mode = metadata.get("billing_mode") or (envelope.cost or {}).get("billing_mode") or self.billing_mode
-            cost_cap_check = _cost_cap_result(envelope.cost or {}, cost_cap_amount, billing_mode=billing_mode)
-            if cost_cap_check["cost_cap_status"] == "exceeded":
-                raise LiveGateError(
-                    "MODEL_PROVIDER_COST_CAP exceeded: "
-                    f"{cost_cap_check['cost_amount']} {cost_cap_check['cost_currency']} > "
-                    f"{cost_cap_check['cost_cap']} {cost_cap_check['cost_cap_unit']}"
-                )
+            if billing_mode != "subscription":
+                raise LiveGateError("Hermes Mimo provider must report subscription billing")
             response = {
                 "provider": envelope.provider_name,
                 "model": envelope.model_name,
+                "model_class": provider_settings.model_class,
                 "status": envelope.status,
                 "error_type": None,
                 "provider_request_id_status": (envelope.metadata or {}).get("provider_request_id_status", "not_available"),
@@ -722,7 +701,7 @@ class ModelProviderHarness(BaseHarness):
                 "retry_count": metadata.get("retry_count", self.max_retries),
                 "timeout_ms": self.timeout_ms,
                 "gate_max_output_tokens": self.gate_max_output_tokens,
-            } | cost_cap_check
+            }
             return response
         except Exception as exc:
             raise LiveGateError(f"Hermes model provider live call failed: {type(exc).__name__}: {exc}") from exc

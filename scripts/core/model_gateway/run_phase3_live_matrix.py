@@ -21,12 +21,26 @@ REPORT_PATH = ROOT / "PHASE_3_LIVE_PROVIDER_MATRIX_REPORT.md"
 
 
 def _model_policy(config: LiveGateConfig) -> dict[str, Any]:
-    raw_model = str(config.env_value("MODEL_PROVIDER_MODEL") or "").strip().lower()
+    raw_model = str(config.env_value("HERMES_BUSINESS_MODEL_NAME") or "").strip().lower()
+    raw_class = str(config.env_value("HERMES_BUSINESS_MODEL_CLASS") or "").strip().lower()
+    model_class = raw_class
+    if not model_class:
+        if "gpt" in raw_model or "openai" in raw_model:
+            model_class = "gpt"
+        elif "deepseek" in raw_model:
+            model_class = "deepseek"
+        elif "mimo" in raw_model or "xiaomi" in raw_model:
+            model_class = "mimo"
+        elif raw_model:
+            model_class = "unknown"
+        else:
+            model_class = "missing"
     return {
         "model_value_present": bool(raw_model),
-        "gpt_model_name_detected": "gpt" in raw_model,
-        "deepseek_model_name_detected": "deepseek" in raw_model,
-        "mimo_model_name_detected": "mimo" in raw_model,
+        "model_class": model_class,
+        "gpt_model_name_detected": model_class == "gpt",
+        "deepseek_model_name_detected": model_class == "deepseek",
+        "mimo_model_name_detected": model_class == "mimo",
         "actual_model_redacted": True,
     }
 
@@ -41,10 +55,10 @@ def _sanitize_gate_status(status: dict[str, Any]) -> dict[str, Any]:
 
 def run_matrix(config: LiveGateConfig, *, environment: str = "validation") -> dict[str, Any]:
     model_policy = _model_policy(config)
-    if model_policy["gpt_model_name_detected"] or model_policy["deepseek_model_name_detected"]:
+    if not model_policy["mimo_model_name_detected"] or model_policy["gpt_model_name_detected"] or model_policy["deepseek_model_name_detected"]:
         return {
             "status": "FAILED",
-            "reason": "disallowed_model_name_detected",
+            "reason": "mimo_model_required",
             "model_policy": model_policy,
             "gpt_called": False,
             "deepseek_called": False,
@@ -70,8 +84,8 @@ def run_matrix(config: LiveGateConfig, *, environment: str = "validation") -> di
         "matrix_policy": "minimal_representative_live_matrix",
         "matrix_reason": (
             "Full 12-Skill live calls are deferred as wasteful; all 12 Skills passed fake/schema/materializer "
-            "validation, while the live matrix verifies ModelGateway, real Provider, schema, idempotency and "
-            "no-fallback behavior on two representative formal business routes."
+            "validation, while the live matrix verifies ModelGateway, Hermes Mimo Provider, schema, "
+            "idempotency and no-fallback behavior on two representative formal business routes."
         ),
         "model_policy": model_policy,
         "gpt_called": False,

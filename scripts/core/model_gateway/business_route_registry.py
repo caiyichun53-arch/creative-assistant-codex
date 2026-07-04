@@ -203,7 +203,7 @@ def run_fixture_route_tests(registry: dict[str, Any]) -> dict[str, Any]:
             contract.logical_route: ModelRoute(
                 route_name=contract.logical_route,
                 provider_name="hermes",
-                model_name="env:MODEL_PROVIDER_MODEL",
+                model_name="env:HERMES_BUSINESS_MODEL_NAME",
                 config_version=f"{GOAL_ID}.registry.v1",
                 config_hash=content_hash(
                     {"node_id": contract.node_id, "logical_route": contract.logical_route},

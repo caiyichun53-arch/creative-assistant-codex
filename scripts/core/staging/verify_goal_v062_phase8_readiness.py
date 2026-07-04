@@ -178,8 +178,9 @@ def model_binding_status() -> dict[str, Any]:
     defaults = registry.get("provider_policy_defaults") or {}
     fallback = defaults.get("fallback_policy") or {}
     env = read_env(ROOT / ".env.live-gates")
-    model = env.get("MODEL_PROVIDER_MODEL")
-    cls = model_class(model)
+    model = env.get("HERMES_BUSINESS_MODEL_NAME")
+    explicit_cls = (env.get("HERMES_BUSINESS_MODEL_CLASS") or "").strip().lower()
+    cls = explicit_cls or model_class(model)
     fallback_enabled = any(
         fallback.get(key) is not False for key in ("dry_run_fallback", "fake_port_fallback", "cli_fallback")
     ) or fallback.get("on_failure") != "fail_closed"
@@ -188,6 +189,8 @@ def model_binding_status() -> dict[str, Any]:
         "provider_name": defaults.get("provider_name"),
         "live_model_port": defaults.get("live_model_port"),
         "model_ref_source": defaults.get("model_ref_env"),
+        "model_class_source": defaults.get("model_class_env"),
+        "billing_mode": defaults.get("billing_mode"),
         "model_class": cls,
         "mimo_configured": cls == "mimo",
         "gpt_configured": cls == "gpt",
@@ -196,22 +199,28 @@ def model_binding_status() -> dict[str, Any]:
         "fallback_enabled": fallback_enabled,
         "on_failure": fallback.get("on_failure"),
         "node_count": len(registry.get("nodes") or []),
-        "passed": cls == "mimo" and not fallback_enabled and defaults.get("provider_name") == "hermes",
+        "passed": cls == "mimo"
+        and defaults.get("billing_mode") == "subscription"
+        and not fallback_enabled
+        and defaults.get("provider_name") == "hermes",
     }
 
 
-def mimo_validation_status() -> dict[str, Any]:
+def model_provider_validation_status() -> dict[str, Any]:
     phase3 = read_yaml(ROOT / "PHASE_3_LIVE_PROVIDER_MATRIX_STATUS.yaml")
     policy = phase3.get("model_policy") or {}
     return {
         "status": phase3.get("status"),
+        "model_class": policy.get("model_class"),
         "mimo_model_name_detected": policy.get("mimo_model_name_detected"),
+        "gpt_model_name_detected": policy.get("gpt_model_name_detected"),
         "gpt_called": phase3.get("gpt_called"),
         "deepseek_called": phase3.get("deepseek_called"),
         "fallback_used": phase3.get("fallback_used"),
         "passed": (
             phase3.get("status") == "COMPLETED"
             and policy.get("mimo_model_name_detected") is True
+            and policy.get("gpt_model_name_detected") is False
             and phase3.get("gpt_called") is False
             and phase3.get("deepseek_called") is False
             and phase3.get("fallback_used") is False
@@ -348,7 +357,7 @@ def verify_phase8_readiness() -> dict[str, Any]:
         "phases": phase_statuses(),
         "formal_skills": formal_skill_status(),
         "model_binding": model_binding_status(),
-        "mimo_validation": mimo_validation_status(),
+        "model_provider_validation": model_provider_validation_status(),
         "clean_room": clean_room_status(),
         "production_tasks": production_task_status(),
         "manuals": manual_status(),

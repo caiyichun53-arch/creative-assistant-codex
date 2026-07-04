@@ -21,8 +21,7 @@ from scripts.validation.clean_room_empty_db import health_check
 from scripts.validation.live_gates import (
     LiveGateConfig,
     ModelProviderHarness,
-    _optional_decimal_value,
-    _valid_base_url,
+    hermes_subscription_provider_settings,
     validate_live_authorization,
 )
 
@@ -62,20 +61,20 @@ class CountingLiveModelPort:
 
 
 def build_live_route(config: LiveGateConfig) -> ModelRoute:
-    model = required_env(config, "MODEL_PROVIDER_MODEL")
+    provider_settings = hermes_subscription_provider_settings(config)
     return ModelRoute(
         route_name="runtime_probe.test",
         provider_name="hermes",
-        model_name=model,
+        model_name=provider_settings.model_name,
         config_version="goal-runtime-model-gate-01.live.v1",
         config_hash=content_hash(
             {
                 "goal": GOAL_ID,
                 "route": "runtime_probe.test",
                 "provider": "hermes",
-                "model": model,
+                "model": provider_settings.model_name,
+                "model_class": provider_settings.model_class,
                 "base_url_configured": True,
-                "project_id_present": bool(config.env_value("MODEL_PROVIDER_PROJECT_ID")),
                 "live_call_limit": 1,
                 "max_retries": 0,
                 "timeout_ms": 30_000,
@@ -93,17 +92,12 @@ def build_live_route(config: LiveGateConfig) -> ModelRoute:
 
 
 def build_live_port(config: LiveGateConfig) -> CountingLiveModelPort:
-    api_key = required_env(config, "MODEL_PROVIDER_API_KEY")
-    base_url = required_env(config, "MODEL_PROVIDER_BASE_URL")
-    model = required_env(config, "MODEL_PROVIDER_MODEL")
-    _optional_decimal_value(config.env_value("MODEL_PROVIDER_COST_CAP"))
-    if not _valid_base_url(base_url):
-        raise RuntimeError("MODEL_PROVIDER_BASE_URL must start with http:// or https://")
+    provider_settings = hermes_subscription_provider_settings(config)
     adapter = HermesModelProviderAdapter(
         HermesModelProviderConfig(
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
+            api_key=provider_settings.token,
+            base_url=provider_settings.base_url,
+            model=provider_settings.model_name,
             timeout_seconds=30,
             max_retries=0,
         )

@@ -20,7 +20,8 @@ current_business_model_binding:
   current_approved_model_class: Mimo
   provider_alias: hermes
   live_model_port: HermesModelProviderAdapter
-  model_ref_source: MODEL_PROVIDER_MODEL
+  model_ref_source: HERMES_BUSINESS_MODEL_NAME
+  model_class_source: HERMES_BUSINESS_MODEL_CLASS
   active_binding_count: 1
   fallback_enabled: false
 production_scheduled_tasks:

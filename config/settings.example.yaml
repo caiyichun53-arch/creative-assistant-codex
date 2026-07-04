@@ -31,8 +31,13 @@ legacy_runtime:
 
 llm:
   provider: hermes
+  default: mimo
   route_registry: BUSINESS_MODEL_ROUTE_REGISTRY.yaml
   direct_cli_runtime_authority: false
+  allowed_runtime_providers: [mimo]
+  fallback_enabled: false
+  aliases:
+    mimo: xiaomi/mimo-v2.5-pro
 
 hit_detection:
   baseline_window_days: 90

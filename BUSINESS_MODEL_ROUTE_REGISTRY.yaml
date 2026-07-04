@@ -15,7 +15,9 @@ source_policy:
 provider_policy_defaults:
   provider_name: hermes
   live_model_port: HermesModelProviderAdapter
-  model_ref_env: MODEL_PROVIDER_MODEL
+  model_ref_env: HERMES_BUSINESS_MODEL_NAME
+  model_class_env: HERMES_BUSINESS_MODEL_CLASS
+  billing_mode: subscription
   tools_enabled: false
   memory_enabled: false
   feishu_messaging_enabled: false

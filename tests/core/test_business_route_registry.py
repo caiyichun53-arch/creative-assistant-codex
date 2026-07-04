@@ -62,7 +62,7 @@ class BusinessRouteRegistryTests(unittest.TestCase):
             ModelRoute(
                 route_name="business.creation_draft",
                 provider_name="hermes",
-                model_name="env:MODEL_PROVIDER_MODEL",
+                model_name="env:HERMES_BUSINESS_MODEL_NAME",
                 config_version="test",
                 config_hash="hash",
                 parameters={"tools": [{"type": "function"}]},
@@ -70,7 +70,7 @@ class BusinessRouteRegistryTests(unittest.TestCase):
             ModelRoute(
                 route_name="business.creation_draft",
                 provider_name="hermes",
-                model_name="env:MODEL_PROVIDER_MODEL",
+                model_name="env:HERMES_BUSINESS_MODEL_NAME",
                 config_version="test",
                 config_hash="hash",
                 parameters={"nested_jobs": True},

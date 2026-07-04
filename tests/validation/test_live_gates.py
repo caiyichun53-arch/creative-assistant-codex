@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import decimal
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -18,7 +17,6 @@ from scripts.core.model_gateway.hermes_model_provider import (
 from scripts.validation.live_gates import (
     GATE_IDS,
     LiveGateConfig,
-    _cost_cap_result,
     command_dry_run,
     command_preflight,
     run_gate_mode,
@@ -58,9 +56,10 @@ class LiveGateHarnessTests(unittest.TestCase):
 
     def model_env(self, **overrides: str) -> dict[str, str]:
         values = {
-            "MODEL_PROVIDER_API_KEY": "test-model-key",
-            "MODEL_PROVIDER_BASE_URL": "https://example.invalid/v1",
-            "MODEL_PROVIDER_MODEL": "test-hermes-model",
+            "HERMES_BUSINESS_MODEL_TOKEN": "test-hermes-token",
+            "HERMES_BUSINESS_MODEL_BASE_URL": "https://example.invalid/v1",
+            "HERMES_BUSINESS_MODEL_NAME": "xiaomi/mimo-v2.5-pro",
+            "HERMES_BUSINESS_MODEL_CLASS": "mimo",
         }
         values.update(overrides)
         return values
@@ -112,54 +111,58 @@ class LiveGateHarnessTests(unittest.TestCase):
             self.assertEqual(status["gates"]["GATE-MODEL-PROVIDER"]["status"], "DRY_RUN_PASSED")
             self.assertEqual(status["gates"]["GATE-ASR"]["status"], "NOT_READY")
 
-    def test_model_preflight_blocks_missing_api_key(self) -> None:
+    def test_model_preflight_blocks_missing_hermes_token(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
-            values = self.model_env(MODEL_PROVIDER_API_KEY="__PLACEHOLDER__")
+            values = self.model_env(HERMES_BUSINESS_MODEL_TOKEN="__PLACEHOLDER__")
             config = self.make_config(tmp, env_values=values)
             result = run_gate_mode(config=config, gate_id="GATE-MODEL-PROVIDER", mode="preflight", status_path=tmp / "status.yaml")
             self.assertEqual(result.status, "BLOCKED_MISSING_CREDENTIAL")
-            self.assertIn("MODEL_PROVIDER_API_KEY", result.failure_reason)
+            self.assertIn("HERMES_BUSINESS_MODEL_TOKEN", result.failure_reason)
 
-    def test_model_preflight_blocks_missing_base_url(self) -> None:
+    def test_model_preflight_blocks_missing_hermes_base_url(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
-            values = self.model_env(MODEL_PROVIDER_BASE_URL="__PLACEHOLDER__")
+            values = self.model_env(HERMES_BUSINESS_MODEL_BASE_URL="__PLACEHOLDER__")
             config = self.make_config(tmp, env_values=values)
             result = run_gate_mode(config=config, gate_id="GATE-MODEL-PROVIDER", mode="preflight", status_path=tmp / "status.yaml")
             self.assertEqual(result.status, "BLOCKED_MISSING_CREDENTIAL")
-            self.assertIn("MODEL_PROVIDER_BASE_URL", result.failure_reason)
+            self.assertIn("HERMES_BUSINESS_MODEL_BASE_URL", result.failure_reason)
 
     def test_model_preflight_blocks_missing_model(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
-            values = self.model_env(MODEL_PROVIDER_MODEL="__PLACEHOLDER__")
+            values = self.model_env(HERMES_BUSINESS_MODEL_NAME="__PLACEHOLDER__")
             config = self.make_config(tmp, env_values=values)
             result = run_gate_mode(config=config, gate_id="GATE-MODEL-PROVIDER", mode="preflight", status_path=tmp / "status.yaml")
             self.assertEqual(result.status, "BLOCKED_MISSING_CREDENTIAL")
-            self.assertIn("MODEL_PROVIDER_MODEL", result.failure_reason)
+            self.assertIn("HERMES_BUSINESS_MODEL_NAME", result.failure_reason)
 
-    def test_model_preflight_project_id_is_optional(self) -> None:
+    def test_model_preflight_blocks_non_mimo_model_class(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
-            values = self.model_env(MODEL_PROVIDER_PROJECT_ID="__PLACEHOLDER__")
+            values = self.model_env(HERMES_BUSINESS_MODEL_CLASS="gpt", HERMES_BUSINESS_MODEL_NAME="gpt-test-hermes-model")
+            config = self.make_config(tmp, env_values=values)
+            result = run_gate_mode(config=config, gate_id="GATE-MODEL-PROVIDER", mode="preflight", status_path=tmp / "status.yaml")
+            self.assertEqual(result.status, "BLOCKED_MISSING_TEST_ENV")
+            self.assertIn("HERMES_BUSINESS_MODEL_CLASS must be mimo", result.failure_reason)
+
+    def test_model_preflight_uses_hermes_subscription_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            values = self.model_env()
             config = self.make_config(tmp, env_values=values)
             result = run_gate_mode(config=config, gate_id="GATE-MODEL-PROVIDER", mode="preflight", status_path=tmp / "status.yaml")
             self.assertEqual(result.status, "PREFLIGHT_PASSED")
             manifest = yaml.safe_load((self.manifest_path(result) / "run_manifest.yaml").read_text(encoding="utf-8"))
             self.assertEqual(manifest["response"]["billing_mode"], "subscription")
-            self.assertEqual(manifest["response"]["monetary_cost_cap"], "not_applicable")
-
-    def test_model_preflight_cost_cap_is_optional_for_subscription_provider(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            tmp = Path(td)
-            values = self.model_env(MODEL_PROVIDER_COST_CAP="__PLACEHOLDER__")
-            config = self.make_config(tmp, env_values=values)
-            result = run_gate_mode(config=config, gate_id="GATE-MODEL-PROVIDER", mode="preflight", status_path=tmp / "status.yaml")
-            self.assertEqual(result.status, "PREFLIGHT_PASSED")
-            manifest = yaml.safe_load((self.manifest_path(result) / "run_manifest.yaml").read_text(encoding="utf-8"))
-            self.assertNotIn("MODEL_PROVIDER_COST_CAP", manifest["response"]["required_fields"])
-            self.assertIn("MODEL_PROVIDER_COST_CAP", manifest["response"]["optional_fields"])
+            self.assertEqual(manifest["response"]["model_class"], "mimo")
+            self.assertNotIn("monetary_cost_cap", manifest["response"])
+            self.assertEqual(
+                tuple(manifest["response"]["required_fields"]),
+                ("HERMES_BUSINESS_MODEL_TOKEN", "HERMES_BUSINESS_MODEL_BASE_URL", "HERMES_BUSINESS_MODEL_NAME", "HERMES_BUSINESS_MODEL_CLASS"),
+            )
+            self.assertEqual(tuple(manifest["response"]["optional_fields"]), ())
 
     def test_hermes_adapter_records_usage_not_available(self) -> None:
         class FakeCompletions:
@@ -306,7 +309,7 @@ class LiveGateHarnessTests(unittest.TestCase):
             self.assertEqual(manifest["response"]["status"], "succeeded")
             self.assertEqual(manifest["response"]["billing_mode"], "subscription")
             self.assertEqual(manifest["response"]["cost_status"], "not_reported")
-            self.assertEqual(manifest["response"]["monetary_cost_cap"], "not_applicable")
+            self.assertNotIn("monetary_cost_cap", manifest["response"])
             self.assertEqual(manifest["response"]["visible_output_status"], "available")
             self.assertTrue(manifest["response"]["expected_output_match"])
             self.assertEqual(manifest["response"]["actual_call_count"], 1)
@@ -330,7 +333,7 @@ class LiveGateHarnessTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
-            config = self.make_config(tmp, env_values=self.model_env(MODEL_PROVIDER_API_KEY="test-secret-key"), live_model_gate=True)
+            config = self.make_config(tmp, env_values=self.model_env(HERMES_BUSINESS_MODEL_TOKEN="test-secret-key"), live_model_gate=True)
             with mock.patch("scripts.validation.live_gates.HermesModelProviderAdapter", FailingHermesAdapter):
                 result = run_gate_mode(
                     config=config,
@@ -345,7 +348,7 @@ class LiveGateHarnessTests(unittest.TestCase):
             manifest_text = (self.manifest_path(result) / "run_manifest.yaml").read_text(encoding="utf-8")
             self.assertNotIn("test-secret-key", manifest_text)
 
-    def test_metered_provider_cost_cap_exceeded_fails_when_enabled(self) -> None:
+    def test_metered_provider_is_rejected_for_subscription_path(self) -> None:
         class CostlyMeteredAdapter:
             provider_name = "hermes"
 
@@ -370,7 +373,7 @@ class LiveGateHarnessTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
-            config = self.make_config(tmp, env_values=self.model_env(MODEL_PROVIDER_COST_CAP="0.01"), live_model_gate=True)
+            config = self.make_config(tmp, env_values=self.model_env(), live_model_gate=True)
             with mock.patch("scripts.validation.live_gates.HermesModelProviderAdapter", CostlyMeteredAdapter):
                 result = run_gate_mode(
                     config=config,
@@ -381,12 +384,7 @@ class LiveGateHarnessTests(unittest.TestCase):
                     status_path=tmp / "status.yaml",
                 )
             self.assertEqual(result.status, "LIVE_FAILED")
-            self.assertIn("MODEL_PROVIDER_COST_CAP exceeded", result.failure_reason)
-
-    def test_metered_cost_cap_helper_still_compares_amounts(self) -> None:
-        result = _cost_cap_result({"currency": "USD", "amount": "0.005"}, decimal.Decimal("0.01"), billing_mode="metered")
-        self.assertEqual(result["cost_cap_status"], "within_cap")
-        self.assertEqual(result["cost_cap_comparison"], "actual_usd_amount_lte_configured_usd_cap")
+            self.assertIn("must report subscription billing", result.failure_reason)
 
     def test_hermes_host_gate_dry_run_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as td:
