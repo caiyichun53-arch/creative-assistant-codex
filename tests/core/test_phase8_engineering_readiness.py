@@ -11,8 +11,9 @@ class Phase8EngineeringReadinessTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "ENGINEERING_READY")
         self.assertEqual(result["engineering_goal_status"], "completed")
-        self.assertEqual(result["production_activation_status"], "not_started")
+        self.assertEqual(result["production_activation_status"], "controlled_pilot_started")
         self.assertNotIn("model_binding", result["failures"])
+        self.assertEqual(result["phase8_gate_status"]["matched_profile"], "post_controlled_real_data_pilot")
         self.assertEqual(result["model_binding"]["model_ref_source"], "HERMES_BUSINESS_MODEL_NAME")
         self.assertEqual(result["model_binding"]["model_class_source"], "HERMES_BUSINESS_MODEL_CLASS")
         self.assertEqual(result["model_binding"]["billing_mode"], "subscription")
@@ -21,5 +22,6 @@ class Phase8EngineeringReadinessTests(unittest.TestCase):
         self.assertFalse(result["model_binding"]["fallback_enabled"])
         self.assertIn("model_provider_validation", result)
         self.assertFalse(result["safety_summary"]["gpt_called"])
-        self.assertFalse(result["safety_summary"]["real_platform_collection_started"])
+        self.assertTrue(result["safety_summary"]["real_platform_collection_started"])
+        self.assertTrue(result["safety_summary"]["approved_real_data_pilot"])
         self.assertFalse(result["safety_summary"]["real_feishu_message_sent"])

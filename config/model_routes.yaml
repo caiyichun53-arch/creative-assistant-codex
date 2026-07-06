@@ -1,0 +1,72 @@
+schema_version: model_routes.v1
+model_providers:
+  mimo_main:
+    type: mimo
+    enabled: true
+    provider_name: hermes
+    live_model_port: HermesModelProviderAdapter
+    auth_ref: HERMES_BUSINESS_API_KEY
+    endpoint_ref: HERMES_BUSINESS_BASE_URL
+    model_ref: HERMES_BUSINESS_MODEL_NAME
+    model_class_ref: HERMES_BUSINESS_MODEL_CLASS
+    billing_mode: subscription
+
+model_routes:
+  daily_chat:
+    provider_ref: mimo_main
+    fallback: none
+    allowed_task_types:
+      - daily_conversation
+      - system_status_explanation
+      - user_instruction_intake
+
+  business_analysis:
+    provider_ref: mimo_main
+    fallback: none
+    allowed_task_types:
+      - business_planning
+      - topic_screening
+      - topic_scoring
+      - material_summary
+      - material_value_judgement
+      - benchmark_analysis
+      - comment_analysis
+      - experience_matching
+      - experience_applicability_judgement
+      - risk_initial_review
+      - workflow_execution_summary
+
+  engineering_execution:
+    provider_ref: mimo_main
+    fallback: none
+    allowed_task_types:
+      - code_editing
+      - command_execution
+      - test_running
+      - config_modification
+      - bug_fixing
+      - migration_script_generation
+      - repo_inspection
+
+  writing_generation:
+    provider_ref: mimo_main
+    fallback: none
+    allowed_task_types:
+      - title_generation
+      - title_rewrite
+      - hook_generation
+      - content_structure
+      - rough_draft
+      - final_draft
+      - multi_variant_copy_generation
+      - rewrite
+      - polishing
+      - de_ai_style
+      - colloquial_rewrite
+      - emotional_strengthening
+      - reduce_preachiness
+      - reduce_plagiarism_risk_rewrite
+      - platform_adaptation
+      - cover_copy
+      - publishing_copy
+      - final_copy_review

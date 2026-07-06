@@ -40,6 +40,7 @@ from scripts.core.hermes.goal11_host_binding import (  # noqa: E402
     FeishuThinBinding,
     HermesCoreBridge,
 )
+from scripts.core.host.production_host import PRODUCTION_HOST_ACTOR  # noqa: E402
 from scripts.core.model_gateway.goal07_model_gateway import (  # noqa: E402
     ModelGateway,
     ModelProviderResult,
@@ -196,8 +197,8 @@ class Goal12StagingHarness:
         self.core = CoreMaterializer.in_memory(id_factory=generator.new)
         self.store = self.core.store
         self.scheduler = Goal03Scheduler(self.store, id_factory=generator.new, now_ms=self.clock.now_ms)
-        self.core.grant_permission("hermes", "create_state")
-        self.core.grant_permission("hermes", "transition_state")
+        self.core.grant_permission(PRODUCTION_HOST_ACTOR, "create_state")
+        self.core.grant_permission(PRODUCTION_HOST_ACTOR, "transition_state")
 
     def make_runtime(self, response_dispatcher: FeishuResponseDispatcher | None = None) -> RuntimeHost:
         runtime = RuntimeHost(self.scheduler, worker_id="goal12-worker")
@@ -767,7 +768,7 @@ def test_traceability_replay_and_faults(harness: Goal12StagingHarness, artifacts
     stale = harness.core.execute(
         CoreCommandEnvelope(
             command_type="transition_state",
-            actor="hermes",
+            actor=PRODUCTION_HOST_ACTOR,
             object_kind="topic",
             object_id=artifacts.topic_id,
             expected_basis_version_id=artifacts.research_artifact_version_id,
@@ -861,7 +862,7 @@ def test_backup_restore_and_clean_room(harness: Goal12StagingHarness, artifacts:
         loaded = load_formal_skill_allowlist(formal_skill_root, allowlist={"goal12-script-writer"})
         assert loaded == {"goal12-script-writer"}
         production_probe = Goal12StagingHarness()
-        production_probe.core.grant_permission("hermes", "create_state")
+        production_probe.core.grant_permission(PRODUCTION_HOST_ACTOR, "create_state")
         probe_result = HermesCoreBridge(production_probe.core).dispatch(
             FeishuThinBinding().to_hermes_message(
                 FeishuBindingEvent(

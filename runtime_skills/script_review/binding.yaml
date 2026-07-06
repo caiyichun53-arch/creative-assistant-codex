@@ -2,10 +2,15 @@ schema_version: formal_skill_binding.v1
 binding_name: script_review_public_input_to_review_polish_ai_flavor
 binding_version: 1.0.0
 route_name: business.creation_review
+route_id: writing_generation
 subnode_routes:
   review: business.creation_review
   polish: business.creation_polish
   ai_flavor: business.ai_flavor_judge
+subnode_route_ids:
+  review: writing_generation
+  polish: writing_generation
+  ai_flavor: writing_generation
 input_map:
   fixture_id:
     source: input

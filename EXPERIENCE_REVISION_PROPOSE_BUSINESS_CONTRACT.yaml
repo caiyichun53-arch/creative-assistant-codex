@@ -121,6 +121,7 @@ target_runner: FormalBusinessSkillAdapter
 materializer_contract: formal_business_skill_result.v1
 model_binding:
   route_name: business.experience_revision_propose
+  route_id: business_analysis
   binding_name: experience_revision_propose_public_input_to_candidate
   binding_version: 1.0.0
   input_map:

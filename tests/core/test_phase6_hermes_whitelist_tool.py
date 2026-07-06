@@ -7,6 +7,7 @@ from scripts.core.hermes.goal_phase6_whitelist_tool import (
     HermesWhitelistToolError,
     HermesWhitelistToolRequest,
 )
+from scripts.core.host.production_host import PRODUCTION_HOST_ACTOR
 from scripts.core.model_gateway.formal_skill_adapter import (
     DeterministicResearchEvidenceExtractModelPort,
     sample_research_evidence_extract_input,
@@ -25,8 +26,8 @@ from scripts.core.workflow.goal_phase5_business_workflow import (
 def make_core_and_scheduler():
     generator = UUIDv7Generator(now_ms=lambda: 1_770_000_000_000, randbits=lambda bits: 42)
     core = CoreMaterializer.in_memory(id_factory=generator.new)
-    core.grant_permission("hermes", "create_state")
-    core.grant_permission("hermes", "transition_state")
+    core.grant_permission(PRODUCTION_HOST_ACTOR, "create_state")
+    core.grant_permission(PRODUCTION_HOST_ACTOR, "transition_state")
     scheduler = Goal03Scheduler(core.store, id_factory=generator.new, now_ms=lambda: 1_770_000_000_000)
     return core, scheduler, generator
 
@@ -193,7 +194,7 @@ class Phase6HermesWhitelistToolTests(unittest.TestCase):
         created = core.execute(
             CoreCommandEnvelope(
                 command_type="create_state",
-                actor="hermes",
+                actor=PRODUCTION_HOST_ACTOR,
                 object_kind="experiment",
                 idempotency_key="phase6-experiment-create",
                 payload={},
@@ -202,7 +203,7 @@ class Phase6HermesWhitelistToolTests(unittest.TestCase):
         core.execute(
             CoreCommandEnvelope(
                 command_type="transition_state",
-                actor="hermes",
+                actor=PRODUCTION_HOST_ACTOR,
                 object_kind="experiment",
                 object_id=created.object_id,
                 expected_basis_version_id=created.basis_version_id,

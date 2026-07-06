@@ -17,6 +17,7 @@ from scripts.core.external_adapters.goal_phase4_external_adapters import (
     make_mediacrawler_runtime_handler,
     make_netease_runtime_handler,
 )
+from scripts.core.external_adapters.local_mediacrawler_executor import LocalMediaCrawlerExecutor
 
 __all__ = [
     "AsrAdapter",
@@ -26,6 +27,7 @@ __all__ = [
     "ExternalAdapterRunResult",
     "ExternalCommandExecutor",
     "ExternalCommandResult",
+    "LocalMediaCrawlerExecutor",
     "MediaCrawlerCollectorAdapter",
     "NetEaseMusicCollectorAdapter",
     "ResearchFetcherAdapter",

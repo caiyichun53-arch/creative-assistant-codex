@@ -23,6 +23,8 @@
 
 ## 模块 / 数据地图(领域 > 账号 > 平台,全是数据)
 - **存储**:SQLite(账号/对标账号/观察池/爆款库/候选池/选题/追踪/diff/基线)+ Obsidian 范例库(选题/钩子/结构/文风/对照 + 爆款拆解 + 分类词表 + 人设)。
+- **生产 Host 边界**:`scripts/core/host/` 是平台中立入口,外部平台先变成 Host message,再经白名单 Tool/Core/Job/Outbox;Hermes、Codex、Claude Code、飞书等只能是适配器,不直接写 Core 或业务库(`DEFAULT_ALLOWED_HOSTS` 现含 `hermes`/`codex`/`claude`)。
+- **竞品业务数据层**:`scripts/core/business_data/`(账号注册 + 首采存量 + 基线/爆款判定),独立库 `data/formal/production_activation.sqlite3`,受 `docs/production_execution_guardrails.md` 的执行契约闸门约束——配置对不上设计契约(观察期/窗口/样本数)直接拒绝执行。真实数据的重判(rejudge)只能走 `run_competitor_registration_full.py --rejudge-only`,不能用临时脚本片段绕过契约闸门。
 - **两类池(别混)**:
   - 竞品数据侧:`采集 → 观察池(仅新发布≤7天的视频·定期复查)→ 爆款判定(过相对基线)→ 爆款库(已验证赢家)`。**注册时的存量视频不进观察池(含年轻的——观察=日常增量里看着新发布的,首采全是存量快照)**:存量 → 算基线(中位数/P90)+判定(爆款直接入库),其余 archived 当基线材料;archived 计数仍被 daily 刷新、每轮重判,过阈值照样晋升。表是 competitor_videos(全部视频),观察池=其 watching 子集视图。
   - 选题侧:`候选池`(推了没选中的;常驻块 + 关联爆款回温 + 衰减淘汰)
@@ -42,4 +44,13 @@
 ## 开工纪律
 - 每步对照 `BUILD_PLAN.md`,**做完一步验一步,不跳建**。
 - 固定决策有疑问 → 查本文件 / 蓝图,**不自行改技术路线**。
-- 改了模块结构 → 更新本文件的模块地图。
+- 改了模块结构 → 更新本文件的模块地图,**且必须在同一次提交里做**,不能代码先跑、文档以后再补(以后再补=从来不补)。
+- **两份宪法文件点名要读的治理依据(如 `target-architecture.md`/`rebuild-direction.md`)如果在仓库和 memory 里都找不到,必须停下来问用户,不能记一笔"找不到"就当警告放过、继续往下做**。这是 2026-07-06 之前 124 次提交里真实发生过的跑偏根因:治理依据缺失被诚实记录、但从未真正拦停过任何一次开工。
+
+## 执行纪律(2026-07-06 新增,防止再次跑偏)
+> 背景:GOAL-V0.6.2-PRODUCTION-COMPLETION-01 分支上,`baseline_min_samples: 30` 一度被写成硬门槛(应为目标样本、10 才是最低可判门槛),导致 28 个竞品账号全部基线=0/爆款=0;修复该问题时,又用没留痕的临时路径重新跑了判定(绕开了刚建好的契约闸门),且汇报"完成"时没有核对真正的权威闸门脚本(闸门实际返回 `ENGINEERING_NOT_READY`)。这五条是从这两次真实事故里提炼的硬闸,不是预防性堆砌:
+- **治理依据缺失 = 硬停**(见上,重复强调因为这是本次事故的制度性根因)。
+- **真实数据写操作只能走一个受控入口**:任何会修改生产业务数据库(如 `data/formal/production_activation.sqlite3`)的操作,必须走一个提交过、有执行契约校验的脚本入口(如 `run_competitor_registration_full.py`),不能用临时命令/代码片段直接对着真实库执行。
+- **完成状态必须贴真实闸门输出,不能凭自己判断**:任何地方标记 `completed`/`succeeded`/`ENGINEERING_READY` 之类的状态,必须附上刚跑过的对应权威闸门脚本(如 `scripts/core/staging/verify_goal_v062_phase8_readiness.py`)的真实终端输出,不能转述、不能只看局部测试就下"完成"结论。
+- **收工/额度耗尽前必须提交干净**:当前进度必须提交成一个能跑的 checkpoint commit,不能把大批未提交改动扔在工作区——交接给另一个执行者(Codex/Claude Code 互相接力)时,工作区状态就是唯一可信的现状。
+- **CLAUDE.md/AGENTS.md 必须保持逐句同步**(`tests/validation/test_constitution_sync.py` 强制检查,两份文件除工具名互换外必须逐字一致),防止再次出现一份被持续维护、另一份 124 次提交没人碰的情况。

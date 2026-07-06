@@ -10,11 +10,12 @@ This is a post-engineering operating manual for a future user-initiated model sw
 
 - Current unique business model binding: `business.primary`
 - Current approved live provider path: `provider_alias=hermes`, `live_model_port=HermesModelProviderAdapter`
-- Current model reference source: `MODEL_PROVIDER_MODEL`
-- Current approved business model class for development/live Provider validation: Mimo
+- Current model reference source: `HERMES_BUSINESS_MODEL_NAME`
+- Current approved business model class for production activation: GPT
 - Active binding count: exactly one
 - Fallback policy: disabled; on failure, fail closed
-- Hermes chat model: independent from business model binding and must not affect `business.primary`
+- Hermes daily chat/default model: independent from business model binding and may remain Mimo.
+- Business model binding: a separate Hermes GPT subscription endpoint/profile used only by `business.primary`.
 
 ## GPT Configuration Method
 
@@ -22,10 +23,11 @@ The switch must be a single authorized change to the model reference behind `bus
 
 Required configuration changes after a future explicit user approval:
 
-- The user first completes GPT authorization and model configuration in Hermes.
+- The user first completes GPT authorization and model configuration in a business-only Hermes endpoint/profile.
+- Hermes daily chat/default configuration may stay on Mimo and must not be used as business fallback.
 - Codex does not configure credentials, copy credentials, infer credentials, or choose the GPT model for the user.
 - The user explicitly chooses the target GPT model.
-- Set the approved GPT model reference through the same model reference mechanism currently used by `business.primary`.
+- Set the approved GPT subscription binding through `HERMES_BUSINESS_MODEL_TOKEN`, `HERMES_BUSINESS_MODEL_BASE_URL`, `HERMES_BUSINESS_MODEL_NAME`, and `HERMES_BUSINESS_MODEL_CLASS=gpt`.
 - Create a new `model_config_version` for the GPT binding.
 - Record the config hash, route registry version, operator, timestamp and approval reference.
 - Keep all formal Skill logical routes unchanged, for example `business.content_classify`, `business.script_generate` and `business.experience_revision_propose`.
@@ -42,7 +44,7 @@ Required checks:
 - No old data, no production data, no real platform collection and no Feishu send.
 - Validate that tools, memory, messaging, nested orchestration and file/terminal side effects remain disabled.
 - Validate that failure produces a failed run envelope and does not call Mimo, DeepSeek, Codex CLI, Claude CLI or any legacy model script.
-- Validate cost/usage metadata shape without printing secrets.
+- Validate usage metadata shape without printing secrets. Subscription billing must not introduce dollar-denominated cost caps.
 
 ## Minimal GPT Regression Matrix
 
@@ -134,10 +136,10 @@ The same flow applies to any future approved model:
 
 These items are intentionally not required for the current engineering Goal to complete:
 
-1. User-confirmed Hermes GPT authorization and provider configuration.
-2. User-selected GPT model reference.
+1. User-confirmed Hermes business GPT authorization and provider configuration.
+2. User-selected GPT model reference in `HERMES_BUSINESS_MODEL_NAME`.
 3. Explicit approval to run the isolated GPT precheck.
 4. Explicit approval to run the minimal GPT regression.
 5. Explicit approval to atomically switch `business.primary`.
 
-Until those future inputs exist, the correct current state remains: `business.primary` uses the approved Mimo binding, active binding count is one, no GPT call has been made, and no fallback exists.
+Until those future inputs exist, the correct current state remains: production activation is not started, no GPT call has been made, and no fallback exists.

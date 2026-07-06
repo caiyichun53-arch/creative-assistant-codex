@@ -24,6 +24,12 @@ from .hermes_model_provider import (
     HermesModelProviderConfig,
     HermesModelProviderError,
 )
+from .model_router import (
+    ModelProviderDefinition,
+    ModelRouteDefinition,
+    ModelRouter,
+    ModelRouterError,
+)
 
 __all__ = [
     "HostBindingSpec",
@@ -33,12 +39,16 @@ __all__ = [
     "ModelGateway",
     "ModelGatewayError",
     "ModelProvider",
+    "ModelProviderDefinition",
     "ModelProviderResult",
     "ModelRequest",
     "ModelRoute",
+    "ModelRouteDefinition",
     "ModelRunEnvelope",
     "ModelRunMaterializer",
     "ModelRunResult",
+    "ModelRouter",
+    "ModelRouterError",
     "ModelUsage",
     "PortableSkillRunner",
     "PortableSkillSpec",

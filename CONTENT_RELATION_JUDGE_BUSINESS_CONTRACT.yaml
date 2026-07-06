@@ -319,6 +319,7 @@ target_runner: FormalBusinessSkillAdapter
 materializer_contract: formal_business_skill_result.v1
 model_binding:
   route_name: business.content_relation_judgement
+  route_id: business_analysis
   binding_name: content_relation_judge_public_input_to_relation_judgement
   binding_version: 1.0.0
   input_map:

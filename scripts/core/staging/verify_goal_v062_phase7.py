@@ -19,6 +19,7 @@ from scripts.core.hermes.goal_phase6_whitelist_tool import (  # noqa: E402
     HermesWhitelistToolError,
     HermesWhitelistToolRequest,
 )
+from scripts.core.host.production_host import PRODUCTION_HOST_ACTOR  # noqa: E402
 from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
     DeterministicContentClassifyModelPort,
     DeterministicContentPlanModelPort,
@@ -172,7 +173,7 @@ def make_harness(*, behaviors: dict[str, str] | None = None, max_clock_ms: int =
     id_factory = UUIDv7Generator(now_ms=clock.now_ms, randbits=DeterministicBits()).new
     store = PersistenceStore.in_memory(id_factory=id_factory)
     core = CoreMaterializer(store, id_factory=id_factory)
-    for actor in ("hermes", "phase7", "phase7_human_gate"):
+    for actor in (PRODUCTION_HOST_ACTOR, "phase7", "phase7_human_gate"):
         core.grant_permission(actor, "create_state")
         core.grant_permission(actor, "transition_state")
     scheduler = Goal03Scheduler(store, id_factory=id_factory, now_ms=clock.now_ms)

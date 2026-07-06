@@ -20,6 +20,8 @@ class ModelRoute:
     config_hash: str
     parameters: dict[str, Any] | None = None
     timeout_ms: int | None = None
+    route_id: str | None = None
+    provider_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -58,7 +60,9 @@ class ModelRunEnvelope:
     status: str
     correlation_id: str | None
     route_name: str
+    route_id: str | None
     provider_name: str
+    provider_ref: str | None
     model_name: str
     prompt_hash: str
     skill_name: str | None
@@ -83,7 +87,9 @@ class ModelRunEnvelope:
             "status": self.status,
             "correlation_id": self.correlation_id,
             "route_name": self.route_name,
+            "route_id": self.route_id,
             "provider_name": self.provider_name,
+            "provider_ref": self.provider_ref,
             "model_name": self.model_name,
             "prompt_hash": self.prompt_hash,
             "skill_name": self.skill_name,
@@ -135,10 +141,12 @@ class ModelRunMaterializer:
             payload,
             projection_version="goal07.model_run_envelope.v1",
             business_payload={
-                "status": envelope.status,
-                "route_name": envelope.route_name,
-                "provider_name": envelope.provider_name,
-                "model_name": envelope.model_name,
+            "status": envelope.status,
+            "route_name": envelope.route_name,
+            "route_id": envelope.route_id,
+            "provider_name": envelope.provider_name,
+            "provider_ref": envelope.provider_ref,
+            "model_name": envelope.model_name,
                 "input_hash": envelope.input_hash,
                 "output_hash": envelope.output_hash,
             },
@@ -153,7 +161,9 @@ class ModelRunMaterializer:
             payload={
                 "status": envelope.status,
                 "route_name": envelope.route_name,
+                "route_id": envelope.route_id,
                 "provider_name": envelope.provider_name,
+                "provider_ref": envelope.provider_ref,
                 "model_name": envelope.model_name,
                 "duration_ms": envelope.duration_ms,
                 "cost": envelope.cost,
@@ -267,7 +277,9 @@ class ModelGateway:
             status=status,
             correlation_id=request.correlation_id,
             route_name=route.route_name,
+            route_id=route.route_id,
             provider_name=route.provider_name,
+            provider_ref=route.provider_ref,
             model_name=route.model_name,
             prompt_hash=content_hash({"prompt": request.prompt}, "goal07.prompt.v1"),
             skill_name=request.skill_name,

@@ -14,6 +14,7 @@ non_responsibilities:
   - feishu_messaging
 runner: FormalBusinessSkillAdapter
 route_name: business.creation_draft
+route_id: writing_generation
 input_schema: input_schema.yaml
 output_schema: output_schema.yaml
 binding: binding.yaml

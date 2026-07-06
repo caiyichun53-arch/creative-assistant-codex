@@ -346,18 +346,19 @@ class BaseHarness:
 
 
 class HermesHostHarness(BaseHarness):
-    adapter_name = "HermesCoreBridge"
+    adapter_name = "ProductionHostBridge"
     expected_output = "HERMES_HOST_GATE_OK"
     timeout_seconds = 30
 
     def dry_run(self) -> dict[str, Any]:
         from scripts.core.hermes.goal11_host_binding import FeishuBindingEvent, FeishuResponseDispatcher, FeishuThinBinding, HermesCoreBridge
+        from scripts.core.host.production_host import PRODUCTION_HOST_ACTOR
         from scripts.core.runtime.goal04_runtime_host import RuntimeHandlerContract, RuntimeHost
         from scripts.core.scheduler.goal03_scheduler import Goal03Scheduler
         from scripts.core.state.goal02_core import CoreMaterializer
 
         core = CoreMaterializer.in_memory()
-        core.grant_permission("hermes", "create_state")
+        core.grant_permission(PRODUCTION_HOST_ACTOR, "create_state")
         bridge = HermesCoreBridge(core)
         dispatch = bridge.dispatch(
             FeishuThinBinding().to_hermes_message(
@@ -506,10 +507,11 @@ class FeishuBindingHarness(BaseHarness):
 
     def dry_run(self) -> dict[str, Any]:
         from scripts.core.hermes.goal11_host_binding import FeishuBindingEvent, FeishuThinBinding, HermesCoreBridge
+        from scripts.core.host.production_host import PRODUCTION_HOST_ACTOR
         from scripts.core.state.goal02_core import CoreMaterializer
 
         core = CoreMaterializer.in_memory()
-        core.grant_permission("hermes", "create_state")
+        core.grant_permission(PRODUCTION_HOST_ACTOR, "create_state")
         bridge = HermesCoreBridge(core)
         event = FeishuBindingEvent(
             event_id="dry-run-feishu-event",

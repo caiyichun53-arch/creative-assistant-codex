@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.core.model_gateway.goal07_model_gateway import (
     ModelGateway,
+    ModelProvider,
     ModelProviderResult,
     ModelRequest,
     ModelRoute,
@@ -23,6 +24,7 @@ from scripts.core.model_gateway.goal07_model_gateway import (
     ModelUsage,
 )
 from scripts.core.model_gateway.goal07_skill_runner import PortableSkillRunner, PortableSkillSpec
+from scripts.core.model_gateway.model_router import ModelRouter, ModelRouterError, WRITING_ROUTE_ID, WRITING_TASK_TYPES
 from scripts.core.persistence.goal01_store import PersistenceStore, content_hash
 from scripts.validation.clean_room_empty_db import health_check
 
@@ -42,6 +44,10 @@ FORMAL_ALLOWED_DIRECT_PROVIDER_FILES = {
 }
 FORMAL_VERIFICATION_ONLY_FILES = {
     (ROOT / "scripts" / "core" / "model_gateway" / "business_route_registry.py").resolve(),
+    (ROOT / "scripts" / "core" / "model_gateway" / "model_router.py").resolve(),
+}
+FORMAL_HOST_BOUNDARY_FILES = {
+    (ROOT / "scripts" / "core" / "host" / "production_host.py").resolve(),
 }
 LEGACY_DIRECT_MODEL_ROOTS = (
     ROOT / "scripts" / "llm",
@@ -73,6 +79,8 @@ class BusinessRouteRegistryError(RuntimeError):
 class NodeContract:
     node_id: str
     logical_route: str
+    route_id: str
+    task_type: str
     capability_tier: str
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
@@ -81,10 +89,9 @@ class NodeContract:
     token_context_budget: dict[str, int]
 
 
-class FixtureHermesProvider:
-    provider_name = "hermes"
-
-    def __init__(self, outputs: dict[str, dict[str, Any]]):
+class FixtureModelProvider:
+    def __init__(self, provider_name: str, outputs: dict[str, dict[str, Any]]):
+        self.provider_name = provider_name
         self.outputs = outputs
         self.call_count = 0
         self.routes_seen: list[str] = []
@@ -119,6 +126,8 @@ def node_contracts(registry: dict[str, Any]) -> list[NodeContract]:
         NodeContract(
             node_id=str(node["node_id"]),
             logical_route=str(node["logical_route"]),
+            route_id=str(node["route_id"]),
+            task_type=str(node["task_type"]),
             capability_tier=str(node["capability_tier"]),
             input_schema=dict(node["input_schema"]),
             output_schema=dict(node["output_schema"]),
@@ -133,9 +142,14 @@ def node_contracts(registry: dict[str, Any]) -> list[NodeContract]:
 def validate_registry(registry: dict[str, Any]) -> dict[str, Any]:
     if registry.get("schema_version") != "business_model_route_registry.v1":
         raise BusinessRouteRegistryError("unexpected registry schema_version")
-    defaults = registry.get("provider_policy_defaults") or {}
-    if defaults.get("provider_name") != "hermes":
-        raise BusinessRouteRegistryError("provider_policy_defaults.provider_name must be hermes")
+    model_routing = registry.get("model_routing") or {}
+    if model_routing.get("workflow_nodes_bind_route_id_only") is not True:
+        raise BusinessRouteRegistryError("model_routing.workflow_nodes_bind_route_id_only must be true")
+    try:
+        router = ModelRouter.from_file(ROOT / str(model_routing.get("config_path") or "config/model_routes.yaml"))
+    except ModelRouterError as exc:
+        raise BusinessRouteRegistryError(f"invalid model routing config: {exc}") from exc
+    defaults = registry.get("runtime_policy_defaults") or {}
     isolation_keys = (
         "tools_enabled",
         "memory_enabled",
@@ -167,6 +181,14 @@ def validate_registry(registry: dict[str, Any]) -> dict[str, Any]:
         seen_routes.add(contract.logical_route)
         if not contract.logical_route.startswith("business."):
             raise BusinessRouteRegistryError(f"business route must start with business.: {contract.logical_route}")
+        try:
+            router.resolve(contract.route_id, route_name=contract.logical_route)
+        except ModelRouterError as exc:
+            raise BusinessRouteRegistryError(f"{contract.node_id} has invalid route_id: {exc}") from exc
+        if contract.task_type in WRITING_TASK_TYPES and contract.route_id != WRITING_ROUTE_ID:
+            raise BusinessRouteRegistryError(f"{contract.node_id} writing task_type must use {WRITING_ROUTE_ID}")
+        if contract.route_id == "business_analysis" and contract.task_type in WRITING_TASK_TYPES:
+            raise BusinessRouteRegistryError(f"{contract.node_id} business_analysis cannot bind writing task_type")
         if contract.retry.get("max_attempts") != 1:
             raise BusinessRouteRegistryError(f"{contract.node_id} must not auto-retry provider calls")
         if contract.timeout_ms <= 0:
@@ -199,24 +221,23 @@ def run_fixture_route_tests(registry: dict[str, Any]) -> dict[str, Any]:
     contracts = node_contracts(registry)
     store = PersistenceStore.in_memory()
     try:
+        router = ModelRouter.from_file(ROOT / str((registry.get("model_routing") or {}).get("config_path") or "config/model_routes.yaml"))
         routes = {
-            contract.logical_route: ModelRoute(
+            contract.logical_route: router.resolve(
+                contract.route_id,
                 route_name=contract.logical_route,
-                provider_name="hermes",
-                model_name="env:HERMES_BUSINESS_MODEL_NAME",
                 config_version=f"{GOAL_ID}.registry.v1",
-                config_hash=content_hash(
-                    {"node_id": contract.node_id, "logical_route": contract.logical_route},
-                    f"{GOAL_ID}.route.v1",
-                ),
                 parameters={"temperature": 0, "max_completion_tokens": contract.token_context_budget["max_output_tokens"]},
                 timeout_ms=contract.timeout_ms,
             )
             for contract in contracts
         }
         outputs = {contract.logical_route: fixture_for_schema(contract.output_schema, contract.node_id) for contract in contracts}
-        provider = FixtureHermesProvider(outputs)
-        gateway = ModelGateway(routes=routes, providers={"hermes": provider}, materializer=ModelRunMaterializer(store))
+        providers: dict[str, ModelProvider] = {
+            provider_ref: FixtureModelProvider(provider_ref, outputs)
+            for provider_ref in sorted({route.provider_name for route in routes.values()})
+        }
+        gateway = ModelGateway(routes=routes, providers=providers, materializer=ModelRunMaterializer(store))
         runner = PortableSkillRunner(gateway)
         tested: list[dict[str, Any]] = []
         for contract in contracts:
@@ -238,13 +259,14 @@ def run_fixture_route_tests(registry: dict[str, Any]) -> dict[str, Any]:
                 {
                     "node_id": contract.node_id,
                     "logical_route": contract.logical_route,
+                    "route_id": contract.route_id,
                     "provider_name": result.model_run.envelope.provider_name,
                     "schema_validation": "passed",
                 }
             )
         return {
             "tested_nodes": tested,
-            "fixture_provider_call_count": provider.call_count,
+            "fixture_provider_call_count": sum(provider.call_count for provider in providers.values()),  # type: ignore[attr-defined]
             "outbox_count": int(store.conn.execute("SELECT count(*) FROM outbox_message").fetchone()[0]),
         }
     finally:
@@ -301,6 +323,8 @@ def scan_direct_model_calls() -> dict[str, Any]:
             resolved = path.resolve()
             if path.name.startswith("verify_") or resolved in FORMAL_VERIFICATION_ONLY_FILES:
                 continue
+            if resolved in FORMAL_HOST_BOUNDARY_FILES:
+                continue
             if resolved in FORMAL_ALLOWED_DIRECT_PROVIDER_FILES:
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
@@ -338,7 +362,7 @@ def _match_payload(path: Path, line_no: int, line: str) -> dict[str, Any]:
 
 
 def verify_hermes_isolation(registry: dict[str, Any]) -> dict[str, Any]:
-    defaults = registry["provider_policy_defaults"]
+    defaults = registry["runtime_policy_defaults"]
     static_edges = {
         "hermes_host_binding_imports_model_gateway": bool(
             re.search(

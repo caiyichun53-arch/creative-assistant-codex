@@ -24,6 +24,7 @@ from scripts.core.model_gateway.goal07_model_gateway import (
     ModelRunMaterializer,
     ModelUsage,
 )
+from scripts.core.model_gateway.model_router import ModelRouter, ModelRouterError
 from scripts.core.model_gateway.goal07_skill_runner import (
     HostBindingSpec,
     PortableSkillSpec,
@@ -451,6 +452,7 @@ class FormalSkillContract:
     allowed_model_nodes: tuple[str, ...]
     model_required: bool
     route_name: str
+    route_id: str
     binding_name: str
     binding_version: str
     input_map: dict[str, Any]
@@ -472,6 +474,7 @@ class FormalSkillContract:
             allowed_model_nodes=tuple(str(node) for node in data["allowed_model_nodes"]),
             model_required=bool(data["whether_model_is_required"]),
             route_name=str(model_binding["route_name"]),
+            route_id=str(model_binding["route_id"]),
             binding_name=str(model_binding["binding_name"]),
             binding_version=str(model_binding["binding_version"]),
             input_map=dict(model_binding["input_map"]),
@@ -491,6 +494,10 @@ class FormalSkillContract:
             raise FormalSkillValidationError("first formal Skill must require ModelGateway")
         if self.route_name not in self.allowed_model_nodes:
             raise FormalSkillValidationError("route_name must be in allowed_model_nodes")
+        try:
+            ModelRouter.from_file().resolve(self.route_id, route_name=self.route_name)
+        except ModelRouterError as exc:
+            raise FormalSkillValidationError(f"invalid route_id for {self.formal_skill_id}: {exc}") from exc
         validate_schema_definition(self.input_schema, "input_schema")
         validate_schema_definition(self.output_schema, "output_schema")
         validate_schema_definition(self.model_input_schema, "model_input_schema")
@@ -529,6 +536,7 @@ class FormalSkillContract:
                 "input_schema": self.input_schema,
                 "output_schema": self.output_schema,
                 "allowed_model_nodes": list(self.allowed_model_nodes),
+                "route_id": self.route_id,
             },
             "formal_business_skill.contract.v1",
         )

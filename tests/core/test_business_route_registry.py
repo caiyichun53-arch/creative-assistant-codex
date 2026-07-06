@@ -38,7 +38,8 @@ class BusinessRouteRegistryTests(unittest.TestCase):
         self.assertEqual(len(result["tested_nodes"]), 15)
         self.assertEqual(result["fixture_provider_call_count"], 15)
         self.assertEqual(result["outbox_count"], 0)
-        self.assertTrue(all(item["provider_name"] == "hermes" for item in result["tested_nodes"]))
+        self.assertTrue(all(item["route_id"] in {"business_analysis", "writing_generation"} for item in result["tested_nodes"]))
+        self.assertTrue(all(item["provider_name"] for item in result["tested_nodes"]))
 
     def test_formal_production_roots_have_no_direct_cli_model_calls(self) -> None:
         result = scan_direct_model_calls()

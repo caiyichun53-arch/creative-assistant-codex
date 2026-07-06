@@ -2,6 +2,7 @@ schema_version: formal_skill_binding.v1
 binding_name: source_to_topic_public_input_to_topic_generation
 binding_version: 1.0.0
 route_name: business.source_to_topic
+route_id: business_analysis
 input_map:
   fixture_id:
     source: input

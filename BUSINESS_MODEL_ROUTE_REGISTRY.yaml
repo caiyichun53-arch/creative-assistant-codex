@@ -1,4 +1,4 @@
-schema_version: business_model_route_registry.v1
+﻿schema_version: business_model_route_registry.v1
 goal: GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01
 status: formal_registry
 source_policy:
@@ -12,12 +12,11 @@ source_policy:
     - config/settings.example.yaml
     - README files
   note: Node inventory is derived from formal docs and the active goal, not from old aliases or legacy scripts.
-provider_policy_defaults:
-  provider_name: hermes
-  live_model_port: HermesModelProviderAdapter
-  model_ref_env: HERMES_BUSINESS_MODEL_NAME
-  model_class_env: HERMES_BUSINESS_MODEL_CLASS
-  billing_mode: subscription
+model_routing:
+  config_path: config/model_routes.yaml
+  workflow_nodes_bind_route_id_only: true
+  provider_resolution_layer: model_routes
+runtime_policy_defaults:
   tools_enabled: false
   memory_enabled: false
   feishu_messaging_enabled: false
@@ -32,10 +31,12 @@ provider_policy_defaults:
 nodes:
   - node_id: topic_judgement
     logical_route: business.topic_judgement
+    route_id: business_analysis
+    task_type: topic_screening
     capability_tier: fast_reasoning
     source_evidence:
-      - AGENTS.md: LLM allowed for 选题判断.
-      - BUILD_PLAN.md: 每日选题流 later connects LLM judgement after examples grow.
+      - AGENTS.md: LLM allowed for 閫夐鍒ゆ柇.
+      - BUILD_PLAN.md: 姣忔棩閫夐娴?later connects LLM judgement after examples grow.
     timeout_ms: 30000
     retry:
       max_attempts: 1
@@ -44,9 +45,9 @@ nodes:
       max_input_tokens: 2000
       max_output_tokens: 700
     allowed_provider_policy:
-      inherit: provider_policy_defaults
+      inherit: runtime_policy_defaults
     fallback_policy:
-      inherit: provider_policy_defaults.fallback_policy
+      inherit: runtime_policy_defaults.fallback_policy
     input_schema:
       type: object
       required: [fixture_id, candidate_topic, evidence_refs]
@@ -66,6 +67,8 @@ nodes:
 
   - node_id: content_relation_judgement
     logical_route: business.content_relation_judgement
+    route_id: business_analysis
+    task_type: benchmark_analysis
     capability_tier: fast_reasoning
     source_evidence:
       - GOAL-BUSINESS-SKILL-CONTENT-RELATION-JUDGE-01 semantic ruling: content_relation_judge v1 formal relation taxonomy and directionality.
@@ -78,9 +81,9 @@ nodes:
       max_input_tokens: 2400
       max_output_tokens: 900
     allowed_provider_policy:
-      inherit: provider_policy_defaults
+      inherit: runtime_policy_defaults
     fallback_policy:
-      inherit: provider_policy_defaults.fallback_policy
+      inherit: runtime_policy_defaults.fallback_policy
     input_schema:
       type: object
       required: [fixture_id, left_content, right_content, left_evidence_refs, right_evidence_refs, relation_types]
@@ -106,6 +109,8 @@ nodes:
 
   - node_id: source_to_topic
     logical_route: business.source_to_topic
+    route_id: business_analysis
+    task_type: topic_screening
     capability_tier: creative_generation
     source_evidence:
       - GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2: source evidence to candidate topic is a remaining formal Skill.
@@ -119,9 +124,9 @@ nodes:
       max_input_tokens: 5000
       max_output_tokens: 1200
     allowed_provider_policy:
-      inherit: provider_policy_defaults
+      inherit: runtime_policy_defaults
     fallback_policy:
-      inherit: provider_policy_defaults.fallback_policy
+      inherit: runtime_policy_defaults.fallback_policy
     input_schema:
       type: object
       required: [fixture_id, source_content, source_evidence_refs, domain_label, relation_summary]
@@ -148,10 +153,12 @@ nodes:
 
   - node_id: research_synthesis
     logical_route: business.research_synthesis
+    route_id: business_analysis
+    task_type: material_summary
     capability_tier: deep_reasoning
     source_evidence:
-      - AGENTS.md: LLM allowed for 研究综合.
-      - BUILD_PLAN.md: 选中一个选题后进行研究并组装材料包.
+      - AGENTS.md: LLM allowed for 鐮旂┒缁煎悎.
+      - BUILD_PLAN.md: 閫変腑涓€涓€夐鍚庤繘琛岀爺绌跺苟缁勮鏉愭枡鍖?
     timeout_ms: 60000
     retry:
       max_attempts: 1
@@ -160,9 +167,9 @@ nodes:
       max_input_tokens: 9000
       max_output_tokens: 1800
     allowed_provider_policy:
-      inherit: provider_policy_defaults
+      inherit: runtime_policy_defaults
     fallback_policy:
-      inherit: provider_policy_defaults.fallback_policy
+      inherit: runtime_policy_defaults.fallback_policy
     input_schema:
       type: object
       required: [fixture_id, research_question, evidence_refs]
@@ -182,10 +189,12 @@ nodes:
 
   - node_id: reverse_dna_analysis
     logical_route: business.reverse_dna_analysis
+    route_id: business_analysis
+    task_type: benchmark_analysis
     capability_tier: deep_reasoning
     source_evidence:
-      - AGENTS.md: LLM allowed for 逆向 DNA 拆解.
-      - BUILD_PLAN.md: LLM 拆 DNA consumes transcript and data.
+      - AGENTS.md: LLM allowed for 閫嗗悜 DNA 鎷嗚В.
+      - BUILD_PLAN.md: LLM 鎷?DNA consumes transcript and data.
     timeout_ms: 90000
     retry:
       max_attempts: 1
@@ -194,9 +203,9 @@ nodes:
       max_input_tokens: 12000
       max_output_tokens: 2500
     allowed_provider_policy:
-      inherit: provider_policy_defaults
+      inherit: runtime_policy_defaults
     fallback_policy:
-      inherit: provider_policy_defaults.fallback_policy
+      inherit: runtime_policy_defaults.fallback_policy
     input_schema:
       type: object
       required: [fixture_id, transcript_excerpt, metrics]
@@ -217,6 +226,8 @@ nodes:
 
   - node_id: reverse_pattern_reduce
     logical_route: business.reverse_pattern_reduce
+    route_id: business_analysis
+    task_type: experience_matching
     capability_tier: deep_reasoning
     source_evidence:
       - BUILD_PLAN.md: reduce finds common patterns from multiple DNA notes into domain examples and methods.
@@ -228,9 +239,9 @@ nodes:
       max_input_tokens: 14000
       max_output_tokens: 2800
     allowed_provider_policy:
-      inherit: provider_policy_defaults
+      inherit: runtime_policy_defaults
     fallback_policy:
-      inherit: provider_policy_defaults.fallback_policy
+      inherit: runtime_policy_defaults.fallback_policy
     input_schema:
       type: object
       required: [fixture_id, dna_note_refs]
@@ -249,6 +260,8 @@ nodes:
 
   - node_id: research_evidence_extract
     logical_route: business.research_evidence_extract
+    route_id: business_analysis
+    task_type: material_summary
     capability_tier: deep_reasoning
     source_evidence:
       - GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2: research evidence extraction is a remaining formal Skill.
@@ -262,9 +275,9 @@ nodes:
       max_input_tokens: 9000
       max_output_tokens: 1800
     allowed_provider_policy:
-      inherit: provider_policy_defaults
+      inherit: runtime_policy_defaults
     fallback_policy:
-      inherit: provider_policy_defaults.fallback_policy
+      inherit: runtime_policy_defaults.fallback_policy
     input_schema:
       type: object
       required: [fixture_id, research_question, research_packet, source_refs]
@@ -285,9 +298,11 @@ nodes:
 
   - node_id: creation_hook
     logical_route: business.creation_hook
+    route_id: writing_generation
+    task_type: hook_generation
     capability_tier: creative_generation
     source_evidence:
-      - BUILD_PLAN.md: 创作对话 includes 钩子.
+      - BUILD_PLAN.md: 鍒涗綔瀵硅瘽 includes 閽╁瓙.
     timeout_ms: 60000
     retry:
       max_attempts: 1
@@ -296,9 +311,9 @@ nodes:
       max_input_tokens: 8000
       max_output_tokens: 1500
     allowed_provider_policy:
-      inherit: provider_policy_defaults
+      inherit: runtime_policy_defaults
     fallback_policy:
-      inherit: provider_policy_defaults.fallback_policy
+      inherit: runtime_policy_defaults.fallback_policy
     input_schema:
       type: object
       required: [fixture_id, brief, style_examples]
@@ -317,9 +332,11 @@ nodes:
 
   - node_id: creation_outline
     logical_route: business.creation_outline
+    route_id: writing_generation
+    task_type: content_structure
     capability_tier: creative_generation
     source_evidence:
-      - BUILD_PLAN.md: 创作对话 includes 大纲.
+      - BUILD_PLAN.md: 鍒涗綔瀵硅瘽 includes 澶х翰.
     timeout_ms: 60000
     retry:
       max_attempts: 1
@@ -328,9 +345,9 @@ nodes:
       max_input_tokens: 9000
       max_output_tokens: 1800
     allowed_provider_policy:
-      inherit: provider_policy_defaults
+      inherit: runtime_policy_defaults
     fallback_policy:
-      inherit: provider_policy_defaults.fallback_policy
+      inherit: runtime_policy_defaults.fallback_policy
     input_schema:
       type: object
       required: [fixture_id, selected_hook, brief]
@@ -349,10 +366,12 @@ nodes:
 
   - node_id: creation_draft
     logical_route: business.creation_draft
+    route_id: writing_generation
+    task_type: rough_draft
     capability_tier: creative_generation
     source_evidence:
-      - AGENTS.md: LLM allowed for 创作.
-      - BUILD_PLAN.md: 创作对话 includes 成稿.
+      - AGENTS.md: LLM allowed for 鍒涗綔.
+      - BUILD_PLAN.md: 鍒涗綔瀵硅瘽 includes 鎴愮.
     timeout_ms: 120000
     retry:
       max_attempts: 1
@@ -361,9 +380,9 @@ nodes:
       max_input_tokens: 12000
       max_output_tokens: 4500
     allowed_provider_policy:
-      inherit: provider_policy_defaults
+      inherit: runtime_policy_defaults
     fallback_policy:
-      inherit: provider_policy_defaults.fallback_policy
+      inherit: runtime_policy_defaults.fallback_policy
     input_schema:
       type: object
       required: [fixture_id, outline, brief]
@@ -382,9 +401,11 @@ nodes:
 
   - node_id: creation_review
     logical_route: business.creation_review
+    route_id: writing_generation
+    task_type: final_copy_review
     capability_tier: critique_reasoning
     source_evidence:
-      - BUILD_PLAN.md: 审稿/优化 occurs before deterministic banned-word gate.
+      - BUILD_PLAN.md: 瀹＄/浼樺寲 occurs before deterministic banned-word gate.
     timeout_ms: 60000
     retry:
       max_attempts: 1
@@ -393,9 +414,9 @@ nodes:
       max_input_tokens: 10000
       max_output_tokens: 2000
     allowed_provider_policy:
-      inherit: provider_policy_defaults
+      inherit: runtime_policy_defaults
     fallback_policy:
-      inherit: provider_policy_defaults.fallback_policy
+      inherit: runtime_policy_defaults.fallback_policy
     input_schema:
       type: object
       required: [fixture_id, draft_text, brief]
@@ -415,9 +436,11 @@ nodes:
 
   - node_id: creation_polish
     logical_route: business.creation_polish
+    route_id: writing_generation
+    task_type: polishing
     capability_tier: creative_generation
     source_evidence:
-      - BUILD_PLAN.md: 审稿/优化 and 精修 happen before final checks.
+      - BUILD_PLAN.md: 瀹＄/浼樺寲 and 绮句慨 happen before final checks.
     timeout_ms: 90000
     retry:
       max_attempts: 1
@@ -426,9 +449,9 @@ nodes:
       max_input_tokens: 11000
       max_output_tokens: 4500
     allowed_provider_policy:
-      inherit: provider_policy_defaults
+      inherit: runtime_policy_defaults
     fallback_policy:
-      inherit: provider_policy_defaults.fallback_policy
+      inherit: runtime_policy_defaults.fallback_policy
     input_schema:
       type: object
       required: [fixture_id, draft_text, edit_notes]
@@ -447,10 +470,12 @@ nodes:
 
   - node_id: ai_flavor_judge
     logical_route: business.ai_flavor_judge
+    route_id: writing_generation
+    task_type: de_ai_style
     capability_tier: critique_reasoning
     source_evidence:
-      - AGENTS.md: LLM allowed for AI 味判官.
-      - BUILD_PLAN.md: AI 味判官 checks draft after writing.
+      - AGENTS.md: LLM allowed for AI 鍛冲垽瀹?
+      - BUILD_PLAN.md: AI 鍛冲垽瀹?checks draft after writing.
     timeout_ms: 60000
     retry:
       max_attempts: 1
@@ -459,9 +484,9 @@ nodes:
       max_input_tokens: 9000
       max_output_tokens: 1800
     allowed_provider_policy:
-      inherit: provider_policy_defaults
+      inherit: runtime_policy_defaults
     fallback_policy:
-      inherit: provider_policy_defaults.fallback_policy
+      inherit: runtime_policy_defaults.fallback_policy
     input_schema:
       type: object
       required: [fixture_id, draft_text, human_reference_refs]
@@ -481,6 +506,8 @@ nodes:
 
   - node_id: experiment_review
     logical_route: business.experiment_review
+    route_id: business_analysis
+    task_type: workflow_execution_summary
     capability_tier: critique_reasoning
     source_evidence:
       - GOAL-V0.6.2-PRODUCTION-COMPLETION-01 explicitly approves business.experiment_review.
@@ -493,9 +520,9 @@ nodes:
       max_input_tokens: 7000
       max_output_tokens: 1800
     allowed_provider_policy:
-      inherit: provider_policy_defaults
+      inherit: runtime_policy_defaults
     fallback_policy:
-      inherit: provider_policy_defaults.fallback_policy
+      inherit: runtime_policy_defaults.fallback_policy
     input_schema:
       type: object
       required: [fixture_id, experiment_design, execution_summary, result_metrics, evidence_refs, tested_experience_refs]
@@ -523,6 +550,8 @@ nodes:
 
   - node_id: experience_revision_propose
     logical_route: business.experience_revision_propose
+    route_id: business_analysis
+    task_type: experience_applicability_judgement
     capability_tier: critique_reasoning
     source_evidence:
       - GOAL-V0.6.2-PRODUCTION-COMPLETION-01 explicitly approves business.experience_revision_propose.
@@ -535,9 +564,9 @@ nodes:
       max_input_tokens: 8000
       max_output_tokens: 2000
     allowed_provider_policy:
-      inherit: provider_policy_defaults
+      inherit: runtime_policy_defaults
     fallback_policy:
-      inherit: provider_policy_defaults.fallback_policy
+      inherit: runtime_policy_defaults.fallback_policy
     input_schema:
       type: object
       required: [fixture_id, frozen_experience_versions, experiment_review, new_evidence_refs, tactic_candidates]

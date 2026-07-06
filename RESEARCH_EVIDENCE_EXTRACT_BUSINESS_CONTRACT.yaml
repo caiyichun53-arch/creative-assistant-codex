@@ -119,6 +119,7 @@ target_runner: FormalBusinessSkillAdapter
 materializer_contract: formal_business_skill_result.v1
 model_binding:
   route_name: business.research_evidence_extract
+  route_id: business_analysis
   binding_name: research_evidence_extract_public_input_to_evidence_extraction
   binding_version: 1.0.0
   input_map:

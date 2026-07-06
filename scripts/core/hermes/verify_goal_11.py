@@ -12,12 +12,15 @@ from scripts.core.hermes.goal11_host_binding import (
     GOAL11_HOST_MESSAGE_SCOPE,
     GOAL11_RESPONSE_SEND_SCOPE,
     GOAL11_RESPONSE_TOPIC,
+    CodexBindingEvent,
+    CodexHostBinding,
     FeishuBindingEvent,
     FeishuResponseDispatcher,
     FeishuThinBinding,
     HermesCoreBridge,
     HermesHostBindingError,
 )
+from scripts.core.host.production_host import PRODUCTION_HOST_ACTOR
 from scripts.core.persistence.goal01_store import IdempotencyConflict, UUIDv7Generator
 from scripts.core.runtime.goal04_runtime_host import RuntimeHandlerContract, RuntimeHost
 from scripts.core.scheduler.goal03_scheduler import Goal03Scheduler
@@ -48,8 +51,8 @@ def make_core() -> CoreMaterializer:
     clock = FakeClock(1_725_100_000_000)
     generator = UUIDv7Generator(now_ms=clock.now_ms, randbits=DeterministicBits())
     core = CoreMaterializer.in_memory(id_factory=generator.new)
-    core.grant_permission("hermes", "create_state")
-    core.grant_permission("hermes", "transition_state")
+    core.grant_permission(PRODUCTION_HOST_ACTOR, "create_state")
+    core.grant_permission(PRODUCTION_HOST_ACTOR, "transition_state")
     return core
 
 
@@ -85,7 +88,7 @@ def make_create_topic_event(event_id: str = "evt-topic-create") -> FeishuBinding
     )
 
 
-def test_feishu_binding_only_maps_to_hermes_message() -> None:
+def test_feishu_binding_only_maps_to_host_message() -> None:
     binding = FeishuThinBinding()
     message = binding.to_hermes_message(make_create_topic_event())
 
@@ -98,7 +101,7 @@ def test_feishu_binding_only_maps_to_hermes_message() -> None:
     assert not hasattr(binding, "core")
     assert not hasattr(binding, "store")
     assert not hasattr(binding, "scheduler")
-    print("PASS Feishu binding maps only to Hermes message")
+    print("PASS Feishu binding maps only to production Host message")
 
 
 def test_hermes_dispatches_formal_state_through_core() -> None:
@@ -125,9 +128,9 @@ def test_hermes_dispatches_formal_state_through_core() -> None:
     assert outbox["topic"] == GOAL11_RESPONSE_TOPIC
     assert outbox["status"] == "pending"
     command = core.conn.execute("SELECT actor, command_type FROM core_command_envelope").fetchone()
-    assert command["actor"] == "hermes"
+    assert command["actor"] == PRODUCTION_HOST_ACTOR
     assert command["command_type"] == "create_state"
-    print("PASS Hermes records host receipt and dispatches formal state through Core")
+    print("PASS production Host records receipt and dispatches formal state through Core")
 
 
 def test_duplicate_feishu_event_replays_without_duplicate_state() -> None:
@@ -181,12 +184,34 @@ def test_changed_payload_with_same_event_key_is_rejected() -> None:
     raise AssertionError("expected idempotency conflict")
 
 
-def test_non_hermes_host_rejected_before_core() -> None:
+def test_codex_host_dispatches_through_same_production_boundary() -> None:
+    core = make_core()
+    bridge = HermesCoreBridge(core)
+    message = CodexHostBinding().to_host_message(
+        CodexBindingEvent(
+            event_id="codex-topic-create",
+            thread_id="codex-thread-fixture",
+            actor_id="codex-user-fixture",
+            command={"command_type": "create_state", "object_kind": "topic", "payload": {}},
+        )
+    )
+
+    result = bridge.dispatch(message)
+
+    assert result.status == "succeeded"
+    assert result.object_id is not None
+    command = core.conn.execute("SELECT actor, command_type FROM core_command_envelope").fetchone()
+    assert command["actor"] == PRODUCTION_HOST_ACTOR
+    assert command["command_type"] == "create_state"
+    print("PASS Codex host dispatches through the same production Host boundary")
+
+
+def test_unregistered_host_rejected_before_core() -> None:
     core = make_core()
     bridge = HermesCoreBridge(core)
     message = FeishuThinBinding().to_hermes_message(make_create_topic_event())
     bad_message = type(message)(
-        host="codex",
+        host="unregistered-host",
         source=message.source,
         source_event_id=message.source_event_id,
         reply_channel_id=message.reply_channel_id,
@@ -201,9 +226,9 @@ def test_non_hermes_host_rejected_before_core() -> None:
     except HermesHostBindingError:
         assert core.conn.execute("SELECT count(*) FROM command_receipt").fetchone()[0] == 0
         assert core.conn.execute("SELECT count(*) FROM topic_state").fetchone()[0] == 0
-        print("PASS non-Hermes host rejected before Core")
+        print("PASS unregistered host rejected before Core")
         return
-    raise AssertionError("expected non-Hermes host rejection")
+    raise AssertionError("expected unregistered host rejection")
 
 
 def test_response_outbox_enqueues_and_worker_sends_without_hermes() -> None:
@@ -294,11 +319,12 @@ def test_fake_feishu_failure_retries_without_duplicate_send() -> None:
 
 
 def main() -> int:
-    test_feishu_binding_only_maps_to_hermes_message()
+    test_feishu_binding_only_maps_to_host_message()
     test_hermes_dispatches_formal_state_through_core()
     test_duplicate_feishu_event_replays_without_duplicate_state()
     test_changed_payload_with_same_event_key_is_rejected()
-    test_non_hermes_host_rejected_before_core()
+    test_codex_host_dispatches_through_same_production_boundary()
+    test_unregistered_host_rejected_before_core()
     test_response_outbox_enqueues_and_worker_sends_without_hermes()
     test_scheduler_recovers_response_job_after_hermes_offline_lease()
     test_fake_feishu_failure_retries_without_duplicate_send()

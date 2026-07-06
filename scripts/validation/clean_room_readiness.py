@@ -254,11 +254,20 @@ def phase_two_findings(root: Path) -> list[Finding]:
         )
     )
 
+    # scripts/core/business_data owns its own formal tables (hits, competitor_videos) in an
+    # isolated database (data/formal/production_activation.sqlite3), guarded by its own
+    # _safe_db_path() check that refuses data/creation.db -- verified separately in
+    # tests.core.test_competitor_account_registration / test_competitor_registration_full.
+    # This bare-string legacy scan can't tell that table name apart from the legacy
+    # data/creation.db table of the same name, and even flags this module's own
+    # "refusing to write old data/creation.db" guard message. Exclude this one formal
+    # module the same way "tests" is already excluded; every other scripts/core path and
+    # every legacy pattern still gets scanned.
     formal_refs = find_references(
         root,
         LEGACY_REFERENCE_PATTERNS,
         scan_roots=PRODUCTION_SCAN_ROOTS,
-        exclude_prefixes=("tests",),
+        exclude_prefixes=("tests", "scripts/core/business_data"),
     )
     findings.append(
         Finding(

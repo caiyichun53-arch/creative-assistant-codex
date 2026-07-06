@@ -47,7 +47,7 @@ The following operations require explicit approval before execution:
 - Use of any real platform account, cookie, token or crawler credential.
 - Starting real new platform collection.
 - Fetching real comments/details/media.
-- Running a real GPT regression or switching `business.primary` to GPT.
+- Switching `business.primary` away from the current approved model binding.
 - Sending any real Feishu test message.
 - Creating or enabling any production timer.
 - Persisting pilot results to formal production tables beyond the approved clean-room pilot scope.
@@ -82,7 +82,7 @@ The following operations require explicit approval before execution:
 Stop immediately if any of the following is required:
 
 - Real credential access not already approved.
-- GPT switch or GPT real regression.
+- Any business model switch away from the current approved binding.
 - Real platform collection.
 - Real Feishu send.
 - Production timer enablement.
@@ -99,4 +99,4 @@ These items are intentionally not required for the current engineering Goal to c
 4. Explicit approval for any production scheduled task enablement.
 5. Explicit approval for any formal production writes beyond disposable/sanitized evidence.
 
-Until those future inputs exist, the correct current state remains: no real collection has started, no real Feishu message has been sent, no production schedule has been enabled, and no old data may be used as pilot evidence.
+Until those future inputs exist, the correct current state remains: no real collection has started, no real Feishu message has been sent, no production schedule has been enabled, no business model switch has started, and no old data may be used as pilot evidence.

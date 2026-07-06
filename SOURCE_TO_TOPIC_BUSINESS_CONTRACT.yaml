@@ -157,6 +157,7 @@ target_runner: FormalBusinessSkillAdapter
 materializer_contract: formal_business_skill_result.v1
 model_binding:
   route_name: business.source_to_topic
+  route_id: business_analysis
   binding_name: source_to_topic_public_input_to_topic_generation
   binding_version: 1.0.0
   input_map:

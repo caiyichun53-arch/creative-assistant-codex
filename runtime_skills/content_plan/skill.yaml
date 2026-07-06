@@ -13,6 +13,7 @@ non_responsibilities:
   - feishu_messaging
 runner: FormalBusinessSkillAdapter
 route_name: business.creation_outline
+route_id: writing_generation
 input_schema: input_schema.yaml
 output_schema: output_schema.yaml
 binding: binding.yaml
@@ -29,3 +30,6 @@ standalone_boundaries:
 subnodes:
   - business.creation_hook
   - business.creation_outline
+subnode_route_ids:
+  hook: writing_generation
+  outline: writing_generation

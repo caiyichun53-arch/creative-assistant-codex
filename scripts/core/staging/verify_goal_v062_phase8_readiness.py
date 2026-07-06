@@ -175,34 +175,68 @@ def formal_skill_status() -> dict[str, Any]:
 
 def model_binding_status() -> dict[str, Any]:
     registry = read_yaml(ROOT / "BUSINESS_MODEL_ROUTE_REGISTRY.yaml")
-    defaults = registry.get("provider_policy_defaults") or {}
-    fallback = defaults.get("fallback_policy") or {}
+    runtime_defaults = registry.get("runtime_policy_defaults") or registry.get("provider_policy_defaults") or {}
+    fallback = runtime_defaults.get("fallback_policy") or {}
+    model_routing = registry.get("model_routing") or {}
+    model_routes_path = ROOT / str(model_routing.get("config_path") or "config/model_routes.yaml")
+    model_routes = read_yaml(model_routes_path)
+    providers = model_routes.get("model_providers") or {}
+    routes = model_routes.get("model_routes") or {}
+    used_route_ids = {str(node.get("route_id")) for node in (registry.get("nodes") or []) if node.get("route_id")}
+    used_provider_refs = {
+        str((routes.get(route_id) or {}).get("provider_ref") or "")
+        for route_id in used_route_ids
+    }
+    used_provider_refs.discard("")
+    used_providers = {
+        provider_ref: providers.get(provider_ref) or {}
+        for provider_ref in used_provider_refs
+    }
+    used_provider_types = {
+        str(provider.get("type") or "").strip().lower()
+        for provider in used_providers.values()
+    }
+    route_fallback_enabled = any(str((routes.get(route_id) or {}).get("fallback") or "") != "none" for route_id in used_route_ids)
+    enabled_non_mimo_providers = {
+        provider_ref: str(provider.get("type") or "")
+        for provider_ref, provider in used_providers.items()
+        if provider.get("enabled") is True and str(provider.get("type") or "").strip().lower() != "mimo"
+    }
+    primary_provider = next(iter(used_providers.values()), {})
     env = read_env(ROOT / ".env.live-gates")
-    model = env.get("HERMES_BUSINESS_MODEL_NAME")
-    explicit_cls = (env.get("HERMES_BUSINESS_MODEL_CLASS") or "").strip().lower()
-    cls = explicit_cls or model_class(model)
+    model_ref_source = primary_provider.get("model_ref") or runtime_defaults.get("model_ref_env")
+    model_class_source = primary_provider.get("model_class_ref") or runtime_defaults.get("model_class_env")
+    model = env.get(str(model_ref_source or ""))
+    explicit_cls = (env.get(str(model_class_source or "")) or "").strip().lower()
+    cls = explicit_cls or ("mimo" if used_provider_types == {"mimo"} else model_class(model))
     fallback_enabled = any(
         fallback.get(key) is not False for key in ("dry_run_fallback", "fake_port_fallback", "cli_fallback")
-    ) or fallback.get("on_failure") != "fail_closed"
+    ) or fallback.get("on_failure") != "fail_closed" or route_fallback_enabled
     return {
         "binding_id": "business.primary",
-        "provider_name": defaults.get("provider_name"),
-        "live_model_port": defaults.get("live_model_port"),
-        "model_ref_source": defaults.get("model_ref_env"),
-        "model_class_source": defaults.get("model_class_env"),
-        "billing_mode": defaults.get("billing_mode"),
+        "provider_name": primary_provider.get("provider_name") or runtime_defaults.get("provider_name"),
+        "live_model_port": primary_provider.get("live_model_port") or runtime_defaults.get("live_model_port"),
+        "model_ref_source": model_ref_source,
+        "model_class_source": model_class_source,
+        "billing_mode": primary_provider.get("billing_mode") or runtime_defaults.get("billing_mode"),
         "model_class": cls,
         "mimo_configured": cls == "mimo",
-        "gpt_configured": cls == "gpt",
-        "deepseek_configured": cls == "deepseek",
-        "single_active_binding": True,
+        "gpt_configured": cls == "gpt" or bool(enabled_non_mimo_providers),
+        "deepseek_configured": cls == "deepseek" or "deepseek" in used_provider_types,
+        "single_active_binding": len(used_provider_refs) == 1,
         "fallback_enabled": fallback_enabled,
         "on_failure": fallback.get("on_failure"),
         "node_count": len(registry.get("nodes") or []),
+        "route_ids": sorted(used_route_ids),
+        "provider_refs": sorted(used_provider_refs),
+        "provider_types": sorted(used_provider_types),
+        "enabled_non_mimo_providers": enabled_non_mimo_providers,
         "passed": cls == "mimo"
-        and defaults.get("billing_mode") == "subscription"
+        and len(used_provider_refs) == 1
+        and used_provider_types == {"mimo"}
+        and (primary_provider.get("billing_mode") or runtime_defaults.get("billing_mode")) == "subscription"
         and not fallback_enabled
-        and defaults.get("provider_name") == "hermes",
+        and (primary_provider.get("provider_name") or runtime_defaults.get("provider_name")) == "hermes",
     }
 
 
@@ -283,19 +317,30 @@ def scan_no_forbidden_phase8_live_work() -> dict[str, Any]:
     # This verifier is local-only; it does not inspect secret values or initiate network calls.
     phase8 = read_yaml(ROOT / "PHASE_8_AUTHORIZATION_GATE_STATUS.yaml")
     safety = phase8.get("safety") or {}
+    approved_real_data_pilot = (
+        safety.get("real_platform_collection_started") is True
+        and safety.get("approved_real_data_pilot_started") is True
+        and phase8.get("real_data_pilot_status") == "succeeded"
+        and bool((phase8.get("activation_evidence") or {}).get("report"))
+    )
     forbidden = {
         "gpt_called": safety.get("gpt_called") is not False,
         "deepseek_called": safety.get("deepseek_called") is not False,
-        "real_platform_collection_started": safety.get("real_platform_collection_started") is not False,
+        "unapproved_real_platform_collection_started": safety.get("real_platform_collection_started") is not False
+        and not approved_real_data_pilot,
         "real_feishu_message_sent": safety.get("real_feishu_message_sent") is not False,
         "fallback_or_auto_downgrade_added": safety.get("fallback_or_auto_downgrade_added") is not False,
     }
-    return {"forbidden_flags": forbidden, "passed": not any(forbidden.values())}
+    return {
+        "forbidden_flags": forbidden,
+        "approved_real_data_pilot": approved_real_data_pilot,
+        "passed": not any(forbidden.values()),
+    }
 
 
 def phase8_gate_status() -> dict[str, Any]:
     phase8 = read_yaml(ROOT / "PHASE_8_AUTHORIZATION_GATE_STATUS.yaml")
-    expected = {
+    pre_activation_expected = {
         "engineering_goal_status": "completed",
         "production_activation_status": "not_started",
         "business_model_switch_status": "not_started",
@@ -303,14 +348,27 @@ def phase8_gate_status() -> dict[str, Any]:
         "feishu_live_activation_status": "not_started",
         "production_schedules_status": "disabled",
     }
-    actual = {key: phase8.get(key) for key in expected}
+    post_activation_expected = {
+        "engineering_goal_status": "completed",
+        "production_activation_status": "controlled_pilot_started",
+        "business_model_switch_status": "not_started",
+        "real_data_pilot_status": "succeeded",
+        "feishu_live_activation_status": "not_started",
+        "production_schedules_status": "disabled",
+    }
+    actual = {key: phase8.get(key) for key in pre_activation_expected}
     active_waiting_status = str(phase8.get("status") or "").upper() in {"WAITING_FOR_USER_INPUT", "BLOCKED"}
+    matched_profile = "pre_activation" if actual == pre_activation_expected else None
+    if actual == post_activation_expected:
+        matched_profile = "post_controlled_real_data_pilot"
     return {
-        "expected": expected,
+        "expected": post_activation_expected if matched_profile == "post_controlled_real_data_pilot" else pre_activation_expected,
+        "accepted_profiles": ["pre_activation", "post_controlled_real_data_pilot"],
+        "matched_profile": matched_profile,
         "actual": actual,
         "active_waiting_status": active_waiting_status,
         "historical_waiting_records_allowed": bool(phase8.get("historical_audit")),
-        "passed": actual == expected and not active_waiting_status,
+        "passed": matched_profile is not None and not active_waiting_status,
     }
 
 
@@ -366,9 +424,10 @@ def verify_phase8_readiness() -> dict[str, Any]:
         "static_gates": static_gate_status(),
     }
     failures = [name for name, section in sections.items() if not section.get("passed", section.get("all_disabled", False))]
+    phase8 = read_yaml(ROOT / "PHASE_8_AUTHORIZATION_GATE_STATUS.yaml")
     production_activation = {
         "business_model_switch_status": "not_started",
-        "real_data_pilot_status": "not_started",
+        "real_data_pilot_status": phase8.get("real_data_pilot_status") or "not_started",
         "feishu_live_activation_status": "not_started",
         "production_schedules_status": "disabled" if sections["production_tasks"].get("all_disabled") else "not_disabled",
     }
@@ -377,14 +436,15 @@ def verify_phase8_readiness() -> dict[str, Any]:
         "goal": GOAL_ID,
         "status": "ENGINEERING_READY" if not failures else "ENGINEERING_NOT_READY",
         "engineering_goal_status": "completed" if not failures else "incomplete",
-        "production_activation_status": "not_started",
+        "production_activation_status": phase8.get("production_activation_status") or "not_started",
         "production_activation": production_activation,
         "failures": failures,
         **sections,
         "safety_summary": {
             "gpt_called": False,
             "deepseek_called": False,
-            "real_platform_collection_started": False,
+            "real_platform_collection_started": bool(phase8.get("safety", {}).get("real_platform_collection_started")),
+            "approved_real_data_pilot": sections["safety"].get("approved_real_data_pilot", False),
             "real_feishu_message_sent": False,
             "old_data_read": False,
             "fallback_or_auto_downgrade_added": False,

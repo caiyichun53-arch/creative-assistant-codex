@@ -2,6 +2,7 @@ schema_version: formal_skill_binding.v1
 binding_name: script_generate_public_input_to_creation_draft
 binding_version: 1.0.0
 route_name: business.creation_draft
+route_id: writing_generation
 input_map:
   fixture_id:
     source: input

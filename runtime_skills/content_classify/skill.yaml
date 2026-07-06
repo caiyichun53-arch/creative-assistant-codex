@@ -3,6 +3,7 @@ formal_skill_id: content_classify
 skill_name: content_classify
 skill_version: 1.0.0
 route_name: business.topic_judgement
+route_id: business_analysis
 description: Formal content_classify Skill for GOAL-BUSINESS-SKILL-CONTENT-CLASSIFY-01.
 input_schema:
   required:

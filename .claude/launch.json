@@ -1,0 +1,16 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "monitor-dashboard",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "scripts.monitor.server",
+        "--port",
+        "8787"
+      ],
+      "port": 8787
+    }
+  ]
+}

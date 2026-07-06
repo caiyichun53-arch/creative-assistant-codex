@@ -13,6 +13,7 @@ non_responsibilities:
   - feishu_messaging
 runner: FormalBusinessSkillAdapter
 route_name: business.source_to_topic
+route_id: business_analysis
 input_schema: input_schema.yaml
 output_schema: output_schema.yaml
 binding: binding.yaml

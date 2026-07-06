@@ -2,6 +2,7 @@ schema_version: formal_skill_binding.v1
 binding_name: experience_revision_propose_public_input_to_candidate
 binding_version: 1.0.0
 route_name: business.experience_revision_propose
+route_id: business_analysis
 input_map:
   fixture_id:
     source: input

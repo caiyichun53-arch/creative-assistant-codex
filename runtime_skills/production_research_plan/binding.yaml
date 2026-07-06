@@ -2,6 +2,7 @@ schema_version: formal_skill_binding.v1
 binding_name: production_research_plan_public_input_to_research_synthesis
 binding_version: 1.0.0
 route_name: business.research_synthesis
+route_id: business_analysis
 input_map:
   fixture_id:
     source: input

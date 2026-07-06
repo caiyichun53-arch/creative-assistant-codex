@@ -2,6 +2,7 @@ schema_version: formal_skill_binding.v1
 binding_name: tactic_extract_public_input_to_reverse_pattern_reduce
 binding_version: 1.0.0
 route_name: business.reverse_pattern_reduce
+route_id: business_analysis
 input_map:
   fixture_id:
     source: input

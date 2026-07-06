@@ -169,6 +169,7 @@ outline_model_output_schema:
   additional_properties: false
 model_binding:
   route_name: business.creation_outline
+  route_id: writing_generation
   binding_name: content_plan_public_input_to_hook_outline
   binding_version: 1.0.0
   input_map:

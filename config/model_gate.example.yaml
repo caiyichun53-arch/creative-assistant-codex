@@ -3,7 +3,7 @@
 goal: GOAL-RUNTIME-MODEL-GATE-01
 route:
   route_name: runtime_probe.test
-  provider_name: hermes
+  route_id: engineering_execution
   config_version: goal-runtime-model-gate-01.live.v1
   timeout_ms: 30000
   parameters:
@@ -13,13 +13,11 @@ route:
     response_format:
       type: json_object
 provider:
-  purpose: hermes_mimo_only
-  daily_hermes_chat_profile_scope: must_remain_mimo
-  type: hermes_mimo_chat_completions
-  token_env: HERMES_BUSINESS_MODEL_TOKEN
-  base_url_env: HERMES_BUSINESS_MODEL_BASE_URL
-  model_env: HERMES_BUSINESS_MODEL_NAME
-  model_class_env: HERMES_BUSINESS_MODEL_CLASS
+  provider_ref_source: config/model_routes.yaml
+  auth_and_endpoint_only: true
+  token_env: GPT_API_GATEWAY_KEY
+  base_url_env: GPT_API_GATEWAY_BASE_URL
+  model_env: GPT_API_GATEWAY_MODEL
   billing_mode: subscription
   cost_status_when_amount_missing: not_reported
 safety:

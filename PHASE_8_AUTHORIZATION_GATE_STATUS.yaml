@@ -2,12 +2,12 @@ schema_version: phase8.engineering_handoff_status.v1
 goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
 phase: 8
 checkpoint: engineering_handoff
-status: ENGINEERING_READY
-updated_at: '2026-07-03'
+status: REGISTRATION_FIRST_CRAWL_REPAIRED_AND_REJUDGED
+updated_at: '2026-07-06'
 engineering_goal_status: completed
-production_activation_status: not_started
+production_activation_status: controlled_pilot_started
 business_model_switch_status: not_started
-real_data_pilot_status: not_started
+real_data_pilot_status: succeeded
 feishu_live_activation_status: not_started
 production_schedules_status: disabled
 generated:
@@ -33,7 +33,7 @@ future_user_initiated_activation:
     manual: BUSINESS_MODEL_SWITCH_TO_GPT_PLAN.md
     current_goal_blocker: false
   real_new_data_pilot:
-    status: not_started
+    status: succeeded
     manual: REAL_NEW_DATA_PILOT_PLAN.md
     current_goal_blocker: false
   feishu_live_activation:
@@ -47,11 +47,57 @@ safety:
   gpt_called: false
   deepseek_called: false
   real_provider_called_in_phase8: false
-  real_platform_collection_started: false
+  real_platform_collection_started: true
+  approved_real_data_pilot_started: true
   real_feishu_message_sent: false
   production_timer_enabled: false
   old_data_read: false
   fallback_or_auto_downgrade_added: false
+activation_evidence:
+  approval: PHASE_8_REAL_NEW_DATA_APPROVAL.yaml
+  domain_config: config/domains/泛科普.yaml
+  competitor_registration:
+    status: first_crawl_repaired_and_rejudged
+    database: data/formal/production_activation.sqlite3
+    script: scripts/core/business_data/register_competitor_accounts.py
+    full_registration_script: scripts/core/business_data/run_competitor_registration_full.py
+    execution_guardrail: docs/production_execution_guardrails.md
+    full_registration_run_id: competitor_registration_full_20260705T091310Z
+    full_registration_report: data/formal/competitor_registration/competitor_registration_full_20260705T091310Z/registration_full_report.json
+    rejudge_run_id: competitor_registration_rejudge_20260706T_design_contract
+    domain: 泛科普-社会与生活
+    domain_label: fan_kepu_social_life
+    platform: douyin
+    registered_accounts: 28
+    first_crawl_videos: 840
+    valid_baseline_candidates: 579
+    excluded_pinned_videos: 44
+    excluded_younger_than_7_days: 124
+    excluded_older_than_90_days: 93
+    max_videos_per_account: 30
+    min_valid_candidates_per_account: 9
+    max_valid_candidates_per_account: 28
+    baseline_minimum_judgement_samples: 10
+    judged_accounts: 28
+    skipped_accounts: 0
+    archived_videos: 795
+    watching_videos: 0
+    promoted_videos: 45
+    baselines: 28
+    hits: 45
+    baseline_judgement_status: judged
+    video_collection_started: true
+    hit_judgement_started: true
+    comments_collected: false
+    min_settled_samples_per_account: 30
+  run_id: phase8_activation_20260705T063407Z
+  report: data/formal/phase8_activation/phase8_activation_20260705T063407Z/activation_report.json
+  source_account: 张见识
+  source_account_count: 1
+  videos_per_account: 1
+  comments_collected: false
+  llm_used: false
+  feishu_sent: false
 historical_audit:
   previous_waiting_for_user_input_records:
     - date: '2026-07-03'
@@ -81,6 +127,12 @@ validation:
       clean_room_tables: 20
       clean_room_total_rows: 0
       foreign_key_check: passed
+    - command: python scripts\core\staging\run_phase8_real_new_data_activation.py --account-limit 1 --videos-per-account 1
+      result: PASS
+      run_id: phase8_activation_20260705T063407Z
+      source_account: 张见识
+      item_count: 1
+      comments_collected: false
     - command: py_compile phase8, phase5, phase6 and phase7 touched validation files
       result: PASS
     - command: git diff --check

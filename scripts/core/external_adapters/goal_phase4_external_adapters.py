@@ -146,12 +146,18 @@ class MediaCrawlerCollectorAdapter(_ExternalAdapterBase):
             raise ExternalAdapterError(f"unsupported MediaCrawler platform: {platform}")
         cap = _require_positive_int(max_items, "max_items", maximum=5)
         url = _require_text(source_url, "source_url")
+        source_kind = "creator" if "/user/" in url or (platform_name == "douyin" and url.startswith("MS4wLjABAAAA")) else "detail"
         command = ExternalAdapterCommand(
             adapter_id=self.adapter_id,
             capability=self.capability,
             executable="vendor/MediaCrawler/main.py",
-            args=(platform_name, "detail", "--get_comment", "yes" if with_comments else "no"),
-            input_payload={"platform": platform_name, "source_url": url, "with_comments": with_comments},
+            args=(platform_name, source_kind, "--get_comment", "yes" if with_comments else "no"),
+            input_payload={
+                "platform": platform_name,
+                "source_url": url,
+                "source_kind": source_kind,
+                "with_comments": with_comments,
+            },
             env_keys=("COLLECTOR_TEST_PROFILE_DIR",),
             max_items=cap,
             timeout_seconds=120,
@@ -169,16 +175,16 @@ class MediaCrawlerCollectorAdapter(_ExternalAdapterBase):
         if not isinstance(item, dict):
             raise ExternalAdapterError("MediaCrawler item must be an object")
         source_id = _require_text(item.get("source_id") or item.get("aweme_id") or item.get("id"), "source_id")
-        url = _require_text(item.get("url") or item.get("source_url"), "url")
+        url = _require_text(item.get("url") or item.get("source_url") or item.get("aweme_url"), "url")
         return {
             "source_id": source_id,
             "platform": platform,
             "source_type": "video_snapshot",
             "url": url,
             "title": str(item.get("title") or item.get("desc") or ""),
-            "author": str(item.get("author") or ""),
+            "author": str(item.get("author") or item.get("nickname") or ""),
             "metrics": {
-                "like_count": int(item.get("like_count") or 0),
+                "like_count": int(item.get("like_count") or item.get("liked_count") or 0),
                 "comment_count": int(item.get("comment_count") or 0),
                 "share_count": int(item.get("share_count") or 0),
             },

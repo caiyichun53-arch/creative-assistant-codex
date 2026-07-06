@@ -2,6 +2,7 @@ schema_version: formal_skill_binding.v1
 binding_name: research_evidence_extract_public_input_to_evidence_extraction
 binding_version: 1.0.0
 route_name: business.research_evidence_extract
+route_id: business_analysis
 input_map:
   fixture_id:
     source: input

@@ -187,6 +187,7 @@ ai_flavor_model_output_schema:
   additional_properties: false
 model_binding:
   route_name: business.creation_review
+  route_id: writing_generation
   binding_name: script_review_public_input_to_review_polish_ai_flavor
   binding_version: 1.0.0
   input_map:

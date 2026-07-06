@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 from scripts.core.model_gateway.business_route_registry import REGISTRY_PATH
+from scripts.core.host.production_host import PRODUCTION_HOST_ACTOR
 from scripts.core.scheduler.goal03_scheduler import Goal03Scheduler
 from scripts.core.state.goal02_core import CoreCommandEnvelope, CoreMaterializer
 from scripts.core.workflow.goal05_workflow import Goal05WorkflowOrchestrator
@@ -17,7 +18,7 @@ from scripts.core.workflow.goal_phase5_business_workflow import (
 )
 
 
-class HermesWhitelistToolError(RuntimeError):
+class ProductionHostWhitelistToolError(RuntimeError):
     pass
 
 
@@ -53,36 +54,39 @@ FORBIDDEN_PAYLOAD_KEYS = frozenset(
 
 
 @dataclass(frozen=True)
-class HermesWhitelistToolRequest:
+class ProductionHostWhitelistToolRequest:
     action: str
     actor: str
     payload: dict[str, Any]
     request_id: str
     confirmed: bool = False
+    host: str = "hermes"
 
 
 @dataclass(frozen=True)
-class HermesWhitelistToolResult:
+class ProductionHostWhitelistToolResult:
     action: str
     status: str
     payload: dict[str, Any]
     replayed: bool = False
 
 
-class HermesWhitelistTool:
+class ProductionHostWhitelistTool:
     def __init__(
         self,
         *,
         core: CoreMaterializer,
         scheduler: Goal03Scheduler,
         input_assembly: InputAssembly | None = None,
+        core_actor: str = PRODUCTION_HOST_ACTOR,
     ):
         self.core = core
         self.scheduler = scheduler
         self.input_assembly = input_assembly or InputAssembly()
         self.orchestrator = Goal05WorkflowOrchestrator(scheduler)
+        self.core_actor = core_actor
 
-    def execute(self, request: HermesWhitelistToolRequest) -> HermesWhitelistToolResult:
+    def execute(self, request: ProductionHostWhitelistToolRequest) -> ProductionHostWhitelistToolResult:
         self._validate_request(request)
         if request.action == "create_controlled_task":
             return self._create_controlled_task(request)
@@ -98,29 +102,29 @@ class HermesWhitelistTool:
             return self._query_human_confirmation_items(request)
         if request.action == "query_business_model_binding_summary":
             return self._query_business_model_binding_summary(request)
-        raise HermesWhitelistToolError(f"unsupported action: {request.action}")
+        raise ProductionHostWhitelistToolError(f"unsupported action: {request.action}")
 
-    def _create_controlled_task(self, request: HermesWhitelistToolRequest) -> HermesWhitelistToolResult:
+    def _create_controlled_task(self, request: ProductionHostWhitelistToolRequest) -> ProductionHostWhitelistToolResult:
         workflow_id = _required_text(request.payload, "workflow_id")
         workflow_instance_id = _required_text(request.payload, "workflow_instance_id")
         definition = FORMAL_WORKFLOW_DEFINITIONS.get(workflow_id)
         if definition is None:
-            raise HermesWhitelistToolError(f"unknown formal workflow: {workflow_id}")
+            raise ProductionHostWhitelistToolError(f"unknown formal workflow: {workflow_id}")
         input_payloads = request.payload.get("input_payloads") or {}
         if not isinstance(input_payloads, dict):
-            raise HermesWhitelistToolError("input_payloads must be an object")
+            raise ProductionHostWhitelistToolError("input_payloads must be an object")
         domain = _required_text(request.payload, "domain")
         content_form = _required_text(request.payload, "content_form")
         conditions = tuple(str(item) for item in request.payload.get("conditions") or ())
         first_step = definition.step_graph[0]
         first_input = input_payloads.get(first_step.step_key)
         if not isinstance(first_input, dict):
-            raise HermesWhitelistToolError(f"missing input for first workflow step: {first_step.step_key}")
+            raise ProductionHostWhitelistToolError(f"missing input for first workflow step: {first_step.step_key}")
 
         create = self.core.execute(
             CoreCommandEnvelope(
                 command_type="create_state",
-                actor="hermes",
+                actor=self.core_actor,
                 object_kind="production_task",
                 idempotency_key=f"phase6.task.create.{request.request_id}",
                 payload={
@@ -132,7 +136,7 @@ class HermesWhitelistTool:
             )
         )
         if create.status != "succeeded" or not create.object_id or not create.basis_version_id:
-            return HermesWhitelistToolResult(
+            return ProductionHostWhitelistToolResult(
                 action=request.action,
                 status=create.status,
                 payload={"reason": create.reason},
@@ -141,7 +145,7 @@ class HermesWhitelistTool:
         queued = self.core.execute(
             CoreCommandEnvelope(
                 command_type="transition_state",
-                actor="hermes",
+                actor=self.core_actor,
                 object_kind="production_task",
                 object_id=create.object_id,
                 expected_basis_version_id=create.basis_version_id,
@@ -152,7 +156,7 @@ class HermesWhitelistTool:
             )
         )
         if queued.status != "succeeded":
-            return HermesWhitelistToolResult(
+            return ProductionHostWhitelistToolResult(
                 action=request.action,
                 status=queued.status,
                 payload={"task_id": create.object_id, "reason": queued.reason},
@@ -180,7 +184,7 @@ class HermesWhitelistTool:
             steps=steps,
             idempotency_key=f"phase6.task.workflow.{request.request_id}",
         )
-        return HermesWhitelistToolResult(
+        return ProductionHostWhitelistToolResult(
             action=request.action,
             status="succeeded",
             payload={
@@ -196,7 +200,7 @@ class HermesWhitelistTool:
             replayed=create.replayed and queued.replayed and started.replayed,
         )
 
-    def _query_task_status(self, request: HermesWhitelistToolRequest) -> HermesWhitelistToolResult:
+    def _query_task_status(self, request: ProductionHostWhitelistToolRequest) -> ProductionHostWhitelistToolResult:
         payload: dict[str, Any] = {}
         task_id = request.payload.get("task_id")
         job_id = request.payload.get("job_id")
@@ -218,10 +222,10 @@ class HermesWhitelistTool:
                 "max_attempts": row["max_attempts"],
             }
         if not payload:
-            raise HermesWhitelistToolError("task_id or job_id is required")
-        return HermesWhitelistToolResult(action=request.action, status="succeeded", payload=payload)
+            raise ProductionHostWhitelistToolError("task_id or job_id is required")
+        return ProductionHostWhitelistToolResult(action=request.action, status="succeeded", payload=payload)
 
-    def _query_task_result(self, request: HermesWhitelistToolRequest) -> HermesWhitelistToolResult:
+    def _query_task_result(self, request: ProductionHostWhitelistToolRequest) -> ProductionHostWhitelistToolResult:
         job_id = _required_text(request.payload, "job_id")
         row = self.core.conn.execute(
             """
@@ -232,8 +236,8 @@ class HermesWhitelistTool:
             (job_id,),
         ).fetchone()
         if row is None:
-            return HermesWhitelistToolResult(action=request.action, status="not_ready", payload={"job_id": job_id})
-        return HermesWhitelistToolResult(
+            return ProductionHostWhitelistToolResult(action=request.action, status="not_ready", payload={"job_id": job_id})
+        return ProductionHostWhitelistToolResult(
             action=request.action,
             status="succeeded",
             payload={
@@ -245,7 +249,7 @@ class HermesWhitelistTool:
             },
         )
 
-    def _query_failure_reason(self, request: HermesWhitelistToolRequest) -> HermesWhitelistToolResult:
+    def _query_failure_reason(self, request: ProductionHostWhitelistToolRequest) -> ProductionHostWhitelistToolResult:
         job_id = _required_text(request.payload, "job_id")
         row = self.core.conn.execute(
             """
@@ -258,26 +262,26 @@ class HermesWhitelistTool:
             (job_id,),
         ).fetchone()
         if row is None:
-            return HermesWhitelistToolResult(action=request.action, status="not_failed", payload={"job_id": job_id})
-        return HermesWhitelistToolResult(
+            return ProductionHostWhitelistToolResult(action=request.action, status="not_failed", payload={"job_id": job_id})
+        return ProductionHostWhitelistToolResult(
             action=request.action,
             status="succeeded",
             payload={"job_id": job_id, "error": json.loads(row["error_json"])},
         )
 
-    def _cancel_task(self, request: HermesWhitelistToolRequest) -> HermesWhitelistToolResult:
+    def _cancel_task(self, request: ProductionHostWhitelistToolRequest) -> ProductionHostWhitelistToolResult:
         cancelled: dict[str, Any] = {}
         job_id = request.payload.get("job_id")
         task_id = request.payload.get("task_id")
         if job_id:
-            self.scheduler.cancel_job(job_id=str(job_id), actor="hermes_whitelist_tool", reason="cancelled_by_whitelist_tool")
+            self.scheduler.cancel_job(job_id=str(job_id), actor="production_host_whitelist_tool", reason="cancelled_by_whitelist_tool")
             cancelled["job_id"] = str(job_id)
         if task_id:
             row = self.core.get_state("production_task", str(task_id))
             result = self.core.execute(
                 CoreCommandEnvelope(
                     command_type="transition_state",
-                    actor="hermes",
+                    actor=self.core_actor,
                     object_kind="production_task",
                     object_id=str(task_id),
                     expected_basis_version_id=row["basis_version_id"],
@@ -290,10 +294,10 @@ class HermesWhitelistTool:
             cancelled["task_status"] = result.status
             cancelled["reason"] = result.reason
         if not cancelled:
-            raise HermesWhitelistToolError("task_id or job_id is required")
-        return HermesWhitelistToolResult(action=request.action, status="succeeded", payload=cancelled)
+            raise ProductionHostWhitelistToolError("task_id or job_id is required")
+        return ProductionHostWhitelistToolResult(action=request.action, status="succeeded", payload=cancelled)
 
-    def _query_human_confirmation_items(self, request: HermesWhitelistToolRequest) -> HermesWhitelistToolResult:
+    def _query_human_confirmation_items(self, request: ProductionHostWhitelistToolRequest) -> ProductionHostWhitelistToolResult:
         rows = self.core.conn.execute(
             """
             SELECT c.command_id, c.object_kind, c.object_id, c.payload_json, r.result_json
@@ -303,7 +307,7 @@ class HermesWhitelistTool:
              ORDER BY c.created_at, c.command_id
             """
         ).fetchall()
-        return HermesWhitelistToolResult(
+        return ProductionHostWhitelistToolResult(
             action=request.action,
             status="succeeded",
             payload={
@@ -320,11 +324,11 @@ class HermesWhitelistTool:
             },
         )
 
-    def _query_business_model_binding_summary(self, request: HermesWhitelistToolRequest) -> HermesWhitelistToolResult:
+    def _query_business_model_binding_summary(self, request: ProductionHostWhitelistToolRequest) -> ProductionHostWhitelistToolResult:
         registry = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8")) or {}
         defaults = registry.get("provider_policy_defaults") or {}
         fallback = defaults.get("fallback_policy") or {}
-        return HermesWhitelistToolResult(
+        return ProductionHostWhitelistToolResult(
             action=request.action,
             status="succeeded",
             payload={
@@ -343,20 +347,20 @@ class HermesWhitelistTool:
         )
 
     @staticmethod
-    def _validate_request(request: HermesWhitelistToolRequest) -> None:
+    def _validate_request(request: ProductionHostWhitelistToolRequest) -> None:
         if request.action not in WHITELISTED_ACTIONS:
-            raise HermesWhitelistToolError(f"action is not whitelisted: {request.action}")
-        if not request.actor or request.actor == "hermes":
-            raise HermesWhitelistToolError("external actor is required")
+            raise ProductionHostWhitelistToolError(f"action is not whitelisted: {request.action}")
+        if not request.actor or request.actor in {request.host, PRODUCTION_HOST_ACTOR}:
+            raise ProductionHostWhitelistToolError("external actor is required")
         if not request.request_id:
-            raise HermesWhitelistToolError("request_id is required")
+            raise ProductionHostWhitelistToolError("request_id is required")
         _reject_forbidden_keys(request.payload)
 
 
 def _required_text(payload: dict[str, Any], key: str) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value:
-        raise HermesWhitelistToolError(f"{key} is required")
+        raise ProductionHostWhitelistToolError(f"{key} is required")
     return value
 
 
@@ -365,8 +369,14 @@ def _reject_forbidden_keys(value: Any, path: str = "payload") -> None:
         for key, child in value.items():
             normalized = str(key).lower()
             if normalized in FORBIDDEN_PAYLOAD_KEYS:
-                raise HermesWhitelistToolError(f"forbidden payload key at {path}.{key}")
+                raise ProductionHostWhitelistToolError(f"forbidden payload key at {path}.{key}")
             _reject_forbidden_keys(child, f"{path}.{key}")
     elif isinstance(value, list):
         for index, child in enumerate(value):
             _reject_forbidden_keys(child, f"{path}[{index}]")
+
+
+HermesWhitelistToolError = ProductionHostWhitelistToolError
+HermesWhitelistToolRequest = ProductionHostWhitelistToolRequest
+HermesWhitelistToolResult = ProductionHostWhitelistToolResult
+HermesWhitelistTool = ProductionHostWhitelistTool

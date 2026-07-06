@@ -2,6 +2,7 @@ schema_version: formal_skill_binding.v1
 binding_name: experiment_review_public_input_to_review
 binding_version: 1.0.0
 route_name: business.experiment_review
+route_id: business_analysis
 input_map:
   fixture_id:
     source: input

@@ -13,6 +13,7 @@ non_responsibilities:
   - feishu_messaging
 runner: FormalBusinessSkillAdapter
 route_name: business.creation_review
+route_id: writing_generation
 input_schema: input_schema.yaml
 output_schema: output_schema.yaml
 binding: binding.yaml
@@ -30,3 +31,7 @@ subnodes:
   - business.creation_review
   - business.creation_polish
   - business.ai_flavor_judge
+subnode_route_ids:
+  review: writing_generation
+  polish: writing_generation
+  ai_flavor: writing_generation

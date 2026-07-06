@@ -31,7 +31,8 @@ budgets:
   max_videos: 20
   max_detail_fetches: 20
   max_workflow_tasks: 3
-  max_gpt_calls: 12
+  max_business_model_calls: 12
+  approved_business_model_class: mimo
   max_total_tokens: 60000
 
 feishu_test:

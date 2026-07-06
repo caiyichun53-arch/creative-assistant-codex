@@ -12,6 +12,7 @@ non_responsibilities:
   - feishu_messaging
 runner: FormalBusinessSkillAdapter
 route_name: business.reverse_pattern_reduce
+route_id: business_analysis
 input_schema: input_schema.yaml
 output_schema: output_schema.yaml
 binding: binding.yaml
