@@ -51,6 +51,20 @@ hit_detection:
   # unreachable absolute one. There is no separate p90_required toggle -- P90 always
   # participates, just bounded.
   hit_floor_absolute_like_count: 2000
+  # 2026-07-07 business decision (BUSINESS_RULE_CATALOG.yaml BR-HIT-001 amendment): a
+  # video is also a hit if comment_count/like_count >= comment_like_ratio_threshold,
+  # OR-ed alongside the like_count formula above (not a replacement -- a video can
+  # qualify through either channel). Sourced from published Douyin operator guidance
+  # (comment/like ratio floor ~10%, ~30% for a typical hit) and NOT from an internally
+  # computed percentile. 0.2 was chosen after checking 15%/18%/20% against the real
+  # 28-account/1253-video dataset: it eliminates the one real account that had zero
+  # hits under the like-only formula (财经不眠姐: 0 -> 2) without zeroing any other
+  # account, while 15% showed accelerating, less stable growth on accounts that had
+  # previously shown false-positive risk under other tested designs. collect_count and
+  # share_count ratios were evaluated the same way but no published threshold survived
+  # contact with the real data (the claimed 3-5x collect:like ratio for knowledge
+  # content matched zero of 1253 real videos), so those two dimensions are not judged.
+  comment_like_ratio_threshold: 0.2
   # 2026-07-06: pinned and younger-than-observe-window videos are permanently
   # ineligible for baseline computation, so fetching exactly baseline_min_samples raw
   # videos on first crawl structurally falls short of 30 eligible after exclusion.

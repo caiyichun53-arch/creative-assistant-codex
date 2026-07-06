@@ -1472,7 +1472,7 @@ goal_data_reset_01_phase_2_execution:
   legacy_data_import_allowed: false
 business_data_competitor_registration_execution:
   status: implemented_and_verified
-  updated_at: '2026-07-06T10:18:58Z'
+  updated_at: '2026-07-07T00:00:00Z'
   note: This block did not exist when scripts/core/business_data was first built --
     the traceability entries above were frozen at GOAL-ALIGNMENT-01 (2026-07-02),
     before this code existed, and were never re-run against it. That gap let a
@@ -1486,6 +1486,15 @@ business_data_competitor_registration_execution:
     at exactly 2 hits regardless of true distribution); it is now bounded by a new
     configurable hit_floor_absolute_like_count (2000). Re-ran the corrected formula
     against the real production database via --rejudge-only and verified results.
+  amendment_2026_07_07_br_hit_001_ratio_channel: User-decided second OR-ed hit channel
+    (see BUSINESS_RULE_CATALOG.yaml BR-HIT-001 amendment_2026_07_07) -- comment_count/
+    like_count >= comment_like_ratio_threshold (0.2) now also qualifies a video as a
+    hit, independent of the like_count channel. hits.hit_channel records which
+    channel(s) fired. Added because the like-only formula left one real account
+    (财经不眠姐) with zero hits; the new channel is sourced from published Douyin
+    operator guidance (not an internally-computed percentile) and was checked against
+    the real 28-account/1253-video dataset at 10/15/18/20/30% before 20% was chosen.
+    Re-ran via --rejudge-only against the real production database and verified.
   requirement_alignment:
     BR-COLLECT-001: exact_match
     BR-COLLECT-002: missing_in_code

@@ -54,6 +54,7 @@ def install_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     _ensure_competitor_video_columns(conn)
     _ensure_evidence_status_columns(conn)
+    _ensure_hit_channel_column(conn)
 
 
 def _ensure_competitor_video_columns(conn: sqlite3.Connection) -> None:
@@ -74,6 +75,15 @@ def _ensure_evidence_status_columns(conn: sqlite3.Connection) -> None:
     hit_columns = {row[1] for row in conn.execute("PRAGMA table_info(hits)").fetchall()}
     if hit_columns and "evidence_status" not in hit_columns:
         conn.execute("ALTER TABLE hits ADD COLUMN evidence_status TEXT NOT NULL DEFAULT 'sufficient'")
+
+
+def _ensure_hit_channel_column(conn: sqlite3.Connection) -> None:
+    # 2026-07-07 (BR-HIT-001 amendment): pre-existing hits rows were all judged solely
+    # on the like_count channel, so backfilling them as 'like_threshold' is accurate,
+    # not a guess.
+    hit_columns = {row[1] for row in conn.execute("PRAGMA table_info(hits)").fetchall()}
+    if hit_columns and "hit_channel" not in hit_columns:
+        conn.execute("ALTER TABLE hits ADD COLUMN hit_channel TEXT NOT NULL DEFAULT 'like_threshold'")
 
 
 def register_from_domain(conn: sqlite3.Connection, domain: dict[str, Any], *, source_config_ref: str) -> dict[str, Any]:

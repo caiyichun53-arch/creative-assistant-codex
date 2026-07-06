@@ -2,30 +2,28 @@
 
 > 活文档:每次收工(额度耗尽/告一段落)前必须更新这份文件,交给下一个接手的执行者(Codex 或 Claude Code)。不是一次性快照——`CURRENT_REPOSITORY_BASELINE.md`/`RELEASE_CANDIDATE_BASELINE.md` 才是那种一次性冻结记录,这份文件永远反映"现在"。
 
-## 现状(2026-07-06,本次收工时)
+## 现状(2026-07-07,本次收工时)
 
 - **分支**:`activation/goal-v0.6.2-production-activation-01`
 - **当前 GOAL**:`GOAL-V0.6.2-PRODUCTION-COMPLETION-01`(见 `implementation_progress/GOAL-V0.6.2-PRODUCTION-COMPLETION-01.md`),工程状态 `completed`,production activation 已跑过一次受控真实数据 pilot(竞品账号注册+首采+基线/爆款判定)。
-- **工作区**:本次收工前已把所有未提交改动(host 边界重构、business_data 竞品数据层、model_router、MediaCrawler 执行适配器、本次的修复)提交成一个 checkpoint commit——收工时工作区应为干净状态,如果不是,说明规则被违反了,先处理这个再往下做。
-- **写这份文件的人/时间**:Claude Code,2026-07-06。下次不管谁接手(Codex 额度恢复或 Claude Code 继续),先读这份文件,不用重新考古。
+- **工作区**:本次收工前已把所有未提交改动(评论/点赞比率并集通道 + 本次的所有配套修改)提交成一个 checkpoint commit——收工时工作区应为干净状态,如果不是,说明规则被违反了,先处理这个再往下做。
+- **写这份文件的人/时间**:Claude Code,2026-07-07。下次不管谁接手(Codex 额度恢复或 Claude Code 继续),先读这份文件,不用重新考古。
 
 ## 权威闸门真实输出(不是转述)
 
 ```
 $ python scripts/core/staging/verify_goal_v062_phase8_readiness.py
 status: ENGINEERING_READY
-failures: []
 
-$ python -c "from scripts.validation.clean_room_readiness import run_audit; from pathlib import Path; print(run_audit(Path('.').resolve())['phase_2_safe_to_execute'])"
-True
-
-$ python -m unittest tests.validation.test_legacy_removal_gate tests.validation.test_business_rule_traceability
-Ran 7 tests
+$ python -m unittest tests.core.test_business_route_registry tests.core.test_competitor_account_registration tests.core.test_competitor_registration_full tests.core.test_content_plan_skill tests.core.test_experience_revision_propose_skill tests.core.test_experiment_review_skill tests.core.test_external_executor_adapters tests.core.test_formal_skill_adapter tests.core.test_local_mediacrawler_executor tests.core.test_model_router tests.core.test_phase5_business_workflow tests.core.test_phase6_hermes_whitelist_tool tests.core.test_phase7_synthetic_acceptance tests.core.test_phase8_engineering_readiness tests.core.test_production_host_boundary tests.core.test_production_research_plan_skill tests.core.test_remaining_formal_skill_graph tests.core.test_research_evidence_extract_skill tests.core.test_runtime_vertical_slice tests.core.test_sample_deep_analyze_skill tests.core.test_script_generate_skill tests.core.test_script_review_skill tests.core.test_source_to_topic_skill tests.core.test_tactic_extract_skill tests.validation.test_business_rule_traceability tests.validation.test_clean_room_readiness tests.validation.test_constitution_sync tests.validation.test_legacy_removal_gate tests.validation.test_live_gates
+Ran 269 tests in 26.6s
 OK
 
-$ python -m unittest <29 个已知测试模块,见本文件 git 历史或直接问上一个执行者要清单>
-Ran 264 tests in 25.5s
-OK
+$ python -m scripts.core.business_data.run_competitor_registration_full --rejudge-only
+summary: {accounts: 28, videos: 1253, promoted_videos: 198, baselines: 56, hits: 198}
+run_id: competitor_registration_rejudge_20260706T213052Z
+(直接查真实库确认:28 账号里 0 个爆款数为 0;财经不眠姐从 0 -> 1,经由新的评论/点赞通道;
+ hits.hit_channel 分布:like_threshold=130, comment_like_ratio=48, both=20)
 ```
 
 **踩过的一个坑,记录下来避免重复踩**:`legacy_removal_gate.py` 是按 `git ls-files`(已跟踪文件)扫描的。`scripts/core/business_data/` 之前是未提交状态,对这个闸门是"隐形"的,所以早前跑闸门一直是绿的;**提交之后**同名表(`competitor_videos`/`hits`)和 guard 消息里的 `creation.db` 字符串才被扫到、闸门转红。也就是说:**未提交的文件不算真正验证过**——闸门/测试的绿灯只在文件已提交(至少是 `git add` 过、能被 `git ls-files` 看到)的前提下才可信。已经把这两个新文件加进 `ALLOWED_GUARD_REFERENCE_FILES`(guard 消息误报)。另外新增的两个监控面板 `.bat` 启动器也撞上了"任何 .bat/.vbs 都算 legacy executable path"这条硬规则——用户明确要求保留 `.bat`(要的是双击可用),已加进新的 `ALLOWED_NEW_EXECUTABLE_PATHS` 例外,不是放松了旧 legacy 路径的检测。
@@ -61,6 +59,15 @@ OK
 16. **`BR-HIT-001` 阈值公式改了(用户明确决策,不是我自己判断)**:原公式 `max(中位数×3, P90)` 里,P90 是"这批小样本自己排前10%"的数学定义,不管账号是否真有离群爆款,都会把爆款数摁死在样本量约一成——真实数据验证过:28 账号里 23 个的爆款数被 P90 锁死在恰好"2"。跟用户来回确认后定的新公式:`门槛 = max(中位数×3, min(P90, hit_floor_absolute_like_count))`,`hit_floor_absolute_like_count`(当前 2000,可配置,不能写死)给 P90 封顶——大账号不会被 P90 顶到天上,小账号(P90 本来就低于这个绝对值)也不会被绝对值卡死。**不再有 `p90_required` 这个开关**,P90 一直参与,只是被这个绝对值封顶。同步改了三处:`config/settings.yaml`/`config/settings.example.yaml`(新增 `hit_floor_absolute_like_count`,删掉 `p90_required`)、`judge_account()` 的阈值计算、`BUSINESS_RULE_CATALOG.yaml` BR-HIT-001(加了 `amendment_2026_07_06` 字段记录这次业务决策和依据,不是默默改掉旧规则)。加了测试锁定这个公式(`test_hit_floor_caps_p90_instead_of_p90_setting_an_unbounded_bar`)。**再次用 `--rejudge-only` 对真实库重跑验证**:117 条爆款(比之前52条多,因为不再被 P90 机械压制),每账号爆款数 1~8 浮动(不再是清一色的"2"),0 条残留不合格记录,两个权威闸门仍绿。**当前真实数据(2026-07-06,P90 封顶后)**:28 账号、840 视频、117 条爆款,全部诚实标 `evidence_status=insufficient_sample`(样本量还没到 30,原因同上,等每日增量采集攒够样本后自然转 `sufficient`)。
 17. **首采抓取数量补了缓冲**:置顶、发布不到7天的视频永久不参与基线计算,首采只抓 `baseline_min_samples`(30)条原始视频的话,刨掉这些,结构性地永远凑不满30条能用的——这不是"数据还没攒够"能解释的,是抓取数量本身没留余量。查了真实数据:28 账号里最坏的一个排除了14/30条,平均排除6条。按最坏情况留余量,新增配置项 `first_crawl_fetch_buffer: 15`(首采改成抓 30+15=45 条,不写死在代码里,`resolve_max_notes()` 读配置算),`--max-notes` 显式传参仍然优先。
 18. **用户要求彻底清空、按新缓冲量真实重新采集验证**:清空 `data/formal/production_activation.sqlite3`,按 45 条/账号重新真实采集 28 个账号。直接查真实库核对过:28 账号、1253 视频(全部同一个 run_id)、**每个账号能用的样本量 31~44 条,全部 ≥ 30(之前是 28 个账号全部 < 30)**、150 条爆款、**全部 28 条基线和 150 条爆款的 `evidence_status` 都变成了 `sufficient`(之前全部是 `insufficient_sample`)**、每账号爆款数 1~11 浮动、27/28 账号有爆款、0 条残留不合格记录,两个权威闸门仍绿。**当前真实数据(2026-07-06,缓冲量生效后)是本次会话第一批"证据充分"的真实业务数据**,今天四轮修复(30目标样本+证据标注、P90封顶、抓取缓冲)加起来的效果在这批数据上完整体现了。
+
+**第二天(2026-07-07):爆款判定加了第二条并集通道(评论/点赞比率),因为纯点赞公式漏判了一个真实账号**
+
+19. **发现问题**:上面第18条那批数据里,27/28 账号有爆款,唯独 **财经不眠姐 完全挂零**——纯点赞公式对它来说门槛太高。用户要求方案必须"结合官方数据、爆款在这些比率数据上的真实表现",而不是又编一个内部百分位数;还要求"领域不同、看重的维度不同"这层考虑。中间走了不少弯路(试过候选池分级、加权综合分、AND 投票,都被用户否掉或验证后发现不可靠——加权综合分和 AND 投票都因为点赞/评论/转发/收藏四个数字本身高度相关,揉在一起反而让判定失灵,财经不眠姐还是被误判)。
+   - **播放量查证**:用户问能不能拿播放量算真正的官方比率(点赞率=赞/播放量等)。查证结果——**拿不到,不是工具问题,是平台规则**:直接看了 MediaCrawler 实际调用的抖音网页详情接口(`/aweme/v1/web/aweme/detail/`)返回的原始 `statistics` 字段,里面根本没有 play_count;另外网上查证抖音就是不对外暴露别人视频的播放量,只有博主自己在创作者中心能看到。第三方工具号称能查,但那是靠点赞倒推估算的,不是真实数据。
+   - **改用"点赞当分母"的官方比率**:用户明确要求"不要硬套官方数字,学它用比率判断的方法"——查到抖音官方公开的运营经验数据里,"评论数/点赞数"这个比率有明确的公开阈值区间(10%及格线、30%左右是典型爆款),不依赖播放量。另外还查到"收藏数是点赞数的3-5倍"这个说法用于知识类内容,但**拿真实1253条视频验证,一条都不满足这个3-5倍**,所以没有采用这一条(收藏、转发这两个维度暂时没有能扛住真实数据验证的官方数字,不强行加)。
+   - **真实数据反复验证选阈值**:分别拿15%/18%/20%/30%对真实1253条视频、28个账号做了并集模拟(不是单独用这条,是跟原点赞公式取并集)。30%太严(14/28账号挂零);10%太松(财经不眠姐直接从0跳到20个,45条里近一半,重新引入之前加权综合分/AND投票暴露过的"财经不眠姐容易被过度判定"风险);15%已经出现"加速松动"迹象(财经不眠姐、肯塔基基等账号涨幅明显比18%→20%那一档更快)。**最终选定 20%**,因为它精确解决了挂零问题(财经不眠姐 0→2,某次快速核算)且没有让任何其他账号挂零,财经不眠姐的涨幅也最克制。
+   - **实现**:`judge_account()` 加了第二条独立通道——`comment_count/like_count >= comment_like_ratio_threshold`(0.2,新配置项),跟原有点赞公式取**并集**(命中任意一条就算爆款),不是替代,也不是加权融合。`hits` 表新增 `hit_channel` 字段(`like_threshold`/`comment_like_ratio`/`both`),记录每条爆款是靠哪条通道判定的,新旧数据兼容迁移(`_ensure_hit_channel_column`)。`validate_registration_execution_contract()` 把 `comment_like_ratio_threshold` 也纳入契约校验(必须是 (0,1] 内的数字)。同步更新 `BUSINESS_RULE_CATALOG.yaml` BR-HIT-001(新增 `amendment_2026_07_07`,完整记录决策理由、真实数据验证过程、为什么收藏/转发维度没有加)、`REQUIREMENT_CODE_TRACEABILITY.yaml`,新增5个测试(3个行为测试 + 2个契约测试)。
+   - **真实验证**:全部269个已知测试跑过(含新增的5个),两个权威闸门(`verify_goal_v062_phase8_readiness.py` → `ENGINEERING_READY`;完整测试套件 → `OK`)都是绿的。用正式的 `--rejudge-only` 入口对真实生产库重跑:28账号里 **0 个挂零**(财经不眠姐 0→1,经由新通道);总爆款数从150涨到198(48条纯靠新通道判定、20条两条通道都命中);`hits.hit_channel` 字段迁移和写入都验证过是真实分布,不是猜的。
 
 ## 下一步该干嘛
 

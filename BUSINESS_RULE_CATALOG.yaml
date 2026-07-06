@@ -347,11 +347,44 @@ rules:
   trigger: judge candidate video
   inputs:
   - like_count
+  - comment_count
   - baseline median
   - baseline p90
   - hit_floor_absolute_like_count
-  expected_behavior: 'A hit requires performance over an account-relative threshold:
-    like_count >= max(median * excess_threshold, min(P90, hit_floor_absolute_like_count)).'
+  - comment_like_ratio_threshold
+  expected_behavior: 'A hit requires clearing EITHER of two independent, OR-ed channels:
+    (1) like_count >= max(median * excess_threshold, min(P90, hit_floor_absolute_like_count)),
+    an account-relative scale channel; or (2) comment_count/like_count >= comment_like_ratio_threshold,
+    a fixed engagement-depth channel sourced from published platform operator guidance
+    (not from this account''s own baseline). Either channel alone is sufficient;
+    hits.hit_channel records which one(s) fired (like_threshold/comment_like_ratio/both).'
+  amendment_2026_07_07:
+    decided_by: user
+    reason: 'The like_count-only channel left one real production account (财经不眠姐)
+      with zero hits despite genuine comment engagement, because its like_count never
+      cleared its own scale threshold. The user required the fix be grounded in how
+      Douyin officially evaluates engagement ratios, not another internally-computed
+      percentile -- but official view-based rate metrics (点赞率/收藏率 as a percentage
+      of play_count) are structurally unobtainable for competitor accounts (verified
+      both by inspecting the actual scraper''s raw API response, which has no play_count
+      field for third-party videos, and by web research confirming Douyin does not
+      expose play_count to non-owners). Comment-to-like ratio was identified as the one
+      published metric that substitutes like_count for play_count as its denominator,
+      with an explicit public threshold range (~10% floor, ~30% typical hit). Verified
+      against the real 28-account/1253-video dataset before adoption -- at 30% threshold,
+      14/28 accounts scored zero (too strict); at 10%, 财经不眠姐 jumped to 20 hits out
+      of 45 videos (too loose, reintroducing false-positive risk this account showed
+      under other previously-rejected designs); 15%/18%/20% were compared directly,
+      and 20% was chosen because it eliminates the zero-hit account (0 -> 2) without
+      zeroing any other account, while showing the least accelerating growth on
+      previously-flagged-risky accounts. collect_count/like_count and share_count/like_count
+      were evaluated the same way (published claim: knowledge-content collect:like
+      ratio of 3:1-5:1) but that specific number matched zero of 1253 real videos, so
+      those two ratio channels were NOT added -- only comment_like_ratio, which did
+      survive contact with real data.'
+    change: added a second OR-ed channel (comment_like_ratio_threshold=0.2, see
+      config/settings.yaml hit_detection) alongside the existing like_count channel;
+      added hits.hit_channel column recording which channel(s) promoted each hit.
   amendment_2026_07_06:
     decided_by: user
     reason: P90 computed on the same small recent sample being judged is close to
@@ -373,6 +406,7 @@ rules:
     excess_threshold: 3.0
     hit_floor_absolute_like_count: 2000
     p90_bounded_by_floor: true
+    comment_like_ratio_threshold: 0.2
   timing_semantics: Judgement runs after collection/refresh; promotion time is separate
     from publish time.
   state_effects:

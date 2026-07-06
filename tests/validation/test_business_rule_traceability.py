@@ -63,6 +63,13 @@ class BusinessRuleTraceabilityTests(unittest.TestCase):
         )
         self.assertEqual(rule["thresholds"]["p90_bounded_by_floor"], True)
 
+    def test_br_hit_001_comment_like_ratio_channel(self) -> None:
+        rule = _rule(self.catalog, "BR-HIT-001")
+        self.assertEqual(
+            self.hit_cfg["comment_like_ratio_threshold"], rule["thresholds"]["comment_like_ratio_threshold"]
+        )
+        self.assertIn("amendment_2026_07_07", rule)
+
     def test_execution_contract_rejects_config_drift_from_the_catalog(self) -> None:
         domain = {
             "collector_policy": {
@@ -78,6 +85,21 @@ class BusinessRuleTraceabilityTests(unittest.TestCase):
         drifted = dict(self.hit_cfg, baseline_min_samples=10)
         with self.assertRaises(ValueError):
             validate_registration_execution_contract(domain, drifted)
+
+    def test_execution_contract_rejects_missing_or_invalid_comment_like_ratio_threshold(self) -> None:
+        domain = {
+            "collector_policy": {
+                "first_crawl": "stock_snapshot_archived",
+                "comments": "reverse_prep_only_for_promoted_hits",
+            }
+        }
+        missing = {k: v for k, v in self.hit_cfg.items() if k != "comment_like_ratio_threshold"}
+        with self.assertRaises(ValueError):
+            validate_registration_execution_contract(domain, missing)
+
+        out_of_range = dict(self.hit_cfg, comment_like_ratio_threshold=1.5)
+        with self.assertRaises(ValueError):
+            validate_registration_execution_contract(domain, out_of_range)
 
 
 if __name__ == "__main__":

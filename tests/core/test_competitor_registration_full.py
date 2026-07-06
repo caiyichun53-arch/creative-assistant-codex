@@ -85,6 +85,7 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                         "baseline_min_samples": 30,
                         "excess_threshold": 3.0,
                         "hit_floor_absolute_like_count": 2000,
+                        "comment_like_ratio_threshold": 0.2,
                     },
                     run_id="run-1",
                 )
@@ -246,6 +247,7 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
             "baseline_min_samples": 30,
             "excess_threshold": 3.0,
             "hit_floor_absolute_like_count": 2000,
+            "comment_like_ratio_threshold": 0.2,
         }
         published_at = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp())
         items = (
@@ -312,6 +314,7 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                         "baseline_min_samples": 30,
                         "excess_threshold": 3.0,
                         "hit_floor_absolute_like_count": 2000,
+                        "comment_like_ratio_threshold": 0.2,
                     },
                     run_id="run-1",
                 )
@@ -343,6 +346,7 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
             "baseline_min_samples": 30,
             "excess_threshold": 3.0,
             "hit_floor_absolute_like_count": 2000,
+            "comment_like_ratio_threshold": 0.2,
         }
         with tempfile.TemporaryDirectory() as tmp:
             conn = sqlite3.connect(Path(tmp) / "retraction.sqlite3")
@@ -382,6 +386,172 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                 )
                 self.assertIsNone(
                     conn.execute("SELECT hit_id FROM hits WHERE platform_item_id='outlier'").fetchone()
+                )
+            finally:
+                conn.close()
+
+    def test_comment_like_ratio_channel_promotes_video_below_like_threshold(self) -> None:
+        # BR-HIT-001 (2026-07-07 revision): a video with deep comment engagement is a
+        # hit even when its own like_count never clears the account's scale threshold.
+        # median=100 -> like_threshold = max(100*3, min(p90, 2000)) = 300, well above
+        # the 150-like "deep_comment" video below -- only the ratio channel (45/150=0.3
+        # >= 0.2) should promote it.
+        domain = {
+            "name": "fixture-domain",
+            "formal_domain_label": "fan_kepu_social_life",
+            "platform": "douyin",
+            "collector_policy": {
+                "first_crawl": "stock_snapshot_archived",
+                "comments": "reverse_prep_only_for_promoted_hits",
+            },
+            "competitor_seeds": [
+                {"name": "fixture-account", "url": "https://www.douyin.com/user/MS4wLjABAAAAabc"},
+            ],
+        }
+        hit_cfg = {
+            "observe_days": 7,
+            "baseline_window_days": 90,
+            "baseline_min_samples": 30,
+            "excess_threshold": 3.0,
+            "hit_floor_absolute_like_count": 2000,
+            "comment_like_ratio_threshold": 0.2,
+        }
+        published_at = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp())
+        items = [
+            {"aweme_id": f"low-{idx}", "liked_count": 100, "comment_count": 5, "create_time": published_at}
+            for idx in range(9)
+        ] + [
+            {
+                "aweme_id": "deep_comment",
+                "liked_count": 150,
+                "comment_count": 45,
+                "create_time": published_at,
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "ratio_channel.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+                ingest_stock_items(conn, account, items, hit_cfg=hit_cfg, run_id="run-1", raw_archive_ref="raw://fixture")
+
+                result = judge_account(conn, account, hit_cfg=hit_cfg, run_id="run-1")
+
+                self.assertEqual(result["threshold"], 300.0)
+                self.assertEqual(result["promoted_count"], 1)
+                self.assertEqual(result["promoted_via_ratio_channel"], 1)
+                hit_row = conn.execute(
+                    "SELECT hit_channel FROM hits WHERE platform_item_id='deep_comment'"
+                ).fetchone()
+                self.assertEqual(hit_row["hit_channel"], "comment_like_ratio")
+            finally:
+                conn.close()
+
+    def test_hit_channel_recorded_as_both_when_like_and_ratio_channels_both_clear(self) -> None:
+        domain = {
+            "name": "fixture-domain",
+            "formal_domain_label": "fan_kepu_social_life",
+            "platform": "douyin",
+            "collector_policy": {
+                "first_crawl": "stock_snapshot_archived",
+                "comments": "reverse_prep_only_for_promoted_hits",
+            },
+            "competitor_seeds": [
+                {"name": "fixture-account", "url": "https://www.douyin.com/user/MS4wLjABAAAAabc"},
+            ],
+        }
+        hit_cfg = {
+            "observe_days": 7,
+            "baseline_window_days": 90,
+            "baseline_min_samples": 30,
+            "excess_threshold": 3.0,
+            "hit_floor_absolute_like_count": 2000,
+            "comment_like_ratio_threshold": 0.2,
+        }
+        published_at = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp())
+        items = [
+            {"aweme_id": f"low-{idx}", "liked_count": 100, "comment_count": 5, "create_time": published_at}
+            for idx in range(9)
+        ] + [
+            # Clears the like channel (100*3=300) AND the ratio channel (200/500=0.4 >= 0.2).
+            {"aweme_id": "double_hit", "liked_count": 500, "comment_count": 200, "create_time": published_at}
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "both_channel.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+                ingest_stock_items(conn, account, items, hit_cfg=hit_cfg, run_id="run-1", raw_archive_ref="raw://fixture")
+
+                result = judge_account(conn, account, hit_cfg=hit_cfg, run_id="run-1")
+
+                self.assertEqual(result["promoted_count"], 1)
+                hit_row = conn.execute(
+                    "SELECT hit_channel FROM hits WHERE platform_item_id='double_hit'"
+                ).fetchone()
+                self.assertEqual(hit_row["hit_channel"], "both")
+            finally:
+                conn.close()
+
+    def test_video_failing_both_channels_is_retracted_not_kept_as_a_stale_hit(self) -> None:
+        domain = {
+            "name": "fixture-domain",
+            "formal_domain_label": "fan_kepu_social_life",
+            "platform": "douyin",
+            "collector_policy": {
+                "first_crawl": "stock_snapshot_archived",
+                "comments": "reverse_prep_only_for_promoted_hits",
+            },
+            "competitor_seeds": [
+                {"name": "fixture-account", "url": "https://www.douyin.com/user/MS4wLjABAAAAabc"},
+            ],
+        }
+        hit_cfg = {
+            "observe_days": 7,
+            "baseline_window_days": 90,
+            "baseline_min_samples": 30,
+            "excess_threshold": 3.0,
+            "hit_floor_absolute_like_count": 2000,
+            "comment_like_ratio_threshold": 0.2,
+        }
+        published_at = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp())
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "retract_ratio.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+
+                # Round 1: promoted purely through the ratio channel.
+                round_1_items = [
+                    {"aweme_id": f"low-{idx}", "liked_count": 100, "comment_count": 5, "create_time": published_at}
+                    for idx in range(9)
+                ] + [
+                    {"aweme_id": "was_deep", "liked_count": 150, "comment_count": 45, "create_time": published_at}
+                ]
+                ingest_stock_items(conn, account, round_1_items, hit_cfg=hit_cfg, run_id="run-1", raw_archive_ref="raw://fixture")
+                first_result = judge_account(conn, account, hit_cfg=hit_cfg, run_id="run-1")
+                self.assertEqual(first_result["promoted_count"], 1)
+
+                # Round 2: re-crawled with a lower comment_count -- ratio drops below
+                # the threshold and like_count still never clears the like channel.
+                conn.execute(
+                    "UPDATE competitor_videos SET comment_count=1 WHERE platform_item_id='was_deep'"
+                )
+                second_result = judge_account(conn, account, hit_cfg=hit_cfg, run_id="run-2")
+
+                self.assertEqual(second_result["promoted_count"], 0)
+                self.assertEqual(second_result["retracted_count"], 1)
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT status FROM competitor_videos WHERE platform_item_id='was_deep'"
+                    ).fetchone()[0],
+                    "archived",
                 )
             finally:
                 conn.close()
@@ -466,6 +636,7 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
             "baseline_min_samples": 30,
             "excess_threshold": 3.0,
             "hit_floor_absolute_like_count": 2000,
+            "comment_like_ratio_threshold": 0.2,
         }
         published_at = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp())
         items = [
@@ -544,6 +715,7 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
             "baseline_min_samples": 30,
             "excess_threshold": 3.0,
             "hit_floor_absolute_like_count": 2000,
+            "comment_like_ratio_threshold": 0.2,
         }
         published_at = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp())
         items = [

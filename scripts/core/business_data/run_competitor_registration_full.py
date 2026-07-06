@@ -370,7 +370,20 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
     # permanently unreachable absolute one. There is no separate p90_required toggle --
     # P90 always participates, just bounded.
     hit_floor = float(hit_cfg["hit_floor_absolute_like_count"])
-    threshold = max(median * float(hit_cfg["excess_threshold"]), min(p90_value, hit_floor))
+    like_threshold = max(median * float(hit_cfg["excess_threshold"]), min(p90_value, hit_floor))
+    # BR-HIT-001 (2026-07-07 revision): a second, independent channel -- comment_count /
+    # like_count -- is OR-ed alongside the like_count channel. Unlike like_threshold,
+    # this is NOT computed from this account's own baseline; it is a fixed threshold
+    # sourced from published Douyin operator guidance on comment-to-like ratio (10%
+    # floor, ~30% for a typical hit), verified against the real 28-account/1253-video
+    # dataset before being adopted (see BUSINESS_RULE_CATALOG.yaml amendment). It exists
+    # because a video can be a genuine hit through unusually deep comment engagement
+    # even when its raw like_count never clears the account's own scale threshold --
+    # exactly the case that left one real account (财经不眠姐) with zero hits under the
+    # like-only formula. collect_count/share_count ratios were evaluated the same way
+    # but no published threshold survived contact with the real dataset (see amendment
+    # note), so those two dimensions are not judged yet.
+    comment_like_ratio_threshold = float(hit_cfg["comment_like_ratio_threshold"])
     baseline_id = stable_baseline_id(account["account_id"], run_id)
     conn.execute(
         """
@@ -388,18 +401,24 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
             len(likes),
             median,
             p90_value,
-            threshold,
+            like_threshold,
             evidence_status,
             run_id,
         ),
     )
     promoted = 0
     retracted = 0
+    promoted_via_ratio_channel = 0
     for row in sample:
         like_count = int(row["like_count"] or 0)
-        if like_count < threshold:
+        comment_like_ratio = (
+            row["comment_count"] / like_count if row["comment_count"] is not None and like_count > 0 else None
+        )
+        like_channel_hit = like_count >= like_threshold
+        ratio_channel_hit = comment_like_ratio is not None and comment_like_ratio >= comment_like_ratio_threshold
+        if not (like_channel_hit or ratio_channel_hit):
             # BR-HIT-003 (idempotent judgement): a video re-evaluated in this same
-            # judgement pass that no longer clears the recomputed threshold must not
+            # judgement pass that no longer clears either recomputed channel must not
             # stay marked as a hit from an earlier, since-corrected judgement. Scoped
             # to the current sample only -- videos outside this run's sample are a
             # past judgement's point-in-time record and are left alone.
@@ -408,6 +427,12 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
                 conn.execute("UPDATE competitor_videos SET status='archived' WHERE video_id=?", (row["video_id"],))
                 retracted += 1
             continue
+        if like_channel_hit and ratio_channel_hit:
+            hit_channel = "both"
+        elif like_channel_hit:
+            hit_channel = "like_threshold"
+        else:
+            hit_channel = "comment_like_ratio"
         hit_id = stable_hit_id(account["account_id"], row["platform_item_id"])
         excess_ratio = round(like_count / median, 2) if median else None
         share_comment_ratio = (
@@ -420,9 +445,9 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
             INSERT INTO hits(
                 hit_id, video_id, account_id, platform, platform_item_id, title, url,
                 publish_time, like_count, comment_count, share_count, collect_count,
-                excess_ratio, share_comment_ratio, baseline_id, evidence_status, run_id
+                excess_ratio, share_comment_ratio, baseline_id, hit_channel, evidence_status, run_id
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_id, platform_item_id) DO UPDATE SET
                 like_count=excluded.like_count,
                 comment_count=excluded.comment_count,
@@ -431,6 +456,7 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
                 excess_ratio=excluded.excess_ratio,
                 share_comment_ratio=excluded.share_comment_ratio,
                 baseline_id=excluded.baseline_id,
+                hit_channel=excluded.hit_channel,
                 evidence_status=excluded.evidence_status,
                 run_id=excluded.run_id
             """,
@@ -450,19 +476,24 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
                 excess_ratio,
                 share_comment_ratio,
                 baseline_id,
+                hit_channel,
                 evidence_status,
                 run_id,
             ),
         )
         conn.execute("UPDATE competitor_videos SET status='promoted' WHERE video_id=?", (row["video_id"],))
         promoted += 1
+        if hit_channel in ("comment_like_ratio", "both"):
+            promoted_via_ratio_channel += 1
     return {
         "account": account["account_name"],
         "sample_count": len(likes),
         "median": round(median, 2),
         "p90": round(p90_value, 2),
-        "threshold": round(threshold, 2),
+        "threshold": round(like_threshold, 2),
+        "comment_like_ratio_threshold": comment_like_ratio_threshold,
         "promoted_count": promoted,
+        "promoted_via_ratio_channel": promoted_via_ratio_channel,
         "retracted_count": retracted,
         "status": "judged",
         "evidence_status": evidence_status,
@@ -594,6 +625,9 @@ def validate_registration_execution_contract(domain: dict[str, Any], hit_cfg: di
     hit_floor = hit_cfg.get("hit_floor_absolute_like_count")
     if not isinstance(hit_floor, (int, float)) or hit_floor <= 0:
         errors.append("hit_detection.hit_floor_absolute_like_count must be a positive number")
+    comment_like_ratio_threshold = hit_cfg.get("comment_like_ratio_threshold")
+    if not isinstance(comment_like_ratio_threshold, (int, float)) or not (0 < comment_like_ratio_threshold <= 1):
+        errors.append("hit_detection.comment_like_ratio_threshold must be a number in (0, 1]")
     if errors:
         raise ValueError("registration execution contract mismatch: " + "; ".join(errors))
     return {
@@ -606,8 +640,12 @@ def validate_registration_execution_contract(domain: dict[str, Any], hit_cfg: di
         "baseline_target_samples": 30,
         "baseline_hard_minimum_samples": BASELINE_HARD_MINIMUM_SAMPLES,
         "baseline_legacy_supplement": True,
-        "hit_threshold_formula": "max(median * excess_threshold, min(P90, hit_floor_absolute_like_count))",
+        "hit_threshold_formula": (
+            "max(median * excess_threshold, min(P90, hit_floor_absolute_like_count))"
+            " OR comment_count/like_count >= comment_like_ratio_threshold"
+        ),
         "hit_floor_absolute_like_count": hit_floor,
+        "comment_like_ratio_threshold": comment_like_ratio_threshold,
     }
 
 
