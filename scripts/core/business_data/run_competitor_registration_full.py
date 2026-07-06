@@ -562,10 +562,20 @@ def resolve_max_notes(cli_value: int | None, settings: dict[str, Any]) -> tuple[
         if cli_value < 1:
             raise ValueError("--max-notes must be positive")
         return cli_value, "cli"
-    value = int((settings.get("hit_detection") or {}).get("baseline_min_samples", 30))
-    if value < 1:
+    hit_cfg = settings.get("hit_detection") or {}
+    target = int(hit_cfg.get("baseline_min_samples", 30))
+    if target < 1:
         raise ValueError("hit_detection.baseline_min_samples must be positive")
-    return value, "settings.hit_detection.baseline_min_samples"
+    # Pinned and younger-than-observe-window videos are permanently ineligible for
+    # baseline computation (never just temporarily excluded), so fetching exactly the
+    # 30-sample target guarantees falling short after exclusions. Fetch a buffer beyond
+    # the target so the first crawl alone can actually reach 30 eligible videos for
+    # accounts with a realistic amount of pinned/young content, instead of every account
+    # structurally capping below the target regardless of how many days pass.
+    buffer = int(hit_cfg.get("first_crawl_fetch_buffer", 0))
+    if buffer < 0:
+        raise ValueError("hit_detection.first_crawl_fetch_buffer must not be negative")
+    return target + buffer, "settings.hit_detection.baseline_min_samples+first_crawl_fetch_buffer"
 
 
 def validate_registration_execution_contract(domain: dict[str, Any], hit_cfg: dict[str, Any]) -> dict[str, Any]:

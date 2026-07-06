@@ -51,6 +51,12 @@ hit_detection:
   # unreachable absolute one. There is no separate p90_required toggle -- P90 always
   # participates, just bounded.
   hit_floor_absolute_like_count: 2000
+  # 2026-07-06: pinned and younger-than-observe-window videos are permanently
+  # ineligible for baseline computation, so fetching exactly baseline_min_samples raw
+  # videos on first crawl structurally falls short of 30 eligible after exclusion.
+  # Verified against real data: worst observed account had 14/30 excluded (avg 6/30).
+  # Fetch buffer covers that with a small margin. Configurable, not a literal in code.
+  first_crawl_fetch_buffer: 15
   observe_days: 7
   recheck_interval_hours: 24
 

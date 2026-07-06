@@ -104,10 +104,35 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                 conn.close()
 
     def test_registration_defaults_use_configured_limit_not_unbounded_max(self) -> None:
-        value, source = resolve_max_notes(None, {"hit_detection": {"baseline_min_samples": 30}, "crawler": {"daily_max_notes": 20}})
+        value, source = resolve_max_notes(
+            None,
+            {"hit_detection": {"baseline_min_samples": 30}, "crawler": {"daily_max_notes": 20}},
+        )
 
+        # No first_crawl_fetch_buffer configured -> falls back to the bare target.
         self.assertEqual(value, 30)
-        self.assertEqual(source, "settings.hit_detection.baseline_min_samples")
+        self.assertEqual(source, "settings.hit_detection.baseline_min_samples+first_crawl_fetch_buffer")
+
+    def test_first_crawl_fetch_buffer_adds_to_the_target_not_replaces_it(self) -> None:
+        # Pinned/young videos are permanently ineligible, so fetching exactly the
+        # 30-sample target structurally falls short after exclusions -- the buffer
+        # exists so first crawl alone can actually reach 30 eligible videos.
+        value, source = resolve_max_notes(
+            None,
+            {"hit_detection": {"baseline_min_samples": 30, "first_crawl_fetch_buffer": 15}},
+        )
+
+        self.assertEqual(value, 45)
+        self.assertEqual(source, "settings.hit_detection.baseline_min_samples+first_crawl_fetch_buffer")
+
+    def test_explicit_cli_max_notes_overrides_the_buffered_default(self) -> None:
+        value, source = resolve_max_notes(
+            50,
+            {"hit_detection": {"baseline_min_samples": 30, "first_crawl_fetch_buffer": 15}},
+        )
+
+        self.assertEqual(value, 50)
+        self.assertEqual(source, "cli")
 
     def test_local_mediacrawler_executor_defaults_to_headless(self) -> None:
         executor = LocalMediaCrawlerExecutor()
