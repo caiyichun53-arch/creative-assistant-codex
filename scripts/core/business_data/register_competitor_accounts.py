@@ -53,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
 def install_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     _ensure_competitor_video_columns(conn)
+    _ensure_evidence_status_columns(conn)
 
 
 def _ensure_competitor_video_columns(conn: sqlite3.Connection) -> None:
@@ -64,6 +65,15 @@ def _ensure_competitor_video_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE competitor_videos ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0")
     if "excluded_reason" not in columns:
         conn.execute("ALTER TABLE competitor_videos ADD COLUMN excluded_reason TEXT")
+
+
+def _ensure_evidence_status_columns(conn: sqlite3.Connection) -> None:
+    baseline_columns = {row[1] for row in conn.execute("PRAGMA table_info(baselines)").fetchall()}
+    if baseline_columns and "evidence_status" not in baseline_columns:
+        conn.execute("ALTER TABLE baselines ADD COLUMN evidence_status TEXT NOT NULL DEFAULT 'sufficient'")
+    hit_columns = {row[1] for row in conn.execute("PRAGMA table_info(hits)").fetchall()}
+    if hit_columns and "evidence_status" not in hit_columns:
+        conn.execute("ALTER TABLE hits ADD COLUMN evidence_status TEXT NOT NULL DEFAULT 'sufficient'")
 
 
 def register_from_domain(conn: sqlite3.Connection, domain: dict[str, Any], *, source_config_ref: str) -> dict[str, Any]:

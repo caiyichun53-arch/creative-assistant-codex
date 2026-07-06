@@ -72,7 +72,11 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                 install_schema(conn)
                 register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
                 account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
-                inserted, updated = ingest_stock_items(conn, account, items, run_id="run-1", raw_archive_ref="raw://fixture")
+                inserted, updated = ingest_stock_items(
+                    conn, account, items,
+                    hit_cfg={"observe_days": 7, "baseline_window_days": 90},
+                    run_id="run-1", raw_archive_ref="raw://fixture",
+                )
                 judgement = judge_domain(
                     conn,
                     "fan_kepu_social_life",
@@ -90,6 +94,7 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                 self.assertEqual(summary["watching_videos"], 0)
                 self.assertEqual(summary["videos"], 30)
                 self.assertEqual(judgement["total_promoted"], 1)
+                self.assertEqual(judgement["accounts"][0]["evidence_status"], "sufficient")
                 self.assertEqual(summary["hits"], 1)
                 comments_table = conn.execute(
                     "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='hit_comments'"
@@ -126,13 +131,15 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
         self.assertEqual(args[args.index("--crawler_max_notes_count") + 1], "30")
 
     def test_baseline_sample_uses_recent_window_without_old_supplement(self) -> None:
+        # BR-BASELINE-003: the 90-day window already meets the 30-sample target, so no
+        # legacy_supplement backfill into older videos should happen.
         with tempfile.TemporaryDirectory() as tmp:
             conn = sqlite3.connect(Path(tmp) / "sample.sqlite3")
             conn.row_factory = sqlite3.Row
             try:
                 conn.execute("CREATE TABLE sample(video_id TEXT, publish_time TEXT, like_count INTEGER)")
                 now = datetime.now(timezone.utc)
-                for idx in range(20):
+                for idx in range(35):
                     conn.execute(
                         "INSERT INTO sample VALUES(?, ?, ?)",
                         (f"recent-{idx}", (now - timedelta(days=30)).isoformat(), 10),
@@ -152,12 +159,13 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                     },
                 )
 
-                self.assertEqual(len(sample), 20)
+                self.assertEqual(len(sample), 30)
+                self.assertTrue(all(row["video_id"].startswith("recent-") for row in sample))
                 self.assertEqual(window_days, 90)
             finally:
                 conn.close()
 
-    def test_baseline_sample_expands_window_only_when_recent_sample_below_ten(self) -> None:
+    def test_baseline_sample_expands_window_only_when_recent_sample_below_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = sqlite3.connect(Path(tmp) / "sample.sqlite3")
             conn.row_factory = sqlite3.Row
@@ -189,7 +197,7 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
             finally:
                 conn.close()
 
-    def test_judgement_runs_with_ten_samples_not_thirty(self) -> None:
+    def test_judgement_runs_below_target_sample_and_flags_insufficient_evidence(self) -> None:
         domain = {
             "name": "fixture-domain",
             "formal_domain_label": "fan_kepu_social_life",
@@ -216,7 +224,11 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                 install_schema(conn)
                 register_from_domain(conn, domain, source_config_ref="config/domains/娉涚鏅?yaml")
                 account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
-                ingest_stock_items(conn, account, items, run_id="run-1", raw_archive_ref="raw://fixture")
+                ingest_stock_items(
+                    conn, account, items,
+                    hit_cfg={"observe_days": 7, "baseline_window_days": 90},
+                    run_id="run-1", raw_archive_ref="raw://fixture",
+                )
                 result = judge_account(
                     conn,
                     account,
@@ -233,6 +245,70 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                 self.assertEqual(result["status"], "judged")
                 self.assertEqual(result["sample_count"], 10)
                 self.assertEqual(result["promoted_count"], 1)
+                self.assertEqual(result["evidence_status"], "insufficient_sample")
+            finally:
+                conn.close()
+
+    def test_rejudgement_retracts_hit_that_no_longer_clears_recomputed_threshold(self) -> None:
+        domain = {
+            "name": "fixture-domain",
+            "formal_domain_label": "fan_kepu_social_life",
+            "platform": "douyin",
+            "collector_policy": {
+                "first_crawl": "stock_snapshot_archived",
+                "comments": "reverse_prep_only_for_promoted_hits",
+            },
+            "competitor_seeds": [
+                {"name": "fixture-account", "url": "https://www.douyin.com/user/MS4wLjABAAAAabc"},
+            ],
+        }
+        published_at = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp())
+        hit_cfg = {
+            "observe_days": 7,
+            "baseline_window_days": 90,
+            "baseline_min_samples": 30,
+            "excess_threshold": 3.0,
+            "p90_required": True,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "retraction.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+
+                # Round 1: sparse sample, the one clear outlier gets promoted.
+                round_1_items = [
+                    {"aweme_id": f"low-{idx}", "liked_count": 10, "create_time": published_at}
+                    for idx in range(9)
+                ] + [{"aweme_id": "outlier", "liked_count": 1000, "create_time": published_at}]
+                ingest_stock_items(conn, account, round_1_items, hit_cfg=hit_cfg, run_id="run-1", raw_archive_ref="raw://fixture")
+                first_result = judge_account(conn, account, hit_cfg=hit_cfg, run_id="run-1")
+                self.assertEqual(first_result["promoted_count"], 1)
+                self.assertEqual(
+                    conn.execute("SELECT status FROM competitor_videos WHERE platform_item_id='outlier'").fetchone()[0],
+                    "promoted",
+                )
+
+                # Round 2: many more mid-range videos raise the median well past the
+                # old outlier's like_count -- it should no longer qualify as a hit.
+                round_2_items = [
+                    {"aweme_id": f"mid-{idx}", "liked_count": 800, "create_time": published_at}
+                    for idx in range(20)
+                ]
+                ingest_stock_items(conn, account, round_2_items, hit_cfg=hit_cfg, run_id="run-2", raw_archive_ref="raw://fixture")
+                second_result = judge_account(conn, account, hit_cfg=hit_cfg, run_id="run-2")
+
+                self.assertEqual(second_result["promoted_count"], 0)
+                self.assertEqual(second_result["retracted_count"], 1)
+                self.assertEqual(
+                    conn.execute("SELECT status FROM competitor_videos WHERE platform_item_id='outlier'").fetchone()[0],
+                    "archived",
+                )
+                self.assertIsNone(
+                    conn.execute("SELECT hit_id FROM hits WHERE platform_item_id='outlier'").fetchone()
+                )
             finally:
                 conn.close()
 
@@ -248,7 +324,9 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
         marked = mark_pinned_items(items)
 
         self.assertEqual([item["_is_pinned"] for item in marked], [True, True, False, False])
-        self.assertEqual(first_crawl_excluded_reason(marked[0]), "pinned")
+        self.assertEqual(
+            first_crawl_excluded_reason(marked[0], {"observe_days": 7, "baseline_window_days": 90}), "pinned"
+        )
 
     def test_settled_sample_count_excludes_young_first_crawl_items(self) -> None:
         domain = {
@@ -279,7 +357,11 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                 install_schema(conn)
                 register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
                 account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
-                ingest_stock_items(conn, account, items, run_id="run-1", raw_archive_ref="raw://fixture")
+                ingest_stock_items(
+                    conn, account, items,
+                    hit_cfg={"observe_days": 7, "baseline_window_days": 90},
+                    run_id="run-1", raw_archive_ref="raw://fixture",
+                )
 
                 count = settled_sample_count(
                     conn,
@@ -333,7 +415,11 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                 register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
                 account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
                 # Simulate data that already went through a (buggy) first judgement pass.
-                ingest_stock_items(conn, account, items, run_id="run-1", raw_archive_ref="raw://fixture")
+                ingest_stock_items(
+                    conn, account, items,
+                    hit_cfg={"observe_days": 7, "baseline_window_days": 90},
+                    run_id="run-1", raw_archive_ref="raw://fixture",
+                )
                 conn.execute("DELETE FROM baselines")
                 conn.execute("DELETE FROM hits")
                 conn.execute("UPDATE competitor_videos SET status='archived'")

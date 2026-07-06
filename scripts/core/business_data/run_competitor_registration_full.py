@@ -28,7 +28,11 @@ from scripts.core.external_adapters.local_mediacrawler_executor import LocalMedi
 DEFAULT_SETTINGS = ROOT / "config" / "settings.yaml"
 FALLBACK_SETTINGS = ROOT / "config" / "settings.example.yaml"
 EXECUTION_GUARDRAIL_DOC = "docs/production_execution_guardrails.md"
-BASELINE_MIN_JUDGEMENT_SAMPLES = 10
+# BR-BASELINE-003 (BUSINESS_RULE_CATALOG.yaml): the only documented sample target is
+# baseline_min_samples=30 (legacy_supplement=true: backfill toward it when the 90-day
+# window falls short). This is the sole hard mathematical floor below which a median/P90
+# cannot be computed at all -- not a business threshold, so it is not configurable.
+BASELINE_HARD_MINIMUM_SAMPLES = 2
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -200,6 +204,7 @@ def ingest_stock_items(
     account: sqlite3.Row,
     items: list[dict[str, Any]],
     *,
+    hit_cfg: dict[str, Any],
     run_id: str,
     raw_archive_ref: str | None,
 ) -> tuple[int, int]:
@@ -208,7 +213,7 @@ def ingest_stock_items(
     for item in mark_pinned_items(items):
         platform_item_id = _required_text(item.get("aweme_id") or item.get("source_id") or item.get("id"), "aweme_id")
         video_id = stable_video_id(account["account_id"], platform_item_id)
-        excluded_reason = first_crawl_excluded_reason(item)
+        excluded_reason = first_crawl_excluded_reason(item, hit_cfg)
         existed = conn.execute(
             "SELECT video_id FROM competitor_videos WHERE account_id=? AND platform_item_id=?",
             (account["account_id"], platform_item_id),
@@ -281,7 +286,9 @@ def crawl_registration_stock_once(
         result["updated_videos"] = 0
         result["valid_baseline_candidates"] = 0
         return result
-    inserted, updated = ingest_stock_items(conn, account, result["items"], run_id=run_id, raw_archive_ref=result["raw_archive_ref"])
+    inserted, updated = ingest_stock_items(
+        conn, account, result["items"], hit_cfg=hit_cfg, run_id=run_id, raw_archive_ref=result["raw_archive_ref"]
+    )
     conn.commit()
     result = dict(result)
     result["inserted_videos"] = inserted
@@ -295,11 +302,13 @@ def judge_domain(conn: sqlite3.Connection, domain_label: str, *, hit_cfg: dict[s
     rows = _load_accounts(conn, domain_label, limit=None)
     results: list[dict[str, Any]] = []
     total_hits = 0
+    total_retracted = 0
     for account in rows:
         account_result = judge_account(conn, account, hit_cfg=hit_cfg, run_id=run_id)
         total_hits += account_result["promoted_count"]
+        total_retracted += account_result.get("retracted_count", 0)
         results.append(account_result)
-    return {"total_promoted": total_hits, "accounts": results}
+    return {"total_promoted": total_hits, "total_retracted": total_retracted, "accounts": results}
 
 
 def settled_sample_count(conn: sqlite3.Connection, account_id: str, hit_cfg: dict[str, Any]) -> int:
@@ -333,15 +342,21 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
         (account["account_id"],),
     ).fetchall()
     sample, sample_window = select_baseline_sample(rows, hit_cfg)
-    minimum_judgement_samples = int(hit_cfg.get("baseline_min_judgement_samples", BASELINE_MIN_JUDGEMENT_SAMPLES))
-    if len(sample) < minimum_judgement_samples:
+    target_samples = int(hit_cfg.get("baseline_min_samples", 30))
+    if len(sample) < BASELINE_HARD_MINIMUM_SAMPLES:
         return {
             "account": account["account_name"],
             "sample_count": len(sample),
-            "minimum_sample_count": minimum_judgement_samples,
+            "minimum_sample_count": BASELINE_HARD_MINIMUM_SAMPLES,
             "status": "skipped_insufficient_sample",
+            "evidence_status": "insufficient_sample",
             "promoted_count": 0,
         }
+    # BR-BASELINE-003: below the documented 30-sample target, judgement may proceed
+    # (the account may never accumulate more without ongoing daily collection) but any
+    # resulting hit must carry an explicit insufficient-evidence flag -- never promoted
+    # silently as if the baseline were fully powered.
+    evidence_status = "sufficient" if len(sample) >= target_samples else "insufficient_sample"
     likes = [int(row["like_count"]) for row in sample if row["like_count"] is not None]
     median = float(statistics.median(likes))
     p90_value = p90(likes)
@@ -353,9 +368,9 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
         """
         INSERT INTO baselines(
             baseline_id, account_id, metric, window_days, sample_count,
-            median_value, p90_value, threshold_value, run_id
+            median_value, p90_value, threshold_value, evidence_status, run_id
         )
-        VALUES(?, ?, 'like_count', ?, ?, ?, ?, ?, ?)
+        VALUES(?, ?, 'like_count', ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(baseline_id) DO NOTHING
         """,
         (
@@ -366,13 +381,24 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
             median,
             p90_value,
             threshold,
+            evidence_status,
             run_id,
         ),
     )
     promoted = 0
+    retracted = 0
     for row in sample:
         like_count = int(row["like_count"] or 0)
         if like_count < threshold:
+            # BR-HIT-003 (idempotent judgement): a video re-evaluated in this same
+            # judgement pass that no longer clears the recomputed threshold must not
+            # stay marked as a hit from an earlier, since-corrected judgement. Scoped
+            # to the current sample only -- videos outside this run's sample are a
+            # past judgement's point-in-time record and are left alone.
+            if row["status"] == "promoted":
+                conn.execute("DELETE FROM hits WHERE video_id=?", (row["video_id"],))
+                conn.execute("UPDATE competitor_videos SET status='archived' WHERE video_id=?", (row["video_id"],))
+                retracted += 1
             continue
         hit_id = stable_hit_id(account["account_id"], row["platform_item_id"])
         excess_ratio = round(like_count / median, 2) if median else None
@@ -386,9 +412,9 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
             INSERT INTO hits(
                 hit_id, video_id, account_id, platform, platform_item_id, title, url,
                 publish_time, like_count, comment_count, share_count, collect_count,
-                excess_ratio, share_comment_ratio, baseline_id, run_id
+                excess_ratio, share_comment_ratio, baseline_id, evidence_status, run_id
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_id, platform_item_id) DO UPDATE SET
                 like_count=excluded.like_count,
                 comment_count=excluded.comment_count,
@@ -397,6 +423,7 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
                 excess_ratio=excluded.excess_ratio,
                 share_comment_ratio=excluded.share_comment_ratio,
                 baseline_id=excluded.baseline_id,
+                evidence_status=excluded.evidence_status,
                 run_id=excluded.run_id
             """,
             (
@@ -415,6 +442,7 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
                 excess_ratio,
                 share_comment_ratio,
                 baseline_id,
+                evidence_status,
                 run_id,
             ),
         )
@@ -427,7 +455,9 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
         "p90": round(p90_value, 2),
         "threshold": round(threshold, 2),
         "promoted_count": promoted,
+        "retracted_count": retracted,
         "status": "judged",
+        "evidence_status": evidence_status,
     }
 
 
@@ -543,21 +573,18 @@ def validate_registration_execution_contract(domain: dict[str, Any], hit_cfg: di
         errors.append("hit_detection.baseline_window_days must be 90")
     if int(hit_cfg.get("baseline_min_samples", 0)) != 30:
         errors.append("hit_detection.baseline_min_samples must stay the 30-sample target")
-    minimum = int(hit_cfg.get("baseline_min_judgement_samples", BASELINE_MIN_JUDGEMENT_SAMPLES))
-    if minimum != BASELINE_MIN_JUDGEMENT_SAMPLES:
-        errors.append("baseline_min_judgement_samples must be 10 for the MVP registration contract")
     if errors:
         raise ValueError("registration execution contract mismatch: " + "; ".join(errors))
     return {
-        "design_sources": ["AGENTS.md", "BUILD_PLAN.md", EXECUTION_GUARDRAIL_DOC],
+        "design_sources": ["BUSINESS_RULE_CATALOG.yaml", "AGENTS.md", "BUILD_PLAN.md", EXECUTION_GUARDRAIL_DOC],
         "first_crawl_stock_archived": True,
         "comments_deferred": True,
         "pinned_excluded": True,
         "young_videos_excluded_from_judgement_days": 7,
         "baseline_window_days": 90,
         "baseline_target_samples": 30,
-        "baseline_minimum_judgement_samples": BASELINE_MIN_JUDGEMENT_SAMPLES,
-        "baseline_expands_window_when_recent_samples_below": BASELINE_MIN_JUDGEMENT_SAMPLES,
+        "baseline_hard_minimum_samples": BASELINE_HARD_MINIMUM_SAMPLES,
+        "baseline_legacy_supplement": True,
     }
 
 
@@ -566,7 +593,6 @@ def select_baseline_sample(rows: list[sqlite3.Row], hit_cfg: dict[str, Any]) -> 
     observe_days = int(hit_cfg.get("observe_days", 7))
     baseline_window_days = int(hit_cfg.get("baseline_window_days", 90))
     target_samples = int(hit_cfg.get("baseline_min_samples", 30))
-    minimum_judgement_samples = int(hit_cfg.get("baseline_min_judgement_samples", BASELINE_MIN_JUDGEMENT_SAMPLES))
     settled_before = now - timedelta(days=observe_days)
     window_start = now - timedelta(days=baseline_window_days)
     usable: list[tuple[datetime, sqlite3.Row]] = []
@@ -577,7 +603,11 @@ def select_baseline_sample(rows: list[sqlite3.Row], hit_cfg: dict[str, Any]) -> 
         usable.append((published_at, row))
     usable.sort(key=lambda item: item[0], reverse=True)
     recent = [row for published_at, row in usable if published_at >= window_start]
-    if len(recent) >= minimum_judgement_samples:
+    # BR-BASELINE-003 legacy_supplement=true: backfill toward the 30-sample target from
+    # all usable (settled) videos, ignoring the 90-day window, whenever the in-window
+    # sample falls short -- matching the pre-migration scripts/analyze/judge_hits.py
+    # behavior exactly (there is no separate lower "minimum before expanding" number).
+    if len(recent) >= target_samples:
         return recent[:target_samples], baseline_window_days
     return [row for _, row in usable[:target_samples]], 0
 
@@ -608,16 +638,18 @@ def mark_pinned_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return marked
 
 
-def first_crawl_excluded_reason(item: dict[str, Any]) -> str | None:
+def first_crawl_excluded_reason(item: dict[str, Any], hit_cfg: dict[str, Any]) -> str | None:
     published_at = _item_publish_datetime(item)
     now = datetime.now(timezone.utc)
+    observe_days = int(hit_cfg.get("observe_days", 7))
+    baseline_window_days = int(hit_cfg.get("baseline_window_days", 90))
     if bool(item.get("_is_pinned")):
         return "pinned"
     if published_at is None:
         return "missing_publish_time"
-    if published_at > now - timedelta(days=7):
+    if published_at > now - timedelta(days=observe_days):
         return "younger_than_7_days"
-    if published_at < now - timedelta(days=90):
+    if published_at < now - timedelta(days=baseline_window_days):
         return "older_than_90_days"
     return None
 

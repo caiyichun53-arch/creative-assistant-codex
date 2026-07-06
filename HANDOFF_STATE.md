@@ -19,12 +19,12 @@ failures: []
 $ python -c "from scripts.validation.clean_room_readiness import run_audit; from pathlib import Path; print(run_audit(Path('.').resolve())['phase_2_safe_to_execute'])"
 True
 
-$ python -m unittest tests.validation.test_legacy_removal_gate
-Ran 2 tests in 0.291s
+$ python -m unittest tests.validation.test_legacy_removal_gate tests.validation.test_business_rule_traceability
+Ran 7 tests
 OK
 
-$ python -m unittest <255 个已知测试模块列表,见本文件 git 历史或直接问上一个执行者要清单>
-Ran 255 tests in 15.302s
+$ python -m unittest <29 个已知测试模块,见本文件 git 历史或直接问上一个执行者要清单>
+Ran 261 tests in 25.3s
 OK
 ```
 
@@ -47,6 +47,13 @@ OK
 8. 补了 `run_full_registration()` 的端到端测试(之前只测过它内部各个子函数,从没测过这个真正在生产 28 账号 pilot 里跑的入口函数本身),mock 掉真实 MediaCrawler 子进程,测完自动清理产生的 report 目录。
 9. 新增 `scripts/core/business_data/README.md`(模块说明:文件用途、设计契约要点、怎么跑、测试清单)。
 10. **提交后才发现的两个闸门回归**(见上面"踩过的坑"):`legacy_removal_gate.py` 对 `scripts/core/business_data/` 的 guard 消息误报(已加 `ALLOWED_GUARD_REFERENCE_FILES` 例外)、对新增的两个 `.bat` 启动器误判为 legacy executable path(已加 `ALLOWED_NEW_EXECUTABLE_PATHS` 例外,用户明确要求保留这两个 `.bat`)。
+
+**同一天的第三轮(用户逐条追问"45 个爆款是不是太少/条件是不是不对",查出真正的设计漂移,不是口味问题)**:
+
+11. **`BR-BASELINE-003` 真漂移,已修**:代码里 `baseline_min_judgement_samples=10` 这个数字在旧系统(`scripts/analyze/judge_hits.py`,git 历史里找到)和新系统正式设计依据 `BUSINESS_RULE_CATALOG.yaml` 里都不存在——两边写的都是 `minimum_sample_count: 30` + `legacy_supplement: true`(90天窗口不足30条,补到最近30条,不看窗口)。已删掉这个自造的 `10`(`BASELINE_MIN_JUDGEMENT_SAMPLES`→改名 `BASELINE_HARD_MINIMUM_SAMPLES=2`,只是"能不能算出中位数"的数学下限,不是业务门槛),`select_baseline_sample()` 改回按 30 补足。同时给 `baselines`/`hits` 表加了 `evidence_status` 列(`sufficient`/`insufficient_sample`),样本不到 30 时判定仍然跑但明确标注证据不足,不再悄悄当满血基线用——这是 `BUSINESS_RULE_CATALOG.yaml` 里 `forbidden_behavior: promote hit from underpowered baseline without flag` 这条硬性要求。
+12. 顺带发现并修了 `first_crawl_excluded_reason()` 硬编码 `timedelta(days=7)`/`timedelta(days=90)` 不读配置的问题——现在从 `hit_cfg` 读,配置改了这里会跟着变,不再是两套真相源。
+13. **发现真正的"检查机制"其实是废的**:`REQUIREMENT_CODE_TRACEABILITY.yaml` 只被 `legacy_removal_gate.py` 当"历史文档"跳过扫描,从没有任何测试真正解析它、拿去对代码断言——这就是为什么"10"这种发明能混过去这么久没人发现。新增 `tests/validation/test_business_rule_traceability.py`,把 `BUSINESS_RULE_CATALOG.yaml` 里几条可核对的阈值(30/7/90/3.0/p90_required)编码成真断言,以后再有人凭空发明数字,跑测试直接报错。同时把 `REQUIREMENT_CODE_TRACEABILITY.yaml` 补了一节 `business_data_competitor_registration_execution`,标注当前 14 条相关 BR-* 规则的真实对齐状态(不再冻结在 07-02 那次审计)。
+14. **加了"重判时撤销不再合格的旧爆款"逻辑**:之前重判只会新增合格的,不会把"以前判过、现在按新规则不够格了"的旧记录退回去——查真实库时发现 2 条这样的残留。已在 `judge_account()` 里加了退回逻辑(范围只限于本轮判定实际重新评估过的样本,不去动本轮没碰到的历史记录,避免破坏审计不可变性原则),配了测试,并且**真的用正式的 `--rejudge-only` 入口对着真实生产库(`data/formal/production_activation.sqlite3`)重跑了一遍**(不是临时脚本手动改库),验证过 0 条残留。当前真实数据(2026-07-06 校正后):28 账号、840 视频、51 条爆款、全部标 `evidence_status=insufficient_sample`(样本量还没到 30,这是诚实的,不是新 bug——首采只抓了 30 条原始视频,刨去置顶/年轻的自然凑不满 30,要等每日增量采集把样本攒大)。
 
 ## 下一步该干嘛
 

@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS baselines (
     median_value REAL NOT NULL,
     p90_value REAL NOT NULL,
     threshold_value REAL NOT NULL,
+    evidence_status TEXT NOT NULL DEFAULT 'sufficient' CHECK(evidence_status IN ('sufficient', 'insufficient_sample')),
     run_id TEXT NOT NULL,
     computed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -92,6 +93,7 @@ CREATE TABLE IF NOT EXISTS hits (
     excess_ratio REAL,
     share_comment_ratio REAL,
     baseline_id TEXT NOT NULL REFERENCES baselines(baseline_id) ON DELETE RESTRICT,
+    evidence_status TEXT NOT NULL DEFAULT 'sufficient' CHECK(evidence_status IN ('sufficient', 'insufficient_sample')),
     run_id TEXT NOT NULL,
     reverse_status TEXT NOT NULL DEFAULT 'none',
     promoted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

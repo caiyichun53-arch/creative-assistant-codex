@@ -64,6 +64,7 @@ ALLOWED_GUARD_REFERENCE_FILES = {
     "scripts/validation/production_startup_smoke.py",
     "scripts/core/business_data/register_competitor_accounts.py",
     "scripts/core/business_data/run_competitor_registration_full.py",
+    "scripts/core/business_data/README.md",
     "tests/core/test_phase5_business_workflow.py",
     "tests/validation/test_clean_room_readiness.py",
 }

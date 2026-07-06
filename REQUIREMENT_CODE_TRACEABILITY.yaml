@@ -1470,3 +1470,46 @@ goal_data_reset_01_phase_2_execution:
     table_count: 18
     all_tables_zero_rows: true
   legacy_data_import_allowed: false
+business_data_competitor_registration_execution:
+  status: implemented_and_verified
+  updated_at: '2026-07-06T05:34:53Z'
+  note: This block did not exist when scripts/core/business_data was first built --
+    the traceability entries above were frozen at GOAL-ALIGNMENT-01 (2026-07-02),
+    before this code existed, and were never re-run against it. That gap let a
+    fabricated baseline_min_judgement_samples=10 threshold (present in neither the
+    legacy system nor BUSINESS_RULE_CATALOG.yaml, which documents 30) ship
+    unnoticed. Fixed 2026-07-06; see tests/validation/test_business_rule_traceability.py
+    for the now-enforced check.
+  requirement_alignment:
+    BR-COLLECT-001: exact_match
+    BR-COLLECT-002: missing_in_code
+    BR-COLLECT-003: exact_match
+    BR-COLLECT-004: missing_in_code
+    BR-COLLECT-005: missing_in_code
+    BR-COLLECT-006: missing_in_code
+    BR-COLLECT-007: exact_match
+    BR-BASELINE-001: exact_match
+    BR-BASELINE-002: exact_match
+    BR-BASELINE-003: exact_match
+    BR-HIT-001: exact_match
+    BR-HIT-002: exact_match
+    BR-HIT-003: exact_match
+    BR-HIT-004: exact_match
+  missing_in_code_note: BR-COLLECT-002/004/005/006 (daily incremental watching pool,
+    T+1..T+7 video_checks snapshots, reverse-prep comment collection) are not yet
+    built -- this is an acknowledged gap, not a drift, since nothing in code
+    contradicts them; they require the daily incremental collection track.
+  code_artifacts:
+  - scripts/core/business_data/register_competitor_accounts.py
+  - scripts/core/business_data/run_competitor_registration_full.py
+  - scripts/core/business_data/competitor_accounts_schema.sqlite.sql
+  - scripts/core/external_adapters/local_mediacrawler_executor.py
+  - docs/production_execution_guardrails.md
+  tests:
+  - tests/core/test_competitor_account_registration.py
+  - tests/core/test_competitor_registration_full.py
+  - tests/core/test_local_mediacrawler_executor.py
+  - tests/validation/test_business_rule_traceability.py
+  formal_db:
+    path: data/formal/production_activation.sqlite3
+  legacy_data_import_allowed: false
