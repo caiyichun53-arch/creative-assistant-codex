@@ -1,19 +1,25 @@
 from __future__ import annotations
 
+import json
+import shutil
 import sqlite3
+import subprocess
 import tempfile
 from pathlib import Path
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from scripts.core.business_data.register_competitor_accounts import install_schema, register_from_domain
 from scripts.core.business_data.run_competitor_registration_full import (
+    ROOT,
     first_crawl_excluded_reason,
     ingest_stock_items,
     judge_domain,
     judge_account,
     mark_pinned_items,
     resolve_max_notes,
+    run_full_registration,
     run_rejudge_only,
     select_baseline_sample,
     settled_sample_count,
@@ -354,6 +360,87 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                     row["run_id"] for row in conn.execute("SELECT run_id FROM baselines").fetchall()
                 }
                 self.assertEqual(baseline_run_ids, {report["run_id"]})
+            finally:
+                conn.close()
+
+    def test_run_full_registration_wires_register_crawl_and_judge_together(self) -> None:
+        # Only the sub-steps (register/ingest/judge) were previously tested in isolation.
+        # This exercises run_full_registration() itself -- the actual entrypoint that ran
+        # against the real 28-account pilot -- end to end, with the crawl subprocess faked.
+        domain = {
+            "name": "泛科普-社会与生活",
+            "formal_domain_label": "fan_kepu_social_life",
+            "platform": "douyin",
+            "collector_policy": {
+                "first_crawl": "stock_snapshot_archived",
+                "comments": "reverse_prep_only_for_promoted_hits",
+            },
+            "competitor_seeds": [
+                {"name": "张见识", "url": "https://www.douyin.com/user/MS4wLjABAAAAabc"},
+            ],
+        }
+        hit_cfg = {
+            "observe_days": 7,
+            "baseline_window_days": 90,
+            "baseline_min_samples": 30,
+            "baseline_min_judgement_samples": 10,
+            "excess_threshold": 3.0,
+            "p90_required": True,
+        }
+        published_at = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp())
+        items = [
+            {"aweme_id": f"v{idx}", "liked_count": 10, "create_time": published_at}
+            for idx in range(1, 30)
+        ] + [
+            {
+                "aweme_id": "v30",
+                "liked_count": 1000,
+                "comment_count": 10,
+                "share_count": 30,
+                "create_time": published_at,
+            }
+        ]
+
+        def fake_run(args, **kwargs):
+            raw_dir = Path(args[args.index("--save_data_path") + 1])
+            jsonl_dir = raw_dir / "douyin" / "jsonl"
+            jsonl_dir.mkdir(parents=True)
+            (jsonl_dir / "1_contents_2026.jsonl").write_text(
+                "\n".join(json.dumps(item, ensure_ascii=False) for item in items),
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(args, returncode=0, stdout="ok", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "full_registration.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                with patch(
+                    "scripts.core.external_adapters.local_mediacrawler_executor.subprocess.run",
+                    side_effect=fake_run,
+                ):
+                    report = run_full_registration(
+                        conn,
+                        domain,
+                        domain_path=Path("config/domains/泛科普.yaml"),
+                        hit_cfg=hit_cfg,
+                        max_notes=30,
+                        max_notes_source="settings.hit_detection.baseline_min_samples",
+                        account_limit=None,
+                        timeout_seconds=60,
+                    )
+                self.addCleanup(shutil.rmtree, ROOT / "data" / "formal" / "competitor_registration" / report["run_id"], True)
+
+                self.assertEqual(report["status"], "succeeded")
+                self.assertEqual(report["mode"], "full")
+                self.assertTrue(report["run_id"].startswith("competitor_registration_full_"))
+                self.assertEqual(report["registration"]["inserted_count"], 1)
+                self.assertEqual(report["crawl"]["results"][0]["inserted_videos"], 30)
+                self.assertEqual(report["judgement"]["total_promoted"], 1)
+                self.assertEqual(report["summary"]["accounts"], 1)
+                self.assertEqual(report["summary"]["archived_videos"], 29)
+                self.assertEqual(report["summary"]["promoted_videos"], 1)
             finally:
                 conn.close()
 

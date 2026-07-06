@@ -84,20 +84,27 @@ class LocalMediaCrawlerExecutor:
         except subprocess.TimeoutExpired as exc:
             stdout_path.write_text(exc.stdout or "", encoding="utf-8")
             stderr_path.write_text(exc.stderr or "MediaCrawler timed out.", encoding="utf-8")
+            # The subprocess was actually launched (real browser/network activity may have
+            # started) before timing out, so this is a real external side effect, not a
+            # no-op -- make that explicit rather than relying on the dataclass default.
             return ExternalCommandResult(
                 status="failed_timeout",
                 payload={"error": "MediaCrawler timed out"},
                 raw_archive_ref=str(run_dir),
+                external_side_effect=True,
             )
 
         stdout_path.write_text(completed.stdout or "", encoding="utf-8")
         stderr_path.write_text(completed.stderr or "", encoding="utf-8")
 
         if completed.returncode != 0:
+            # Same reasoning as the timeout branch: the process ran, so treat it as a
+            # real external side effect rather than leaving this to the default value.
             return ExternalCommandResult(
                 status=f"failed_exit_{completed.returncode}",
                 payload={"error": "MediaCrawler exited with a non-zero status"},
                 raw_archive_ref=str(run_dir),
+                external_side_effect=True,
             )
 
         payload = self._read_payload(command, raw_dir)

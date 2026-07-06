@@ -62,11 +62,21 @@ ALLOWED_GUARD_REFERENCE_FILES = {
     "scripts/validation/legacy_removal_gate.py",
     "scripts/validation/live_gates.py",
     "scripts/validation/production_startup_smoke.py",
+    "scripts/core/business_data/register_competitor_accounts.py",
+    "scripts/core/business_data/run_competitor_registration_full.py",
     "tests/core/test_phase5_business_workflow.py",
     "tests/validation/test_clean_room_readiness.py",
 }
 ALLOWED_EXCLUSION_REFERENCE_FILES = {
     "BUSINESS_MODEL_ROUTE_REGISTRY.yaml",
+}
+# Root .bat/.vbs launchers are treated as legacy-style by default because the old
+# business pipeline shipped several (启动逆向拆DNA.bat etc). These two are a new,
+# read-only dev-tool convenience launcher for scripts/monitor/ (double-click start/stop
+# for a user who isn't comfortable with a CLI) -- not a revived legacy execution path.
+ALLOWED_NEW_EXECUTABLE_PATHS = {
+    "启动监控面板.bat",
+    "停止监控面板.bat",
 }
 HISTORICAL_DOC_PREFIXES = (
     "implementation_progress/",
@@ -159,6 +169,8 @@ def existing_inventory_paths() -> list[str]:
 
 
 def is_legacy_executable_path(path: str) -> bool:
+    if path in ALLOWED_NEW_EXECUTABLE_PATHS:
+        return False
     return path in LEGACY_EXACT_PATHS or path.endswith((".bat", ".vbs")) or any(path.startswith(prefix) for prefix in LEGACY_PATH_PREFIXES)
 
 
