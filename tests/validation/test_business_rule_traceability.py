@@ -55,10 +55,13 @@ class BusinessRuleTraceabilityTests(unittest.TestCase):
         # 30-sample target, never a second competing "business" threshold.
         self.assertLess(BASELINE_HARD_MINIMUM_SAMPLES, rule["thresholds"]["minimum_sample_count"])
 
-    def test_br_hit_001_excess_threshold_and_p90_required(self) -> None:
+    def test_br_hit_001_excess_threshold_and_hit_floor(self) -> None:
         rule = _rule(self.catalog, "BR-HIT-001")
         self.assertEqual(self.hit_cfg["excess_threshold"], rule["thresholds"]["excess_threshold"])
-        self.assertEqual(self.hit_cfg["p90_required"], rule["defaults"]["p90_required"])
+        self.assertEqual(
+            self.hit_cfg["hit_floor_absolute_like_count"], rule["thresholds"]["hit_floor_absolute_like_count"]
+        )
+        self.assertEqual(rule["thresholds"]["p90_bounded_by_floor"], True)
 
     def test_execution_contract_rejects_config_drift_from_the_catalog(self) -> None:
         domain = {

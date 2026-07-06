@@ -24,7 +24,7 @@ Ran 7 tests
 OK
 
 $ python -m unittest <29 个已知测试模块,见本文件 git 历史或直接问上一个执行者要清单>
-Ran 261 tests in 25.3s
+Ran 262 tests in 25.3s
 OK
 ```
 
@@ -54,7 +54,11 @@ OK
 12. 顺带发现并修了 `first_crawl_excluded_reason()` 硬编码 `timedelta(days=7)`/`timedelta(days=90)` 不读配置的问题——现在从 `hit_cfg` 读,配置改了这里会跟着变,不再是两套真相源。
 13. **发现真正的"检查机制"其实是废的**:`REQUIREMENT_CODE_TRACEABILITY.yaml` 只被 `legacy_removal_gate.py` 当"历史文档"跳过扫描,从没有任何测试真正解析它、拿去对代码断言——这就是为什么"10"这种发明能混过去这么久没人发现。新增 `tests/validation/test_business_rule_traceability.py`,把 `BUSINESS_RULE_CATALOG.yaml` 里几条可核对的阈值(30/7/90/3.0/p90_required)编码成真断言,以后再有人凭空发明数字,跑测试直接报错。同时把 `REQUIREMENT_CODE_TRACEABILITY.yaml` 补了一节 `business_data_competitor_registration_execution`,标注当前 14 条相关 BR-* 规则的真实对齐状态(不再冻结在 07-02 那次审计)。
 14. **加了"重判时撤销不再合格的旧爆款"逻辑**:之前重判只会新增合格的,不会把"以前判过、现在按新规则不够格了"的旧记录退回去——查真实库时发现 2 条这样的残留。已在 `judge_account()` 里加了退回逻辑(范围只限于本轮判定实际重新评估过的样本,不去动本轮没碰到的历史记录,避免破坏审计不可变性原则),配了测试,并且**真的用正式的 `--rejudge-only` 入口对着真实生产库(`data/formal/production_activation.sqlite3`)重跑了一遍**(不是临时脚本手动改库),验证过 0 条残留。
-15. **用户要求彻底清空重来**:清空 `data/formal/production_activation.sqlite3`,用修好的逻辑对 28 个账号跑了一次真实全新首采(经过环境预检:MediaCrawler venv/Playwright Chromium/抖音登录缓存都在;`--headless yes` 会覆盖 MediaCrawler 配置文件里 `HEADLESS=False` 的默认值,实际是无头跑的,不会弹窗——这点我一开始查漏了只看了静态配置,被用户纠正过)。后台跑完(约几分钟),直接查真实库核对过(不只信自报的 JSON):28 账号、840 视频全部是同一个 run_id(证明是干净单次采集,不是历史补丁)、52 条爆款、0 条残留不合格记录、两个权威闸门仍绿。**当前真实数据(2026-07-06 全新采集后)**:28 账号、840 视频、52 条爆款,全部诚实标 `evidence_status=insufficient_sample`(首采只有 30 条原始视频/账号,刨去置顶/年轻的天然凑不满 30 这个目标,不是新 bug,等每日增量采集把样本攒大后会自然转为 `sufficient`)。
+15. **用户要求彻底清空重来**:清空 `data/formal/production_activation.sqlite3`,用修好的逻辑对 28 个账号跑了一次真实全新首采(经过环境预检:MediaCrawler venv/Playwright Chromium/抖音登录缓存都在;`--headless yes` 会覆盖 MediaCrawler 配置文件里 `HEADLESS=False` 的默认值,实际是无头跑的,不会弹窗——这点我一开始查漏了只看了静态配置,被用户纠正过)。后台跑完(约几分钟),直接查真实库核对过(不只信自报的 JSON):28 账号、840 视频全部是同一个 run_id(证明是干净单次采集,不是历史补丁)、52 条爆款、0 条残留不合格记录、两个权威闸门仍绿。
+
+**同一天的第四轮(用户追问"P90 是不是该拿掉",查出 P90 本身机械限制爆款数的真问题)**:
+
+16. **`BR-HIT-001` 阈值公式改了(用户明确决策,不是我自己判断)**:原公式 `max(中位数×3, P90)` 里,P90 是"这批小样本自己排前10%"的数学定义,不管账号是否真有离群爆款,都会把爆款数摁死在样本量约一成——真实数据验证过:28 账号里 23 个的爆款数被 P90 锁死在恰好"2"。跟用户来回确认后定的新公式:`门槛 = max(中位数×3, min(P90, hit_floor_absolute_like_count))`,`hit_floor_absolute_like_count`(当前 2000,可配置,不能写死)给 P90 封顶——大账号不会被 P90 顶到天上,小账号(P90 本来就低于这个绝对值)也不会被绝对值卡死。**不再有 `p90_required` 这个开关**,P90 一直参与,只是被这个绝对值封顶。同步改了三处:`config/settings.yaml`/`config/settings.example.yaml`(新增 `hit_floor_absolute_like_count`,删掉 `p90_required`)、`judge_account()` 的阈值计算、`BUSINESS_RULE_CATALOG.yaml` BR-HIT-001(加了 `amendment_2026_07_06` 字段记录这次业务决策和依据,不是默默改掉旧规则)。加了测试锁定这个公式(`test_hit_floor_caps_p90_instead_of_p90_setting_an_unbounded_bar`)。**再次用 `--rejudge-only` 对真实库重跑验证**:117 条爆款(比之前52条多,因为不再被 P90 机械压制),每账号爆款数 1~8 浮动(不再是清一色的"2"),0 条残留不合格记录,两个权威闸门仍绿。**当前真实数据(2026-07-06,P90 封顶后)**:28 账号、840 视频、117 条爆款,全部诚实标 `evidence_status=insufficient_sample`(样本量还没到 30,原因同上,等每日增量采集攒够样本后自然转 `sufficient`)。
 
 ## 下一步该干嘛
 

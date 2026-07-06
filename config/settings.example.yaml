@@ -39,7 +39,18 @@ hit_detection:
   baseline_window_days: 90
   baseline_min_samples: 30
   excess_threshold: 3.0
-  p90_required: true
+  # 2026-07-06 business decision (see BUSINESS_RULE_CATALOG.yaml BR-HIT-001):
+  # threshold = max(median * excess_threshold, min(P90, hit_floor_absolute_like_count)).
+  # P90 computed on the same small recent sample being judged is close to tautological
+  # -- by definition ~10% of any account's sample clears its own P90 -- so it can no
+  # longer stand alone as an upper-uncapped term (verified against real data: as a bare
+  # OR-ed term it capped 23/28 accounts at exactly 2 hits regardless of true
+  # distribution shape). Bounding it with min(P90, floor) keeps it from pushing the bar
+  # above the floor for large accounts, while still giving small accounts (whose P90
+  # never reaches the floor) a reachable relative bar instead of a permanently
+  # unreachable absolute one. There is no separate p90_required toggle -- P90 always
+  # participates, just bounded.
+  hit_floor_absolute_like_count: 2000
   observe_days: 7
   recheck_interval_hours: 24
 

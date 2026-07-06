@@ -360,9 +360,17 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
     likes = [int(row["like_count"]) for row in sample if row["like_count"] is not None]
     median = float(statistics.median(likes))
     p90_value = p90(likes)
-    threshold = median * float(hit_cfg["excess_threshold"])
-    if bool(hit_cfg.get("p90_required", True)):
-        threshold = max(threshold, p90_value)
+    # BR-HIT-001 (2026-07-06 revision): threshold = max(median * excess_threshold,
+    # min(P90, hit_floor_absolute_like_count)). P90 alone is close to tautological on a
+    # small, self-referential sample -- ~10% of any account's videos clear its own P90
+    # by definition, regardless of whether that account has a genuine standout. Capping
+    # it at the configurable absolute floor stops it from mechanically outranking every
+    # other account at the same fixed percentile, while still giving small accounts
+    # (whose P90 never reaches the floor) a reachable relative bar instead of a
+    # permanently unreachable absolute one. There is no separate p90_required toggle --
+    # P90 always participates, just bounded.
+    hit_floor = float(hit_cfg["hit_floor_absolute_like_count"])
+    threshold = max(median * float(hit_cfg["excess_threshold"]), min(p90_value, hit_floor))
     baseline_id = stable_baseline_id(account["account_id"], run_id)
     conn.execute(
         """
@@ -573,6 +581,9 @@ def validate_registration_execution_contract(domain: dict[str, Any], hit_cfg: di
         errors.append("hit_detection.baseline_window_days must be 90")
     if int(hit_cfg.get("baseline_min_samples", 0)) != 30:
         errors.append("hit_detection.baseline_min_samples must stay the 30-sample target")
+    hit_floor = hit_cfg.get("hit_floor_absolute_like_count")
+    if not isinstance(hit_floor, (int, float)) or hit_floor <= 0:
+        errors.append("hit_detection.hit_floor_absolute_like_count must be a positive number")
     if errors:
         raise ValueError("registration execution contract mismatch: " + "; ".join(errors))
     return {
@@ -585,6 +596,8 @@ def validate_registration_execution_contract(domain: dict[str, Any], hit_cfg: di
         "baseline_target_samples": 30,
         "baseline_hard_minimum_samples": BASELINE_HARD_MINIMUM_SAMPLES,
         "baseline_legacy_supplement": True,
+        "hit_threshold_formula": "max(median * excess_threshold, min(P90, hit_floor_absolute_like_count))",
+        "hit_floor_absolute_like_count": hit_floor,
     }
 
 

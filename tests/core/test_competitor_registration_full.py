@@ -84,7 +84,7 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                         "baseline_window_days": 90,
                         "baseline_min_samples": 30,
                         "excess_threshold": 3.0,
-                        "p90_required": True,
+                        "hit_floor_absolute_like_count": 2000,
                     },
                     run_id="run-1",
                 )
@@ -197,6 +197,55 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_hit_floor_caps_p90_instead_of_p90_setting_an_unbounded_bar(self) -> None:
+        # BR-HIT-001 (2026-07-06 revision): threshold = max(median * excess_threshold,
+        # min(P90, hit_floor_absolute_like_count)). This account's own P90 (3000) is
+        # above the configured floor (2000) and well above median*3 (300) -- without
+        # capping, P90 alone would set the bar at 3000; with capping, the floor (2000,
+        # the smaller of the two) is what actually binds.
+        domain = {
+            "name": "fixture-domain",
+            "formal_domain_label": "fan_kepu_social_life",
+            "platform": "douyin",
+            "collector_policy": {
+                "first_crawl": "stock_snapshot_archived",
+                "comments": "reverse_prep_only_for_promoted_hits",
+            },
+            "competitor_seeds": [
+                {"name": "fixture-account", "url": "https://www.douyin.com/user/MS4wLjABAAAAabc"},
+            ],
+        }
+        hit_cfg = {
+            "observe_days": 7,
+            "baseline_window_days": 90,
+            "baseline_min_samples": 30,
+            "excess_threshold": 3.0,
+            "hit_floor_absolute_like_count": 2000,
+        }
+        published_at = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp())
+        items = (
+            [{"aweme_id": f"low-{idx}", "liked_count": 100, "create_time": published_at} for idx in range(20)]
+            + [{"aweme_id": f"mid-{idx}", "liked_count": 3000, "create_time": published_at} for idx in range(9)]
+            + [{"aweme_id": "outlier", "liked_count": 500000, "create_time": published_at}]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "floor_cap.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+                ingest_stock_items(conn, account, items, hit_cfg=hit_cfg, run_id="run-1", raw_archive_ref="raw://fixture")
+
+                result = judge_account(conn, account, hit_cfg=hit_cfg, run_id="run-1")
+
+                self.assertEqual(result["median"], 100.0)
+                self.assertEqual(result["p90"], 3000.0)
+                self.assertEqual(result["threshold"], 2000.0)
+                self.assertEqual(result["promoted_count"], 10)  # 9 mid + 1 outlier, all >= 2000
+            finally:
+                conn.close()
+
     def test_judgement_runs_below_target_sample_and_flags_insufficient_evidence(self) -> None:
         domain = {
             "name": "fixture-domain",
@@ -237,7 +286,7 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                         "baseline_window_days": 90,
                         "baseline_min_samples": 30,
                         "excess_threshold": 3.0,
-                        "p90_required": True,
+                        "hit_floor_absolute_like_count": 2000,
                     },
                     run_id="run-1",
                 )
@@ -268,7 +317,7 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
             "baseline_window_days": 90,
             "baseline_min_samples": 30,
             "excess_threshold": 3.0,
-            "p90_required": True,
+            "hit_floor_absolute_like_count": 2000,
         }
         with tempfile.TemporaryDirectory() as tmp:
             conn = sqlite3.connect(Path(tmp) / "retraction.sqlite3")
@@ -390,9 +439,8 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
             "observe_days": 7,
             "baseline_window_days": 90,
             "baseline_min_samples": 30,
-            "baseline_min_judgement_samples": 10,
             "excess_threshold": 3.0,
-            "p90_required": True,
+            "hit_floor_absolute_like_count": 2000,
         }
         published_at = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp())
         items = [
@@ -469,9 +517,8 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
             "observe_days": 7,
             "baseline_window_days": 90,
             "baseline_min_samples": 30,
-            "baseline_min_judgement_samples": 10,
             "excess_threshold": 3.0,
-            "p90_required": True,
+            "hit_floor_absolute_like_count": 2000,
         }
         published_at = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp())
         items = [
@@ -547,7 +594,6 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
             "observe_days": 7,
             "baseline_window_days": 90,
             "baseline_min_samples": 10,  # violates the fixed 30-sample target contract
-            "baseline_min_judgement_samples": 10,
         }
         with tempfile.TemporaryDirectory() as tmp:
             conn = sqlite3.connect(Path(tmp) / "rejudge_reject.sqlite3")

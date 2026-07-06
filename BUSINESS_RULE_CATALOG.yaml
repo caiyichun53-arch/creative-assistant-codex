@@ -349,12 +349,30 @@ rules:
   - like_count
   - baseline median
   - baseline p90
+  - hit_floor_absolute_like_count
   expected_behavior: 'A hit requires performance over an account-relative threshold:
-    like_count >= max(median * excess_threshold, P90 when enabled).'
-  defaults:
-    p90_required: true
+    like_count >= max(median * excess_threshold, min(P90, hit_floor_absolute_like_count)).'
+  amendment_2026_07_06:
+    decided_by: user
+    reason: P90 computed on the same small recent sample being judged is close to
+      tautological -- by definition ~10% of any account's own sample clears its
+      own P90, so using it as a bare, unbounded OR-ed term mechanically caps every
+      account's hit count near a fixed percentile regardless of whether that
+      account's distribution has a genuine standout video. Verified against the
+      real 28-account production dataset -- with P90 unbounded, 23/28 accounts were
+      capped at exactly 2 hits; with P90 bounded by the floor, hit counts varied
+      2-8 per account, tracking real distribution shape instead of sample-size
+      arithmetic.
+    change: p90_required (bare on/off toggle) removed; P90 now always participates
+      but is bounded above by hit_floor_absolute_like_count, so it can never push
+      the bar above the configured floor for large accounts, while still giving
+      small accounts (whose own P90 never reaches the floor) a reachable relative
+      bar instead of a permanently unreachable absolute one.
+  defaults: {}
   thresholds:
     excess_threshold: 3.0
+    hit_floor_absolute_like_count: 2000
+    p90_bounded_by_floor: true
   timing_semantics: Judgement runs after collection/refresh; promotion time is separate
     from publish time.
   state_effects:

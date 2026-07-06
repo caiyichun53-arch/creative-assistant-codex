@@ -1472,7 +1472,7 @@ goal_data_reset_01_phase_2_execution:
   legacy_data_import_allowed: false
 business_data_competitor_registration_execution:
   status: implemented_and_verified
-  updated_at: '2026-07-06T05:34:53Z'
+  updated_at: '2026-07-06T10:18:58Z'
   note: This block did not exist when scripts/core/business_data was first built --
     the traceability entries above were frozen at GOAL-ALIGNMENT-01 (2026-07-02),
     before this code existed, and were never re-run against it. That gap let a
@@ -1480,6 +1480,12 @@ business_data_competitor_registration_execution:
     legacy system nor BUSINESS_RULE_CATALOG.yaml, which documents 30) ship
     unnoticed. Fixed 2026-07-06; see tests/validation/test_business_rule_traceability.py
     for the now-enforced check.
+  amendment_2026_07_06_br_hit_001: User-decided change to the hit threshold formula
+    (see BUSINESS_RULE_CATALOG.yaml BR-HIT-001 amendment_2026_07_06) -- P90 is no
+    longer a bare unbounded OR-ed term (it mechanically capped 23/28 real accounts
+    at exactly 2 hits regardless of true distribution); it is now bounded by a new
+    configurable hit_floor_absolute_like_count (2000). Re-ran the corrected formula
+    against the real production database via --rejudge-only and verified results.
   requirement_alignment:
     BR-COLLECT-001: exact_match
     BR-COLLECT-002: missing_in_code
