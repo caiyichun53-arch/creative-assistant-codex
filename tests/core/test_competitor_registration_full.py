@@ -157,8 +157,10 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
         self.assertEqual(args[args.index("--crawler_max_notes_count") + 1], "30")
 
     def test_baseline_sample_uses_recent_window_without_old_supplement(self) -> None:
-        # BR-BASELINE-003: the 90-day window already meets the 30-sample target, so no
-        # legacy_supplement backfill into older videos should happen.
+        # BR-BASELINE-002: videos that have left the observation window (published more
+        # than observe_days ago) become baseline material -- this is what select_baseline_sample
+        # is filtering for. BR-BASELINE-003: the 90-day window already meets the 30-sample
+        # target here, so no legacy_supplement backfill into older videos should happen.
         with tempfile.TemporaryDirectory() as tmp:
             conn = sqlite3.connect(Path(tmp) / "sample.sqlite3")
             conn.row_factory = sqlite3.Row
@@ -192,6 +194,9 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                 conn.close()
 
     def test_baseline_sample_expands_window_only_when_recent_sample_below_target(self) -> None:
+        # BR-BASELINE-002: videos past the observation window are baseline material even
+        # when the in-window sample falls short and the legacy_supplement backfill has to
+        # reach further back for them.
         with tempfile.TemporaryDirectory() as tmp:
             conn = sqlite3.connect(Path(tmp) / "sample.sqlite3")
             conn.row_factory = sqlite3.Row
@@ -229,6 +234,10 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
         # above the configured floor (2000) and well above median*3 (300) -- without
         # capping, P90 alone would set the bar at 3000; with capping, the floor (2000,
         # the smaller of the two) is what actually binds.
+        # BR-HIT-002: the fixture below deliberately mixes a "low" tier (20 videos), a
+        # "mid" tier (9 videos), and one true outlier -- normal/low-performer contrast
+        # cases must survive alongside the hit so the threshold math is proven to
+        # discriminate, not just proven to promote something.
         domain = {
             "name": "fixture-domain",
             "formal_domain_label": "fan_kepu_social_life",
@@ -327,6 +336,9 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                 conn.close()
 
     def test_rejudgement_retracts_hit_that_no_longer_clears_recomputed_threshold(self) -> None:
+        # BR-HIT-003: re-judging the same video across two runs (via the ON CONFLICT
+        # upsert in the hits insert) must stay idempotent -- update the one logical hit
+        # record, never duplicate it -- whether the outcome is promote or retract.
         domain = {
             "name": "fixture-domain",
             "formal_domain_label": "fan_kepu_social_life",
@@ -801,6 +813,112 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
 
                 with self.assertRaises(ValueError):
                     run_rejudge_only(conn, domain, hit_cfg=bad_hit_cfg)
+            finally:
+                conn.close()
+
+    def test_reingesting_same_platform_item_id_updates_not_duplicates(self) -> None:
+        # BR-COLLECT-003: video identity is platform_item_id scoped to the competitor --
+        # re-discovering the same video must update its metrics in place, never create a
+        # second business object for the same source video.
+        domain = {
+            "name": "fixture-domain",
+            "formal_domain_label": "fan_kepu_social_life",
+            "platform": "douyin",
+            "collector_policy": {
+                "first_crawl": "stock_snapshot_archived",
+                "comments": "reverse_prep_only_for_promoted_hits",
+            },
+            "competitor_seeds": [
+                {"name": "fixture-account", "url": "https://www.douyin.com/user/MS4wLjABAAAAabc"},
+            ],
+        }
+        hit_cfg = {"observe_days": 7, "baseline_window_days": 90}
+        published_at = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp())
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "dedupe.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+
+                first_pass = [{"aweme_id": "dupe-check", "liked_count": 100, "create_time": published_at}]
+                inserted, updated = ingest_stock_items(
+                    conn, account, first_pass, hit_cfg=hit_cfg, run_id="run-1", raw_archive_ref="raw://fixture"
+                )
+                self.assertEqual((inserted, updated), (1, 0))
+
+                second_pass = [{"aweme_id": "dupe-check", "liked_count": 250, "create_time": published_at}]
+                inserted, updated = ingest_stock_items(
+                    conn, account, second_pass, hit_cfg=hit_cfg, run_id="run-2", raw_archive_ref="raw://fixture"
+                )
+                self.assertEqual((inserted, updated), (0, 1))
+
+                rows = conn.execute(
+                    "SELECT like_count FROM competitor_videos WHERE platform_item_id='dupe-check'"
+                ).fetchall()
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]["like_count"], 250)
+            finally:
+                conn.close()
+
+    def test_share_comment_ratio_is_derived_evidence_not_a_promotion_channel(self) -> None:
+        # BR-HIT-004: share_comment_ratio is stored as derived evidence for ranking/
+        # analysis only. A video with a huge share_comment_ratio but low like_count and
+        # low comment_count (clearing neither the like channel nor the comment/like
+        # ratio channel) must not be promoted by ratio alone.
+        domain = {
+            "name": "fixture-domain",
+            "formal_domain_label": "fan_kepu_social_life",
+            "platform": "douyin",
+            "collector_policy": {
+                "first_crawl": "stock_snapshot_archived",
+                "comments": "reverse_prep_only_for_promoted_hits",
+            },
+            "competitor_seeds": [
+                {"name": "fixture-account", "url": "https://www.douyin.com/user/MS4wLjABAAAAabc"},
+            ],
+        }
+        hit_cfg = {
+            "observe_days": 7,
+            "baseline_window_days": 90,
+            "baseline_min_samples": 30,
+            "excess_threshold": 3.0,
+            "hit_floor_absolute_like_count": 2000,
+            "comment_like_ratio_threshold": 0.2,
+        }
+        published_at = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp())
+        items = [
+            {"aweme_id": f"low-{idx}", "liked_count": 100, "comment_count": 5, "share_count": 2, "create_time": published_at}
+            for idx in range(9)
+        ] + [
+            # share_comment_ratio = 500/1 = 500 (huge), but like_count=100 clears neither
+            # the like channel (median*3=300) nor the ratio channel (1/100=0.01 < 0.2).
+            {
+                "aweme_id": "high_share_ratio_only",
+                "liked_count": 100,
+                "comment_count": 1,
+                "share_count": 500,
+                "create_time": published_at,
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "share_ratio.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+                ingest_stock_items(conn, account, items, hit_cfg=hit_cfg, run_id="run-1", raw_archive_ref="raw://fixture")
+
+                result = judge_account(conn, account, hit_cfg=hit_cfg, run_id="run-1")
+
+                self.assertEqual(result["promoted_count"], 0)
+                self.assertIsNone(
+                    conn.execute(
+                        "SELECT hit_id FROM hits WHERE platform_item_id='high_share_ratio_only'"
+                    ).fetchone()
+                )
             finally:
                 conn.close()
 

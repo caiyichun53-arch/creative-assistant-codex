@@ -1,5 +1,14 @@
 schema_version: 1
 goal: GOAL-ALIGNMENT-01
+# 2026-07-07: every "exact_match" claim in this file is now mechanically checked, not
+# just human-reviewed -- see tests/validation/test_business_rule_test_coverage.py. That
+# test reads this file, reads BUSINESS_RULE_CATALOG.yaml, scans every test file for the
+# rule's BR-*/GATE-* id, and fails if an exact_match claim has zero test backing. This
+# exists because "exact_match" written here had, twice, been quietly false (a fabricated
+# baseline_min_samples=10, a permanently-excluding younger_than_7_days flag contradicting
+# an already-documented rule) with no automated way to notice. Any new exact_match claim
+# added to this file must be accompanied by a test that cites its id, or the coverage
+# gate fails.
 allowed_alignment_statuses:
 - exact_match
 - naming_only

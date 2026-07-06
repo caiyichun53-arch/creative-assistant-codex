@@ -15,8 +15,8 @@
 $ python scripts/core/staging/verify_goal_v062_phase8_readiness.py
 status: ENGINEERING_READY
 
-$ python -m unittest tests.core.test_business_route_registry tests.core.test_competitor_account_registration tests.core.test_competitor_registration_full tests.core.test_content_plan_skill tests.core.test_experience_revision_propose_skill tests.core.test_experiment_review_skill tests.core.test_external_executor_adapters tests.core.test_formal_skill_adapter tests.core.test_local_mediacrawler_executor tests.core.test_model_router tests.core.test_phase5_business_workflow tests.core.test_phase6_hermes_whitelist_tool tests.core.test_phase7_synthetic_acceptance tests.core.test_phase8_engineering_readiness tests.core.test_production_host_boundary tests.core.test_production_research_plan_skill tests.core.test_remaining_formal_skill_graph tests.core.test_research_evidence_extract_skill tests.core.test_runtime_vertical_slice tests.core.test_sample_deep_analyze_skill tests.core.test_script_generate_skill tests.core.test_script_review_skill tests.core.test_source_to_topic_skill tests.core.test_tactic_extract_skill tests.validation.test_business_rule_traceability tests.validation.test_clean_room_readiness tests.validation.test_constitution_sync tests.validation.test_legacy_removal_gate tests.validation.test_live_gates
-Ran 269 tests in 26.6s
+$ python -m unittest <29个模块,见下一行更新> tests.validation.test_business_rule_test_coverage tests.validation.test_business_data_no_llm
+Ran 273 tests in 27.0s
 OK
 
 $ python -m scripts.core.business_data.run_competitor_registration_full --rejudge-only
@@ -69,8 +69,16 @@ run_id: competitor_registration_rejudge_20260706T213052Z
    - **实现**:`judge_account()` 加了第二条独立通道——`comment_count/like_count >= comment_like_ratio_threshold`(0.2,新配置项),跟原有点赞公式取**并集**(命中任意一条就算爆款),不是替代,也不是加权融合。`hits` 表新增 `hit_channel` 字段(`like_threshold`/`comment_like_ratio`/`both`),记录每条爆款是靠哪条通道判定的,新旧数据兼容迁移(`_ensure_hit_channel_column`)。`validate_registration_execution_contract()` 把 `comment_like_ratio_threshold` 也纳入契约校验(必须是 (0,1] 内的数字)。同步更新 `BUSINESS_RULE_CATALOG.yaml` BR-HIT-001(新增 `amendment_2026_07_07`,完整记录决策理由、真实数据验证过程、为什么收藏/转发维度没有加)、`REQUIREMENT_CODE_TRACEABILITY.yaml`,新增5个测试(3个行为测试 + 2个契约测试)。
    - **真实验证**:全部269个已知测试跑过(含新增的5个),两个权威闸门(`verify_goal_v062_phase8_readiness.py` → `ENGINEERING_READY`;完整测试套件 → `OK`)都是绿的。用正式的 `--rejudge-only` 入口对真实生产库重跑:28账号里 **0 个挂零**(财经不眠姐 0→1,经由新通道);总爆款数从150涨到198(48条纯靠新通道判定、20条两条通道都命中);`hits.hit_channel` 字段迁移和写入都验证过是真实分布,不是猜的。
 
+**第三天(仍是 2026-07-07):建"规则不能靠人盯"的机械闸门,起因是又发现一个文档早写好、代码没照做的漏洞**
+
+20. **发现的漏洞**:开始设计"每日增量采集"时查代码发现,`excluded_reason='younger_than_7_days'` 被写成了**永久拉黑**——一条视频只要首采时不到7天,就永远不会被拿去跟基线比对、永远判不了爆款,哪怕后来早就满7天、数据也稳定了。这跟 CLAUDE.md 自己写的"archived 计数仍被 daily 刷新、每轮重判,过阈值照样晋升"直接矛盾。**这不是一个新的设计分歧,是之前写代码时没有对照已经写定的文档**,属于真实 bug,还没来得及修(见下面"下一步")。
+    用户在这个点上表达了强烈的疲惫感——不是针对这一个 bug,而是"设计早就讨论定型的东西,落地时又要重新一点点敲定细节"这种模式反复出现(点赞门槛30被写成10、现在这次年轻视频永久拉黑,都是同一类:文档写对了,代码没照做,而且事先没有任何机制会自动发现,只能靠用户自己在对话里发现)。用户明确说:不要道歉,道歉没用,要的是"不靠人来把控"的机制。
+21. **建了一道机械闸门,不是承诺**:新增 `tests/validation/test_business_rule_test_coverage.py`——这个测试会真的去读 `BUSINESS_RULE_CATALOG.yaml`(规则清单)和 `REQUIREMENT_CODE_TRACEABILITY.yaml`(哪些规则声称"代码对得上"),再扫描全部测试文件找有没有真的写了对应的 `BR-*` 编号的测试,**只要有规则声称"对得上"但一个测试都没有,直接报错**。已经验证过这道闸门真的管用(手动模拟往对照表里加一条没有测试撑腰的假声明,闸门立刻报错,不是摆设)。
+    顺带把之前一直"声称对得上但其实没测试"的6条规则全部补齐了(`BR-BASELINE-002`、`BR-COLLECT-003`、`BR-COLLECT-007`、`BR-HIT-002`、`BR-HIT-003`、`BR-HIT-004`)——3条是已有测试但没写编号引用,补了引用;3条是真的没测试,新写了(视频去重不重复入库、分享评论比不能单独当判定通道、collection模块不接LLM的静态代码扫描)。全部273个测试(含新增4个)跑过,两个权威闸门仍绿。
+
 ## 下一步该干嘛
 
+- **每日增量采集还没写**——这是当前正在做的下一件事,设计已经在对话里定型(不再讨论,直接落地):新发布视频入观察池;判定不是等满7天才跑一次,是每天都对观察中的视频跑,提前达标就提前入库;满7天还没达标就归档、之后不再追它;首采时因为"太年轻"被排除的视频,不能再永久拉黑,要能在满7天后正常参与判定(这正是第20条发现的那个 bug,必须先修)。**这次必须先写测试(把这些规则钉成能跑的断言),再写代码去让测试通过,不能反过来**——这是用户对上面第20条问题要求的具体做法,不是可选项。
 - **业务表(观察池/爆款库/候选池等完整业务视图)仍未建**——当前只有 `scripts/core/business_data/` 这一个竞品账号+首采+基线/爆款的切片,不是完整业务层。切片本身现在验证得比较扎实了(端到端测试、执行器测试、README 都补齐了),下一步如果要继续业务开发,先看这个切片能不能直接扩展,不要另起炉灶。
 - **本地监控面板**(`scripts/monitor/`,双击根目录 `启动监控面板.bat`)已就绪,可用来看 job/状态机/审计日志——业务数据面板还没做,等业务表长出来再说。
 - **飞书集成**在上次 legacy removal 里被整体删除,还没重建,重建前先确认是否真的现在需要。
