@@ -16,7 +16,7 @@ $ python scripts/core/staging/verify_goal_v062_phase8_readiness.py
 status: ENGINEERING_READY
 
 $ python -m unittest <31个已知模块,find tests -iname "test_*.py" 取得>
-Ran 286 tests in 17.8s
+Ran 287 tests in 26.3s
 OK
 
 $ python -m scripts.core.business_data.run_competitor_registration_full --rejudge-only
@@ -118,6 +118,7 @@ run_id: competitor_registration_rejudge_20260707T023426Z
     - `excess_threshold` 从 3.0 改成 2.0(`config/settings.yaml`、`config/settings.example.yaml`、`BUSINESS_RULE_CATALOG.yaml` 的 `thresholds.excess_threshold` 三处同步改)。
     - **这次改动影响的是判定所有已归档/已判定爆款视频的主门槛公式,不只是新观察视频**,所以立刻用 `--rejudge-only` 对真实生产库重新判定一遍验证,不是改完就当完事:**28账号,总爆款数从198涨到245(+47),0个账号挂零,每账号爆款数1~17条(没有账号暴增到不正常的比例)**,`hit_channel` 分布从 `like_threshold=130/comment_like_ratio=48/both=20` 变成 `like_threshold=177/comment_like_ratio=43/both=25`——涨幅集中在点赞门槛通道,符合"门槛降低、点赞门槛更容易达标"这个预期,不是判定逻辑坏了。
     - `BUSINESS_RULE_CATALOG.yaml`/`REQUIREMENT_CODE_TRACEABILITY.yaml` 都补了这次修订记录(含真实验证数字)。全部286个测试跑过,两个权威闸门仍绿。
+30. **用户追问:测试这么多,为什么连"有没有按设计执行"这种基本问题都测不出来**——查了实际网上通行做法(ADR"供奉人"机制、文档当代码一样跑CI检查/linting)确认这类问题确实有正经解法,不是没法测。新增 `tests/validation/test_authoritative_docs_not_legacy.py`:任何被 `CLAUDE.md`/`AGENTS.md` 点名要读的权威设计文档(现在是 `CLAUDE.md`、`AGENTS.md`、`BUSINESS_DECISION_TABLES.md`),自动扫描有没有提到 `scripts/validation/clean_room_readiness.py` 里 `LEGACY_QUARANTINE_ROOTS` 那份已隔离旧路径清单——提到了就直接报错,不用等人发现。`BUSINESS_RULE_CATALOG.yaml`/`REQUIREMENT_CODE_TRACEABILITY.yaml` 故意不放进这份清单——这两份文件的正经工作就是记录"老代码当年是怎么做的"当迁移依据(`observed_legacy_behavior`/`code_artifacts` 这类字段合法引用旧路径,不是同一种错误)。已验证过这道闸门真的管用(手动模拟一段引用旧路径的文本,闸门立刻报错)。全部287个测试跑过,两个权威闸门仍绿。
 
 ## 下一步该干嘛
 
