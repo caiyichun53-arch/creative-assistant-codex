@@ -8,21 +8,26 @@ import tempfile
 from pathlib import Path
 import unittest
 from datetime import datetime, timedelta, timezone
+from typing import Any
+from unittest import mock
 from unittest.mock import patch
 
 from scripts.core.business_data.register_competitor_accounts import install_schema, register_from_domain
 from scripts.core.business_data.run_competitor_registration_full import (
     ROOT,
     first_crawl_excluded_reason,
+    ingest_daily_incremental_items,
     ingest_stock_items,
     judge_domain,
     judge_account,
     mark_pinned_items,
     resolve_max_notes,
+    run_daily_incremental,
     run_full_registration,
     run_rejudge_only,
     select_baseline_sample,
     settled_sample_count,
+    stable_video_id,
     summarize,
 )
 from scripts.core.external_adapters import ExternalAdapterCommand
@@ -629,6 +634,231 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_younger_than_7_days_flag_is_not_a_permanent_exclusion(self) -> None:
+        # BR-BASELINE-002 / BUILD_PLAN.md 阶段1 二次修正 (2026-06-13): "其计数照样每日
+        # 刷新+每轮重判,不吃亏" -- a video flagged younger_than_7_days at ingest time must
+        # become eligible for judgement once it has genuinely aged past observe_days,
+        # exactly like any other archived video. This row is inserted directly with an
+        # aged publish_time to simulate "flagged young back then, settled by now" without
+        # needing to travel through real time.
+        domain = {
+            "name": "fixture-domain",
+            "formal_domain_label": "fan_kepu_social_life",
+            "platform": "douyin",
+            "collector_policy": {
+                "first_crawl": "stock_snapshot_archived",
+                "comments": "reverse_prep_only_for_promoted_hits",
+            },
+            "competitor_seeds": [
+                {"name": "fixture-account", "url": "https://www.douyin.com/user/MS4wLjABAAAAabc"},
+            ],
+        }
+        hit_cfg = {
+            "observe_days": 7,
+            "baseline_window_days": 90,
+            "baseline_min_samples": 30,
+            "excess_threshold": 3.0,
+            "hit_floor_absolute_like_count": 2000,
+            "comment_like_ratio_threshold": 0.2,
+        }
+        settled_time = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "unstick_young_flag.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+
+                # 9 ordinary settled videos to give the baseline a real median, plus one
+                # row that carries the stale younger_than_7_days flag but is, by its
+                # publish_time, thoroughly settled now.
+                for idx in range(9):
+                    video_id = stable_video_id(account["account_id"], f"ordinary-{idx}")
+                    conn.execute(
+                        """
+                        INSERT INTO competitor_videos(
+                            video_id, account_id, platform, platform_item_id, publish_time,
+                            like_count, comment_count, excluded_reason, status,
+                            registration_run_id, raw_archive_ref, raw_json
+                        ) VALUES (?, ?, 'douyin', ?, ?, 100, 5, NULL, 'archived', 'run-0', 'raw://fixture', '{}')
+                        """,
+                        (video_id, account["account_id"], f"ordinary-{idx}", settled_time),
+                    )
+                stale_flag_video_id = stable_video_id(account["account_id"], "stale-young-flag")
+                conn.execute(
+                    """
+                    INSERT INTO competitor_videos(
+                        video_id, account_id, platform, platform_item_id, publish_time,
+                        like_count, comment_count, excluded_reason, status,
+                        registration_run_id, raw_archive_ref, raw_json
+                    ) VALUES (?, ?, 'douyin', ?, ?, 5000, 10, 'younger_than_7_days', 'archived', 'run-0', 'raw://fixture', '{}')
+                    """,
+                    (stale_flag_video_id, account["account_id"], "stale-young-flag", settled_time),
+                )
+                conn.commit()
+
+                result = judge_account(conn, account, hit_cfg=hit_cfg, run_id="run-1")
+
+                self.assertEqual(result["sample_count"], 10)
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT status FROM competitor_videos WHERE platform_item_id='stale-young-flag'"
+                    ).fetchone()["status"],
+                    "promoted",
+                )
+            finally:
+                conn.close()
+
+    def test_watching_video_within_observe_window_is_not_judged_early(self) -> None:
+        # BUILD_PLAN.md 阶段1: "video_checks...攒生长曲线-- 现在只捕获不建模,数据够了再做
+        # 早期预警(第N天异常陡->提前晋升...)". A video still inside the observation
+        # window must stay 'watching' even if its metrics would already clear the hit
+        # threshold -- no early promotion in this phase.
+        domain = {
+            "name": "fixture-domain",
+            "formal_domain_label": "fan_kepu_social_life",
+            "platform": "douyin",
+            "collector_policy": {
+                "first_crawl": "stock_snapshot_archived",
+                "comments": "reverse_prep_only_for_promoted_hits",
+            },
+            "competitor_seeds": [
+                {"name": "fixture-account", "url": "https://www.douyin.com/user/MS4wLjABAAAAabc"},
+            ],
+        }
+        hit_cfg = {
+            "observe_days": 7,
+            "baseline_window_days": 90,
+            "baseline_min_samples": 30,
+            "excess_threshold": 3.0,
+            "hit_floor_absolute_like_count": 2000,
+            "comment_like_ratio_threshold": 0.2,
+        }
+        settled_time = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        young_time = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "no_early_judgement.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+                for idx in range(9):
+                    video_id = stable_video_id(account["account_id"], f"ordinary-{idx}")
+                    conn.execute(
+                        """
+                        INSERT INTO competitor_videos(
+                            video_id, account_id, platform, platform_item_id, publish_time,
+                            like_count, comment_count, excluded_reason, status,
+                            registration_run_id, raw_archive_ref, raw_json
+                        ) VALUES (?, ?, 'douyin', ?, ?, 100, 5, NULL, 'archived', 'run-0', 'raw://fixture', '{}')
+                        """,
+                        (video_id, account["account_id"], f"ordinary-{idx}", settled_time),
+                    )
+                # Only 2 days old -- would clear the like threshold (median*3=300) many
+                # times over, but must not be promoted yet.
+                early_video_id = stable_video_id(account["account_id"], "early-riser")
+                conn.execute(
+                    """
+                    INSERT INTO competitor_videos(
+                        video_id, account_id, platform, platform_item_id, publish_time,
+                        like_count, comment_count, excluded_reason, status,
+                        registration_run_id, raw_archive_ref, raw_json
+                    ) VALUES (?, ?, 'douyin', ?, ?, 50000, 100, NULL, 'watching', 'run-0', 'raw://fixture', '{}')
+                    """,
+                    (early_video_id, account["account_id"], "early-riser", young_time),
+                )
+                conn.commit()
+
+                result = judge_account(conn, account, hit_cfg=hit_cfg, run_id="run-1")
+
+                self.assertEqual(result["sample_count"], 9)  # early-riser not counted yet
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT status FROM competitor_videos WHERE platform_item_id='early-riser'"
+                    ).fetchone()["status"],
+                    "watching",
+                )
+            finally:
+                conn.close()
+
+    def test_watching_video_graduates_to_archived_when_it_never_cleared_the_bar(self) -> None:
+        # BUILD_PLAN.md 阶段2: "watching 到期(>7天)-> archived 转基线材料". A video that
+        # aged out of observation without ever clearing the hit threshold settles as
+        # ordinary archived material -- this is its first judgement (graduation), not a
+        # retraction, so it must not touch the hits table.
+        domain = {
+            "name": "fixture-domain",
+            "formal_domain_label": "fan_kepu_social_life",
+            "platform": "douyin",
+            "collector_policy": {
+                "first_crawl": "stock_snapshot_archived",
+                "comments": "reverse_prep_only_for_promoted_hits",
+            },
+            "competitor_seeds": [
+                {"name": "fixture-account", "url": "https://www.douyin.com/user/MS4wLjABAAAAabc"},
+            ],
+        }
+        hit_cfg = {
+            "observe_days": 7,
+            "baseline_window_days": 90,
+            "baseline_min_samples": 30,
+            "excess_threshold": 3.0,
+            "hit_floor_absolute_like_count": 2000,
+            "comment_like_ratio_threshold": 0.2,
+        }
+        settled_time = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "graduation.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+                for idx in range(9):
+                    video_id = stable_video_id(account["account_id"], f"ordinary-{idx}")
+                    conn.execute(
+                        """
+                        INSERT INTO competitor_videos(
+                            video_id, account_id, platform, platform_item_id, publish_time,
+                            like_count, comment_count, excluded_reason, status,
+                            registration_run_id, raw_archive_ref, raw_json
+                        ) VALUES (?, ?, 'douyin', ?, ?, 100, 5, NULL, 'archived', 'run-0', 'raw://fixture', '{}')
+                        """,
+                        (video_id, account["account_id"], f"ordinary-{idx}", settled_time),
+                    )
+                # Aged past the 7-day window, still 'watching', and never cleared either
+                # channel -- must graduate to 'archived', not stay stuck in 'watching'.
+                graduate_video_id = stable_video_id(account["account_id"], "never-hit")
+                conn.execute(
+                    """
+                    INSERT INTO competitor_videos(
+                        video_id, account_id, platform, platform_item_id, publish_time,
+                        like_count, comment_count, excluded_reason, status,
+                        registration_run_id, raw_archive_ref, raw_json
+                    ) VALUES (?, ?, 'douyin', ?, ?, 50, 1, NULL, 'watching', 'run-0', 'raw://fixture', '{}')
+                    """,
+                    (graduate_video_id, account["account_id"], "never-hit", settled_time),
+                )
+                conn.commit()
+
+                result = judge_account(conn, account, hit_cfg=hit_cfg, run_id="run-1")
+
+                self.assertEqual(result["promoted_count"], 0)
+                self.assertEqual(result["graduated_count"], 1)
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT status FROM competitor_videos WHERE platform_item_id='never-hit'"
+                    ).fetchone()["status"],
+                    "archived",
+                )
+                self.assertIsNone(
+                    conn.execute("SELECT hit_id FROM hits WHERE platform_item_id='never-hit'").fetchone()
+                )
+            finally:
+                conn.close()
+
     def test_rejudge_only_recomputes_without_registering_or_crawling(self) -> None:
         domain = {
             "name": "泛科普-社会与生活",
@@ -919,6 +1149,243 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                         "SELECT hit_id FROM hits WHERE platform_item_id='high_share_ratio_only'"
                     ).fetchone()
                 )
+            finally:
+                conn.close()
+
+    def _fixture_domain(self) -> dict[str, Any]:
+        return {
+            "name": "fixture-domain",
+            "formal_domain_label": "fan_kepu_social_life",
+            "platform": "douyin",
+            "collector_policy": {
+                "first_crawl": "stock_snapshot_archived",
+                "comments": "reverse_prep_only_for_promoted_hits",
+            },
+            "competitor_seeds": [
+                {"name": "fixture-account", "url": "https://www.douyin.com/user/MS4wLjABAAAAabc"},
+            ],
+        }
+
+    def test_ingest_daily_incremental_new_video_within_window_enters_watching(self) -> None:
+        # BR-COLLECT-002: a genuinely new video, published within the observation
+        # window, must enter 'watching' -- not 'archived' the way stock items do.
+        hit_cfg = {"observe_days": 7, "baseline_window_days": 90}
+        published_at = int((datetime.now(timezone.utc) - timedelta(days=1)).timestamp())
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "daily_new.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, self._fixture_domain(), source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+
+                result = ingest_daily_incremental_items(
+                    conn, account,
+                    [{"aweme_id": "brand-new", "liked_count": 10, "comment_count": 1, "create_time": published_at}],
+                    hit_cfg=hit_cfg, run_id="run-1", raw_archive_ref="raw://fixture",
+                )
+
+                self.assertEqual(result["inserted"], 1)
+                row = conn.execute(
+                    "SELECT status, excluded_reason FROM competitor_videos WHERE platform_item_id='brand-new'"
+                ).fetchone()
+                self.assertEqual(row["status"], "watching")
+                self.assertIsNone(row["excluded_reason"])
+            finally:
+                conn.close()
+
+    def test_ingest_daily_incremental_updates_existing_and_appends_video_check(self) -> None:
+        # BR-COLLECT-004: a video already known (in 'watching') must have its metrics
+        # updated in place AND get a new video_checks snapshot row appended -- not
+        # overwritten/lost, and not treated as a fresh discovery.
+        hit_cfg = {"observe_days": 7, "baseline_window_days": 90}
+        published_at = int((datetime.now(timezone.utc) - timedelta(days=2)).timestamp())
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "daily_reconcile.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, self._fixture_domain(), source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+                ingest_daily_incremental_items(
+                    conn, account,
+                    [{"aweme_id": "growing", "liked_count": 10, "comment_count": 1, "create_time": published_at}],
+                    hit_cfg=hit_cfg, run_id="run-1", raw_archive_ref="raw://fixture",
+                )
+
+                result = ingest_daily_incremental_items(
+                    conn, account,
+                    [{"aweme_id": "growing", "liked_count": 40, "comment_count": 5, "create_time": published_at}],
+                    hit_cfg=hit_cfg, run_id="run-2", raw_archive_ref="raw://fixture",
+                )
+
+                self.assertEqual(result["inserted"], 0)
+                self.assertEqual(result["updated"], 1)
+                row = conn.execute(
+                    "SELECT like_count, check_count FROM competitor_videos WHERE platform_item_id='growing'"
+                ).fetchone()
+                self.assertEqual(row["like_count"], 40)
+                self.assertEqual(row["check_count"], 1)
+                checks = conn.execute(
+                    "SELECT vc.like_count FROM video_checks vc JOIN competitor_videos cv ON cv.video_id=vc.video_id"
+                    " WHERE cv.platform_item_id='growing' ORDER BY vc.checked_at"
+                ).fetchall()
+                self.assertEqual([c["like_count"] for c in checks], [10, 40])
+            finally:
+                conn.close()
+
+    def test_ingest_daily_incremental_reconciles_existing_before_new_discoveries(self) -> None:
+        # Agreed processing order: reconcile against the observation pool first, then
+        # treat leftover items as newly discovered -- not the other way round.
+        hit_cfg = {"observe_days": 7, "baseline_window_days": 90}
+        published_at = int((datetime.now(timezone.utc) - timedelta(days=1)).timestamp())
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "daily_order.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, self._fixture_domain(), source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+                ingest_daily_incremental_items(
+                    conn, account,
+                    [{"aweme_id": "already-known", "liked_count": 10, "create_time": published_at}],
+                    hit_cfg=hit_cfg, run_id="run-1", raw_archive_ref="raw://fixture",
+                )
+
+                result = ingest_daily_incremental_items(
+                    conn, account,
+                    [
+                        {"aweme_id": "already-known", "liked_count": 20, "create_time": published_at},
+                        {"aweme_id": "just-discovered", "liked_count": 5, "create_time": published_at},
+                    ],
+                    hit_cfg=hit_cfg, run_id="run-2", raw_archive_ref="raw://fixture",
+                )
+
+                self.assertEqual(result["updated"], 1)
+                self.assertEqual(result["inserted"], 1)
+            finally:
+                conn.close()
+
+    def test_ingest_daily_incremental_only_honors_explicit_pinned_flag(self) -> None:
+        # No positional guessing for a small daily batch -- only an explicit pinned
+        # flag from the platform routes a new discovery straight to archived+excluded.
+        hit_cfg = {"observe_days": 7, "baseline_window_days": 90}
+        published_at = int((datetime.now(timezone.utc) - timedelta(days=1)).timestamp())
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "daily_pinned.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, self._fixture_domain(), source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+
+                ingest_daily_incremental_items(
+                    conn, account,
+                    [
+                        {"aweme_id": "explicit-pin", "liked_count": 10, "is_top": True, "create_time": published_at},
+                        {"aweme_id": "no-flag", "liked_count": 10, "create_time": published_at},
+                    ],
+                    hit_cfg=hit_cfg, run_id="run-1", raw_archive_ref="raw://fixture",
+                )
+
+                pinned_row = conn.execute(
+                    "SELECT status, excluded_reason FROM competitor_videos WHERE platform_item_id='explicit-pin'"
+                ).fetchone()
+                self.assertEqual(pinned_row["status"], "archived")
+                self.assertEqual(pinned_row["excluded_reason"], "pinned")
+
+                unflagged_row = conn.execute(
+                    "SELECT status, excluded_reason FROM competitor_videos WHERE platform_item_id='no-flag'"
+                ).fetchone()
+                self.assertEqual(unflagged_row["status"], "watching")
+                self.assertIsNone(unflagged_row["excluded_reason"])
+            finally:
+                conn.close()
+
+    def test_ingest_daily_incremental_late_discovery_older_than_window_goes_straight_to_archived(self) -> None:
+        hit_cfg = {"observe_days": 7, "baseline_window_days": 90}
+        published_at = int((datetime.now(timezone.utc) - timedelta(days=20)).timestamp())
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "daily_late.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, self._fixture_domain(), source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+
+                ingest_daily_incremental_items(
+                    conn, account,
+                    [{"aweme_id": "late-find", "liked_count": 10, "create_time": published_at}],
+                    hit_cfg=hit_cfg, run_id="run-1", raw_archive_ref="raw://fixture",
+                )
+
+                row = conn.execute(
+                    "SELECT status FROM competitor_videos WHERE platform_item_id='late-find'"
+                ).fetchone()
+                self.assertEqual(row["status"], "archived")
+            finally:
+                conn.close()
+
+    def test_run_daily_incremental_wires_crawl_ingest_and_judge_together(self) -> None:
+        domain = self._fixture_domain()
+        hit_cfg = {
+            "observe_days": 7,
+            "baseline_window_days": 90,
+            "baseline_min_samples": 30,
+            "excess_threshold": 3.0,
+            "hit_floor_absolute_like_count": 2000,
+            "comment_like_ratio_threshold": 0.2,
+        }
+        crawler_cfg = {"daily_max_notes": 20}
+        published_at = int((datetime.now(timezone.utc) - timedelta(days=1)).timestamp())
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "run_daily.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
+
+                fake_executor = mock.Mock()
+                fake_executor.execute.return_value = mock.Mock(
+                    status="succeeded",
+                    raw_archive_ref="raw://fixture",
+                    payload={"items": [{"aweme_id": "daily-find", "liked_count": 10, "create_time": published_at}]},
+                )
+
+                report = run_daily_incremental(
+                    conn, domain, hit_cfg=hit_cfg, crawler_cfg=crawler_cfg, executor=fake_executor,
+                )
+
+                self.assertEqual(report["status"], "succeeded")
+                self.assertIn("judgement", report)
+                row = conn.execute(
+                    "SELECT status FROM competitor_videos WHERE platform_item_id='daily-find'"
+                ).fetchone()
+                self.assertEqual(row["status"], "watching")
+            finally:
+                conn.close()
+
+    def test_run_daily_incremental_rejects_bad_daily_max_notes(self) -> None:
+        domain = self._fixture_domain()
+        hit_cfg = {
+            "observe_days": 7,
+            "baseline_window_days": 90,
+            "baseline_min_samples": 30,
+            "excess_threshold": 3.0,
+            "hit_floor_absolute_like_count": 2000,
+            "comment_like_ratio_threshold": 0.2,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "run_daily_reject.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
+
+                with self.assertRaises(ValueError):
+                    run_daily_incremental(
+                        conn, domain, hit_cfg=hit_cfg, crawler_cfg={"daily_max_notes": 0},
+                    )
             finally:
                 conn.close()
 

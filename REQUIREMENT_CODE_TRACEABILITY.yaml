@@ -1504,11 +1504,28 @@ business_data_competitor_registration_execution:
     operator guidance (not an internally-computed percentile) and was checked against
     the real 28-account/1253-video dataset at 10/15/18/20/30% before 20% was chosen.
     Re-ran via --rejudge-only against the real production database and verified.
+  amendment_2026_07_07_daily_incremental: Built BR-COLLECT-002/004 (BUILD_PLAN.md
+    阶段1/2, 2026-06-13 decisions -- not a new design, an existing one that had
+    never been implemented against this clean-room module). Added
+    ingest_daily_incremental_items() (new discoveries within observe_days enter
+    'watching'; existing rows get metrics updated + a video_checks snapshot appended,
+    reconciled before new discoveries per agreed order; only an explicit platform
+    pinned flag routes a new discovery to archived+excluded, no positional guessing)
+    and run_daily_incremental() (contract-gated entrypoint wiring crawl+ingest+judge_domain
+    together, validates crawler.daily_max_notes). Also fixed a real bug found while
+    building this -- 'younger_than_7_days' had been implemented as a PERMANENT
+    judgement exclusion, contradicting BUILD_PLAN.md's own "其计数照样每日刷新+每轮重判,
+    不吃亏" -- broadened the settled-sample query (status IN (...,'watching') and
+    excluded_reason IN (...,'younger_than_7_days')) so a row flows through once
+    select_baseline_sample's own live age-check confirms it has genuinely aged past
+    the window; only 'pinned' remains a real permanent exclusion. No early judgement
+    is performed on still-watching videos (BUILD_PLAN.md says "现在只捕获不建模") --
+    video_checks only accumulates a growth curve for a future modeling phase.
   requirement_alignment:
     BR-COLLECT-001: exact_match
-    BR-COLLECT-002: missing_in_code
+    BR-COLLECT-002: exact_match
     BR-COLLECT-003: exact_match
-    BR-COLLECT-004: missing_in_code
+    BR-COLLECT-004: exact_match
     BR-COLLECT-005: missing_in_code
     BR-COLLECT-006: missing_in_code
     BR-COLLECT-007: exact_match
@@ -1519,10 +1536,10 @@ business_data_competitor_registration_execution:
     BR-HIT-002: exact_match
     BR-HIT-003: exact_match
     BR-HIT-004: exact_match
-  missing_in_code_note: BR-COLLECT-002/004/005/006 (daily incremental watching pool,
-    T+1..T+7 video_checks snapshots, reverse-prep comment collection) are not yet
-    built -- this is an acknowledged gap, not a drift, since nothing in code
-    contradicts them; they require the daily incremental collection track.
+  missing_in_code_note: BR-COLLECT-005/006 (reverse-prep comment collection, comment
+    noise filtering) are not yet built -- this is an acknowledged gap, not a drift,
+    since nothing in code contradicts them; they belong to the separate 备料层
+    (reverse-prep) track, not the daily incremental collection track.
   code_artifacts:
   - scripts/core/business_data/register_competitor_accounts.py
   - scripts/core/business_data/run_competitor_registration_full.py
@@ -1534,6 +1551,7 @@ business_data_competitor_registration_execution:
   - tests/core/test_competitor_registration_full.py
   - tests/core/test_local_mediacrawler_executor.py
   - tests/validation/test_business_rule_traceability.py
+  - tests/validation/test_business_rule_test_coverage.py
   formal_db:
     path: data/formal/production_activation.sqlite3
   legacy_data_import_allowed: false

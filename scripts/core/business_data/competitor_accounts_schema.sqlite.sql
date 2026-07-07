@@ -60,6 +60,24 @@ ON competitor_videos(account_id, status, publish_time);
 CREATE VIEW IF NOT EXISTS observation_pool AS
     SELECT * FROM competitor_videos WHERE status='watching';
 
+-- BR-COLLECT-004 / BUILD_PLAN.md 阶段1 (2026-06-13): one append-only row per daily
+-- recheck of a video, captured while it is in the observation window. Purpose is to
+-- accumulate a growth curve for future modeling (day-N steepness -> early promotion) --
+-- captured now, not modeled yet. Never updated in place, never deleted.
+CREATE TABLE IF NOT EXISTS video_checks (
+    check_id TEXT PRIMARY KEY,
+    video_id TEXT NOT NULL REFERENCES competitor_videos(video_id) ON DELETE RESTRICT,
+    checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    like_count INTEGER,
+    comment_count INTEGER,
+    share_count INTEGER,
+    collect_count INTEGER,
+    run_id TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_video_checks_video
+ON video_checks(video_id, checked_at);
+
 CREATE TABLE IF NOT EXISTS baselines (
     baseline_id TEXT PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES competitor_accounts(account_id) ON DELETE RESTRICT,

@@ -15,8 +15,8 @@
 $ python scripts/core/staging/verify_goal_v062_phase8_readiness.py
 status: ENGINEERING_READY
 
-$ python -m unittest <29个模块,见下一行更新> tests.validation.test_business_rule_test_coverage tests.validation.test_business_data_no_llm
-Ran 273 tests in 27.0s
+$ python -m unittest <31个已知模块,find tests -iname "test_*.py" 取得>
+Ran 283 tests in 18.3s
 OK
 
 $ python -m scripts.core.business_data.run_competitor_registration_full --rejudge-only
@@ -76,9 +76,18 @@ run_id: competitor_registration_rejudge_20260706T213052Z
 21. **建了一道机械闸门,不是承诺**:新增 `tests/validation/test_business_rule_test_coverage.py`——这个测试会真的去读 `BUSINESS_RULE_CATALOG.yaml`(规则清单)和 `REQUIREMENT_CODE_TRACEABILITY.yaml`(哪些规则声称"代码对得上"),再扫描全部测试文件找有没有真的写了对应的 `BR-*` 编号的测试,**只要有规则声称"对得上"但一个测试都没有,直接报错**。已经验证过这道闸门真的管用(手动模拟往对照表里加一条没有测试撑腰的假声明,闸门立刻报错,不是摆设)。
     顺带把之前一直"声称对得上但其实没测试"的6条规则全部补齐了(`BR-BASELINE-002`、`BR-COLLECT-003`、`BR-COLLECT-007`、`BR-HIT-002`、`BR-HIT-003`、`BR-HIT-004`)——3条是已有测试但没写编号引用,补了引用;3条是真的没测试,新写了(视频去重不重复入库、分享评论比不能单独当判定通道、collection模块不接LLM的静态代码扫描)。全部273个测试(含新增4个)跑过,两个权威闸门仍绿。
 
-## 下一步该干嘛
+**同一天(2026-07-07)紧接着:把每日增量采集写完了,先查文档、再写测试、后写代码**
 
-- **每日增量采集还没写**——这是当前正在做的下一件事,设计已经在对话里定型(不再讨论,直接落地):新发布视频入观察池;判定不是等满7天才跑一次,是每天都对观察中的视频跑,提前达标就提前入库;满7天还没达标就归档、之后不再追它;首采时因为"太年轻"被排除的视频,不能再永久拉黑,要能在满7天后正常参与判定(这正是第20条发现的那个 bug,必须先修)。**这次必须先写测试(把这些规则钉成能跑的断言),再写代码去让测试通过,不能反过来**——这是用户对上面第20条问题要求的具体做法,不是可选项。
+22. **查文档发现每日增量的设计早就写好了,不是新讨论**:`BUILD_PLAN.md` 第20-31行(2026-06-13,用户自己写的)完整记录了:抓取节奏(一次抓最新20条,同时干"发现新视频"+"刷新观察池"两件事)、基线口径(视频**出观察期时**的点赞数=Day7口径,不是提前判定)、`video_checks` 快照表(现在只攒生长曲线数据,不建模,早期预警是以后的事)、首采时太年轻被排除的视频为什么不进观察池(曲线缺前几帧=以后建模的噪音,但"其计数照样每日刷新+每轮重判,不吃亏"——这句原文直接证明第20条发现的"永久拉黑"是真bug)。同时确认了 CLAUDE.md 点名要读的 `target-architecture.md`/`rebuild-direction.md` 在仓库和 memory 里都不存在(旧坑,不是新问题),已告知用户,用户认可继续用 `BUILD_PLAN.md` 作为依据往下做。
+23. **先写测试、再写代码,照文档来**:
+    - 修复 `judge_account`/`settled_sample_count` 的查询条件:把 `excluded_reason='younger_than_7_days'` 从永久排除改成只是历史标注(查询条件放开成 `status IN (archived,promoted,watching)` + `excluded_reason IN (NULL,older_than_90_days,younger_than_7_days)`),两处查询合并成一个共享常量 `SETTLED_SAMPLE_QUERY`,不再各写一份容易漂移。`select_baseline_sample()` 自带的活时间校验保证了不会误判还没真的满7天的视频。
+    - `judge_account` 的"不合格"分支拆成两种:原来是爆款、现在不够格→撤销(不变);原来是"观察中"、满7天了还是不够格→**毕业归档**(新逻辑,新计数器 `graduated_count`)。
+    - 明确不做"提前晋升":观察中(不到7天)的视频哪怕数据已经很炸,也不会提前判定,只会更新数据+记一笔 `video_checks` 快照,严格照 `BUILD_PLAN.md` "现在只捕获不建模"来。
+    - 新增 `video_checks` 表(schema,append-only,攒生长曲线用)。
+    - 新增 `ingest_daily_incremental_items()`:处理顺序固定为"先对刷新观察池里已有的视频(更新数据+记快照),再把剩下没对上的当新发现处理"(用户明确要求的顺序)；新发现的视频,发布在7天内的进观察池,置顶只认平台给的明确标记(不用首采那套位置猜测);如果发现时已经超过7天,直接当存量处理(不进观察池)。
+    - 新增 `run_daily_incremental()`:一个受契约校验的入口,把"抓取(用 `crawler.daily_max_notes` 上限)→ 摄入 → 判定"串成一次调用,跟 `run_full_registration`/`run_rejudge_only` 同一套纪律。
+    - 全部新写了10个测试覆盖这些规则(先写测试确认失败,再写代码让测试通过,不是反过来),`REQUIREMENT_CODE_TRACEABILITY.yaml` 里 `BR-COLLECT-002`/`BR-COLLECT-004` 从 `missing_in_code` 改成 `exact_match`(带完整修订说明)。全部283个测试(含新增10个)跑过,两个权威闸门仍绿。
+    - **还没做的**:没有真的对生产库跑一次真实的 `run_daily_incremental`(会真的联网抓28个账号),只验证到单元测试这一层——这是刻意留白,真实联网抓取属于"影响外部真实系统"的动作,应该先跟用户确认再触发,不是我自己决定跑。
 - **业务表(观察池/爆款库/候选池等完整业务视图)仍未建**——当前只有 `scripts/core/business_data/` 这一个竞品账号+首采+基线/爆款的切片,不是完整业务层。切片本身现在验证得比较扎实了(端到端测试、执行器测试、README 都补齐了),下一步如果要继续业务开发,先看这个切片能不能直接扩展,不要另起炉灶。
 - **本地监控面板**(`scripts/monitor/`,双击根目录 `启动监控面板.bat`)已就绪,可用来看 job/状态机/审计日志——业务数据面板还没做,等业务表长出来再说。
 - **飞书集成**在上次 legacy removal 里被整体删除,还没重建,重建前先确认是否真的现在需要。

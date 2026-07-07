@@ -34,6 +34,27 @@ EXECUTION_GUARDRAIL_DOC = "docs/production_execution_guardrails.md"
 # cannot be computed at all -- not a business threshold, so it is not configurable.
 BASELINE_HARD_MINIMUM_SAMPLES = 2
 
+# BR-BASELINE-002 / BUILD_PLAN.md 阶段1 二次修正 (2026-06-13): a video excluded as
+# 'younger_than_7_days' at ingest time is NOT permanently disqualified -- that flag only
+# means its growth-curve capture is missing its first few frames (noise for future
+# curve modeling), not that it should stop being refreshed/re-judged. "Its count still
+# gets refreshed daily and re-judged every round, it doesn't lose out" (原文:"其计数照样
+# 每日刷新+每轮重判,不吃亏"). select_baseline_sample() already re-checks each row's live
+# age against observe_days, so once such a row has genuinely aged past the window it is
+# safe to let back into this query -- only 'pinned' stays a real, permanent exclusion.
+# Videos still in the 'watching' status are included too: select_baseline_sample()'s own
+# age check keeps still-young ones out (no early judgement -- BUILD_PLAN.md 阶段1: "现在
+# 只捕获不建模"), while ones that have aged past observe_days flow through and graduate.
+SETTLED_SAMPLE_QUERY = """
+    SELECT *
+      FROM competitor_videos
+     WHERE account_id=?
+       AND like_count IS NOT NULL
+       AND status IN ('archived', 'promoted', 'watching')
+       AND (excluded_reason IS NULL OR excluded_reason IN ('older_than_90_days', 'younger_than_7_days'))
+     ORDER BY publish_time DESC
+"""
+
 
 def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
@@ -271,6 +292,134 @@ def ingest_stock_items(
     return inserted, updated
 
 
+def ingest_daily_incremental_items(
+    conn: sqlite3.Connection,
+    account: sqlite3.Row,
+    items: list[dict[str, Any]],
+    *,
+    hit_cfg: dict[str, Any],
+    run_id: str,
+    raw_archive_ref: str | None,
+) -> dict[str, Any]:
+    """Process one day's fetched batch for one account.
+
+    BUILD_PLAN.md 阶段1/BR-COLLECT-002/BR-COLLECT-004: reconcile against videos already
+    known to this account first (update metrics + append a video_checks snapshot), then
+    treat whatever is left over as newly discovered. New discoveries within the
+    observation window enter 'watching'; only an explicit platform pinned flag routes a
+    new discovery straight to archived+excluded (no positional guessing on a small daily
+    batch). A discovery whose publish_time is already past the window on arrival is
+    treated like a stock item -- settled immediately, never enters watching.
+    """
+    observe_days = int(hit_cfg.get("observe_days", 7))
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(days=observe_days)
+
+    existing_ids = {
+        row["platform_item_id"]
+        for row in conn.execute(
+            "SELECT platform_item_id FROM competitor_videos WHERE account_id=?",
+            (account["account_id"],),
+        ).fetchall()
+    }
+
+    existing_items: list[dict[str, Any]] = []
+    new_items: list[dict[str, Any]] = []
+    for item in items:
+        platform_item_id = _required_text(item.get("aweme_id") or item.get("source_id") or item.get("id"), "aweme_id")
+        (existing_items if platform_item_id in existing_ids else new_items).append(item)
+
+    updated = 0
+    checks_recorded = 0
+    for item in existing_items:
+        platform_item_id = _required_text(item.get("aweme_id") or item.get("source_id") or item.get("id"), "aweme_id")
+        video_id = stable_video_id(account["account_id"], platform_item_id)
+        like_count = _optional_int(item.get("liked_count") or item.get("like_count"))
+        comment_count = _optional_int(item.get("comment_count"))
+        share_count = _optional_int(item.get("share_count"))
+        collect_count = _optional_int(item.get("collected_count") or item.get("collect_count"))
+        conn.execute(
+            """
+            UPDATE competitor_videos
+               SET like_count=?, comment_count=?, share_count=?, collect_count=?,
+                   last_checked_at=CURRENT_TIMESTAMP, check_count=check_count + 1
+             WHERE video_id=?
+            """,
+            (like_count, comment_count, share_count, collect_count, video_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO video_checks(check_id, video_id, like_count, comment_count, share_count, collect_count, run_id)
+            VALUES(?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(check_id) DO NOTHING
+            """,
+            (stable_check_id(video_id, run_id), video_id, like_count, comment_count, share_count, collect_count, run_id),
+        )
+        updated += 1
+        checks_recorded += 1
+
+    inserted = 0
+    for item in new_items:
+        platform_item_id = _required_text(item.get("aweme_id") or item.get("source_id") or item.get("id"), "aweme_id")
+        video_id = stable_video_id(account["account_id"], platform_item_id)
+        published_at = _item_publish_datetime(item)
+        explicit_pinned = _explicit_pinned_value(item)
+        like_count = _optional_int(item.get("liked_count") or item.get("like_count"))
+        comment_count = _optional_int(item.get("comment_count"))
+        share_count = _optional_int(item.get("share_count"))
+        collect_count = _optional_int(item.get("collected_count") or item.get("collect_count"))
+
+        if explicit_pinned:
+            status, excluded_reason = "archived", "pinned"
+        elif published_at is None or published_at < window_start:
+            status, excluded_reason = "archived", None
+        else:
+            status, excluded_reason = "watching", None
+
+        conn.execute(
+            """
+            INSERT INTO competitor_videos(
+                video_id, account_id, platform, platform_item_id, title, url, publish_time,
+                duration_sec, like_count, comment_count, share_count, collect_count,
+                is_pinned, excluded_reason, status, registration_run_id, raw_archive_ref, raw_json
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                video_id,
+                account["account_id"],
+                account["platform"],
+                platform_item_id,
+                str(item.get("title") or item.get("desc") or ""),
+                str(item.get("aweme_url") or item.get("url") or f"https://www.douyin.com/video/{platform_item_id}"),
+                _timestamp_to_iso(item.get("create_time")),
+                _optional_int(item.get("duration_sec")),
+                like_count,
+                comment_count,
+                share_count,
+                collect_count,
+                1 if explicit_pinned else 0,
+                excluded_reason,
+                status,
+                run_id,
+                raw_archive_ref,
+                json.dumps(item, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO video_checks(check_id, video_id, like_count, comment_count, share_count, collect_count, run_id)
+            VALUES(?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(check_id) DO NOTHING
+            """,
+            (stable_check_id(video_id, run_id), video_id, like_count, comment_count, share_count, collect_count, run_id),
+        )
+        inserted += 1
+        checks_recorded += 1
+
+    return {"inserted": inserted, "updated": updated, "checks_recorded": checks_recorded}
+
+
 def crawl_registration_stock_once(
     conn: sqlite3.Connection,
     executor: LocalMediaCrawlerExecutor,
@@ -298,49 +447,117 @@ def crawl_registration_stock_once(
     return result
 
 
+def crawl_daily_incremental_once(
+    conn: sqlite3.Connection,
+    executor: LocalMediaCrawlerExecutor,
+    account: sqlite3.Row,
+    *,
+    max_notes: int,
+    hit_cfg: dict[str, Any],
+    run_id: str,
+) -> dict[str, Any]:
+    result = _crawl_account(executor, account, max_notes=max_notes, run_id=run_id)
+    if result["status"] != "succeeded":
+        result["inserted"] = 0
+        result["updated"] = 0
+        result["checks_recorded"] = 0
+        return result
+    ingest_result = ingest_daily_incremental_items(
+        conn, account, result["items"], hit_cfg=hit_cfg, run_id=run_id, raw_archive_ref=result["raw_archive_ref"]
+    )
+    conn.commit()
+    result = dict(result)
+    result.update(ingest_result)
+    result.pop("items", None)
+    return result
+
+
+def run_daily_incremental(
+    conn: sqlite3.Connection,
+    domain: dict[str, Any],
+    *,
+    hit_cfg: dict[str, Any],
+    crawler_cfg: dict[str, Any],
+    account_limit: int | None = None,
+    executor: LocalMediaCrawlerExecutor | None = None,
+) -> dict[str, Any]:
+    """BUILD_PLAN.md 阶段1/3 (定时·快·不碰逆向转写): one daily invocation that discovers
+    newly-published videos, refreshes the observation pool, and judges/graduates
+    everything that has aged past the observation window -- all in one contract-gated
+    entrypoint, same discipline as run_full_registration/run_rejudge_only.
+    """
+    execution_contract = validate_registration_execution_contract(domain, hit_cfg)
+    daily_max_notes = crawler_cfg.get("daily_max_notes")
+    if not isinstance(daily_max_notes, int) or daily_max_notes < 1:
+        raise ValueError("crawler.daily_max_notes must be a positive integer")
+
+    run_id = "competitor_daily_incremental_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    domain_label = domain["formal_domain_label"]
+    accounts = _load_accounts(conn, domain_label, limit=account_limit)
+    executor = executor or LocalMediaCrawlerExecutor()
+
+    crawl_results: list[dict[str, Any]] = []
+    for account in accounts:
+        result = crawl_daily_incremental_once(
+            conn, executor, account, max_notes=daily_max_notes, hit_cfg=hit_cfg, run_id=run_id,
+        )
+        crawl_results.append(result)
+
+    judgement = judge_domain(conn, domain_label, hit_cfg=hit_cfg, run_id=run_id)
+    conn.commit()
+    summary = summarize(conn, domain_label)
+
+    return {
+        "status": "succeeded" if all(item["status"] == "succeeded" for item in crawl_results) else "partial_failed",
+        "mode": "daily_incremental",
+        "run_id": run_id,
+        "domain": domain["name"],
+        "domain_label": domain_label,
+        "platform": domain["platform"],
+        "policy": {
+            "execution_guardrail": EXECUTION_GUARDRAIL_DOC,
+            "comments_collected": False,
+            "llm_used": False,
+            "contract": execution_contract,
+        },
+        "crawl": {
+            "requested_accounts": len(accounts),
+            "daily_max_notes": daily_max_notes,
+            "results": crawl_results,
+        },
+        "judgement": judgement,
+        "summary": summary,
+    }
+
+
 def judge_domain(conn: sqlite3.Connection, domain_label: str, *, hit_cfg: dict[str, Any], run_id: str) -> dict[str, Any]:
     rows = _load_accounts(conn, domain_label, limit=None)
     results: list[dict[str, Any]] = []
     total_hits = 0
     total_retracted = 0
+    total_graduated = 0
     for account in rows:
         account_result = judge_account(conn, account, hit_cfg=hit_cfg, run_id=run_id)
         total_hits += account_result["promoted_count"]
         total_retracted += account_result.get("retracted_count", 0)
+        total_graduated += account_result.get("graduated_count", 0)
         results.append(account_result)
-    return {"total_promoted": total_hits, "total_retracted": total_retracted, "accounts": results}
+    return {
+        "total_promoted": total_hits,
+        "total_retracted": total_retracted,
+        "total_graduated": total_graduated,
+        "accounts": results,
+    }
 
 
 def settled_sample_count(conn: sqlite3.Connection, account_id: str, hit_cfg: dict[str, Any]) -> int:
-    rows = conn.execute(
-        """
-        SELECT *
-          FROM competitor_videos
-         WHERE account_id=?
-           AND like_count IS NOT NULL
-           AND status IN ('archived', 'promoted')
-           AND (excluded_reason IS NULL OR excluded_reason='older_than_90_days')
-         ORDER BY publish_time DESC
-        """,
-        (account_id,),
-    ).fetchall()
+    rows = conn.execute(SETTLED_SAMPLE_QUERY, (account_id,)).fetchall()
     sample, _ = select_baseline_sample(rows, hit_cfg)
     return len(sample)
 
 
 def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: dict[str, Any], run_id: str) -> dict[str, Any]:
-    rows = conn.execute(
-        """
-        SELECT *
-          FROM competitor_videos
-         WHERE account_id=?
-           AND like_count IS NOT NULL
-           AND status IN ('archived', 'promoted')
-           AND (excluded_reason IS NULL OR excluded_reason='older_than_90_days')
-         ORDER BY publish_time DESC
-        """,
-        (account["account_id"],),
-    ).fetchall()
+    rows = conn.execute(SETTLED_SAMPLE_QUERY, (account["account_id"],)).fetchall()
     sample, sample_window = select_baseline_sample(rows, hit_cfg)
     target_samples = int(hit_cfg.get("baseline_min_samples", 30))
     if len(sample) < BASELINE_HARD_MINIMUM_SAMPLES:
@@ -408,6 +625,7 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
     )
     promoted = 0
     retracted = 0
+    graduated = 0
     promoted_via_ratio_channel = 0
     for row in sample:
         like_count = int(row["like_count"] or 0)
@@ -426,6 +644,14 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
                 conn.execute("DELETE FROM hits WHERE video_id=?", (row["video_id"],))
                 conn.execute("UPDATE competitor_videos SET status='archived' WHERE video_id=?", (row["video_id"],))
                 retracted += 1
+            elif row["status"] == "watching":
+                # BUILD_PLAN.md 阶段2: "watching 到期(>7天)-> archived 转基线材料" -- this
+                # row only reached `sample` because select_baseline_sample's own age check
+                # confirmed it has left the observation window, so this is its first-ever
+                # judgement (graduation), not a retraction: it was never a hit, it settles
+                # as ordinary baseline material and daily incremental stops touching it.
+                conn.execute("UPDATE competitor_videos SET status='archived' WHERE video_id=?", (row["video_id"],))
+                graduated += 1
             continue
         if like_channel_hit and ratio_channel_hit:
             hit_channel = "both"
@@ -495,6 +721,7 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
         "promoted_count": promoted,
         "promoted_via_ratio_channel": promoted_via_ratio_channel,
         "retracted_count": retracted,
+        "graduated_count": graduated,
         "status": "judged",
         "evidence_status": evidence_status,
     }
@@ -739,6 +966,10 @@ def stable_baseline_id(account_id: str, run_id: str) -> str:
 
 def stable_hit_id(account_id: str, platform_item_id: str) -> str:
     return "hit_" + _digest(f"{account_id}:{platform_item_id}", 20)
+
+
+def stable_check_id(video_id: str, run_id: str) -> str:
+    return "vck_" + _digest(f"{video_id}:{run_id}", 20)
 
 
 def _digest(value: str, length: int) -> str:
