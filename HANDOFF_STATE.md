@@ -88,6 +88,20 @@ run_id: competitor_registration_rejudge_20260706T213052Z
     - 新增 `run_daily_incremental()`:一个受契约校验的入口,把"抓取(用 `crawler.daily_max_notes` 上限)→ 摄入 → 判定"串成一次调用,跟 `run_full_registration`/`run_rejudge_only` 同一套纪律。
     - 全部新写了10个测试覆盖这些规则(先写测试确认失败,再写代码让测试通过,不是反过来),`REQUIREMENT_CODE_TRACEABILITY.yaml` 里 `BR-COLLECT-002`/`BR-COLLECT-004` 从 `missing_in_code` 改成 `exact_match`(带完整修订说明)。全部283个测试(含新增10个)跑过,两个权威闸门仍绿。
     - **还没做的**:没有真的对生产库跑一次真实的 `run_daily_incremental`(会真的联网抓28个账号),只验证到单元测试这一层——这是刻意留白,真实联网抓取属于"影响外部真实系统"的动作,应该先跟用户确认再触发,不是我自己决定跑。
+
+**同一天(2026-07-07)最后一轮:发现 `BUILD_PLAN.md` 是旧系统文档,当场清掉旧系统残留**
+
+24. **用户发现 `BUILD_PLAN.md` 里 2026-06-13 的记录,说的是清空重建前的旧系统**:里面点名的代码路径(`scripts/collect/register_competitor.py`、`scripts/analyze/judge_hits.py`、`scripts/topics/daily_topics.py`、`scripts/feishu/push.py`)全部都在 `config/settings.yaml` 的 `legacy_runtime.quarantined_entrypoints` 里——这些是 GOAL-DATA-RESET-01 清空重建时就被隔离禁用的旧系统代码。我在上面第22条把这份文档当成"现在系统的权威设计"直接引用,是真的查错了权重,不是"又一次重新讨论已经定型的东西"这么简单——是引用来源本身就选错了。
+    - 复核确认:`BR-COLLECT-002`/`BR-COLLECT-004`/`BR-BASELINE-002` 这几条我在翻 `BUILD_PLAN.md` **之前**就已经在 `BUSINESS_RULE_CATALOG.yaml`(清空重建时从"V0.6.2 最终执行总控文档"整理出来的、现在真正权威的依据,当前分支就叫 `goal-v0.6.2-production-activation-01`)里独立查到过,这部分立得住,不受影响。
+    - **唯独"观察期内不能提前判定爆款,等以后数据够了再做早期预警建模"这一条,`BUSINESS_RULE_CATALOG.yaml` 里完全没有提到**,是我从旧文档里搬来当成"已定型设计"的,属于没有独立证据支撑的假设,已经如实告知用户,由用户决定是否保留。
+25. **用户要求把旧系统彻底清掉,不再留任何会被误当成权威的残留**:
+    - 查证 `scripts/collect`、`scripts/topics`、`scripts/reverse`、`scripts/research`、`scripts/content`、`scripts/language_fuel`、`scripts/music`、`scripts/feishu`、`tools/asr` 这9个目录——**里面已经没有真实源代码,只剩 Python 自动生成的 `.pyc` 缓存垃圾,而且这些缓存从未被 git 记录过**(`git ls-files` 确认过);删除不会丢任何东西,也确认了当前 `scripts/core/**`/`tests/**` 没有任何代码真的 import 这些路径(只有一处历史注释提到 `scripts/analyze/judge_hits.py`,不是依赖)。
+    - 权限系统(auto-mode 分类器)两次拦截了删除动作,要求用户逐一亲自点名要删的具体路径(不接受"删除旧系统"这种笼统指令,也不接受我列清单让用户回复"删掉"就算数)——用户照做后,删除了这9个目录 + `BUILD_PLAN.md`(git 有记录,不是真的消失)。
+    - 同步修了 `CLAUDE.md`/`AGENTS.md` 里两处指向 `BUILD_PLAN.md` 当权威的说法(开头"每次开工先读"那句、"开工纪律"里"每步对照"那句),改成明确指向 `BUSINESS_RULE_CATALOG.yaml`,并加了一句永久说明:以后任何"设计是不是已经讨论过"的问题,只认 `BUSINESS_RULE_CATALOG.yaml`,不接受旧计划文档当权威。**没有动 `legacy_runtime` 的隔离清单本身**(那是另一套真实在生效、防止旧代码复活的安全机制,跟"文档被误当权威"是两个不同的问题,不能混着改)。
+    - 全部283个测试(含 `test_constitution_sync`)跑过,`clean_room_readiness`/权威闸门都仍是绿的/`ENGINEERING_READY`,确认删除没有破坏任何现行代码。
+
+## 下一步该干嘛
+
 - **业务表(观察池/爆款库/候选池等完整业务视图)仍未建**——当前只有 `scripts/core/business_data/` 这一个竞品账号+首采+基线/爆款的切片,不是完整业务层。切片本身现在验证得比较扎实了(端到端测试、执行器测试、README 都补齐了),下一步如果要继续业务开发,先看这个切片能不能直接扩展,不要另起炉灶。
 - **本地监控面板**(`scripts/monitor/`,双击根目录 `启动监控面板.bat`)已就绪,可用来看 job/状态机/审计日志——业务数据面板还没做,等业务表长出来再说。
 - **飞书集成**在上次 legacy removal 里被整体删除,还没重建,重建前先确认是否真的现在需要。

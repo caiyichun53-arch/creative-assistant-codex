@@ -1,6 +1,7 @@
 # 创作助手 · 工程章程(AGENTS.md)
 
-> **每次开工先读:本文件 + memory 里的 `target-architecture.md`(完整蓝图)/ `rebuild-direction.md`(推理依据)/ `BUILD_PLAN.md`(构建路线图)。本文件是防漂移的宪法。**
+> **每次开工先读:本文件 + `BUSINESS_RULE_CATALOG.yaml`(现行系统唯一算数的业务规则依据)+ memory 里的 `target-architecture.md`(完整蓝图)/ `rebuild-direction.md`(推理依据)。本文件是防漂移的宪法。**
+> **`BUILD_PLAN.md` 已于 2026-07-07 删除(git 历史可查):那是清空重建(GOAL-DATA-RESET-01)前旧系统的构建日志,写的是已经隔离下线的旧代码路径,不是现行系统的设计依据——曾被当成"已定型设计"直接引用过,导致真实跑偏一次。以后任何"设计是不是已经讨论过"的问题,只认 `BUSINESS_RULE_CATALOG.yaml`,不接受旧计划文档/对话记忆当权威。**
 
 ## 这是什么
 一个 **Codex 工程**(不是独立程序):写死的 Python 脚本干确定性脏活,Codex 当创作驾驶舱,飞书当远程指挥/数据视图。目标 = 一个"越用越好"的抖音内容创作系统(自进化 agent 的**实质**,载体是程序)。开发用 Codex(Opus 4.8 / 可切 Fable 5),日常 LLM 节点走 Codex 订阅低阶模型(Codex 无头;Codex 不装 cc-switch 用不了 DeepSeek,故不接),创作走用户的 Codex 订阅。
@@ -42,7 +43,7 @@
 - 旧 `creation_assistant` 归档:捞数据(禁词表/人设/词表),不捞代码。真实路径写在本机配置,不入库。
 
 ## 开工纪律
-- 每步对照 `BUILD_PLAN.md`,**做完一步验一步,不跳建**。
+- 每步对照 `BUSINESS_RULE_CATALOG.yaml` + `REQUIREMENT_CODE_TRACEABILITY.yaml`,**做完一步验一步,不跳建**。
 - 固定决策有疑问 → 查本文件 / 蓝图,**不自行改技术路线**。
 - 改了模块结构 → 更新本文件的模块地图,**且必须在同一次提交里做**,不能代码先跑、文档以后再补(以后再补=从来不补)。
 - **两份宪法文件点名要读的治理依据(如 `target-architecture.md`/`rebuild-direction.md`)如果在仓库和 memory 里都找不到,必须停下来问用户,不能记一笔"找不到"就当警告放过、继续往下做**。这是 2026-07-06 之前 124 次提交里真实发生过的跑偏根因:治理依据缺失被诚实记录、但从未真正拦停过任何一次开工。
