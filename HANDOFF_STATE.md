@@ -2,7 +2,19 @@
 
 > 活文档:每次收工(额度耗尽/告一段落)前必须更新这份文件,交给下一个接手的执行者(Codex 或 Claude Code)。不是一次性快照——`CURRENT_REPOSITORY_BASELINE.md`/`RELEASE_CANDIDATE_BASELINE.md` 才是那种一次性冻结记录,这份文件永远反映"现在"。
 
-## 现状(2026-07-07,本次收工时)
+## 现状(2026-07-08,本次收工时)
+
+- **分支**:`activation/goal-v0.6.2-production-activation-01`(与下方 2026-07-07 记录同一分支延续)。
+- **本次做的事**:上一轮"master doc 完全对齐重写"之后,用户用真实数据追问了三个具体问题,顺藤摸瓜修了三个真问题(细节见 `BUSINESS_RULE_CATALOG.yaml` 的 `amendment_2026_07_08_backfill_counting_and_daily_refresh`):
+  1. **窄范围重新引入"窗口外回补"机制**:账号 90 天内样本不足 20 条、但账号全部历史样本 ≥20 且量级明显够高(同 `_account_small_status` 的判定口径)时,用全部历史(封顶 50 条)顶上,不再永久判定"无基线"。
+  2. **修了一个真实存在的统计口径 bug**:`judge_account()` 的 `rough_hit_count`/`formal_hit_count` 之前按 `judgment_confidence`(会被 comment_like_ratio 覆盖成 formal)计数,导致 30 条同时命中两个通道的视频被漏计成 rough——现在改按 `baseline_mode`(不会被覆盖)计数。写入 `hits`/`competitor_videos` 的记录本身一直是对的,只是运行报告的汇总数字算错了。
+  3. **过渡期视频改成每天都刷新+参与判断**:之前 `ingest_daily_incremental_items()` 对过渡期(1-7天)视频只在满 7 天那天才更新数据,期间(第1-6天)完全冻结在首次采集时的快照——现在每天都会刷新数值、记一条 `video_checks`,跟正式跟踪视频(formal_new)的节奏对齐。没有加"发布不满N天不判断"这类年龄门槛(用户明确要求从简)。
+- **真实数据重判结果**(`reset_judgement_state` 清空后 `--rejudge-only` 重新判定,28 账号):`total_promoted=441`(112 formal + 363 rough,5 个账号用到了新回补机制),`小椰子专栏`(此前挂零的高体量账号)现在有 4 条基线(sample_count=50,回补生效)、19 条真实命中。
+- **紧接着又补了一个字段**:用户追问"过渡期视频每天观察,到底记在哪儿"——发现`discovery_batch_index`只服务正式跟踪视频的D0-D7(发现批次锚定),过渡期视频每天的check完全没有"第几天"标签。加了`video_checks.day_since_publish`(日历天数锚定,跟discovery_batch_index刻意分开存,不混用),`install_schema()`现在会对已存在的库懒加这个新列(`CREATE TABLE IF NOT EXISTS`不会给已有表补列)。已经通过`--rejudge-only`真实调用过一次,确认真实生产库`video_checks`表已经有这一列。
+- **测试**:`tests/core` 259 个、`tests/validation` 44 个全过(新增 6 个测试:回补机制 3 个、计数修复 1 个、每日刷新 1 个、day_since_publish 1 个)。
+- **写这份文件的人/时间**:Claude Code,2026-07-08。
+
+## 历史记录(2026-07-07,上一次收工时)
 
 - **分支**:`activation/goal-v0.6.2-production-activation-01`
 - **当前 GOAL**:`GOAL-V0.6.2-PRODUCTION-COMPLETION-01`(见 `implementation_progress/GOAL-V0.6.2-PRODUCTION-COMPLETION-01.md`),工程状态 `completed`,production activation 已跑过一次受控真实数据 pilot(竞品账号注册+首采+基线/爆款判定)。
@@ -126,8 +138,48 @@ run_id: competitor_registration_rejudge_20260707T023426Z
     - 这次改动顺带把我自己新写的检查脚本也检出一个假阳性(脚本里为了举例写的旧路径字符串,被另一个闸门当成"生产代码引用旧路径"报错)——按现有惯例加进白名单,不是放松检测。
     - 全部287个测试跑过,两个权威闸门仍绿,`legacy_removal_gate`/`clean_room_readiness` 都确认干净。
 
+32. **用户发现仓库根目录一直有这份总控文档原始 docx**(`爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx`),质问"为什么之前 Codex 没把文档当设计来源"——查证后确认这份文档是 `BUSINESS_RULE_CATALOG.yaml` 里 BR-HIT-001 等大多数规则的 `source_document` 引用来源,是真实存在的原始设计,不是编的。逐章跟用户对照文档原文(第8/9/10/14/15章 + 附录A),把这周之前那套"3倍/2倍混用、观察池、baseline_min_samples 30/10、P90封顶"的设计,跟文档原文一条条核对、逐条拍板定稿:
+    - **D0-D7 改成"发现批次"锚定**(不是发布日历天):D0=系统第一次发现这条视频的那次采集批次。
+    - **首次接触分三类**(历史成熟样本/过渡样本/正式新视频),过渡样本存两次快照(现在一次+满7天一次),不再是"首采不满7天被永久排除"的bug修复思路。
+    - **成熟历史基线**:最近90天、最多50条、滚动窗口。**正式D基线**:20条启用(用户修正文档原文"20条既是启用门槛又是计算窗口"的表述,改成"20启用、50计算窗口对齐成熟历史基线")。
+    - **触发规则从混用倍率统一成**:单指标(点赞/评论/收藏/分享各自)2.0倍、多指标组合(4项任2项)1.6倍、评论/点赞比例(这周新增,文档没有,用户明确保留)。冷启动D7粗略参照倍率也对齐同一套数字,不用文档原文的2.5/2.0/3.0。
+    - **置顶判断整个删除**——用户推导出"只要年龄过滤用真实发布时间,置顶不置顶不影响基线资格",验证成立,不再单独识别置顶。
+    - **P90封顶+绝对值下限公式、watching/archived/promoted状态机+退回/graduated逻辑、baseline_min_samples 30/10方案,全部按用户"没点名保留的一律不留"的指示删除**。
+    - **自营P基线保留**(不是文档字面写的用途,是因为经验迭代需要跟自己历史比),但怎么用还没定,明确留给经验库层设计,不在本次瞎猜。
+    - 顺带发现文档里还有一整块没讨论过的候选处理设计(第15章"双阶段处理"+候选记录字段+"首次触发后永久保留不删除"的明文规定、第16章评论采集两阶段策略、第17章对照/低表现样本的完整规则)——BR-HIT-002 从一句话占位补全,新增 BR-HIT-005(候选记录字段+永久保留,比之前"文档没提退回"的说法更准更硬——文档原文是"明确规定不能退回")、BR-HIT-006(五级分级处理+深度分析资格)、BR-HIT-007(评论采集purpose标记策略)。BR-HIT-006/007 连同 BR-HIT-002 的完整实现本次**有意留白**,不是漏掉——这三块都要挂在评论采集流水线上,而这条流水线现在还没建,现在硬做就是无米之炊。
+    - 把这份文档整个转成纯文字存进仓库根目录(8423行),以后不用每次重新转换 docx。
+    - 新增 `TECHNICAL_MANUAL.md`(给人看的运行手册骨架)+ `tests/validation/test_technical_manual_sync.py`(模块建好没写手册会报错)+ CLAUDE.md/AGENTS.md 新硬规则(模块建好必须同commit写手册,不能留白拖以后)。
+33. **用户拍板"现在可以重构代码了"**——把上面这套最终设计整个重写进 `scripts/core/business_data/`(schema、`run_competitor_registration_full.py` 全部重写,不是增量patch):
+    - `competitor_accounts_schema.sqlite.sql`:`competitor_videos` 去掉 `is_pinned`/`status`,加 `first_contact_category`/`discovery_delay_hours`/`mature_snapshot_taken_at`/`tracking_completed` + BR-HIT-005 候选字段(`first_trigger_observation`/`first_trigger_at`/`trigger_rules`/`peak_observation`/`baseline_mode`/`judgment_confidence`);`video_checks` 加 `discovery_batch_index`;`baselines` 改成 `baseline_mode`+`observation_point` 区分四种基线;`hits.hit_channel` 从固定枚举改成逗号拼接的自由文本(6通道组合太多,不适合再用小枚举)。
+    - `config/settings.yaml`/`config/settings.example.yaml` 的 `hit_detection` 整块重写,旧 key(`excess_threshold`/`hit_floor_absolute_like_count`/`early_excess_threshold`/`baseline_min_samples`/`baseline_window_days`/`first_crawl_fetch_buffer` 的旧含义)全部废弃,换成新 key 集合(`single_metric_excess_threshold`/`multi_indicator_excess_threshold`/`unified_min_samples`/`formal_baseline_activation_min_samples`/`formal_baseline_computation_window` 等)。
+    - `BUSINESS_RULE_CATALOG.yaml` 的 `BR-COLLECT-001/002`、`BR-BASELINE-001/002/003` 同步改写(标注被 BR-HIT-001 取代的部分,不再重复维护两份口径)。
+    - 新写 34 个测试(`tests/core/test_competitor_registration_full.py` 整个替换,不是增量),覆盖三类分类、两种基线的启用门槛/窗口/滚动、六通道触发、候选永久保留、执行契约、入口冒烟测试。`tests/validation/test_business_rule_traceability.py` 同步重写(旧的 `excess_threshold`/`hit_floor_absolute_like_count` 断言全部替换)。
+    - `REQUIREMENT_CODE_TRACEABILITY.yaml`:BR-HIT-002/006/007 从 `exact_match` 降级成 `missing_in_code`(如实标记未建,不是隐瞒);BR-HIT-004(旧的"分享/评论比"规则)标记为"被取代",因为新设计里分享数已经变成独立的 `share_anomaly` 通道,不再是这条规则字面描述的东西。
+    - **验证结果**:`tests/core`(246个测试)、`tests/validation`(43个测试)全绿;`verify_goal_v062_phase8_readiness.py` 仍 `ENGINEERING_READY`。
+    - **明确留了一个没做的决定,没有擅自处理**:真实生产库 `data/formal/production_activation.sqlite3` 现有1253条视频还是旧表结构(`is_pinned`/`status` 等),这次重写完全没碰它——新代码和旧库结构对不上,需要专门的迁移/重建步骤才能把真实数据接上新代码,这属于"会修改生产业务数据库结构"的动作,按硬规则不能顺手做,需要用户先决定怎么处理旧数据(整表重建,还是想办法保留原始爬取字段迁移过来)。
+
+34. **用户拍板"清空重建"（第一版理解）**——新写 `scripts/core/business_data/migrate_master_doc_realignment.py`(committed、有 `--confirm` 二次确认、跑之前先把整个DB文件备份成带时间戳的副本,不确认就拒绝执行),用小型合成旧库先验证过逻辑(`tests/core/test_migrate_master_doc_realignment.py`)才对真实库动手:重新分类了旧的1253条视频(1148历史成熟+105过渡),`--rejudge-only` 后总命中96条(全靠评论/点赞比例通道,倍数异常通道一条没触发——因为迁移进来的全是历史/过渡样本,没有D0-D7序列)。
+35. **用户追问两点,都问到实处**：(1) "这些历史存量视频应该拿去跟历史成熟基线比啊"——查代码发现是真漏洞:倍数异常判断只接在了"正式D基线"路径上,历史成熟/过渡样本完全没走这条检查,只有评论/点赞比例在工作。**已修复**:`judge_account()` 现在对每条历史成熟/过渡样本视频,也会拿它自己的数据去跟成熟历史基线比(用"冷启动粗略"那套2.0/1.6倍阈值),命中了标记"粗略信号"(不自动变成正式爆款,这是文档原文规定的)。(2) "你迁移了1253条视频，这些视频不是按新方案采集的，你清空了什么"——如实承认:上一步做的是"重新分类旧数据",不是"清空后用新方案重新采集",两者是真的不一样的事。用户明确要求"真正的清空重建,现在就执行":
+    - `migrate_master_doc_realignment.py` 加了 `--mode wipe`(备份后彻底清空 `competitor_videos`/`baselines`/`hits`/`video_checks`,`competitor_accounts` 不动,注册本身是幂等的),配了测试。
+    - 真实执行:先备份(`production_activation_pre_true_clean_rebuild_20260707T125656Z.sqlite3`),清空后对真实28个对标账号跑了一次**真实联网抓取**(`run_full_registration`,这个动作有 `PHASE_8_REAL_NEW_DATA_APPROVAL.yaml` 既有批准覆盖,加上用户本轮明确说"现在就执行"),28个账号全部成功、0失败。
+    - **真实结果**:1497条视频(比旧数据集多,因为新配置 `first_crawl_max_notes=50+缓冲5=55`,比旧配置抓得多),1372条历史成熟+125条过渡+0条正式新视频(符合预期——首次注册抓的都是存量,不是"正式跟踪后日常发现"的新视频)。总命中112条(评论/点赞比例通道),历史高信号粗略信号613条。同样4个账号(万物电台、小时好食禄、小椰子专栏、食侠客)暂时挂零。
+    - 最终验证:`tests/core` 249个测试、`tests/validation` 43个测试全绿,`verify_goal_v062_phase8_readiness.py` 仍 `ENGINEERING_READY`。
+36. **用户质问:"什么正式爆款,粗略爆款,我什么时候用了这些名字分类的?"**——`judgment_confidence` 那两个词是我从代码字段直接搬去跟用户讲的,用户没要求这套分层说法,只想知道机制本身:除了评论/点赞比例,还有一种是"这条视频自己的数据跟账号历史中位数比,任一项2倍或任两项1.6倍"。之后用户要求现场测试调参(3倍单指标/2倍多指标/点赞绝对下限2000/小账号改用P90当门槛、标清楚走哪条通道),我先写了一个**只读**对比脚本跑真实数据给用户看数字(不碰数据库),用户确认"符合预期,可以定下来,但要标注清楚满足哪些条件"后正式落地:
+    - `cold_start_d7_single_metric_threshold`/`cold_start_d7_multi_indicator_threshold` 从2.0/1.6改成3.0/2.0(只改成熟历史/粗略这条通道,正式D通道不变——刻意设计成"证据越弱、门槛越高"这个非对称,不是笔误)。
+    - 新增 `mature_history_absolute_like_floor=2000`(点赞数硬门槛,不管是哪个指标触发的倍数异常都要点赞过这条线才算,评论/点赞比例通道不受影响)。
+    - 新增 `small_account_p90_percentile=0.9`:账号历史中位数×3倍都够不到2000的,判定为"小账号",改用自己历史点赞数据的P90当门槛,命中标注 `p90_small_account:like=X>=p90:Y`,不跟正常通道混在一起。
+    - **所有命中原因从裸规则名改成带具体数值的标注**(如 `like_anomaly:3.24x`、`multi_indicator:comment_anomaly=2.10x;collect_anomaly=2.30x`、`comment_like_ratio:0.250`),按用户要求"标注清楚满足哪些条件"。
+    - 新写3个测试(小账号P90正确区分普通视频和真标兵;绝对下限能拦住只靠非点赞指标触发的视频;正式D通道multi_indicator标注不跟独立like_anomaly混淆),`BUSINESS_RULE_CATALOG.yaml` 补了完整修订记录。
+37. **锁定新参数后,重跑判定发现:真实数据库里已有的644条命中还是旧参数(2.0/1.6)判出来的**——因为"命中永久保留"这条规则本来就设计成不会自动撤销,单纯重跑 `--rejudge-only` 不会把旧参数判的命中换成新参数的结果。用户一开始因为"又要重判"而不满("还重判什么,前面不是重判过了?"),说清楚这不是重新问要不要用新参数(那已经定了),是提醒"永久保留"这条规则保护的是"数据正常波动",不是保护"已经被换掉的旧判定标准"本身。用户随即明确要求"清空hits/baselines表,用新参数重判":
+    - 新增 `migrate_master_doc_realignment.py --mode reset_judgement`:只清 `hits`/`baselines` 表和 `competitor_videos` 里的候选字段(`first_trigger_at`等),**不碰原始爬取数据**,不需要重新爬取。
+    - 这个动作(对真实库执行DELETE)第一次被 Claude Code 自动权限分类器拦下——判定这是"这次会话里现场发明的动作,用户原话没有明确点名删hits/baselines"，要求用户用更明确的话重新确认。用户照做后正式执行。
+    - **真实最终结果**:先备份(`production_activation_pre_judgement_reset_20260707T194617Z.sqlite3`),清空后重判,总命中480条(正式112条评论/点赞比例通道不变+粗略368条历史高信号通道,其中27条是走P90小账号通道)。仍然3个账号(万物电台、小时好食禄、小椰子专栏)挂零——食侠客这次转正了。
+    - 最终验证:`tests/core` 252个测试、`tests/validation` 43个测试全绿,`verify_goal_v062_phase8_readiness.py` 仍 `ENGINEERING_READY`。
+
 ## 下一步该干嘛
 
+- **要让倍数异常通道(点赞/评论/收藏/分享 vs 正式D基线)真正工作,必须让 `run_daily_incremental()` 对着这28个真实账号连续跑起来**——现在的真实数据集里 `formal_new_videos` 还是0,因为这次的"真正清空重建"抓的是首次注册的存量快照,不是"正式跟踪后日常发现"的新视频。账号要攒够20条走完D0-D7的新发现视频,这条通道才会启用。这是下一步最值得做的事,不是可选项——但这也是真实联网抓取,要不要现在就开始按日调度,需要用户明确同意。
+- **BR-HIT-002(对照/低表现样本)/BR-HIT-006(五级处理+深度分析资格)/BR-HIT-007(评论采集)三块有意留白**——都要挂在评论采集流水线上,现在这条流水线还没建,建起来之后再回头做这三块,不是忘了。
 - **业务表(观察池/爆款库/候选池等完整业务视图)仍未建**——当前只有 `scripts/core/business_data/` 这一个竞品账号+首采+基线/爆款的切片,不是完整业务层。切片本身现在验证得比较扎实了(端到端测试、执行器测试、README 都补齐了),下一步如果要继续业务开发,先看这个切片能不能直接扩展,不要另起炉灶。
 - **本地监控面板**(`scripts/monitor/`,双击根目录 `启动监控面板.bat`)已就绪,可用来看 job/状态机/审计日志——业务数据面板还没做,等业务表长出来再说。
 - **飞书集成**在上次 legacy removal 里被整体删除,还没重建,重建前先确认是否真的现在需要。

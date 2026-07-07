@@ -1166,6 +1166,55 @@ business_data_competitor_registration_execution:
     exercised against real data: video_checks was only just created and daily
     incremental has never run for real, so there is no real day-specific history yet
     for this channel to use.'
+  amendment_2026_07_07_master_doc_realignment: 'Whole business_data hit-detection
+    engine rewritten from scratch against 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_
+    无损汇编版.md (now committed to the repo root) -- see BUSINESS_RULE_CATALOG.yaml
+    BR-HIT-001 amendment_2026_07_07_master_doc_realignment for the full decision
+    trail. This replaced, not incrementally patched: discovery-anchored D0-D7 (not
+    calendar days), the three-category first-contact classification (historical_
+    mature/transition/formal_new, replacing the watching/archived/promoted status
+    machine), four baselines (mature_history rolling 90d/50cap/unified_min_samples=20,
+    cold_start_d7_rough, formal_d_series 20-activate/50-window, formal_p_series kept
+    but unused pending experience-layer design), the six OR-ed trigger channels
+    (like/comment/collect/share anomaly at 2.0x, multi_indicator at 1.6x,
+    comment_like_ratio kept from the prior iteration), and permanent candidate
+    records (BR-HIT-005: never retract once first triggered). Explicitly deferred,
+    not built this pass (see BUSINESS_RULE_CATALOG.yaml BR-HIT-002/006/007): control/
+    counter-example sample recall, five-tier LLM-cost-gated processing, and
+    purpose-tagged comment collection -- none of these have a comment-collection
+    pipeline to hook into yet in this codebase, so building them now would be
+    speculative scaffolding.'
+  amendment_2026_07_08_backfill_counting_and_daily_refresh: 'Three fixes from one
+    real-data question (why an account with six-figure like counts had zero hits):
+    (1) _mature_history_pool() reinstates a narrowly-scoped version of the
+    legacy_supplement/backfill-outside-the-90-day-window mechanism this same file''s
+    old BR-BASELINE-003 entry above flags as an unresolved "conflict" -- now
+    resolved: backfill only applies when the account''s FULL lifetime pool has
+    >= unified_min_samples(20) videos AND is high-magnitude by the same yardstick
+    _account_small_status already uses, otherwise behavior is unchanged. (2)
+    judge_account()''s rough_hit_count/formal_hit_count are now tallied from
+    baseline_mode (never overwritten) instead of judgment_confidence (which gets
+    overwritten to "formal" when comment_like_ratio also fires on a video that
+    already cleared mature_history) -- a real reporting bug that undercounted rough
+    hits by 30 videos in the live 28-account dataset; the persisted hits/
+    competitor_videos records were always correct, only the run-report tally was
+    wrong. (3) ingest_daily_incremental_items() now refreshes a transition video''s
+    numbers and records a video_checks row on every daily pass while it has not yet
+    matured (previously frozen at its first-contact snapshot until day 7), matching
+    formal_new''s existing daily cadence -- no age-gate was added to any channel,
+    per explicit user decision to keep this simple. See BUSINESS_RULE_CATALOG.yaml
+    amendment_2026_07_08_backfill_counting_and_daily_refresh for the full decision
+    trail and BR-BASELINE-003''s current status (unified_min_samples=20 remains
+    authoritative; this only widens WHICH videos can be pooled to reach it).'
+  amendment_2026_07_08_day_since_publish_column: 'Follow-up: video_checks.
+    day_since_publish (nullable INTEGER) added so a transition video''s daily
+    checks record which day of its own 0-7 lifecycle each one happened on --
+    deliberately separate from discovery_batch_index (discovery-batch-anchored,
+    formal_new only). register_competitor_accounts.install_schema() now lazily
+    ALTER TABLE ADD COLUMNs this onto any existing DB (CREATE TABLE IF NOT EXISTS
+    does not retroactively add columns) -- applied to the real production DB via
+    --rejudge-only. See BUSINESS_RULE_CATALOG.yaml
+    amendment_2026_07_08_day_since_publish_column for the full trail.'
   requirement_alignment:
     BR-COLLECT-001: exact_match
     BR-COLLECT-002: exact_match
@@ -1178,13 +1227,24 @@ business_data_competitor_registration_execution:
     BR-BASELINE-002: exact_match
     BR-BASELINE-003: exact_match
     BR-HIT-001: exact_match
-    BR-HIT-002: exact_match
+    BR-HIT-002: missing_in_code
     BR-HIT-003: exact_match
-    BR-HIT-004: exact_match
-  missing_in_code_note: BR-COLLECT-005/006 (reverse-prep comment collection, comment
+    BR-HIT-004: missing_in_code
+    BR-HIT-005: exact_match
+    BR-HIT-006: missing_in_code
+    BR-HIT-007: missing_in_code
+  missing_in_code_note: 'BR-COLLECT-005/006 (reverse-prep comment collection, comment
     noise filtering) are not yet built -- this is an acknowledged gap, not a drift,
     since nothing in code contradicts them; they belong to the separate 备料层
-    (reverse-prep) track, not the daily incremental collection track.
+    (reverse-prep) track, not the daily incremental collection track. BR-HIT-002
+    (control/counter-example sample recall), BR-HIT-006 (five-tier processing/
+    deep_eligibility), and BR-HIT-007 (purpose-tagged comment collection) are
+    likewise acknowledged gaps, not drift -- deferred in the 2026-07-07 rewrite
+    because no comment-collection pipeline exists yet to hook them into. BR-HIT-004
+    (the old share_comment_ratio derived-evidence-only rule) is superseded, not
+    merely missing -- the new design folds share_count into its own independent
+    share_anomaly channel (BR-HIT-001 section D), so BR-HIT-004 as literally worded
+    no longer describes a real code path.'
   code_artifacts:
   - scripts/core/business_data/register_competitor_accounts.py
   - scripts/core/business_data/run_competitor_registration_full.py

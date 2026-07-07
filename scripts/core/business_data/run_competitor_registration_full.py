@@ -28,38 +28,21 @@ from scripts.core.external_adapters.local_mediacrawler_executor import LocalMedi
 DEFAULT_SETTINGS = ROOT / "config" / "settings.yaml"
 FALLBACK_SETTINGS = ROOT / "config" / "settings.example.yaml"
 EXECUTION_GUARDRAIL_DOC = "docs/production_execution_guardrails.md"
-# BR-BASELINE-003 (BUSINESS_RULE_CATALOG.yaml): the only documented sample target is
-# baseline_min_samples=30 (legacy_supplement=true: backfill toward it when the 90-day
-# window falls short). This is the sole hard mathematical floor below which a median/P90
-# cannot be computed at all -- not a business threshold, so it is not configurable.
-BASELINE_HARD_MINIMUM_SAMPLES = 2
+# 2026-07-07: the single design authority for everything in this file. See
+# BUSINESS_RULE_CATALOG.yaml BR-HIT-001 amendment_2026_07_07_master_doc_realignment
+# for the full decision trail -- this module was rewritten from scratch against it,
+# not incrementally patched.
+MASTER_DESIGN_DOC = "爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.md"
 
-# 2026-07-07 user decision: a day-specific reference median (see
-# _account_day_reference_median) must not be trusted off too few historical
-# video_checks points at that exact day-offset -- this is the floor below which the
-# channel is skipped entirely rather than fabricating an unreliable reference.
-DAY_REFERENCE_MIN_SAMPLES = 3
-
-# BR-BASELINE-002 / BUILD_PLAN.md 阶段1 二次修正 (2026-06-13): a video excluded as
-# 'younger_than_7_days' at ingest time is NOT permanently disqualified -- that flag only
-# means its growth-curve capture is missing its first few frames (noise for future
-# curve modeling), not that it should stop being refreshed/re-judged. "Its count still
-# gets refreshed daily and re-judged every round, it doesn't lose out" (原文:"其计数照样
-# 每日刷新+每轮重判,不吃亏"). select_baseline_sample() already re-checks each row's live
-# age against observe_days, so once such a row has genuinely aged past the window it is
-# safe to let back into this query -- only 'pinned' stays a real, permanent exclusion.
-# Videos still in the 'watching' status are included too: select_baseline_sample()'s own
-# age check keeps still-young ones out (no early judgement -- BUILD_PLAN.md 阶段1: "现在
-# 只捕获不建模"), while ones that have aged past observe_days flow through and graduate.
-SETTLED_SAMPLE_QUERY = """
-    SELECT *
-      FROM competitor_videos
-     WHERE account_id=?
-       AND like_count IS NOT NULL
-       AND status IN ('archived', 'promoted', 'watching')
-       AND (excluded_reason IS NULL OR excluded_reason IN ('older_than_90_days', 'younger_than_7_days'))
-     ORDER BY publish_time DESC
-"""
+# BR-HIT-001 section D: the four metrics every single-metric and multi-indicator
+# channel is evaluated over, and the rule name each one fires under.
+METRICS = ("like_count", "comment_count", "collect_count", "share_count")
+METRIC_RULE_NAME = {
+    "like_count": "like_anomaly",
+    "comment_count": "comment_anomaly",
+    "collect_count": "collect_anomaly",
+    "share_count": "share_anomaly",
+}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -166,8 +149,8 @@ def run_full_registration(
         "platform": domain["platform"],
         "policy": {
             "execution_guardrail": EXECUTION_GUARDRAIL_DOC,
+            "design_authority": MASTER_DESIGN_DOC,
             "first_crawl": domain["collector_policy"]["first_crawl"],
-            "video_status_for_first_crawl": "archived",
             "comments_collected": False,
             "llm_used": False,
             "feishu_sent": False,
@@ -217,6 +200,7 @@ def run_rejudge_only(
         "platform": domain["platform"],
         "policy": {
             "execution_guardrail": EXECUTION_GUARDRAIL_DOC,
+            "design_authority": MASTER_DESIGN_DOC,
             "contract": execution_contract,
         },
         "registration": None,
@@ -224,6 +208,28 @@ def run_rejudge_only(
         "judgement": judgement,
         "summary": summary,
     }
+
+
+# ---------------------------------------------------------------------------
+# BR-HIT-001 section B: three-category first-contact classification
+# ---------------------------------------------------------------------------
+
+
+def classify_first_contact_category(published_at: datetime | None, now: datetime, observe_days: int) -> str | None:
+    """First-registration classification only -- never returns 'formal_new'.
+
+    'formal_new' only applies to videos discovered via the ongoing daily
+    batch after an account is under formal tracking (see
+    ingest_daily_incremental_items), not at first registration. Returns None
+    when published_at is unusable; the caller records
+    excluded_reason='missing_publish_time' in that case rather than guessing
+    a category.
+    """
+    if published_at is None:
+        return None
+    if published_at <= now - timedelta(days=observe_days):
+        return "historical_mature"
+    return "transition"
 
 
 def ingest_stock_items(
@@ -235,12 +241,32 @@ def ingest_stock_items(
     run_id: str,
     raw_archive_ref: str | None,
 ) -> tuple[int, int]:
+    """First-crawl ingestion (BR-HIT-001 section B).
+
+    Every item is classified into historical_mature or transition based on
+    its age at first sight. One cumulative snapshot is taken now for both
+    categories; transition videos get a second "matured" snapshot later once
+    they turn 7 days published (see _mature_transition_samples, called from
+    judge_account). No D-series is fabricated for either category -- that is
+    reserved for formal_new videos discovered via the ongoing daily batch.
+    """
+    now = datetime.now(timezone.utc)
+    observe_days = int(hit_cfg["observe_days"])
     inserted = 0
     updated = 0
-    for item in mark_pinned_items(items):
+    for item in items:
         platform_item_id = _required_text(item.get("aweme_id") or item.get("source_id") or item.get("id"), "aweme_id")
         video_id = stable_video_id(account["account_id"], platform_item_id)
-        excluded_reason = first_crawl_excluded_reason(item, hit_cfg)
+        published_at = _item_publish_datetime(item)
+        category = classify_first_contact_category(published_at, now, observe_days)
+        excluded_reason = None if category is not None else "missing_publish_time"
+        discovery_delay_hours = (
+            round((now - published_at).total_seconds() / 3600, 2) if published_at is not None else None
+        )
+        like_count = _optional_int(item.get("liked_count") or item.get("like_count"))
+        comment_count = _optional_int(item.get("comment_count"))
+        share_count = _optional_int(item.get("share_count"))
+        collect_count = _optional_int(item.get("collected_count") or item.get("collect_count"))
         existed = conn.execute(
             "SELECT video_id FROM competitor_videos WHERE account_id=? AND platform_item_id=?",
             (account["account_id"], platform_item_id),
@@ -250,21 +276,15 @@ def ingest_stock_items(
             INSERT INTO competitor_videos(
                 video_id, account_id, platform, platform_item_id, title, url, publish_time,
                 duration_sec, like_count, comment_count, share_count, collect_count,
-                is_pinned, excluded_reason, status, registration_run_id, raw_archive_ref, raw_json
+                first_contact_category, discovery_delay_hours, excluded_reason,
+                registration_run_id, raw_archive_ref, raw_json
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'archived', ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_id, platform_item_id) DO UPDATE SET
                 title=excluded.title,
                 url=excluded.url,
                 publish_time=excluded.publish_time,
                 duration_sec=excluded.duration_sec,
-                like_count=excluded.like_count,
-                comment_count=excluded.comment_count,
-                share_count=excluded.share_count,
-                collect_count=excluded.collect_count,
-                is_pinned=excluded.is_pinned,
-                excluded_reason=excluded.excluded_reason,
-                status=CASE WHEN competitor_videos.status='promoted' THEN 'promoted' ELSE 'archived' END,
                 registration_run_id=excluded.registration_run_id,
                 raw_archive_ref=excluded.raw_archive_ref,
                 raw_json=excluded.raw_json,
@@ -280,22 +300,46 @@ def ingest_stock_items(
                 str(item.get("aweme_url") or item.get("url") or f"https://www.douyin.com/video/{platform_item_id}"),
                 _timestamp_to_iso(item.get("create_time")),
                 _optional_int(item.get("duration_sec")),
-                _optional_int(item.get("liked_count") or item.get("like_count")),
-                _optional_int(item.get("comment_count")),
-                _optional_int(item.get("share_count")),
-                _optional_int(item.get("collected_count") or item.get("collect_count")),
-                1 if bool(item.get("_is_pinned")) else 0,
+                like_count,
+                comment_count,
+                share_count,
+                collect_count,
+                category,
+                discovery_delay_hours,
                 excluded_reason,
                 run_id,
                 raw_archive_ref,
                 json.dumps(item, ensure_ascii=False, sort_keys=True),
             ),
         )
-        if existed:
-            updated += 1
-        else:
+        if not existed:
             inserted += 1
+            if category is not None:
+                conn.execute(
+                    """
+                    INSERT INTO video_checks(check_id, video_id, discovery_batch_index, day_since_publish, like_count, comment_count, share_count, collect_count, run_id)
+                    VALUES(?, ?, NULL, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(check_id) DO NOTHING
+                    """,
+                    (
+                        stable_check_id(video_id, run_id), video_id, _day_since_publish(published_at, now),
+                        like_count, comment_count, share_count, collect_count, run_id,
+                    ),
+                )
+        else:
+            updated += 1
     return inserted, updated
+
+
+def _day_since_publish(published_at: datetime | None, now: datetime) -> int | None:
+    """Calendar days since publish_time -- deliberately distinct from
+    discovery_batch_index (discovery-batch-anchored, for formal_new only).
+    Labels historical_mature/transition video_checks rows with which day of
+    the video's own 0-7 lifecycle a given observation happened on.
+    """
+    if published_at is None:
+        return None
+    return (now - published_at).days
 
 
 def ingest_daily_incremental_items(
@@ -307,24 +351,24 @@ def ingest_daily_incremental_items(
     run_id: str,
     raw_archive_ref: str | None,
 ) -> dict[str, Any]:
-    """Process one day's fetched batch for one account.
+    """Process one day's fetched batch for one account (BR-HIT-001 sections A/B).
 
-    BUILD_PLAN.md 阶段1/BR-COLLECT-002/BR-COLLECT-004: reconcile against videos already
-    known to this account first (update metrics + append a video_checks snapshot), then
-    treat whatever is left over as newly discovered. New discoveries within the
-    observation window enter 'watching'; only an explicit platform pinned flag routes a
-    new discovery straight to archived+excluded (no positional guessing on a small daily
-    batch). A discovery whose publish_time is already past the window on arrival is
-    treated like a stock item -- settled immediately, never enters watching.
+    Reconciles against videos already known to this account first: a
+    transition video that has now turned 7 days published gets its second
+    "matured" snapshot; a formal_new video that is not yet tracking_completed
+    gets its next D-point snapshot (discovery-anchored: the Nth time this
+    video has ever been checked, not a calendar-day count since publish).
+    Anything left over is a brand new discovery -- classified as
+    first_contact_category='formal_new' regardless of its actual publish
+    age (BR-HIT-001 section B: 'formal_new' means discovered via the ongoing
+    daily batch, not "recently published"), with D0 recorded now.
     """
-    observe_days = int(hit_cfg.get("observe_days", 7))
     now = datetime.now(timezone.utc)
-    window_start = now - timedelta(days=observe_days)
 
-    existing_ids = {
-        row["platform_item_id"]
+    known_rows = {
+        row["platform_item_id"]: row
         for row in conn.execute(
-            "SELECT platform_item_id FROM competitor_videos WHERE account_id=?",
+            "SELECT * FROM competitor_videos WHERE account_id=?",
             (account["account_id"],),
         ).fetchall()
     }
@@ -333,63 +377,114 @@ def ingest_daily_incremental_items(
     new_items: list[dict[str, Any]] = []
     for item in items:
         platform_item_id = _required_text(item.get("aweme_id") or item.get("source_id") or item.get("id"), "aweme_id")
-        (existing_items if platform_item_id in existing_ids else new_items).append(item)
+        (existing_items if platform_item_id in known_rows else new_items).append(item)
 
     updated = 0
     checks_recorded = 0
+    matured = 0
+    d_points_recorded = 0
+
     for item in existing_items:
         platform_item_id = _required_text(item.get("aweme_id") or item.get("source_id") or item.get("id"), "aweme_id")
-        video_id = stable_video_id(account["account_id"], platform_item_id)
+        video_row = known_rows[platform_item_id]
+        video_id = video_row["video_id"]
         like_count = _optional_int(item.get("liked_count") or item.get("like_count"))
         comment_count = _optional_int(item.get("comment_count"))
         share_count = _optional_int(item.get("share_count"))
         collect_count = _optional_int(item.get("collected_count") or item.get("collect_count"))
-        conn.execute(
-            """
-            UPDATE competitor_videos
-               SET like_count=?, comment_count=?, share_count=?, collect_count=?,
-                   last_checked_at=CURRENT_TIMESTAMP, check_count=check_count + 1
-             WHERE video_id=?
-            """,
-            (like_count, comment_count, share_count, collect_count, video_id),
-        )
-        conn.execute(
-            """
-            INSERT INTO video_checks(check_id, video_id, like_count, comment_count, share_count, collect_count, run_id)
-            VALUES(?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(check_id) DO NOTHING
-            """,
-            (stable_check_id(video_id, run_id), video_id, like_count, comment_count, share_count, collect_count, run_id),
-        )
+
+        if video_row["first_contact_category"] == "transition" and video_row["mature_snapshot_taken_at"] is None:
+            # 2026-07-08 user decision: to avoid the complexity of an age gate,
+            # ALL videos participate in judgement every day -- a transition video
+            # gets its numbers refreshed and a video_checks row recorded on EVERY
+            # daily pass while still observing (not just once at day 7, which
+            # previously left it frozen at its first-contact snapshot for up to 6
+            # days), matching the daily cadence formal_new videos already get.
+            # mature_snapshot_taken_at is still only set once it actually reaches
+            # day 7 -- that freeze point (and what feeds the mature_history
+            # baseline) is unchanged.
+            published_at = _parse_datetime(video_row["publish_time"])
+            observe_days = int(hit_cfg["observe_days"])
+            has_matured = published_at is not None and published_at <= now - timedelta(days=observe_days)
+            conn.execute(
+                """
+                UPDATE competitor_videos
+                   SET like_count=?, comment_count=?, share_count=?, collect_count=?,
+                       mature_snapshot_taken_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE mature_snapshot_taken_at END,
+                       last_checked_at=CURRENT_TIMESTAMP, check_count=check_count + 1
+                 WHERE video_id=?
+                """,
+                (like_count, comment_count, share_count, collect_count, 1 if has_matured else 0, video_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO video_checks(check_id, video_id, discovery_batch_index, day_since_publish, like_count, comment_count, share_count, collect_count, run_id)
+                VALUES(?, ?, NULL, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(check_id) DO NOTHING
+                """,
+                (
+                    stable_check_id(video_id, run_id), video_id, _day_since_publish(published_at, now),
+                    like_count, comment_count, share_count, collect_count, run_id,
+                ),
+            )
+            checks_recorded += 1
+            if has_matured:
+                matured += 1
+            updated += 1
+            continue
+
+        if video_row["first_contact_category"] == "formal_new" and not video_row["tracking_completed"]:
+            next_index = _next_discovery_batch_index(conn, video_id)
+            tracking_completed = 1 if next_index >= 7 else 0
+            conn.execute(
+                """
+                UPDATE competitor_videos
+                   SET like_count=?, comment_count=?, share_count=?, collect_count=?,
+                       tracking_completed=?, last_checked_at=CURRENT_TIMESTAMP, check_count=check_count + 1
+                 WHERE video_id=?
+                """,
+                (like_count, comment_count, share_count, collect_count, tracking_completed, video_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO video_checks(check_id, video_id, discovery_batch_index, like_count, comment_count, share_count, collect_count, run_id)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(check_id) DO NOTHING
+                """,
+                (stable_check_id(video_id, run_id), video_id, next_index, like_count, comment_count, share_count, collect_count, run_id),
+            )
+            d_points_recorded += 1
+            updated += 1
+            continue
+
+        # historical_mature (or an already-matured transition / already-tracking_completed
+        # formal_new): the one-time snapshot(s) are frozen by design, daily incremental
+        # does not keep refreshing them.
         updated += 1
-        checks_recorded += 1
 
     inserted = 0
     for item in new_items:
         platform_item_id = _required_text(item.get("aweme_id") or item.get("source_id") or item.get("id"), "aweme_id")
         video_id = stable_video_id(account["account_id"], platform_item_id)
         published_at = _item_publish_datetime(item)
-        explicit_pinned = _explicit_pinned_value(item)
+        discovery_delay_hours = (
+            round((now - published_at).total_seconds() / 3600, 2) if published_at is not None else None
+        )
         like_count = _optional_int(item.get("liked_count") or item.get("like_count"))
         comment_count = _optional_int(item.get("comment_count"))
         share_count = _optional_int(item.get("share_count"))
         collect_count = _optional_int(item.get("collected_count") or item.get("collect_count"))
-
-        if explicit_pinned:
-            status, excluded_reason = "archived", "pinned"
-        elif published_at is None or published_at < window_start:
-            status, excluded_reason = "archived", None
-        else:
-            status, excluded_reason = "watching", None
+        excluded_reason = None if published_at is not None else "missing_publish_time"
 
         conn.execute(
             """
             INSERT INTO competitor_videos(
                 video_id, account_id, platform, platform_item_id, title, url, publish_time,
                 duration_sec, like_count, comment_count, share_count, collect_count,
-                is_pinned, excluded_reason, status, registration_run_id, raw_archive_ref, raw_json
+                first_contact_category, discovery_delay_hours, excluded_reason,
+                registration_run_id, raw_archive_ref, raw_json
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'formal_new', ?, ?, ?, ?, ?)
             """,
             (
                 video_id,
@@ -404,9 +499,8 @@ def ingest_daily_incremental_items(
                 comment_count,
                 share_count,
                 collect_count,
-                1 if explicit_pinned else 0,
+                discovery_delay_hours,
                 excluded_reason,
-                status,
                 run_id,
                 raw_archive_ref,
                 json.dumps(item, ensure_ascii=False, sort_keys=True),
@@ -414,16 +508,32 @@ def ingest_daily_incremental_items(
         )
         conn.execute(
             """
-            INSERT INTO video_checks(check_id, video_id, like_count, comment_count, share_count, collect_count, run_id)
-            VALUES(?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO video_checks(check_id, video_id, discovery_batch_index, like_count, comment_count, share_count, collect_count, run_id)
+            VALUES(?, ?, 0, ?, ?, ?, ?, ?)
             ON CONFLICT(check_id) DO NOTHING
             """,
             (stable_check_id(video_id, run_id), video_id, like_count, comment_count, share_count, collect_count, run_id),
         )
         inserted += 1
         checks_recorded += 1
+        d_points_recorded += 1
 
-    return {"inserted": inserted, "updated": updated, "checks_recorded": checks_recorded}
+    return {
+        "inserted": inserted,
+        "updated": updated,
+        "checks_recorded": checks_recorded,
+        "transition_matured": matured,
+        "d_points_recorded": d_points_recorded,
+    }
+
+
+def _next_discovery_batch_index(conn: sqlite3.Connection, video_id: str) -> int:
+    row = conn.execute(
+        "SELECT MAX(discovery_batch_index) AS max_index FROM video_checks WHERE video_id=? AND discovery_batch_index IS NOT NULL",
+        (video_id,),
+    ).fetchone()
+    current = row["max_index"]
+    return 0 if current is None else int(current) + 1
 
 
 def crawl_registration_stock_once(
@@ -439,7 +549,7 @@ def crawl_registration_stock_once(
     if result["status"] != "succeeded":
         result["inserted_videos"] = 0
         result["updated_videos"] = 0
-        result["valid_baseline_candidates"] = 0
+        result["mature_history_sample_count"] = 0
         return result
     inserted, updated = ingest_stock_items(
         conn, account, result["items"], hit_cfg=hit_cfg, run_id=run_id, raw_archive_ref=result["raw_archive_ref"]
@@ -448,7 +558,9 @@ def crawl_registration_stock_once(
     result = dict(result)
     result["inserted_videos"] = inserted
     result["updated_videos"] = updated
-    result["valid_baseline_candidates"] = settled_sample_count(conn, account["account_id"], hit_cfg)
+    result["mature_history_sample_count"] = len(
+        _mature_history_pool(conn, account["account_id"], hit_cfg, datetime.now(timezone.utc))[0]
+    )
     result.pop("items", None)
     return result
 
@@ -487,10 +599,10 @@ def run_daily_incremental(
     account_limit: int | None = None,
     executor: LocalMediaCrawlerExecutor | None = None,
 ) -> dict[str, Any]:
-    """BUILD_PLAN.md 阶段1/3 (定时·快·不碰逆向转写): one daily invocation that discovers
-    newly-published videos, refreshes the observation pool, and judges/graduates
-    everything that has aged past the observation window -- all in one contract-gated
-    entrypoint, same discipline as run_full_registration/run_rejudge_only.
+    """One daily invocation: discover new videos, advance every formal_new
+    video's D-series, mature any transition videos that have turned 7 days
+    published, and judge -- all under the same execution-contract gate as
+    run_full_registration/run_rejudge_only.
     """
     execution_contract = validate_registration_execution_contract(domain, hit_cfg)
     daily_max_notes = crawler_cfg.get("daily_max_notes")
@@ -522,6 +634,7 @@ def run_daily_incremental(
         "platform": domain["platform"],
         "policy": {
             "execution_guardrail": EXECUTION_GUARDRAIL_DOC,
+            "design_authority": MASTER_DESIGN_DOC,
             "comments_collected": False,
             "llm_used": False,
             "contract": execution_contract,
@@ -536,329 +649,548 @@ def run_daily_incremental(
     }
 
 
+# ---------------------------------------------------------------------------
+# BR-HIT-001 section C: four baselines
+# ---------------------------------------------------------------------------
+
+
+def _mature_history_pool(
+    conn: sqlite3.Connection, account_id: str, hit_cfg: dict[str, Any], now: datetime
+) -> tuple[list[sqlite3.Row], bool]:
+    """Rolling pool: this account's historical_mature videos, plus matured
+    transition videos, published within the trailing window, capped at the
+    configured max -- re-evaluated fresh each time, not a stored/maintained set.
+    Returns (pool, used_backfill).
+
+    2026-07-08 user decision: reinstates a narrower version of the master
+    document's retired legacy_supplement/backfill-outside-the-90-day-window
+    behavior (see BR-BASELINE-003's status note on why it was originally
+    dropped). Scoped ONLY to accounts that are both high-magnitude and have
+    enough lifetime content for backfilling to be meaningful -- a slow-posting
+    account whose typical numbers are small stays exactly as underpowered as
+    before (no backfill). A slow-posting account whose lifetime content is
+    clearly high-magnitude, and which has at least unified_min_samples videos
+    across its FULL history (not just the 90-day window), gets its pool
+    topped up with older videos from beyond the window, capped at
+    mature_history_max_samples -- the same real-world case that surfaced this
+    (an account with 55 lifetime videos, high six-figure like counts, but only
+    17 within the last 90 days, which could never otherwise get a baseline).
+    """
+    window_start = now - timedelta(days=int(hit_cfg["mature_history_window_days"]))
+    cap = int(hit_cfg["mature_history_max_samples"])
+    unified_min_samples = int(hit_cfg["unified_min_samples"])
+
+    query = """
+        SELECT * FROM competitor_videos
+         WHERE account_id=?
+           AND publish_time IS NOT NULL
+           {window_clause}
+           AND (
+                first_contact_category = 'historical_mature'
+                OR (first_contact_category = 'transition' AND mature_snapshot_taken_at IS NOT NULL)
+           )
+         ORDER BY publish_time DESC
+    """
+    in_window_rows = conn.execute(
+        query.format(window_clause="AND publish_time >= ?"), (account_id, window_start.isoformat())
+    ).fetchall()
+    in_window_pool = in_window_rows[:cap]
+    if len(in_window_pool) >= unified_min_samples:
+        return in_window_pool, False
+
+    full_rows = conn.execute(query.format(window_clause=""), (account_id,)).fetchall()
+    full_pool = full_rows[:cap]
+    if len(full_pool) < unified_min_samples:
+        return in_window_pool, False
+
+    like_values = [row["like_count"] for row in full_pool if row["like_count"] is not None]
+    if not like_values:
+        return in_window_pool, False
+    full_like_median = statistics.median(like_values)
+    single_threshold = float(hit_cfg["cold_start_d7_single_metric_threshold"])
+    absolute_floor = float(hit_cfg["mature_history_absolute_like_floor"])
+    if full_like_median * single_threshold < absolute_floor:
+        return in_window_pool, False
+
+    return full_pool, True
+
+
+def _mature_history_medians(pool: list[sqlite3.Row], unified_min_samples: int) -> dict[str, float]:
+    if len(pool) < unified_min_samples:
+        return {}
+    medians: dict[str, float] = {}
+    for metric in METRICS:
+        values = [row[metric] for row in pool if row[metric] is not None]
+        if values:
+            medians[metric] = float(statistics.median(values))
+    return medians
+
+
+def _formal_d_predecessor_pool(conn: sqlite3.Connection, account_id: str, hit_cfg: dict[str, Any]) -> list[sqlite3.Row]:
+    """All formal_new videos eligible to be someone else's baseline predecessor:
+    tracking_completed (full D0-D7) AND within the discovery-delay gate.
+    """
+    delay_max = float(hit_cfg["discovery_delay_hours_max"])
+    rows = conn.execute(
+        """
+        SELECT * FROM competitor_videos
+         WHERE account_id=?
+           AND first_contact_category='formal_new'
+           AND tracking_completed=1
+           AND discovery_delay_hours IS NOT NULL
+           AND discovery_delay_hours <= ?
+         ORDER BY publish_time DESC
+        """,
+        (account_id, delay_max),
+    ).fetchall()
+    return rows
+
+
+def _formal_d_baseline_medians(
+    conn: sqlite3.Connection, predecessor_pool: list[sqlite3.Row], observation_point: str, window: int
+) -> dict[str, float]:
+    """Median per metric, at one D-point, over the most recent `window`
+    predecessor videos (BR-HIT-001 section C(3): the ongoing computation
+    window is corrected to align with mature_history_max_samples, not fixed
+    at the activation-gate size of 20).
+    """
+    candidates = predecessor_pool[:window]
+    if not candidates:
+        return {}
+    video_ids = [row["video_id"] for row in candidates]
+    placeholders = ",".join("?" for _ in video_ids)
+    checks = conn.execute(
+        f"""
+        SELECT video_id, like_count, comment_count, share_count, collect_count
+          FROM video_checks
+         WHERE video_id IN ({placeholders}) AND discovery_batch_index = ?
+        """,
+        (*video_ids, int(observation_point[1:])),
+    ).fetchall()
+    medians: dict[str, float] = {}
+    for metric in METRICS:
+        values = [row[metric] for row in checks if row[metric] is not None]
+        if len(values) >= 1:
+            medians[metric] = float(statistics.median(values))
+    return medians
+
+
+# ---------------------------------------------------------------------------
+# BR-HIT-001 section D: trigger channels
+# ---------------------------------------------------------------------------
+
+
+def _evaluate_magnitude_channels(
+    current: dict[str, int | None], median: dict[str, float], single_threshold: float, multi_threshold: float
+) -> list[str]:
+    """formal_d_series channel only. Every entry states the actual multiple
+    achieved (e.g. 'like_anomaly:3.24x'), not just the bare channel name, so a
+    reader can see exactly why a video qualified without cross-referencing the
+    baseline separately.
+    """
+    fired: list[str] = []
+    cleared_multi: list[str] = []
+    for metric in METRICS:
+        value = current.get(metric)
+        med = median.get(metric)
+        if value is None or med is None or med <= 0:
+            continue
+        ratio = value / med
+        if ratio >= single_threshold:
+            fired.append(f"{METRIC_RULE_NAME[metric]}:{ratio:.2f}x")
+        if ratio >= multi_threshold:
+            cleared_multi.append(f"{METRIC_RULE_NAME[metric]}={ratio:.2f}x")
+    if len(cleared_multi) >= 2:
+        fired.append("multi_indicator:" + ";".join(cleared_multi))
+    return fired
+
+
+def _percentile(values: list[int], pct: float) -> float:
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return float(ordered[0])
+    index = min(len(ordered) - 1, int(len(ordered) * pct))
+    return float(ordered[index])
+
+
+def _account_small_status(
+    mature_pool: list[sqlite3.Row],
+    mature_medians: dict[str, float],
+    single_threshold: float,
+    absolute_floor: float,
+    p90_percentile: float,
+) -> tuple[bool, float | None]:
+    """2026-07-08 user decision: an account is 'small' for the mature-history
+    channel when even its best-case comparison (median * single_threshold)
+    could never reach the absolute like floor -- the fixed floor would lock it
+    out forever, so it gets an alternate bar: its own like_count distribution's
+    P90, instead of the normal ratio+floor path.
+    """
+    like_median = mature_medians.get("like_count")
+    if like_median is None or like_median * single_threshold >= absolute_floor:
+        return False, None
+    like_values = [row["like_count"] for row in mature_pool if row["like_count"] is not None]
+    if not like_values:
+        return True, None
+    return True, _percentile(like_values, p90_percentile)
+
+
+def _evaluate_mature_history_channel(
+    current: dict[str, int | None],
+    medians: dict[str, float],
+    single_threshold: float,
+    multi_threshold: float,
+    absolute_floor: float,
+    is_small_account: bool,
+    account_like_p90: float | None,
+) -> list[str]:
+    """The mature-history/rough channel (BR-HIT-001 section C(2)): used for
+    historical_mature/transition videos (the only magnitude-based channel
+    available at first registration, since those never get a D-series) and for
+    a formal_new video at D7 while the formal D baseline is not yet active.
+    Small accounts (see _account_small_status) use their own P90 as the bar
+    instead of the normal ratio+absolute-floor path -- always labelled
+    p90_small_account so it is never confused with the normal path's evidence.
+    """
+    like_count = current.get("like_count")
+    if is_small_account:
+        if like_count is not None and account_like_p90 is not None and like_count >= account_like_p90:
+            return [f"p90_small_account:like={like_count}>=p90:{account_like_p90:.0f}"]
+        return []
+    if like_count is None or like_count < absolute_floor:
+        return []
+    fired: list[str] = []
+    cleared_multi: list[str] = []
+    for metric in METRICS:
+        value = current.get(metric)
+        med = medians.get(metric)
+        if value is None or med is None or med <= 0:
+            continue
+        ratio = value / med
+        if ratio >= single_threshold:
+            fired.append(f"{METRIC_RULE_NAME[metric]}:{ratio:.2f}x")
+        if ratio >= multi_threshold:
+            cleared_multi.append(f"{METRIC_RULE_NAME[metric]}={ratio:.2f}x")
+    if len(cleared_multi) >= 2:
+        fired.append("multi_indicator:" + ";".join(cleared_multi))
+    return fired
+
+
+def _comment_like_ratio_label(like_count: int | None, comment_count: int | None, threshold: float) -> str | None:
+    if not like_count or comment_count is None:
+        return None
+    ratio = comment_count / like_count
+    if ratio >= threshold:
+        return f"comment_like_ratio:{ratio:.3f}"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Judgement
+# ---------------------------------------------------------------------------
+
+
 def judge_domain(conn: sqlite3.Connection, domain_label: str, *, hit_cfg: dict[str, Any], run_id: str) -> dict[str, Any]:
     rows = _load_accounts(conn, domain_label, limit=None)
     results: list[dict[str, Any]] = []
-    total_hits = 0
-    total_retracted = 0
-    total_graduated = 0
-    total_promoted_early = 0
+    total_promoted = 0
+    total_formal = 0
+    total_rough = 0
+    total_accounts_using_backfill = 0
     for account in rows:
         account_result = judge_account(conn, account, hit_cfg=hit_cfg, run_id=run_id)
-        total_hits += account_result["promoted_count"]
-        total_retracted += account_result.get("retracted_count", 0)
-        total_graduated += account_result.get("graduated_count", 0)
-        total_promoted_early += account_result.get("promoted_early_count", 0)
+        total_promoted += account_result["promoted_count"]
+        total_formal += account_result["formal_hit_count"]
+        total_rough += account_result["rough_hit_count"]
+        if account_result["mature_history_used_backfill"]:
+            total_accounts_using_backfill += 1
         results.append(account_result)
     return {
-        "total_promoted": total_hits,
-        "total_retracted": total_retracted,
-        "total_graduated": total_graduated,
-        "total_promoted_early": total_promoted_early,
+        "total_promoted": total_promoted,
+        "total_formal_hits": total_formal,
+        "total_rough_hits": total_rough,
+        "total_accounts_using_mature_history_backfill": total_accounts_using_backfill,
         "accounts": results,
     }
 
 
-def settled_sample_count(conn: sqlite3.Connection, account_id: str, hit_cfg: dict[str, Any]) -> int:
-    rows = conn.execute(SETTLED_SAMPLE_QUERY, (account_id,)).fetchall()
-    sample, _ = select_baseline_sample(rows, hit_cfg)
-    return len(sample)
+def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: dict[str, Any], run_id: str) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    account_id = account["account_id"]
+    unified_min_samples = int(hit_cfg["unified_min_samples"])
+    single_threshold = float(hit_cfg["single_metric_excess_threshold"])
+    multi_threshold = float(hit_cfg["multi_indicator_excess_threshold"])
+    cold_start_single_threshold = float(hit_cfg["cold_start_d7_single_metric_threshold"])
+    cold_start_multi_threshold = float(hit_cfg["cold_start_d7_multi_indicator_threshold"])
+    mature_history_absolute_like_floor = float(hit_cfg["mature_history_absolute_like_floor"])
+    small_account_p90_percentile = float(hit_cfg["small_account_p90_percentile"])
+    comment_like_ratio_threshold = float(hit_cfg["comment_like_ratio_threshold"])
+    activation_min_samples = int(hit_cfg["formal_baseline_activation_min_samples"])
+    computation_window = int(hit_cfg["formal_baseline_computation_window"])
 
+    # --- (1) mature history baseline ---
+    mature_pool, mature_history_used_backfill = _mature_history_pool(conn, account_id, hit_cfg, now)
+    mature_medians = _mature_history_medians(mature_pool, unified_min_samples)
+    if mature_medians:
+        baseline_id_mature = stable_baseline_id(account_id, run_id + ":mature_history")
+        for metric, value in mature_medians.items():
+            sample_count = len([row for row in mature_pool if row[metric] is not None])
+            _insert_baseline(
+                conn, baseline_id_mature + ":" + metric, account_id, "mature_history", metric, None, sample_count, value, run_id
+            )
+    is_small_account, account_like_p90 = _account_small_status(
+        mature_pool, mature_medians, cold_start_single_threshold, mature_history_absolute_like_floor, small_account_p90_percentile
+    )
 
-def _account_day_reference_median(conn: sqlite3.Connection, account_id: str, day_offset: int) -> float | None:
-    """Median like_count across this account's OTHER videos' video_checks history,
-    restricted to checks recorded exactly `day_offset` days after that video's own
-    publish_time. Returns None (not zero, not a guess) when there are fewer than
-    DAY_REFERENCE_MIN_SAMPLES such checks -- the caller must skip the channel, not
-    fabricate a reference from too few points.
-    """
-    rows = conn.execute(
+    # --- (2) formal D baseline activation ---
+    predecessor_pool = _formal_d_predecessor_pool(conn, account_id, hit_cfg)
+    formal_d_active = len(predecessor_pool) >= activation_min_samples
+
+    promoted = 0
+    formal_hits = 0
+    rough_hits = 0
+
+    formal_new_rows = conn.execute(
+        "SELECT * FROM competitor_videos WHERE account_id=? AND first_contact_category='formal_new'",
+        (account_id,),
+    ).fetchall()
+
+    for video_row in formal_new_rows:
+        latest_check = conn.execute(
+            """
+            SELECT * FROM video_checks
+             WHERE video_id=? AND discovery_batch_index IS NOT NULL
+             ORDER BY discovery_batch_index DESC LIMIT 1
+            """,
+            (video_row["video_id"],),
+        ).fetchone()
+        if latest_check is None:
+            continue
+        observation_point = f"D{latest_check['discovery_batch_index']}"
+        current = {metric: latest_check[metric] for metric in METRICS}
+        fired: list[str] = []
+        baseline_mode: str | None = None
+        judgment_confidence: str | None = None
+        baseline_id_for_hit: str | None = None
+
+        if formal_d_active:
+            eligible_predecessors = [row for row in predecessor_pool if row["video_id"] != video_row["video_id"]]
+            d_medians = _formal_d_baseline_medians(conn, eligible_predecessors, observation_point, computation_window)
+            if d_medians:
+                fired = _evaluate_magnitude_channels(current, d_medians, single_threshold, multi_threshold)
+                if fired:
+                    baseline_mode = "formal_d_series"
+                    judgment_confidence = "formal"
+                    baseline_id_for_hit = stable_baseline_id(account_id, run_id + ":formal_d:" + observation_point)
+                    for metric, value in d_medians.items():
+                        _insert_baseline(
+                            conn, baseline_id_for_hit + ":" + metric, account_id, "formal_d_series", metric,
+                            observation_point, len(eligible_predecessors), value, run_id,
+                        )
+        elif observation_point == "D7" and mature_medians:
+            # BR-HIT-001 section C(2) / master doc chapter 20.2 "存量高信号": this
+            # IS a real hit -- the document explicitly allows it to be called
+            # "历史爆款" -- just tagged judgment_confidence=rough (a different
+            # evidence caliber from formal_d_series, not "not a hit").
+            cold_start_fired = _evaluate_mature_history_channel(
+                current, mature_medians, cold_start_single_threshold, cold_start_multi_threshold,
+                mature_history_absolute_like_floor, is_small_account, account_like_p90,
+            )
+            if cold_start_fired:
+                fired = cold_start_fired
+                baseline_mode = "mature_history"
+                judgment_confidence = "rough"
+
+        ratio_label = _comment_like_ratio_label(video_row["like_count"], video_row["comment_count"], comment_like_ratio_threshold)
+        if ratio_label:
+            fired = list(fired) + [ratio_label]
+            judgment_confidence = "formal"
+
+        if fired:
+            was_new = _record_trigger(
+                conn, account, video_row, observation_point, fired,
+                baseline_mode=baseline_mode, judgment_confidence=judgment_confidence or "formal",
+                baseline_id=baseline_id_for_hit, run_id=run_id,
+            )
+            if was_new:
+                promoted += 1
+                # 2026-07-08 bug fix: count by which channel(s) actually fired, not
+                # by judgment_confidence -- that field gets overwritten to "formal"
+                # whenever comment_like_ratio ALSO fires on a video that already
+                # cleared the mature_history/formal_d_series channel, which was
+                # silently hiding those videos from rough_hits (baseline_mode itself
+                # is never overwritten, so it is the reliable signal here). A video
+                # that fires two channels increments both counters -- these are
+                # per-channel counts, not a partition, so rough+formal can exceed
+                # promoted_count.
+                if baseline_mode == "mature_history":
+                    rough_hits += 1
+                if baseline_mode == "formal_d_series" or ratio_label:
+                    formal_hits += 1
+
+    # --- historical_mature / transition videos: they never have a D-series, so
+    # neither ever uses the formal D baseline. Two independent checks:
+    # (1) comment_like_ratio -- needs no baseline, always formal-confidence.
+    # (2) BR-HIT-001 section C(2) / master doc chapter 20.2 "存量高信号": this
+    # video's own numbers vs the mature_history baseline -- a real
+    # history_high_signal hit (informally "历史爆款" per the document), tagged
+    # judgment_confidence=rough to keep its evidence caliber distinct from
+    # formal_d_series hits, per the document's explicit instruction not to mix
+    # the two calibers -- not excluded from the hits table.
+    other_rows = conn.execute(
         """
-        SELECT vc.like_count, vc.checked_at, cv.publish_time
-          FROM video_checks vc
-          JOIN competitor_videos cv ON cv.video_id = vc.video_id
-         WHERE cv.account_id = ? AND vc.like_count IS NOT NULL AND cv.publish_time IS NOT NULL
+        SELECT * FROM competitor_videos
+         WHERE account_id=? AND first_contact_category IN ('historical_mature', 'transition')
         """,
         (account_id,),
     ).fetchall()
-    values: list[int] = []
-    for row in rows:
-        published_at = _parse_datetime(row["publish_time"])
-        checked_at = _parse_datetime(row["checked_at"])
-        if published_at is None or checked_at is None:
-            continue
-        if (checked_at.date() - published_at.date()).days == day_offset:
-            values.append(int(row["like_count"]))
-    if len(values) < DAY_REFERENCE_MIN_SAMPLES:
-        return None
-    return float(statistics.median(values))
+    # Bug fix 2026-07-08: mature_medians is computed from mature_pool (the
+    # trailing 90-day/50-cap rolling window). A video outside that window (too
+    # old, or beyond the 50-cap) is NOT part of the baseline that would judge
+    # it -- checking it against a baseline it does not belong to inflates the
+    # hit count with comparisons that were never actually apples-to-apples.
+    # Only videos that are themselves members of mature_pool are eligible for
+    # the mature-history magnitude channel; comment_like_ratio still applies to
+    # every historical_mature/transition video regardless, since it needs no
+    # baseline at all.
+    mature_pool_video_ids = {row["video_id"] for row in mature_pool}
+    for video_row in other_rows:
+        observation_point = video_row["first_contact_category"]
+        fired: list[str] = []
+        baseline_mode: str | None = None
+        judgment_confidence: str | None = None
 
+        if mature_medians and video_row["video_id"] in mature_pool_video_ids:
+            current = {metric: video_row[metric] for metric in METRICS}
+            history_fired = _evaluate_mature_history_channel(
+                current, mature_medians, cold_start_single_threshold, cold_start_multi_threshold,
+                mature_history_absolute_like_floor, is_small_account, account_like_p90,
+            )
+            if history_fired:
+                fired = history_fired
+                baseline_mode = "mature_history"
+                judgment_confidence = "rough"
 
-def _evaluate_hit_channels(
-    row: sqlite3.Row, like_threshold: float, comment_like_ratio_threshold: float
-) -> tuple[bool, bool]:
-    like_count = int(row["like_count"] or 0)
-    comment_like_ratio = (
-        row["comment_count"] / like_count if row["comment_count"] is not None and like_count > 0 else None
-    )
-    like_channel_hit = like_count >= like_threshold
-    ratio_channel_hit = comment_like_ratio is not None and comment_like_ratio >= comment_like_ratio_threshold
-    return like_channel_hit, ratio_channel_hit
+        ratio_label = _comment_like_ratio_label(video_row["like_count"], video_row["comment_count"], comment_like_ratio_threshold)
+        if ratio_label:
+            fired = list(fired) + [ratio_label]
+            judgment_confidence = "formal"
 
-
-def _hit_channel_label(like_channel_hit: bool, ratio_channel_hit: bool) -> str:
-    if like_channel_hit and ratio_channel_hit:
-        return "both"
-    if like_channel_hit:
-        return "like_threshold"
-    return "comment_like_ratio"
-
-
-def _promote_hit(
-    conn: sqlite3.Connection,
-    account: sqlite3.Row,
-    row: sqlite3.Row,
-    *,
-    median: float,
-    baseline_id: str,
-    hit_channel: str,
-    evidence_status: str,
-    run_id: str,
-) -> None:
-    like_count = int(row["like_count"] or 0)
-    hit_id = stable_hit_id(account["account_id"], row["platform_item_id"])
-    excess_ratio = round(like_count / median, 2) if median else None
-    share_comment_ratio = (
-        round(int(row["share_count"]) / int(row["comment_count"]), 2)
-        if row["share_count"] and row["comment_count"]
-        else None
-    )
-    conn.execute(
-        """
-        INSERT INTO hits(
-            hit_id, video_id, account_id, platform, platform_item_id, title, url,
-            publish_time, like_count, comment_count, share_count, collect_count,
-            excess_ratio, share_comment_ratio, baseline_id, hit_channel, evidence_status, run_id
-        )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(account_id, platform_item_id) DO UPDATE SET
-            like_count=excluded.like_count,
-            comment_count=excluded.comment_count,
-            share_count=excluded.share_count,
-            collect_count=excluded.collect_count,
-            excess_ratio=excluded.excess_ratio,
-            share_comment_ratio=excluded.share_comment_ratio,
-            baseline_id=excluded.baseline_id,
-            hit_channel=excluded.hit_channel,
-            evidence_status=excluded.evidence_status,
-            run_id=excluded.run_id
-        """,
-        (
-            hit_id,
-            row["video_id"],
-            account["account_id"],
-            row["platform"],
-            row["platform_item_id"],
-            row["title"],
-            row["url"],
-            row["publish_time"],
-            row["like_count"],
-            row["comment_count"],
-            row["share_count"],
-            row["collect_count"],
-            excess_ratio,
-            share_comment_ratio,
-            baseline_id,
-            hit_channel,
-            evidence_status,
-            run_id,
-        ),
-    )
-    conn.execute("UPDATE competitor_videos SET status='promoted' WHERE video_id=?", (row["video_id"],))
-
-
-def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: dict[str, Any], run_id: str) -> dict[str, Any]:
-    rows = conn.execute(SETTLED_SAMPLE_QUERY, (account["account_id"],)).fetchall()
-    sample, sample_window = select_baseline_sample(rows, hit_cfg)
-    target_samples = int(hit_cfg.get("baseline_min_samples", 30))
-    if len(sample) < BASELINE_HARD_MINIMUM_SAMPLES:
-        return {
-            "account": account["account_name"],
-            "sample_count": len(sample),
-            "minimum_sample_count": BASELINE_HARD_MINIMUM_SAMPLES,
-            "status": "skipped_insufficient_sample",
-            "evidence_status": "insufficient_sample",
-            "promoted_count": 0,
-        }
-    # BR-BASELINE-003: below the documented 30-sample target, judgement may proceed
-    # (the account may never accumulate more without ongoing daily collection) but any
-    # resulting hit must carry an explicit insufficient-evidence flag -- never promoted
-    # silently as if the baseline were fully powered.
-    evidence_status = "sufficient" if len(sample) >= target_samples else "insufficient_sample"
-    likes = [int(row["like_count"]) for row in sample if row["like_count"] is not None]
-    median = float(statistics.median(likes))
-    p90_value = p90(likes)
-    # BR-HIT-001 (2026-07-06 revision): threshold = max(median * excess_threshold,
-    # min(P90, hit_floor_absolute_like_count)). P90 alone is close to tautological on a
-    # small, self-referential sample -- ~10% of any account's videos clear its own P90
-    # by definition, regardless of whether that account has a genuine standout. Capping
-    # it at the configurable absolute floor stops it from mechanically outranking every
-    # other account at the same fixed percentile, while still giving small accounts
-    # (whose P90 never reaches the floor) a reachable relative bar instead of a
-    # permanently unreachable absolute one. There is no separate p90_required toggle --
-    # P90 always participates, just bounded.
-    hit_floor = float(hit_cfg["hit_floor_absolute_like_count"])
-    like_threshold = max(median * float(hit_cfg["excess_threshold"]), min(p90_value, hit_floor))
-    # BR-HIT-001 (2026-07-07 revision): a second, independent channel -- comment_count /
-    # like_count -- is OR-ed alongside the like_count channel. Unlike like_threshold,
-    # this is NOT computed from this account's own baseline; it is a fixed threshold
-    # sourced from published Douyin operator guidance on comment-to-like ratio (10%
-    # floor, ~30% for a typical hit), verified against the real 28-account/1253-video
-    # dataset before being adopted (see BUSINESS_RULE_CATALOG.yaml amendment). It exists
-    # because a video can be a genuine hit through unusually deep comment engagement
-    # even when its raw like_count never clears the account's own scale threshold --
-    # exactly the case that left one real account (财经不眠姐) with zero hits under the
-    # like-only formula. collect_count/share_count ratios were evaluated the same way
-    # but no published threshold survived contact with the real dataset (see amendment
-    # note), so those two dimensions are not judged yet.
-    comment_like_ratio_threshold = float(hit_cfg["comment_like_ratio_threshold"])
-    # 2026-07-07 user decision: a day-specific reference channel for still-watching
-    # videos -- see _account_day_reference_median and its use below. Same numeric
-    # value (2.0) as excess_threshold itself now (both were lowered from 3.0 for the
-    # same reason -- a 3x bar pulls the standard too high for large accounts) but
-    # this is a separately configurable value on purpose: it multiplies a
-    # day-of-life-specific reference, not the mature/settled one, so the two are free
-    # to diverge again later without one change silently dragging the other along.
-    early_excess_threshold = float(hit_cfg.get("early_excess_threshold", 2.0))
-    baseline_id = stable_baseline_id(account["account_id"], run_id)
-    conn.execute(
-        """
-        INSERT INTO baselines(
-            baseline_id, account_id, metric, window_days, sample_count,
-            median_value, p90_value, threshold_value, evidence_status, run_id
-        )
-        VALUES(?, ?, 'like_count', ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(baseline_id) DO NOTHING
-        """,
-        (
-            baseline_id,
-            account["account_id"],
-            sample_window,
-            len(likes),
-            median,
-            p90_value,
-            like_threshold,
-            evidence_status,
-            run_id,
-        ),
-    )
-    promoted = 0
-    retracted = 0
-    graduated = 0
-    promoted_via_ratio_channel = 0
-    promoted_early = 0
-    for row in sample:
-        like_channel_hit, ratio_channel_hit = _evaluate_hit_channels(row, like_threshold, comment_like_ratio_threshold)
-        if not (like_channel_hit or ratio_channel_hit):
-            # BR-HIT-003 (idempotent judgement): a video re-evaluated in this same
-            # judgement pass that no longer clears either recomputed channel must not
-            # stay marked as a hit from an earlier, since-corrected judgement. Scoped
-            # to the current sample only -- videos outside this run's sample are a
-            # past judgement's point-in-time record and are left alone.
-            if row["status"] == "promoted":
-                conn.execute("DELETE FROM hits WHERE video_id=?", (row["video_id"],))
-                conn.execute("UPDATE competitor_videos SET status='archived' WHERE video_id=?", (row["video_id"],))
-                retracted += 1
-            elif row["status"] == "watching":
-                # BUILD_PLAN.md 阶段2: "watching 到期(>7天)-> archived 转基线材料" -- this
-                # row only reached `sample` because select_baseline_sample's own age check
-                # confirmed it has left the observation window, so this is its first-ever
-                # judgement (graduation), not a retraction: it was never a hit, it settles
-                # as ordinary baseline material and daily incremental stops touching it.
-                conn.execute("UPDATE competitor_videos SET status='archived' WHERE video_id=?", (row["video_id"],))
-                graduated += 1
-            continue
-        hit_channel = _hit_channel_label(like_channel_hit, ratio_channel_hit)
-        _promote_hit(
-            conn, account, row,
-            median=median, baseline_id=baseline_id, hit_channel=hit_channel,
-            evidence_status=evidence_status, run_id=run_id,
-        )
-        promoted += 1
-        if hit_channel in ("comment_like_ratio", "both"):
-            promoted_via_ratio_channel += 1
-
-    # 2026-07-07 user decision: the point of capturing a still-watching video's own
-    # 0-7 day video_checks curve is to actually use it, not just store it. A video
-    # still inside the observation window that already clears the account's existing
-    # hit threshold is promoted right now -- not held back until it ages out. This
-    # uses the same already-validated hit criteria as the settled-sample loop above,
-    # not a separate growth-curve/steepness model (no historical trajectory data
-    # exists yet to calibrate one responsibly). A still-watching video that has NOT
-    # cleared either channel is left untouched here -- it stays 'watching' and will
-    # either clear the bar on a future day or graduate via the loop above once it
-    # ages past observe_days without ever clearing it.
-    promoted_via_day_reference = 0
-    watching_rows = conn.execute(
-        "SELECT * FROM competitor_videos WHERE account_id=? AND status='watching' AND like_count IS NOT NULL",
-        (account["account_id"],),
-    ).fetchall()
-    for row in watching_rows:
-        like_channel_hit, ratio_channel_hit = _evaluate_hit_channels(row, like_threshold, comment_like_ratio_threshold)
-        day_reference_hit = False
-        if not (like_channel_hit or ratio_channel_hit):
-            # 2026-07-07: comparing a still-young video against the mature threshold
-            # (calibrated for >=7 day-old videos) almost never fires this early, which
-            # defeats the point of checking at all -- so also compare it against this
-            # account's own historical median at the SAME day-of-life, computed from
-            # video_checks. Skipped entirely (not a soft zero) when there isn't enough
-            # day-specific history yet to trust that median.
-            published_at = _parse_datetime(row["publish_time"])
-            if published_at is not None:
-                day_offset = (datetime.now(timezone.utc).date() - published_at.date()).days
-                day_reference_median = _account_day_reference_median(conn, account["account_id"], day_offset)
-                if day_reference_median is not None:
-                    like_count = int(row["like_count"] or 0)
-                    day_reference_hit = like_count >= day_reference_median * early_excess_threshold
-        if not (like_channel_hit or ratio_channel_hit or day_reference_hit):
-            continue
-        if day_reference_hit and not (like_channel_hit or ratio_channel_hit):
-            # Reuses the 'like_threshold' label (a magnitude-based like_count check,
-            # same category, just against a day-specific reference instead of the
-            # mature one) rather than adding a new hits.hit_channel enum value, which
-            # would require migrating the CHECK constraint on the real production
-            # table. promoted_via_day_reference_count is the source of truth for how
-            # many hits this specific channel produced.
-            hit_channel = "like_threshold"
-            promoted_via_day_reference += 1
-        else:
-            hit_channel = _hit_channel_label(like_channel_hit, ratio_channel_hit)
-        _promote_hit(
-            conn, account, row,
-            median=median, baseline_id=baseline_id, hit_channel=hit_channel,
-            evidence_status=evidence_status, run_id=run_id,
-        )
-        promoted += 1
-        promoted_early += 1
-        if hit_channel in ("comment_like_ratio", "both"):
-            promoted_via_ratio_channel += 1
+        if fired:
+            was_new = _record_trigger(
+                conn, account, video_row, observation_point, fired,
+                baseline_mode=baseline_mode, judgment_confidence=judgment_confidence or "formal",
+                baseline_id=None, run_id=run_id,
+            )
+            if was_new:
+                promoted += 1
+                # See the matching comment in the formal_new_rows loop above --
+                # count by which channel(s) actually fired, not by the
+                # possibly-overwritten judgment_confidence.
+                if baseline_mode == "mature_history":
+                    rough_hits += 1
+                if baseline_mode == "formal_d_series" or ratio_label:
+                    formal_hits += 1
 
     return {
         "account": account["account_name"],
-        "sample_count": len(likes),
-        "median": round(median, 2),
-        "p90": round(p90_value, 2),
-        "threshold": round(like_threshold, 2),
-        "comment_like_ratio_threshold": comment_like_ratio_threshold,
+        "mature_history_sample_count": len(mature_pool),
+        "mature_history_used_backfill": mature_history_used_backfill,
+        "formal_d_baseline_active": formal_d_active,
+        "formal_d_predecessor_count": len(predecessor_pool),
         "promoted_count": promoted,
-        "promoted_early_count": promoted_early,
-        "promoted_via_ratio_channel": promoted_via_ratio_channel,
-        "promoted_via_day_reference_count": promoted_via_day_reference,
-        "retracted_count": retracted,
-        "graduated_count": graduated,
+        "formal_hit_count": formal_hits,
+        "rough_hit_count": rough_hits,
         "status": "judged",
-        "evidence_status": evidence_status,
     }
+
+
+def _record_trigger(
+    conn: sqlite3.Connection,
+    account: sqlite3.Row,
+    video_row: sqlite3.Row,
+    observation_point: str,
+    fired_rules: list[str],
+    *,
+    baseline_mode: str | None,
+    judgment_confidence: str,
+    baseline_id: str | None,
+    run_id: str,
+) -> bool:
+    """BR-HIT-005: permanent candidate record. Returns True only the first
+    time this video ever triggers (the moment a hits row is created) -- every
+    later call for the same video only appends to trigger_rules, it never
+    creates a second hits row and never touches first_trigger_at/
+    first_trigger_observation again.
+    """
+    existing_trigger_rules = json.loads(video_row["trigger_rules"]) if video_row["trigger_rules"] else []
+    new_entries = [f"{observation_point}:{rule}" for rule in fired_rules]
+    combined = existing_trigger_rules + [entry for entry in new_entries if entry not in existing_trigger_rules]
+
+    is_first_trigger = video_row["first_trigger_at"] is None
+    if is_first_trigger:
+        conn.execute(
+            """
+            UPDATE competitor_videos
+               SET first_trigger_observation=?, first_trigger_at=CURRENT_TIMESTAMP,
+                   trigger_rules=?, peak_observation=?, baseline_mode=?, judgment_confidence=?
+             WHERE video_id=?
+            """,
+            (
+                observation_point, json.dumps(combined, ensure_ascii=False), observation_point,
+                baseline_mode, judgment_confidence, video_row["video_id"],
+            ),
+        )
+        hit_id = stable_hit_id(account["account_id"], video_row["platform_item_id"])
+        conn.execute(
+            """
+            INSERT INTO hits(
+                hit_id, video_id, account_id, platform, platform_item_id, title, url,
+                publish_time, like_count, comment_count, share_count, collect_count,
+                hit_channel, judgment_confidence, baseline_id, run_id
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(account_id, platform_item_id) DO NOTHING
+            """,
+            (
+                hit_id, video_row["video_id"], account["account_id"], video_row["platform"], video_row["platform_item_id"],
+                video_row["title"], video_row["url"], video_row["publish_time"],
+                video_row["like_count"], video_row["comment_count"], video_row["share_count"], video_row["collect_count"],
+                ",".join(fired_rules), judgment_confidence, baseline_id, run_id,
+            ),
+        )
+        return True
+
+    # BR-HIT-005 permanence: never retract, never overwrite first_trigger_at/
+    # first_trigger_observation/the existing hits row -- only append newly
+    # fired rules to the cumulative trigger_rules list, and advance
+    # peak_observation to track the most recent trigger point.
+    conn.execute(
+        "UPDATE competitor_videos SET trigger_rules=?, peak_observation=? WHERE video_id=?",
+        (json.dumps(combined, ensure_ascii=False), observation_point, video_row["video_id"]),
+    )
+    return False
+
+
+def _insert_baseline(
+    conn: sqlite3.Connection,
+    baseline_id: str,
+    account_id: str,
+    baseline_mode: str,
+    metric: str,
+    observation_point: str | None,
+    sample_count: int,
+    median_value: float,
+    run_id: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO baselines(baseline_id, account_id, baseline_mode, metric, observation_point, sample_count, median_value, run_id)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(baseline_id) DO NOTHING
+        """,
+        (baseline_id, account_id, baseline_mode, metric, observation_point, sample_count, median_value, run_id),
+    )
 
 
 def summarize(conn: sqlite3.Connection, domain_label: str) -> dict[str, Any]:
@@ -871,21 +1203,21 @@ def summarize(conn: sqlite3.Connection, domain_label: str) -> dict[str, Any]:
                 params,
             ).fetchone()[0]
         ),
-        "archived_videos": int(
+        "historical_mature_videos": int(
             conn.execute(
-                "SELECT count(*) FROM competitor_videos v JOIN competitor_accounts a ON a.account_id=v.account_id WHERE a.domain_label=? AND v.status='archived'",
+                "SELECT count(*) FROM competitor_videos v JOIN competitor_accounts a ON a.account_id=v.account_id WHERE a.domain_label=? AND v.first_contact_category='historical_mature'",
                 params,
             ).fetchone()[0]
         ),
-        "watching_videos": int(
+        "transition_videos": int(
             conn.execute(
-                "SELECT count(*) FROM competitor_videos v JOIN competitor_accounts a ON a.account_id=v.account_id WHERE a.domain_label=? AND v.status='watching'",
+                "SELECT count(*) FROM competitor_videos v JOIN competitor_accounts a ON a.account_id=v.account_id WHERE a.domain_label=? AND v.first_contact_category='transition'",
                 params,
             ).fetchone()[0]
         ),
-        "promoted_videos": int(
+        "formal_new_videos": int(
             conn.execute(
-                "SELECT count(*) FROM competitor_videos v JOIN competitor_accounts a ON a.account_id=v.account_id WHERE a.domain_label=? AND v.status='promoted'",
+                "SELECT count(*) FROM competitor_videos v JOIN competitor_accounts a ON a.account_id=v.account_id WHERE a.domain_label=? AND v.first_contact_category='formal_new'",
                 params,
             ).fetchone()[0]
         ),
@@ -943,31 +1275,19 @@ def _crawl_account(executor: LocalMediaCrawlerExecutor, account: sqlite3.Row, *,
     }
 
 
-def p90(values: list[int]) -> float:
-    if len(values) == 1:
-        return float(values[0])
-    return float(statistics.quantiles(sorted(values), n=10)[8])
-
-
 def resolve_max_notes(cli_value: int | None, settings: dict[str, Any]) -> tuple[int, str]:
     if cli_value is not None:
         if cli_value < 1:
             raise ValueError("--max-notes must be positive")
         return cli_value, "cli"
     hit_cfg = settings.get("hit_detection") or {}
-    target = int(hit_cfg.get("baseline_min_samples", 30))
+    target = int(hit_cfg.get("first_crawl_max_notes", 50))
     if target < 1:
-        raise ValueError("hit_detection.baseline_min_samples must be positive")
-    # Pinned and younger-than-observe-window videos are permanently ineligible for
-    # baseline computation (never just temporarily excluded), so fetching exactly the
-    # 30-sample target guarantees falling short after exclusions. Fetch a buffer beyond
-    # the target so the first crawl alone can actually reach 30 eligible videos for
-    # accounts with a realistic amount of pinned/young content, instead of every account
-    # structurally capping below the target regardless of how many days pass.
+        raise ValueError("hit_detection.first_crawl_max_notes must be positive")
     buffer = int(hit_cfg.get("first_crawl_fetch_buffer", 0))
     if buffer < 0:
         raise ValueError("hit_detection.first_crawl_fetch_buffer must not be negative")
-    return target + buffer, "settings.hit_detection.baseline_min_samples+first_crawl_fetch_buffer"
+    return target + buffer, "settings.hit_detection.first_crawl_max_notes+first_crawl_fetch_buffer"
 
 
 def validate_registration_execution_contract(domain: dict[str, Any], hit_cfg: dict[str, Any]) -> dict[str, Any]:
@@ -979,115 +1299,69 @@ def validate_registration_execution_contract(domain: dict[str, Any], hit_cfg: di
         errors.append("collector_policy.comments must defer comments to reverse prep")
     if int(hit_cfg.get("observe_days", 0)) != 7:
         errors.append("hit_detection.observe_days must be 7")
-    if int(hit_cfg.get("baseline_window_days", 0)) != 90:
-        errors.append("hit_detection.baseline_window_days must be 90")
-    if int(hit_cfg.get("baseline_min_samples", 0)) != 30:
-        errors.append("hit_detection.baseline_min_samples must stay the 30-sample target")
-    hit_floor = hit_cfg.get("hit_floor_absolute_like_count")
-    if not isinstance(hit_floor, (int, float)) or hit_floor <= 0:
-        errors.append("hit_detection.hit_floor_absolute_like_count must be a positive number")
+    if int(hit_cfg.get("mature_history_window_days", 0)) != 90:
+        errors.append("hit_detection.mature_history_window_days must be 90")
+    if int(hit_cfg.get("mature_history_max_samples", 0)) != 50:
+        errors.append("hit_detection.mature_history_max_samples must be 50")
+    if int(hit_cfg.get("unified_min_samples", 0)) != 20:
+        errors.append("hit_detection.unified_min_samples must be 20")
+    if int(hit_cfg.get("formal_baseline_activation_min_samples", 0)) != 20:
+        errors.append("hit_detection.formal_baseline_activation_min_samples must be 20")
+    if int(hit_cfg.get("formal_baseline_computation_window", 0)) != 50:
+        errors.append("hit_detection.formal_baseline_computation_window must be 50")
+    if float(hit_cfg.get("discovery_delay_hours_max", 0)) != 36:
+        errors.append("hit_detection.discovery_delay_hours_max must be 36")
+    if float(hit_cfg.get("cold_start_d7_single_metric_threshold", 0)) != 3.0:
+        errors.append("hit_detection.cold_start_d7_single_metric_threshold must be 3.0")
+    if float(hit_cfg.get("cold_start_d7_multi_indicator_threshold", 0)) != 2.0:
+        errors.append("hit_detection.cold_start_d7_multi_indicator_threshold must be 2.0")
+    mature_history_absolute_like_floor = hit_cfg.get("mature_history_absolute_like_floor")
+    if not isinstance(mature_history_absolute_like_floor, (int, float)) or mature_history_absolute_like_floor <= 0:
+        errors.append("hit_detection.mature_history_absolute_like_floor must be a positive number")
+    small_account_p90_percentile = hit_cfg.get("small_account_p90_percentile")
+    if not isinstance(small_account_p90_percentile, (int, float)) or not (0 < small_account_p90_percentile < 1):
+        errors.append("hit_detection.small_account_p90_percentile must be a number in (0, 1)")
     comment_like_ratio_threshold = hit_cfg.get("comment_like_ratio_threshold")
     if not isinstance(comment_like_ratio_threshold, (int, float)) or not (0 < comment_like_ratio_threshold <= 1):
         errors.append("hit_detection.comment_like_ratio_threshold must be a number in (0, 1]")
     if errors:
         raise ValueError("registration execution contract mismatch: " + "; ".join(errors))
     return {
-        "design_sources": ["BUSINESS_RULE_CATALOG.yaml", "AGENTS.md", "BUILD_PLAN.md", EXECUTION_GUARDRAIL_DOC],
+        "design_sources": [MASTER_DESIGN_DOC, "BUSINESS_RULE_CATALOG.yaml", EXECUTION_GUARDRAIL_DOC],
         "first_crawl_stock_archived": True,
         "comments_deferred": True,
-        "pinned_excluded": True,
-        "young_videos_excluded_from_judgement_days": 7,
-        "baseline_window_days": 90,
-        "baseline_target_samples": 30,
-        "baseline_hard_minimum_samples": BASELINE_HARD_MINIMUM_SAMPLES,
-        "baseline_legacy_supplement": True,
-        "hit_threshold_formula": (
-            "max(median * excess_threshold, min(P90, hit_floor_absolute_like_count))"
-            " OR comment_count/like_count >= comment_like_ratio_threshold"
-        ),
-        "hit_floor_absolute_like_count": hit_floor,
+        "observe_days": 7,
+        "discovery_delay_hours_max": float(hit_cfg["discovery_delay_hours_max"]),
+        "mature_history_window_days": 90,
+        "mature_history_max_samples": 50,
+        "unified_min_samples": 20,
+        "formal_baseline_activation_min_samples": 20,
+        "formal_baseline_computation_window": 50,
+        "cold_start_d7_single_metric_threshold": 3.0,
+        "cold_start_d7_multi_indicator_threshold": 2.0,
+        "mature_history_absolute_like_floor": mature_history_absolute_like_floor,
+        "small_account_p90_percentile": small_account_p90_percentile,
+        "hit_trigger_channels": [
+            "like_anomaly (>=single_metric_excess_threshold)",
+            "comment_anomaly (>=single_metric_excess_threshold)",
+            "collect_anomaly (>=single_metric_excess_threshold)",
+            "share_anomaly (>=single_metric_excess_threshold)",
+            "multi_indicator (>=2 of 4 metrics clear multi_indicator_excess_threshold)",
+            "comment_like_ratio (comment_count/like_count >= comment_like_ratio_threshold, no baseline required)",
+        ],
         "comment_like_ratio_threshold": comment_like_ratio_threshold,
     }
 
 
-def select_baseline_sample(rows: list[sqlite3.Row], hit_cfg: dict[str, Any]) -> tuple[list[sqlite3.Row], int]:
-    now = datetime.now(timezone.utc)
-    observe_days = int(hit_cfg.get("observe_days", 7))
-    baseline_window_days = int(hit_cfg.get("baseline_window_days", 90))
-    target_samples = int(hit_cfg.get("baseline_min_samples", 30))
-    settled_before = now - timedelta(days=observe_days)
-    window_start = now - timedelta(days=baseline_window_days)
-    usable: list[tuple[datetime, sqlite3.Row]] = []
-    for row in rows:
-        published_at = _parse_datetime(row["publish_time"])
-        if published_at is None or published_at > settled_before:
-            continue
-        usable.append((published_at, row))
-    usable.sort(key=lambda item: item[0], reverse=True)
-    recent = [row for published_at, row in usable if published_at >= window_start]
-    # BR-BASELINE-003 legacy_supplement=true: backfill toward the 30-sample target from
-    # all usable (settled) videos, ignoring the 90-day window, whenever the in-window
-    # sample falls short -- matching the pre-migration scripts/analyze/judge_hits.py
-    # behavior exactly (there is no separate lower "minimum before expanding" number).
-    if len(recent) >= target_samples:
-        return recent[:target_samples], baseline_window_days
-    return [row for _, row in usable[:target_samples]], 0
-
-
 def mark_pinned_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    marked = [dict(item) for item in items]
-    if not marked:
-        return marked
-    explicit_found = False
-    for item in marked:
-        explicit = _explicit_pinned_value(item)
-        if explicit is not None:
-            item["_is_pinned"] = explicit
-            explicit_found = True
-    if explicit_found:
-        for item in marked:
-            item.setdefault("_is_pinned", False)
-        return marked
-    first_four = marked[:4]
-    if len(first_four) < 4:
-        for item in marked:
-            item["_is_pinned"] = False
-        return marked
-    anchor_time = _item_publish_datetime(first_four[3])
-    for idx, item in enumerate(marked):
-        published_at = _item_publish_datetime(item)
-        item["_is_pinned"] = bool(idx < 3 and anchor_time and published_at and published_at < anchor_time)
-    return marked
+    """BR-HIT-001 section E: no pinned-detection step exists in this design.
 
-
-def first_crawl_excluded_reason(item: dict[str, Any], hit_cfg: dict[str, Any]) -> str | None:
-    published_at = _item_publish_datetime(item)
-    now = datetime.now(timezone.utc)
-    observe_days = int(hit_cfg.get("observe_days", 7))
-    baseline_window_days = int(hit_cfg.get("baseline_window_days", 90))
-    if bool(item.get("_is_pinned")):
-        return "pinned"
-    if published_at is None:
-        return "missing_publish_time"
-    if published_at > now - timedelta(days=observe_days):
-        return "younger_than_7_days"
-    if published_at < now - timedelta(days=baseline_window_days):
-        return "older_than_90_days"
-    return None
-
-
-def _explicit_pinned_value(item: dict[str, Any]) -> bool | None:
-    for key in ("is_pinned", "is_top", "is_stick", "stick_top", "is_sticky", "top"):
-        if key in item:
-            value = item.get(key)
-            if isinstance(value, str):
-                return value.strip().lower() in {"1", "true", "yes", "y"}
-            return bool(value)
-    return None
-
-
-def _item_publish_datetime(item: dict[str, Any]) -> datetime | None:
-    return _parse_datetime(_timestamp_to_iso(item.get("create_time")) if item.get("create_time") not in (None, "") else item.get("publish_time"))
+    Kept as a no-op passthrough (rather than deleted outright) only because
+    older fixtures/callers may still import it; age eligibility everywhere in
+    this module is decided purely from real publish timestamps, never from a
+    platform pinned flag or list-position heuristic.
+    """
+    return [dict(item) for item in items]
 
 
 def stable_video_id(account_id: str, platform_item_id: str) -> str:
@@ -1143,6 +1417,10 @@ def _parse_datetime(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _item_publish_datetime(item: dict[str, Any]) -> datetime | None:
+    return _parse_datetime(_timestamp_to_iso(item.get("create_time")) if item.get("create_time") not in (None, "") else item.get("publish_time"))
 
 
 def _optional_int(value: Any) -> int | None:

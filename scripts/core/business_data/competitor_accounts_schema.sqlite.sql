@@ -29,6 +29,21 @@ BEGIN
      WHERE account_id=NEW.account_id;
 END;
 
+-- BR-HIT-001 section B (2026-07-07 master-doc realignment): every video is
+-- classified at first contact into exactly one of three categories, per the
+-- document's "历史回填与三类视频". This replaces the prior watching/archived/
+-- promoted status machine entirely -- there is no retraction/graduation
+-- lifecycle anymore (BR-HIT-005: once a video first formally triggers, its
+-- candidate fields are permanent).
+--   historical_mature: already published >=7 days when first seen. One
+--     cumulative snapshot now. Feeds mature_history baseline only.
+--   transition: published 1-7 days when first seen. One snapshot now, a
+--     second "matured" snapshot once it turns exactly 7 days published. No
+--     D-series. Feeds mature_history baseline only, once matured.
+--   formal_new: first discovered via the account's ongoing daily batch (not
+--     at first registration). D0 at discovery, D1-D7 on the next 7 discovery
+--     batches. Feeds the formal D baseline once the full D0-D7 set is
+--     complete AND discovery_delay_hours <= 36.
 CREATE TABLE IF NOT EXISTS competitor_videos (
     video_id TEXT PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES competitor_accounts(account_id) ON DELETE RESTRICT,
@@ -42,9 +57,36 @@ CREATE TABLE IF NOT EXISTS competitor_videos (
     comment_count INTEGER,
     share_count INTEGER,
     collect_count INTEGER,
-    is_pinned INTEGER NOT NULL DEFAULT 0 CHECK(is_pinned IN (0, 1)),
+    -- NULL only when publish_time was unusable at ingest (excluded_reason=
+    -- 'missing_publish_time') -- a video that genuinely cannot be classified.
+    first_contact_category TEXT
+        CHECK(first_contact_category IN ('historical_mature', 'transition', 'formal_new') OR first_contact_category IS NULL),
+    -- publish_time -> first_seen_at gap in hours. A formal_new video only ever
+    -- becomes a formal_d_series baseline member if this is <= 36 (BR-HIT-001
+    -- section A). historical_mature/transition videos are not gated by this --
+    -- they never join the formal D baseline regardless of discovery delay.
+    discovery_delay_hours REAL,
+    -- transition-only: set once the second "matured" snapshot (at day 7) has
+    -- been recorded. NULL means still waiting on that second snapshot (or not
+    -- a transition-category video at all).
+    mature_snapshot_taken_at TEXT,
+    -- formal_new-only: true once D0..D7 have all been recorded in video_checks.
+    tracking_completed INTEGER NOT NULL DEFAULT 0 CHECK(tracking_completed IN (0, 1)),
+    -- BR-HIT-005: candidate record fields. Permanent once first written --
+    -- never cleared or overwritten backwards, even if later data would no
+    -- longer clear the bar (verbatim document rule: "首次正式触发后保留记录,
+    -- 即使后续倍数回落也不删除").
+    first_trigger_observation TEXT,
+    first_trigger_at TEXT,
+    -- JSON array of every rule name that has ever fired for this video across
+    -- all observation points (cumulative, append-only -- not just the first).
+    trigger_rules TEXT,
+    peak_observation TEXT,
+    baseline_mode TEXT
+        CHECK(baseline_mode IN ('mature_history', 'formal_d_series') OR baseline_mode IS NULL),
+    judgment_confidence TEXT
+        CHECK(judgment_confidence IN ('rough', 'formal') OR judgment_confidence IS NULL),
     excluded_reason TEXT,
-    status TEXT NOT NULL CHECK(status IN ('watching', 'archived', 'promoted')),
     registration_run_id TEXT,
     raw_archive_ref TEXT,
     raw_json TEXT NOT NULL,
@@ -54,19 +96,24 @@ CREATE TABLE IF NOT EXISTS competitor_videos (
     UNIQUE(account_id, platform_item_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_competitor_videos_account_status
-ON competitor_videos(account_id, status, publish_time);
+CREATE INDEX IF NOT EXISTS idx_competitor_videos_account_category
+ON competitor_videos(account_id, first_contact_category, publish_time);
 
-CREATE VIEW IF NOT EXISTS observation_pool AS
-    SELECT * FROM competitor_videos WHERE status='watching';
-
--- BR-COLLECT-004 / BUILD_PLAN.md 阶段1 (2026-06-13): one append-only row per daily
--- recheck of a video, captured while it is in the observation window. Purpose is to
--- accumulate a growth curve for future modeling (day-N steepness -> early promotion) --
--- captured now, not modeled yet. Never updated in place, never deleted.
+-- One append-only row per observation of a video. discovery_batch_index is
+-- the D-point (0..7) for formal_new videos, discovery-anchored (D0 = the
+-- batch that first discovered the video, not a calendar-day count since
+-- publish); NULL for historical_mature/transition snapshots. day_since_publish
+-- is the OPPOSITE anchoring -- calendar days since publish_time, deliberately
+-- a separate column so the two are never conflated: it is populated for
+-- historical_mature/transition checks (2026-07-08: transition videos are now
+-- refreshed daily while observing, not just once at day 7, so their 0-7
+-- lifecycle needs its own explicit day label), and left NULL for formal_new
+-- rows, which already have discovery_batch_index for that purpose.
 CREATE TABLE IF NOT EXISTS video_checks (
     check_id TEXT PRIMARY KEY,
     video_id TEXT NOT NULL REFERENCES competitor_videos(video_id) ON DELETE RESTRICT,
+    discovery_batch_index INTEGER,
+    day_since_publish INTEGER,
     checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     like_count INTEGER,
     comment_count INTEGER,
@@ -76,25 +123,35 @@ CREATE TABLE IF NOT EXISTS video_checks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_video_checks_video
-ON video_checks(video_id, checked_at);
+ON video_checks(video_id, discovery_batch_index, checked_at);
 
+-- BR-HIT-001 section C: four baseline types share this table, distinguished
+-- by baseline_mode. mature_history has observation_point=NULL (one
+-- account-wide value per metric); formal_d_series has one row per D-point
+-- per metric (observation_point='D0'..'D7').
 CREATE TABLE IF NOT EXISTS baselines (
     baseline_id TEXT PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES competitor_accounts(account_id) ON DELETE RESTRICT,
-    metric TEXT NOT NULL DEFAULT 'like_count',
-    window_days INTEGER NOT NULL,
+    baseline_mode TEXT NOT NULL CHECK(baseline_mode IN ('mature_history', 'formal_d_series')),
+    metric TEXT NOT NULL CHECK(metric IN ('like_count', 'comment_count', 'collect_count', 'share_count')),
+    observation_point TEXT,
     sample_count INTEGER NOT NULL,
     median_value REAL NOT NULL,
-    p90_value REAL NOT NULL,
-    threshold_value REAL NOT NULL,
-    evidence_status TEXT NOT NULL DEFAULT 'sufficient' CHECK(evidence_status IN ('sufficient', 'insufficient_sample')),
     run_id TEXT NOT NULL,
     computed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_baselines_account
-ON baselines(account_id, metric, computed_at);
+ON baselines(account_id, baseline_mode, metric, observation_point, computed_at);
 
+-- hit_channel is a comma-joined list of every channel that fired at
+-- promotion time (like_anomaly/comment_anomaly/collect_anomaly/share_anomaly/
+-- multi_indicator/comment_like_ratio/cold_start_d7_rough) -- not a fixed
+-- small enum, since BR-HIT-001's 6-channel OR design allows many combinations
+-- and BR-HIT-005 requires the video's own trigger_rules to be the cumulative
+-- record. This row records the FIRST promotion only; once inserted it is
+-- never deleted or reverted (BR-HIT-005 permanence) -- later judgement
+-- passes may only add to competitor_videos.trigger_rules, not touch this row.
 CREATE TABLE IF NOT EXISTS hits (
     hit_id TEXT PRIMARY KEY,
     video_id TEXT NOT NULL REFERENCES competitor_videos(video_id) ON DELETE RESTRICT,
@@ -108,12 +165,12 @@ CREATE TABLE IF NOT EXISTS hits (
     comment_count INTEGER,
     share_count INTEGER,
     collect_count INTEGER,
-    excess_ratio REAL,
-    share_comment_ratio REAL,
-    baseline_id TEXT NOT NULL REFERENCES baselines(baseline_id) ON DELETE RESTRICT,
-    hit_channel TEXT NOT NULL DEFAULT 'like_threshold'
-        CHECK(hit_channel IN ('like_threshold', 'comment_like_ratio', 'both')),
-    evidence_status TEXT NOT NULL DEFAULT 'sufficient' CHECK(evidence_status IN ('sufficient', 'insufficient_sample')),
+    hit_channel TEXT NOT NULL,
+    judgment_confidence TEXT NOT NULL CHECK(judgment_confidence IN ('rough', 'formal')),
+    -- Informational only, no FK: this references a synthetic per-judgement
+    -- composite id (one judgement pass may write several per-metric baselines
+    -- rows), not a single literal baselines.baseline_id row.
+    baseline_id TEXT,
     run_id TEXT NOT NULL,
     reverse_status TEXT NOT NULL DEFAULT 'none',
     promoted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

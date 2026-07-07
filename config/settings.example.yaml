@@ -36,60 +36,90 @@ llm:
   fallback_enabled: false
 
 hit_detection:
-  baseline_window_days: 90
-  baseline_min_samples: 30
-  excess_threshold: 2.0
-  # 2026-07-07 user decision: lowered from 3.0 to 2.0 -- 3x pulls the standard too
-  # high for large accounts. See BUSINESS_RULE_CATALOG.yaml BR-HIT-001
-  # amendment_2026_07_07_excess_threshold_2x.
-  # 2026-07-06 business decision (see BUSINESS_RULE_CATALOG.yaml BR-HIT-001):
-  # threshold = max(median * excess_threshold, min(P90, hit_floor_absolute_like_count)).
-  # P90 computed on the same small recent sample being judged is close to tautological
-  # -- by definition ~10% of any account's sample clears its own P90 -- so it can no
-  # longer stand alone as an upper-uncapped term (verified against real data: as a bare
-  # OR-ed term it capped 23/28 accounts at exactly 2 hits regardless of true
-  # distribution shape). Bounding it with min(P90, floor) keeps it from pushing the bar
-  # above the floor for large accounts, while still giving small accounts (whose P90
-  # never reaches the floor) a reachable relative bar instead of a permanently
-  # unreachable absolute one. There is no separate p90_required toggle -- P90 always
-  # participates, just bounded.
-  hit_floor_absolute_like_count: 2000
-  # 2026-07-07 business decision (BUSINESS_RULE_CATALOG.yaml BR-HIT-001 amendment): a
-  # video is also a hit if comment_count/like_count >= comment_like_ratio_threshold,
-  # OR-ed alongside the like_count formula above (not a replacement -- a video can
-  # qualify through either channel). Sourced from published Douyin operator guidance
-  # (comment/like ratio floor ~10%, ~30% for a typical hit) and NOT from an internally
-  # computed percentile. 0.2 was chosen after checking 15%/18%/20% against the real
-  # 28-account/1253-video dataset: it eliminates the one real account that had zero
-  # hits under the like-only formula (财经不眠姐: 0 -> 2) without zeroing any other
-  # account, while 15% showed accelerating, less stable growth on accounts that had
-  # previously shown false-positive risk under other tested designs. collect_count and
-  # share_count ratios were evaluated the same way but no published threshold survived
-  # contact with the real data (the claimed 3-5x collect:like ratio for knowledge
-  # content matched zero of 1253 real videos), so those two dimensions are not judged.
-  comment_like_ratio_threshold: 0.2
-  # 2026-07-07 user decision: a still-watching video (day 1-6 of its life) should not
-  # be compared against the mature/settled threshold above (median * 3) -- that
-  # threshold is calibrated for fully-matured (>=7 day) videos, so a young video would
-  # almost never clear it except in an extreme viral case, which defeats the point of
-  # checking early at all. Instead, a SEPARATE channel compares a still-watching
-  # video's current like_count against `early_excess_threshold` times the account's
-  # own median like_count AT THAT SAME DAY-OFFSET (computed from video_checks history
-  # across this account's other videos, not from the mature threshold). The user
-  # explicitly set this multiplier lower than excess_threshold (3.0) because a 3x bar
-  # pulls the standard too high for large accounts -- same reasoning as excess_threshold
-  # itself, just applied to the day-specific reference instead of the mature one.
-  # Requires enough video_checks history at that day-offset to trust the median; until
-  # daily incremental has run for real over enough days, this channel has no data to
-  # use yet and is skipped (never blocks or fabricates a threshold from thin samples).
-  early_excess_threshold: 2.0
-  # 2026-07-06: pinned and younger-than-observe-window videos are permanently
-  # ineligible for baseline computation, so fetching exactly baseline_min_samples raw
-  # videos on first crawl structurally falls short of 30 eligible after exclusion.
-  # Verified against real data: worst observed account had 14/30 excluded (avg 6/30).
-  # Fetch buffer covers that with a small margin. Configurable, not a literal in code.
-  first_crawl_fetch_buffer: 15
+  # 2026-07-07: this whole block was rewritten from scratch after reconciling
+  # against 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.md (now
+  # committed to the repo root). See BUSINESS_RULE_CATALOG.yaml BR-HIT-001
+  # amendment_2026_07_07_master_doc_realignment for the full decision trail --
+  # every value below traces to a specific line in that amendment, not to
+  # guesswork. The prior excess_threshold/hit_floor_absolute_like_count/
+  # early_excess_threshold/baseline_min_samples/baseline_window_days/
+  # first_crawl_fetch_buffer keys are gone; nothing here is a renamed
+  # continuation of them, this is a different formula.
   observe_days: 7
+  # BR-HIT-001 section A: a formal_new video only ever joins the formal D
+  # baseline if publish_time -> first-discovery gap is within this many hours.
+  discovery_delay_hours_max: 36
+  # BR-HIT-001 section C(1): mature history baseline pool = this account's
+  # videos published within the trailing N days, capped at M, one cumulative
+  # snapshot per video, rolling (recomputed from current data each time it is
+  # needed, no separate top-up algorithm).
+  mature_history_window_days: 90
+  mature_history_max_samples: 50
+  # BR-HIT-001 section C: the user overrode the document's literal "each
+  # metric needs >=5 non-null samples" with one unified floor used everywhere
+  # in this rule (mature history baseline AND formal D baseline activation).
+  unified_min_samples: 20
+  # BR-HIT-001 section C(3): "20" in the document literally meant two
+  # different things -- an activation gate AND (separately) the ongoing
+  # per-D-point computation window. The user determined only the
+  # activation-gate meaning survives; the ongoing window is corrected to
+  # align with mature_history_max_samples instead of staying fixed at 20
+  # forever.
+  formal_baseline_activation_min_samples: 20
+  formal_baseline_computation_window: 50
+  # BR-HIT-001 section D: five OR-ed trigger channels once the relevant
+  # formal baseline is active. Single-metric channels (like/comment/collect/
+  # share, each independently) share one threshold; the multi-indicator combo
+  # channel (>=2 of those 4 metrics each clearing THIS lower bar) is
+  # deliberately lower since requiring two simultaneous metrics is already a
+  # stricter condition than requiring one.
+  single_metric_excess_threshold: 2.0
+  multi_indicator_excess_threshold: 1.6
+  # 2026-07-08 user decision: the mature-history/rough channel (used for BOTH
+  # first-registration hits on historical_mature/transition videos AND the D7
+  # cold-start case) is now DELIBERATELY stricter than the formal_d_series
+  # channel above -- 3.0x/2.0x instead of 2.0x/1.6x. This is not an accident:
+  # comparing a video's cumulative value against a coarse account-wide median
+  # (mixed maturities, no day-of-life alignment) is a noisier comparison than
+  # the formal D baseline's same-day-point median, so it needs a higher bar to
+  # compensate for the weaker evidence quality, not a lower one. Verified by
+  # testing 3.0x/2.0x against the real 28-account dataset before adoption:
+  # dropped the mature-history-channel hit count from 532 (at the old 2.0x/1.6x)
+  # to 262 via the normal path, plus 18 via the small-account P90 path below.
+  cold_start_d7_single_metric_threshold: 3.0
+  cold_start_d7_multi_indicator_threshold: 2.0
+  # 2026-07-08 user decision: a video's own like_count must clear this absolute
+  # floor to qualify via the mature-history/rough channel's NORMAL path (below),
+  # regardless of how many times its account's median it clears -- stops a tiny
+  # account's tiny numbers from reading as a "hit" just because they are a large
+  # multiple of an equally tiny median. Does NOT apply to comment_like_ratio
+  # (that channel is ratio-based by design, already separately verified against
+  # real data) and does NOT apply to formal_d_series (untested/unchanged).
+  mature_history_absolute_like_floor: 2000
+  # 2026-07-08 user decision: an account is "small" for this channel's purposes
+  # when even its best-case comparison (median * cold_start_d7_single_metric_threshold)
+  # could never reach mature_history_absolute_like_floor -- for those accounts the
+  # fixed floor would structurally lock them out forever, so they get a
+  # different bar instead: their OWN like_count distribution's P90 (see
+  # small_account_p90_percentile). A hit produced this way is always labelled
+  # p90_small_account so it is never confused with the normal-path evidence
+  # caliber. Verified against real data: 4/23 evaluable accounts qualified as
+  # small, producing 18 hits via this path that the normal path could not reach.
+  small_account_p90_percentile: 0.9
+  # BR-HIT-001 section D(6): the one channel kept from the pre-realignment
+  # week that has no counterpart in the master document at all -- computed
+  # purely from the candidate video's own comment_count/like_count, no
+  # baseline required. Verified against the real 28-account/1253-video
+  # dataset before adoption (see the superseded amendment_2026_07_07 block in
+  # BUSINESS_RULE_CATALOG.yaml for the actual 15/18/20 percent comparison).
+  comment_like_ratio_threshold: 0.2
+  # How many videos the first crawl fetches. Not tied to any sample-count
+  # target anymore (the mature history baseline is a rolling 90-day/50-cap
+  # window, not a fixed target to hit on day one) -- this just needs to be
+  # comfortably above mature_history_max_samples so a small number of
+  # unparseable-publish-time items don't structurally starve the window.
+  first_crawl_max_notes: 50
+  first_crawl_fetch_buffer: 5
   recheck_interval_hours: 24
 
 candidate_pool:

@@ -6,7 +6,6 @@ from pathlib import Path
 import yaml
 
 from scripts.core.business_data.run_competitor_registration_full import (
-    BASELINE_HARD_MINIMUM_SAMPLES,
     validate_registration_execution_contract,
 )
 
@@ -19,6 +18,10 @@ ROOT = Path(__file__).resolve().parents[2]
 # BR-* rule that scripts/core/business_data actually implements into a real assertion.
 # When implementing a new BR-* rule (or changing a threshold), add/update its assertion
 # here in the same commit -- see AGENTS.md/CLAUDE.md "执行纪律".
+#
+# 2026-07-07: rewritten for the master-doc-realignment design (BR-HIT-001
+# amendment_2026_07_07_master_doc_realignment) -- excess_threshold/hit_floor_
+# absolute_like_count/baseline_min_samples/baseline_window_days no longer exist.
 
 
 def _load_catalog() -> dict:
@@ -42,33 +45,76 @@ class BusinessRuleTraceabilityTests(unittest.TestCase):
         rule = _rule(self.catalog, "BR-COLLECT-001")
         self.assertEqual(self.hit_cfg["observe_days"], rule["thresholds"]["observe_days"])
 
-    def test_br_baseline_001_window_and_target_samples(self) -> None:
+    def test_br_baseline_001_mature_history_window_and_unified_min_samples(self) -> None:
         rule = _rule(self.catalog, "BR-BASELINE-001")
-        self.assertEqual(self.hit_cfg["baseline_window_days"], rule["defaults"]["baseline_window_days"])
+        self.assertEqual(self.hit_cfg["mature_history_window_days"], rule["defaults"]["mature_history_window_days"])
+        self.assertEqual(self.hit_cfg["unified_min_samples"], rule["thresholds"]["unified_min_samples"])
 
-    def test_br_baseline_003_minimum_sample_count_is_30_not_invented(self) -> None:
+    def test_br_baseline_003_minimum_sample_count_is_20_not_invented(self) -> None:
         rule = _rule(self.catalog, "BR-BASELINE-003")
-        self.assertEqual(self.hit_cfg["baseline_min_samples"], rule["thresholds"]["minimum_sample_count"])
-        self.assertTrue(rule["defaults"]["legacy_supplement"])
-        # The only other floor allowed to exist is the hard mathematical minimum for
-        # computing a median/P90 at all -- it must stay far below the documented
-        # 30-sample target, never a second competing "business" threshold.
-        self.assertLess(BASELINE_HARD_MINIMUM_SAMPLES, rule["thresholds"]["minimum_sample_count"])
+        self.assertEqual(self.hit_cfg["unified_min_samples"], rule["thresholds"]["minimum_sample_count"])
+        self.assertFalse(rule["defaults"]["legacy_supplement"])
 
-    def test_br_hit_001_excess_threshold_and_hit_floor(self) -> None:
+    def test_br_hit_001_magnitude_channel_thresholds(self) -> None:
         rule = _rule(self.catalog, "BR-HIT-001")
-        self.assertEqual(self.hit_cfg["excess_threshold"], rule["thresholds"]["excess_threshold"])
         self.assertEqual(
-            self.hit_cfg["hit_floor_absolute_like_count"], rule["thresholds"]["hit_floor_absolute_like_count"]
+            self.hit_cfg["single_metric_excess_threshold"], rule["thresholds"]["single_metric_excess_threshold"]
         )
-        self.assertEqual(rule["thresholds"]["p90_bounded_by_floor"], True)
+        self.assertEqual(
+            self.hit_cfg["multi_indicator_excess_threshold"], rule["thresholds"]["multi_indicator_excess_threshold"]
+        )
+        self.assertEqual(
+            self.hit_cfg["cold_start_d7_single_metric_threshold"],
+            rule["thresholds"]["cold_start_d7_single_metric_threshold"],
+        )
+        self.assertEqual(
+            self.hit_cfg["cold_start_d7_multi_indicator_threshold"],
+            rule["thresholds"]["cold_start_d7_multi_indicator_threshold"],
+        )
+        # 2026-07-08: the mature-history/rough channel is deliberately stricter
+        # than formal_d_series (3.0x/2.0x vs 2.0x/1.6x) -- noisier evidence needs a
+        # higher bar to compensate, not a lower one.
+        self.assertGreater(
+            self.hit_cfg["cold_start_d7_single_metric_threshold"], self.hit_cfg["single_metric_excess_threshold"]
+        )
+        self.assertGreater(
+            self.hit_cfg["cold_start_d7_multi_indicator_threshold"], self.hit_cfg["multi_indicator_excess_threshold"]
+        )
+
+    def test_br_hit_001_mature_history_absolute_floor_and_small_account_p90(self) -> None:
+        rule = _rule(self.catalog, "BR-HIT-001")
+        self.assertEqual(
+            self.hit_cfg["mature_history_absolute_like_floor"], rule["thresholds"]["mature_history_absolute_like_floor"]
+        )
+        self.assertEqual(
+            self.hit_cfg["small_account_p90_percentile"], rule["thresholds"]["small_account_p90_percentile"]
+        )
+
+    def test_br_hit_001_baseline_windows_and_activation_gates(self) -> None:
+        rule = _rule(self.catalog, "BR-HIT-001")
+        self.assertEqual(self.hit_cfg["mature_history_window_days"], rule["thresholds"]["mature_history_window_days"])
+        self.assertEqual(self.hit_cfg["mature_history_max_samples"], rule["thresholds"]["mature_history_max_samples"])
+        self.assertEqual(
+            self.hit_cfg["formal_baseline_activation_min_samples"],
+            rule["thresholds"]["formal_baseline_activation_min_samples"],
+        )
+        self.assertEqual(
+            self.hit_cfg["formal_baseline_computation_window"], rule["thresholds"]["formal_baseline_computation_window"]
+        )
+        self.assertEqual(self.hit_cfg["discovery_delay_hours_max"], rule["thresholds"]["discovery_delay_hours_max"])
+        self.assertEqual(self.hit_cfg["unified_min_samples"], rule["thresholds"]["unified_min_samples"])
+        # The corrected reading of the document's "20": an activation gate only, not a
+        # permanent computation-window cap -- the two numbers must differ on purpose.
+        self.assertNotEqual(
+            rule["thresholds"]["formal_baseline_activation_min_samples"],
+            rule["thresholds"]["formal_baseline_computation_window"],
+        )
 
     def test_br_hit_001_comment_like_ratio_channel(self) -> None:
         rule = _rule(self.catalog, "BR-HIT-001")
         self.assertEqual(
             self.hit_cfg["comment_like_ratio_threshold"], rule["thresholds"]["comment_like_ratio_threshold"]
         )
-        self.assertIn("amendment_2026_07_07", rule)
 
     def test_execution_contract_rejects_config_drift_from_the_catalog(self) -> None:
         domain = {
@@ -82,7 +128,7 @@ class BusinessRuleTraceabilityTests(unittest.TestCase):
 
         # A config drifted away from the catalog's documented threshold must be rejected,
         # not silently accepted -- this is the exact failure mode being guarded against.
-        drifted = dict(self.hit_cfg, baseline_min_samples=10)
+        drifted = dict(self.hit_cfg, unified_min_samples=10)
         with self.assertRaises(ValueError):
             validate_registration_execution_contract(domain, drifted)
 

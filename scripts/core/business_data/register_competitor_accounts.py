@@ -52,38 +52,17 @@ def main(argv: list[str] | None = None) -> int:
 
 def install_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    _ensure_competitor_video_columns(conn)
-    _ensure_evidence_status_columns(conn)
-    _ensure_hit_channel_column(conn)
+    # 2026-07-08: CREATE TABLE IF NOT EXISTS does not retroactively add columns
+    # to a table that already exists (e.g. the real production DB) -- this
+    # lazily backfills newly-added nullable columns on every call, so no
+    # separate migration invocation is needed.
+    _ensure_column(conn, "video_checks", "day_since_publish", "INTEGER")
 
 
-def _ensure_competitor_video_columns(conn: sqlite3.Connection) -> None:
-    columns = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(competitor_videos)").fetchall()
-    }
-    if "is_pinned" not in columns:
-        conn.execute("ALTER TABLE competitor_videos ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0")
-    if "excluded_reason" not in columns:
-        conn.execute("ALTER TABLE competitor_videos ADD COLUMN excluded_reason TEXT")
-
-
-def _ensure_evidence_status_columns(conn: sqlite3.Connection) -> None:
-    baseline_columns = {row[1] for row in conn.execute("PRAGMA table_info(baselines)").fetchall()}
-    if baseline_columns and "evidence_status" not in baseline_columns:
-        conn.execute("ALTER TABLE baselines ADD COLUMN evidence_status TEXT NOT NULL DEFAULT 'sufficient'")
-    hit_columns = {row[1] for row in conn.execute("PRAGMA table_info(hits)").fetchall()}
-    if hit_columns and "evidence_status" not in hit_columns:
-        conn.execute("ALTER TABLE hits ADD COLUMN evidence_status TEXT NOT NULL DEFAULT 'sufficient'")
-
-
-def _ensure_hit_channel_column(conn: sqlite3.Connection) -> None:
-    # 2026-07-07 (BR-HIT-001 amendment): pre-existing hits rows were all judged solely
-    # on the like_count channel, so backfilling them as 'like_threshold' is accurate,
-    # not a guess.
-    hit_columns = {row[1] for row in conn.execute("PRAGMA table_info(hits)").fetchall()}
-    if hit_columns and "hit_channel" not in hit_columns:
-        conn.execute("ALTER TABLE hits ADD COLUMN hit_channel TEXT NOT NULL DEFAULT 'like_threshold'")
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, column_type: str) -> None:
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
 def register_from_domain(conn: sqlite3.Connection, domain: dict[str, Any], *, source_config_ref: str) -> dict[str, Any]:

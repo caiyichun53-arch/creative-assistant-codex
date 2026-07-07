@@ -55,3 +55,4 @@
 - **完成状态必须贴真实闸门输出,不能凭自己判断**:任何地方标记 `completed`/`succeeded`/`ENGINEERING_READY` 之类的状态,必须附上刚跑过的对应权威闸门脚本(如 `scripts/core/staging/verify_goal_v062_phase8_readiness.py`)的真实终端输出,不能转述、不能只看局部测试就下"完成"结论。
 - **收工/额度耗尽前必须提交干净**:当前进度必须提交成一个能跑的 checkpoint commit,不能把大批未提交改动扔在工作区——交接给另一个执行者(Codex/Claude Code 互相接力)时,工作区状态就是唯一可信的现状。
 - **CLAUDE.md/AGENTS.md 必须保持逐句同步**(`tests/validation/test_constitution_sync.py` 强制检查,两份文件除工具名互换外必须逐字一致),防止再次出现一份被持续维护、另一份 124 次提交没人碰的情况。
+- **模块建好即写技术手册,不能"以后再补"**(2026-07-07 新增):`TECHNICAL_MANUAL.md` 是写给人看的运行/使用说明,跟 `BUSINESS_RULE_CATALOG.yaml`(机器可核对的规则)、`HANDOFF_STATE.md`(交接记录)分工不同。一个模块从"设计中"变成"能跑、有测试通过"的那次提交里,必须同一次提交把该模块在 `TECHNICAL_MANUAL.md` 里对应的章节从 `[占位]` 改写成 `[已完成]` 的真内容,不能代码合并、手册留白等以后补——以后补 = 从来不补。

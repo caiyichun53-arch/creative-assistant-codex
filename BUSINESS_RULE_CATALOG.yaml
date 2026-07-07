@@ -47,21 +47,25 @@ rules:
   inputs:
   - competitor profile url or sec_uid
   - domain
-  expected_behavior: 'First crawl is a stock snapshot: existing videos become baseline
-    material and must not enter the watching observation pool.'
+  status: '2026-07-07: superseded in detail by BR-HIT-001 section B (three-category
+    first-contact classification) -- there is no watching/archived status machine or
+    observation pool anymore. Kept as a pointer, not duplicated.'
+  expected_behavior: 'First crawl classifies every item into historical_mature or
+    transition (never formal_new) per BR-HIT-001 section B; there is no watching
+    observation pool to enter or avoid.'
   defaults:
-    first_crawl_status: archived
+    first_crawl_status: n/a (see BR-HIT-001 section B first_contact_category)
   thresholds:
     observe_days: 7
   timing_semantics: first_seen_at is discovery time; publish_time remains original
     platform publish time.
   state_effects:
-  - competitor_videos.status=archived
+  - competitor_videos.first_contact_category set (historical_mature or transition)
   allowed_side_effects:
   - collector raw archive
   - SQLite/source record in legacy only
   forbidden_behavior:
-  - treat young stock videos as watching
+  - fabricate a D-series for a historical_mature or transition video
   - send external message during registration
   edge_cases:
   - missing publish_time
@@ -80,8 +84,12 @@ rules:
   inputs:
   - newly discovered platform item
   - last_crawled_at
-  expected_behavior: Only daily incremental newly published videos within the observation
-    window enter watching.
+  status: '2026-07-07: superseded in detail by BR-HIT-001 section B -- a video newly
+    discovered via the ongoing daily batch is classified first_contact_category=
+    formal_new (D0 recorded now) regardless of its publish age; there is no more
+    "watching" status or observation-window entry gate.'
+  expected_behavior: A video newly discovered via the ongoing daily batch (not at
+    registration) is classified formal_new and gets its D0 snapshot recorded immediately.
   defaults:
     daily_max_notes: config crawler.daily_max_notes
   thresholds:
@@ -89,13 +97,13 @@ rules:
   timing_semantics: T+0 starts from publish_time for age, but first_seen_at records
     actual discovery.
   state_effects:
-  - competitor_videos.status=watching
-  - video_checks snapshot
+  - competitor_videos.first_contact_category=formal_new
+  - video_checks D0 snapshot
   allowed_side_effects:
   - collector raw archive
   forbidden_behavior:
-  - reclassify stock snapshot as watching
-  - LLM decision for watching membership
+  - reclassify a registration-time stock item as formal_new
+  - LLM decision for formal_new classification
   edge_cases:
   - publish_time absent uses discovery time only as fallback flag
   user_confirmation_required: false
@@ -262,15 +270,18 @@ rules:
   inputs:
   - settled videos
   - like_count
-  expected_behavior: Baseline is account-relative and computed from settled videos,
-    using median and P90 as threshold ingredients.
+  status: '2026-07-07: superseded in detail by BR-HIT-001 section C(1) -- there is
+    no P90 ingredient anymore, and the sample target is unified_min_samples=20, not
+    30. Kept as a pointer, not duplicated.'
+  expected_behavior: Mature history baseline is account-relative, computed from the
+    rolling historical_mature/matured-transition pool, using median only (no P90).
   defaults:
     metric: like_count
-    baseline_window_days: 90
+    mature_history_window_days: 90
   thresholds:
-    baseline_min_samples: 30
-  timing_semantics: Prefer recent settled window; legacy supplements to minimum sample
-    count when recent sample is short.
+    unified_min_samples: 20
+  timing_semantics: Recomputed fresh from current data each time it is needed (rolling),
+    not a stored/frozen one-time value.
   state_effects:
   - baselines insert
   allowed_side_effects:
@@ -289,79 +300,444 @@ rules:
   source_section: 历史基线与Day7口径
   priority: P0
   domain_scope: all domains
-  trigger: video leaves observation window
+  status: '2026-07-07: superseded in detail by BR-HIT-001 sections B/C -- there is
+    no observation window to "leave"; a transition video takes a second snapshot at
+    exactly day 7 (not an ongoing re-crawl), and a formal_new video''s D0-D7 series
+    feeds the formal D baseline, never the mature history one.'
+  trigger: transition video reaches day 7 published
   inputs:
-  - video final metrics
-  expected_behavior: Videos that leave the observation window become baseline material;
-    stock snapshots are conservative historical baseline seeds.
+  - video final metrics at day 7
+  expected_behavior: A transition video (1-7 days published at first contact) gets
+    a second "matured" snapshot once it turns exactly 7 days published; that snapshot
+    (not the first one) is what feeds the mature history baseline.
   defaults:
-    stock_status: archived
+    stock_status: n/a (see BR-HIT-001 section B mature_snapshot_taken_at)
   thresholds:
     observe_days: 7
-  timing_semantics: Observation samples approximate Day7; stock samples may be final-count
-    and more conservative.
+  timing_semantics: The matured snapshot is taken at day 7 exactly, not approximated
+    from an ongoing observation window.
   state_effects:
-  - competitor_videos.status=archived
+  - competitor_videos.mature_snapshot_taken_at set
   allowed_side_effects:
   - baseline recomputation
   forbidden_behavior:
   - periodic full re-crawl as baseline truth
+  - fabricate a D-series for a transition video
   edge_cases:
-  - viral video keeps growing after T+7
+  - viral video keeps growing after day 7 (the matured snapshot is still just one
+    point-in-time value, not re-taken again)
   user_confirmation_required: false
   supersedes: []
   validation_required:
-  - archived-to-baseline replay
+  - transition-to-matured replay
 - requirement_id: BR-BASELINE-003
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
   source_section: 基线样本不足
   priority: P0
   domain_scope: all domains
+  status: '2026-07-07: superseded in detail by BR-HIT-001 section C -- the unified
+    minimum is 20 (user override of the document''s original per-metric ">=5"), not
+    30, and there is no more legacy_supplement/backfill-outside-the-90-day-window
+    behavior. Below 20, the mature history baseline is simply not computed at all
+    (no evidence-insufficient hit is ever promoted from it).'
   trigger: baseline sample under minimum
   inputs:
   - sample_count
-  expected_behavior: If there is not enough valid sample, hit judgement must be skipped
-    or marked not enough evidence; legacy supplement behavior is a conflict needing
-    decision.
+  expected_behavior: Below unified_min_samples(20), the mature history baseline is
+    not computed and no hit is promoted from it -- only comment_like_ratio (which
+    needs no baseline) can still fire for that account.
   defaults:
-    legacy_supplement: true
+    legacy_supplement: false
   thresholds:
-    minimum_sample_count: 30
-  timing_semantics: Do not silently compare against tiny sample without evidence flag.
+    minimum_sample_count: 20
+  timing_semantics: Do not silently compare against a too-small sample.
   state_effects:
-  - baseline gap marker in target
+  - baseline simply absent for that account/metric until the sample grows
   allowed_side_effects: []
   forbidden_behavior:
-  - promote hit from underpowered baseline without flag
+  - promote a hit from an underpowered (< unified_min_samples) baseline
+  - backfill toward the minimum from outside the 90-day window
   edge_cases:
-  - <20 and =20 sample fixtures absent in current DB
+  - exactly 19 vs exactly 20 qualifying videos
   user_confirmation_required: false
   supersedes: []
   validation_required:
-  - synthetic sparse-account fixture required
+  - synthetic sparse-account fixture (19 vs 20 boundary)
 - requirement_id: BR-HIT-001
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
-  source_section: 爆款判定
+  source_section: 爆款判定 (第8/9/10/14/15章 + 附录A，2026-07-07 与用户逐条对照复核后定稿)
   priority: P0
   domain_scope: all domains
-  trigger: judge candidate video
+  status: '2026-07-07 full realignment to the master document (see
+    amendment_2026_07_07_master_doc_realignment below). This replaces the
+    partial, code-first iteration built earlier the same week (the
+    amendment_2026_07_06 / amendment_2026_07_07 / amendment_2026_07_07_excess_threshold_2x
+    / amendment_2026_07_07_day_reference_channel / amendment_2026_07_07_early_promotion
+    blocks below): those are kept ONLY as an audit trail of what was tried and why it
+    was superseded -- they do NOT describe current behavior. Read expected_behavior
+    below plus amendment_2026_07_07_master_doc_realignment for the current design;
+    everything needed to implement or verify it is there, none of the superseded
+    blocks below need to be read to understand current behavior.'
+  trigger: discover / track / judge a competitor or self-owned video
   inputs:
-  - like_count
-  - comment_count
-  - baseline median
-  - baseline p90
-  - hit_floor_absolute_like_count
+  - discovery_delay_hours (publish_time to first-crawl-discovery gap)
+  - video_checks history (per-video, per-discovery-batch snapshots)
+  - mature_history_baseline (per-account, per-metric median)
+  - formal_d_baseline (per-account, per-D-point median, competitor videos)
+  - formal_p_baseline (per-account, per-P-point median, self-owned videos)
+  - like_count / comment_count / collect_count / share_count
   - comment_like_ratio_threshold
-  expected_behavior: 'A hit requires clearing EITHER of two independent, OR-ed channels:
-    (1) like_count >= max(median * excess_threshold, min(P90, hit_floor_absolute_like_count)),
-    an account-relative scale channel; or (2) comment_count/like_count >= comment_like_ratio_threshold,
-    a fixed engagement-depth channel sourced from published platform operator guidance
-    (not from this account''s own baseline). Either channel alone is sufficient;
-    hits.hit_channel records which one(s) fired (like_threshold/comment_like_ratio/both).
-    These channels are evaluated against a still-watching video''s CURRENT numbers on
-    every daily judgement pass, not only once it exits the observation window -- a
-    video that already clears either channel is promoted immediately (see
-    amendment_2026_07_07_early_promotion).'
+  expected_behavior: 'FULL CURRENT DESIGN (supersedes all per-threshold amendments
+    below; this paragraph alone is sufficient to implement or verify it):
+
+
+    (A) Discovery-anchored D-notation, not calendar days. D0 = the first crawl
+    batch that discovers a given video; D1..D7 = the next 7 discovery batches for
+    that same video, regardless of how many calendar days after publish the video
+    was actually first discovered. A video only qualifies for the formal D baseline
+    if discovery_delay_hours (publish_time -> first discovery) <= 36 hours; a video
+    discovered later than that can still be tracked and still counts toward the
+    mature history baseline once it matures, it just never becomes a formal-D-baseline
+    member or gets D-point candidate judgement.
+
+
+    (B) Three categories at first contact with a video (per the master document''s
+    "历史回填与三类视频"): (1) historical mature sample -- already published >=7 days
+    when first seen; store one current cumulative snapshot now; feeds the mature
+    history baseline only, never the formal D baseline. (2) transition sample --
+    published 1-7 days when first seen; store one snapshot now, then store a second
+    "matured" snapshot once it turns exactly 7 days published; no D-series is
+    fabricated for it; once matured it feeds the mature history baseline only, never
+    the formal D baseline. (3) formal new video -- first discovered via the account''s
+    regular ongoing daily batch (i.e. not at first registration); store D0, then D1..D7
+    on the following 7 discovery batches; feeds ASR/topic pipelines and, once the full
+    D0-D7 set is complete AND discovery_delay_hours <= 36h, becomes eligible to join
+    the formal D baseline.
+
+
+    (C) Four baselines, not one: (1) mature history baseline -- source pool is this
+    account''s videos published within the trailing 90 days, capped at 50 (a rolling
+    window: newly-matured transition samples and newly-matured regular videos slide
+    in as they turn 7 days old; videos aging past 90 days slide out; there is no
+    separate "top-up" algorithm, the same 90-day/50-cap rule is simply re-evaluated
+    against current data whenever the baseline is needed); one cumulative-value
+    snapshot per video; median per metric; requires >= UNIFIED_MIN_SAMPLES (20, see
+    thresholds) total qualifying videos before it can be computed at all -- this
+    supersedes the master document''s literal "each metric needs >=5 non-null
+    samples," which the user explicitly overrode in favor of one unified floor of 20
+    used everywhere in this rule. (2) cold-start / history-high-signal rough reference
+    -- compares a video''s numbers against the mature history median using the SAME
+    multipliers as section (D) below (2.0x single-metric, 1.6x any-2-of-4 combo).
+    Applies in two cases, per master doc chapter 20.2 "存量高信号" and chapter 14''s
+    cold-start row: (a) a historical_mature or matured-transition video (the normal
+    case at first registration/首采, since these NEVER get a D-series at all), and
+    (b) a formal_new video at exactly D7 while the formal D baseline itself has
+    fewer than UNIFIED_MIN_SAMPLES qualifying D0-D7 sequences. CORRECTED 2026-07-07
+    (see amendment_2026_07_07_history_high_signal_is_a_real_hit below): this IS a
+    real hit -- the document explicitly permits calling it "历史爆款" informally --
+    tagged judgment_confidence=rough (a distinct evidence caliber from
+    formal_d_series, per the document''s "不能与正式D候选混用证据口径", not "not a
+    hit at all"). It is inserted into hits and is subject to the same permanence
+    rule (section F below / BR-HIT-005) as any other hit. (3) formal competitor D baseline -- activates once the account has
+    accumulated >= UNIFIED_MIN_SAMPLES (20) complete, discovery-delay-qualifying
+    D0-D7 sequences; once active, each D-point''s median is computed over the most
+    recent 50 qualifying predecessor videos at that D-point -- this corrects the
+    master document''s literal text ("最近20条"), which fixed the ongoing computation
+    window at 20 forever; the user determined 20 should only ever be the activation
+    gate, and the ongoing window should align with the mature history baseline''s 50;
+    the video currently being judged never contributes to its own baseline. (4) formal
+    self-owned P baseline -- kept (not redundant with raw play-count-based ratios,
+    because it answers "is this better than THIS account''s own normal performance,"
+    which official engagement-rate metrics computed against play_count cannot answer
+    on their own, and this account-relative comparison is what feeds the experience-library
+    promotion loop); activates at >= UNIFIED_MIN_SAMPLES (20) complete P sequences,
+    window then also aligned to 50 to mirror the D-baseline correction. NOTE (explicitly
+    left open, not a gap in this catalog entry -- deliberately deferred): the exact
+    mechanics of HOW the P-baseline comparison result feeds into experience-library
+    promotion are not yet designed; that design work belongs to the experience-library
+    layer, not to this hit-detection rule, and must not be guessed here.
+
+
+    (D) Trigger rules once the relevant formal baseline (D for competitor, P for
+    self-owned) is active -- five independent OR-ed channels, any one firing is
+    sufficient: (1) like anomaly -- candidate''s like_count >= 2.0x the baseline
+    median like_count at that D/P point. (2) comment anomaly -- comment_count >=
+    2.0x median. (3) collect anomaly -- collect_count >= 2.0x median. (4) share
+    anomaly -- share_count >= 2.0x median. (5) multi-indicator anomaly -- at least 2
+    of the 4 metrics above each independently clear 1.6x their own median (a separate,
+    lower-bar combo path, evaluated independently of channels 1-4''s own 2.0x bars,
+    not requiring any single metric to hit 2.0x). PLUS one additional channel that
+    exists outside the master document, kept by explicit user decision:
+    (6) comment_like_ratio -- comment_count/like_count >= comment_like_ratio_threshold
+    (0.2); computed purely from the candidate video''s own numbers, no baseline or
+    account history required at all, so it can fire even before any baseline is
+    active. hits.hit_channel records which channel(s) fired.
+
+
+    (E) Pinned-video handling: there is no separate pinned-detection step. Age
+    eligibility for every rule above (7-day minimum, 90-day mature-history window,
+    36-hour discovery-delay gate) is determined purely from the video''s real
+    publish timestamp versus current time. A pinned video whose real publish date
+    is actually outside a given window is excluded by that ordinary age rule like
+    any other video; a pinned video that is actually recent is eligible like any
+    other recent video. No platform "is this pinned" flag or list-position heuristic
+    is consulted anywhere in this rule.
+
+
+    (F) Explicitly REMOVED from the prior (superseded) implementation, by explicit
+    user instruction that nothing from that iteration survives unless named: the
+    P90-cap-plus-absolute-floor formula (max(median*excess_threshold, min(P90,
+    hit_floor_absolute_like_count))) is deleted -- the only formula is median x
+    threshold, per (D) above; the watching/archived/promoted status-machine and
+    "observation pool" framing, and the retraction/graduation lifecycle built on top
+    of it, are deleted -- replaced entirely by the three-category + D0-D7 +
+    four-baseline structure in (B)/(C) above; the baseline_min_samples 30-target/10-floor
+    scheme is deleted -- replaced by the single UNIFIED_MIN_SAMPLES=20 floor used
+    everywhere in (C).'
+  amendment_2026_07_07_master_doc_realignment:
+    decided_by: user
+    reason: 'The user discovered that a master design document already existed on
+      disk (爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx, the same
+      file cited in source_document above) describing the original hit-detection
+      design in detail -- and that the whole week''s incremental, code-first
+      iteration (the superseded amendments below) had drifted from it without
+      anyone checking, because nobody had gone back to that document while making
+      changes. The user required a full line-by-line reconciliation against the
+      actual document text before writing anything further, explicitly forbidding
+      guessing or inventing where the document was silent (pinned-video handling)
+      or where the document''s literal text conflicted with the user''s own recalled
+      intent (the D-baseline''s "最近20条" window, the per-metric ">=5 samples" floor).'
+    change: 'Every sub-decision in expected_behavior above was individually walked
+      through against the document''s actual chapters (8, 9, 10, 14, 15, appendix A)
+      and confirmed or corrected one at a time: (1) D-notation confirmed
+      discovery-anchored, not publish-calendar-anchored -- this is a real behavior
+      change from the prior week''s video_checks.day_offset, which was calendar-day-since-publish.
+      (2) three-category first-contact handling confirmed per the document, replacing
+      the prior week''s "younger_than_7_days permanent-exclusion bug fix," which
+      was solving the wrong problem (the document never intended exclusion at all --
+      it intended a two-snapshot transition-sample path). (3) mature history baseline
+      confirmed 90-day/50-cap/rolling, matching what the prior week''s code already
+      approximated for its stock crawl, but the per-metric ">=5 samples" floor was
+      overridden by the user to a single unified 20. (4) formal D baseline''s "20"
+      was identified by the user as literally meaning two different things in the
+      document text (an activation gate AND, separately, the ongoing computation
+      window) -- the user determined only the activation-gate meaning should survive;
+      the ongoing window is corrected to 50 to match the mature history baseline.
+      (5) formal P baseline was initially questioned as possibly redundant now that
+      self-owned accounts can obtain real play_count (making official view-based
+      ratio metrics computable) -- the user weighed this and kept the P baseline,
+      because it answers a different question (relative to this account''s own
+      history, which is what experience-library promotion needs) than an absolute/official
+      ratio does; the exact mechanics of how the P-baseline feeds experience promotion
+      is explicitly left open for the experience-library design, not resolved here.
+      (6) trigger multipliers were re-tuned by the user beyond the document''s
+      original 2.5/2.0/3.0 mix: single-metric channels (like/comment/collect/share)
+      unified to 2.0x, the multi-indicator combo channel separately lowered further
+      to 1.6x, and the cold-start D7 rough reference explicitly told to track the
+      same 2.0x/1.6x numbers rather than keep the document''s original 2.5/2.0/3.0.
+      (7) pinned-video handling was found to not exist anywhere in the document at
+      all (confirmed by a full-text search) -- the user reasoned through, and this
+      reconciliation confirmed, that a real-publish-timestamp age filter alone makes
+      a separate pinned-detection step unnecessary, so it is removed rather than
+      formalized. (8) comment_like_ratio (this week''s pre-existing addition, not in
+      the document) was the one and only piece of the superseded week''s design
+      explicitly kept by the user, verbatim, unchanged. (9) the P90-cap/absolute-floor
+      formula, the watching/archived/promoted status machine, the retraction/graduation
+      lifecycle, and the baseline_min_samples 30/10 scheme were all confirmed to have
+      no counterpart in the document and were explicitly ordered removed rather than
+      preserved, per the user''s blanket instruction that nothing from the superseded
+      iteration survives unless it was individually named to keep. Code, schema and
+      tests implementing this design have NOT been written yet as of this amendment
+      -- this is a rules-catalog-only checkpoint; the rewrite is a separate, larger
+      follow-up task.'
+  amendment_2026_07_07_history_high_signal_is_a_real_hit:
+    decided_by: user
+    reason: 'After the code rewrite landed and was run against real production data,
+      the user asked what happened to the document''s original magnitude-based
+      hit formula at first registration (首采) -- the real dataset showed 0 hits
+      from any magnitude channel, 100% from comment_like_ratio (this week''s
+      addition). The implementer had read chapter 14''s "不得用于D0-D6自动候选" and
+      appendix A''s "只标rough" as meaning mature-history-based magnitude checks
+      could never produce a real hit at all -- only a non-promoting counter. The
+      user pushed back sharply, correctly pointing out that the D0-D6 restriction
+      is about a completely different case (a formal_new video mid-way through its
+      D-series before the formal D baseline matures) and has nothing to do with
+      historical_mature/transition stock videos, which never have a D-series at
+      all. Re-reading chapter 20.2 "存量高信号" resolved it precisely: "历史视频只能
+      通过成熟历史基线粗略识别，数据库类型使用history_high_signal，用户阅读时可以简称
+      ''历史爆款''，但不能与正式D候选混用证据口径" -- history_high_signal IS a real hit
+      (informally "历史爆款"), just a distinct evidence caliber from formal_d_series,
+      not "not a hit."'
+    change: 'judge_account() rewritten so that BOTH cases -- (a) a historical_mature/
+      matured-transition video clearing the mature-history magnitude thresholds, and
+      (b) a formal_new video at D7 clearing them while the formal D baseline is not
+      yet active -- now insert a real row into hits via _record_trigger(), tagged
+      judgment_confidence=''rough'', baseline_mode=''mature_history'', instead of only
+      incrementing a non-promoting counter. These hits are permanent (BR-HIT-005)
+      like any other. judge_account()''s return dict changed from
+      promoted_count/comment_ratio_only_hits/cold_start_rough_count to
+      promoted_count/formal_hit_count/rough_hit_count (promoted_count is now the
+      true total of both calibers combined). Re-ran against the real 28-account
+      production dataset after this fix: rough-confidence (history_high_signal) hits
+      went from 0 (previously never recorded) to a real, substantial count now
+      present in the hits table alongside the 112 formal (comment_like_ratio) hits --
+      see HANDOFF_STATE.md for the exact real numbers from this run.'
+  amendment_2026_07_08_mature_history_channel_retuned:
+    decided_by: user
+    reason: 'After seeing the real 28-account result of amendment_2026_07_07_history_
+      high_signal_is_a_real_hit (532 rough hits at the 2.0x/1.6x thresholds shared
+      with formal_d_series), the user asked to test stricter numbers for the
+      mature-history/rough channel specifically, plus two gaps: no absolute floor
+      existed (a tiny account''s tiny numbers could read as a "hit" purely by being
+      a large multiple of an equally tiny median), and small accounts had no path
+      around a fixed floor at all. Tested 3.0x single-metric / 2.0x multi-indicator
+      / 2000 absolute like floor / P90 fallback for accounts too small to ever
+      clear the floor, against the real dataset before adoption: dropped the
+      channel from 532 hits to 262 (normal path) + 18 (small-account P90 path,
+      4/23 evaluable accounts qualified as small). User confirmed these numbers
+      matched expectations and locked them in, with the explicit requirement that
+      every hit record clearly state which condition(s) it actually met.'
+    change: 'hit_detection.cold_start_d7_single_metric_threshold raised 2.0->3.0
+      and cold_start_d7_multi_indicator_threshold raised 1.6->2.0 (mature-history/
+      rough channel only -- formal_d_series keeps 2.0x/1.6x unchanged, since a
+      same-day-point D-series comparison is inherently more precise/apples-to-apples
+      than a coarse account-wide median, so it can afford a lower bar; the noisier
+      mature-history comparison needs a higher one to compensate, not a lower one --
+      this is a deliberate asymmetry, not an oversight). Added
+      mature_history_absolute_like_floor=2000: on the normal (non-small-account)
+      path, a video''s own like_count must clear this floor regardless of which
+      specific metric(s) triggered the single/multi-indicator channel -- does not
+      apply to comment_like_ratio (independently verified, ratio-based by design)
+      or to formal_d_series (unchanged/untested this round). Added
+      small_account_p90_percentile=0.9: an account is classified "small" for this
+      channel when mature_medians[like_count] * cold_start_d7_single_metric_threshold
+      < mature_history_absolute_like_floor (i.e. even its best case could never
+      clear the fixed floor) -- for those accounts, a video qualifies instead by
+      clearing the account''s OWN like_count P90, always labelled
+      "p90_small_account:like={value}>=p90:{value}" so it is never confused with
+      the normal path''s evidence. Every hit_channel entry was also changed from a
+      bare rule name to a self-describing label carrying the actual value achieved
+      (e.g. "like_anomaly:3.24x", "multi_indicator:comment_anomaly=2.10x;collect_anomaly=2.30x",
+      "comment_like_ratio:0.250") -- per the user''s explicit requirement that every
+      hit record state exactly which condition(s) it met, not just which channel
+      name fired. Verified with 3 new tests (small-account P90 discriminates
+      correctly between a bulk group and genuine standouts; the absolute floor
+      rejects a video even when multi_indicator fired via non-like metrics; the
+      formal_d_series multi_indicator label correctly distinguishes from a
+      standalone like_anomaly channel despite now naming contributing metrics in
+      its own breakdown).'
+  amendment_2026_07_08_backfill_counting_and_daily_refresh:
+    decided_by: user
+    reason: 'Three issues surfaced from a single real-data question ("why does
+      账号小椰子专栏, with six-figure like counts, have zero hits?"), investigated one
+      at a time: (1) the account has 55 lifetime historical_mature videos but only
+      17 within the 90-day window, so it could never clear unified_min_samples(20)
+      -- the assistant first misdiagnosed this as a bug (misreading the master
+      document''s original literal ">=5" as current, without checking that
+      BR-BASELINE-003 already records the user''s explicit override to 20). The
+      user corrected this ("基本的要求是20个样本，不是5个") and pointed out the master
+      document''s ORIGINAL design did have a "legacy_supplement" backfill-outside-
+      the-90-day-window mechanism (retired verbatim in BR-BASELINE-003''s status
+      note) -- asking whether a narrower version should come back for exactly this
+      kind of account. (2) Separately, the assistant misreported the post-bugfix
+      real-data reconciliation (250 rough / 232 normal + 18 p90) when the true
+      channel-fired count was 280 (262 normal + 18 p90, exactly matching the
+      original dry-run prediction) -- root-caused to rough_hit_count/formal_hit_count
+      being tallied from judgment_confidence, which gets overwritten to "formal"
+      whenever comment_like_ratio ALSO fires on a video that already cleared the
+      mature_history channel (30 such videos in the real dataset). (3) The user
+      observed the real hit rate on still-observing transition videos looked high
+      and asked whether videos under some minimum age (they suggested 3 days)
+      should be excluded from judgement entirely; on reflection they decided
+      against adding that age-gate complexity ("为了不麻烦，所有视频都要参与爆款判断")
+      and instead identified the ACTUAL gap: transition videos were frozen at
+      their first-contact snapshot for up to 6 days (ingest_daily_incremental_items
+      only touched them once, at day 7 maturity) while formal_new videos already
+      get refreshed every single day -- the user asked for transition videos to
+      get the same daily-refresh cadence, with no age restriction on either.'
+    change: '(A) _mature_history_pool() now returns (pool, used_backfill). When
+      the in-window (90-day/50-cap) pool has fewer than unified_min_samples(20)
+      videos, it additionally computes a full-lifetime pool (same historical_
+      mature/matured-transition query, no window filter, still capped at
+      mature_history_max_samples=50). Backfill (using the full-lifetime pool
+      instead of the in-window one) applies ONLY when BOTH: the full-lifetime
+      pool itself has >= unified_min_samples(20) videos ("历史视频够多"), AND its
+      like_count median * cold_start_d7_single_metric_threshold >=
+      mature_history_absolute_like_floor ("体量高" -- the same yardstick
+      _account_small_status already uses, just evaluated against the full-lifetime
+      pool instead of the in-window one). An account that is either lifetime-sparse
+      or genuinely small-magnitude is NOT backfilled -- it stays exactly as
+      underpowered as before amendment_2026_07_08_mature_history_channel_retuned.
+      used_backfill is surfaced in judge_account()''s per-account report dict as
+      mature_history_used_backfill (and aggregated as
+      total_accounts_using_mature_history_backfill in judge_domain()) -- not
+      written to any schema column, to avoid migrating the baseline_mode/
+      hit_channel CHECK constraints (same precedent as
+      amendment_2026_07_07_day_reference_channel not minting a new hit_channel
+      enum value). (B) judge_account()''s rough_hit_count/formal_hit_count are now
+      tallied from baseline_mode (which is never overwritten) instead of
+      judgment_confidence (which the ratio_label branch overwrites to "formal"):
+      a video counts toward rough_hit_count if baseline_mode==''mature_history'',
+      and toward formal_hit_count if baseline_mode==''formal_d_series'' OR
+      comment_like_ratio also fired -- a video firing both now correctly
+      increments both counters (these are per-channel counts, not a partition;
+      rough_hit_count + formal_hit_count can exceed promoted_count when a video
+      clears more than one channel type). What gets WRITTEN to hits/
+      competitor_videos.judgment_confidence is unchanged (still "formal" takes
+      precedence when comment_like_ratio also clears, since it is independently
+      strong evidence) -- only the run-report tally was wrong, not the persisted
+      record. (C) ingest_daily_incremental_items()''s transition/not-yet-matured
+      branch now updates like_count/comment_count/share_count/collect_count and
+      records a video_checks row on EVERY daily pass (previously it did nothing
+      until the video actually reached day 7), matching formal_new''s existing
+      daily cadence; mature_snapshot_taken_at is still only set once the video
+      actually reaches day 7 (the freeze point, and what feeds the mature_history
+      baseline, is unchanged). No minimum-age gate was added to any channel --
+      every video participates in judgement on every pass regardless of age, per
+      the user''s explicit choice to keep this simple rather than add an
+      age-restriction rule. Verified with 5 new tests (backfill applies/does not
+      apply for high-magnitude+video-rich / small-magnitude / lifetime-sparse
+      accounts; a video firing both mature_history and comment_like_ratio
+      increments both counters; a transition video gets refreshed and checked on
+      a daily pass before maturing). Re-ran via reset_judgement_state +
+      --rejudge-only against the real 28-account production database after this
+      change -- see HANDOFF_STATE.md for the resulting real numbers.'
+  amendment_2026_07_08_day_since_publish_column:
+    decided_by: user
+    reason: 'Follow-up question after amendment_2026_07_08_backfill_counting_and_
+      daily_refresh: now that transition videos are checked daily during their 0-7
+      day observation, WHERE is which day of that lifecycle actually recorded?
+      video_checks.discovery_batch_index only carries D0-D7 discovery-batch-anchored
+      semantics for formal_new videos (explicitly documented as "not a calendar-day
+      count since publish") -- it was NULL for every transition check, so there was
+      no way to tell, from the table itself, which day of a transition video''s life
+      a given row corresponded to (only derivable indirectly from checked_at minus
+      publish_time). The user chose to add an explicit column rather than leave it
+      derivable-only.'
+    change: 'Added video_checks.day_since_publish (nullable INTEGER), deliberately a
+      separate column from discovery_batch_index so the two anchoring schemes (
+      discovery-batch vs calendar-day-since-publish) are never conflated in the same
+      field. Populated for historical_mature/transition video_checks rows only (the
+      first-contact snapshot in ingest_stock_items, and every daily-refresh/matured
+      snapshot in ingest_daily_incremental_items) via a new _day_since_publish()
+      helper -- (now - publish_time).days. Left NULL for formal_new rows, which
+      already have discovery_batch_index for this purpose; adding it there too was
+      out of scope for what was asked. register_competitor_accounts.install_schema()
+      now also lazily ALTER TABLE ADD COLUMNs any missing nullable column (currently
+      just this one) on every call via a new _ensure_column() helper, since CREATE
+      TABLE IF NOT EXISTS does not retroactively add columns to an existing table
+      (e.g. the real production DB) -- applied for real via --rejudge-only, which
+      calls install_schema() before judging; verified the column now exists on
+      data/formal/production_activation.sqlite3. Verified with 1 new test (a
+      transition video checked 2 days after publish records day_since_publish=2 and
+      discovery_batch_index=NULL).'
+  superseded_amendments_kept_as_audit_trail_only:
+    note: 'Everything below this point describes the mid-week (2026-07-06 /
+      2026-07-07, before the master-doc reconciliation) iteration. It does NOT
+      describe current behavior -- see expected_behavior and
+      amendment_2026_07_07_master_doc_realignment above for what is actually true
+      now. Kept, not deleted, only so the reasoning trail of what was tried and why
+      it changed remains inspectable.'
   amendment_2026_07_07_early_promotion:
     decided_by: user
     reason: 'BUSINESS_DECISION_TABLES.md (GOAL-ALIGNMENT-01) documents the observation
@@ -475,53 +851,142 @@ rules:
       bar instead of a permanently unreachable absolute one.
   defaults: {}
   thresholds:
-    excess_threshold: 2.0
-    hit_floor_absolute_like_count: 2000
-    p90_bounded_by_floor: true
+    single_metric_excess_threshold: 2.0
+    multi_indicator_excess_threshold: 1.6
+    cold_start_d7_single_metric_threshold: 3.0
+    cold_start_d7_multi_indicator_threshold: 2.0
+    mature_history_absolute_like_floor: 2000
+    small_account_p90_percentile: 0.9
     comment_like_ratio_threshold: 0.2
-  timing_semantics: Judgement runs after collection/refresh; promotion time is separate
-    from publish time.
+    discovery_delay_hours_max: 36
+    observe_days: 7
+    mature_history_window_days: 90
+    mature_history_max_samples: 50
+    formal_baseline_activation_min_samples: 20
+    formal_baseline_computation_window: 50
+    unified_min_samples: 20
+  timing_semantics: Discovery-batch judgement runs after each daily collection pass;
+    D0..D7 snapshots are keyed to discovery batch, not to calendar day since publish.
+    Mature-history and formal-baseline medians are recomputed from current data each
+    time they are needed (rolling), not stored as a frozen one-time value.
   state_effects:
   - hits insert/update
-  - competitor_videos.status=promoted
+  - video promoted/marked as hit
   allowed_side_effects:
   - hit artifact creation
   forbidden_behavior:
-  - absolute-like-count only judgement
+  - absolute-like-count-only judgement (no baseline reference at all)
   - LLM hit judgement
+  - P90-cap-plus-absolute-floor formula (removed, see expected_behavior section F)
+  - watching/archived/promoted status-machine or retraction/graduation lifecycle
+    (removed, see expected_behavior section F)
+  - baseline_min_samples 30-target/10-floor scheme (removed, replaced by
+    unified_min_samples=20)
+  - platform-position or heuristic pinned-video detection (removed, see
+    expected_behavior section E)
   edge_cases:
+  - account has fewer than unified_min_samples(20) qualifying videos -- mature
+    history baseline and formal D/P baselines are not computed; only
+    comment_like_ratio can fire
+  - video discovered more than discovery_delay_hours_max(36h) after its real
+    publish time -- never joins the formal D baseline, but still feeds the mature
+    history baseline once matured
+  - fewer than 20 complete D0-D7 (or P) sequences -- formal baseline stays
+    inactive; only the cold-start D7 rough reference (rough-labelled, non-hit-producing)
+    and comment_like_ratio can fire
   - zero median
-  - missing p90
   user_confirmation_required: false
   supersedes: []
   validation_required:
   - golden high/normal/low fixture
+  - discovery-anchored D0-D7 fixture (first-discovery delayed past publish date)
+  - transition-sample two-snapshot fixture (1-7 days old at first contact)
+  - unified_min_samples=20 boundary fixture (19 vs 20 qualifying videos)
+  - formal D/P baseline 20-activate / 50-window fixture (more than 50 qualifying
+    predecessors accumulated)
+  - multi-indicator 1.6x combo fixture (2-of-4 metrics each clearing 1.6x while none
+    clears the 2.0x single-metric bar)
+  - pinned-but-recent vs pinned-but-stale age-filter fixture (no separate pinned flag
+    consulted)
 - requirement_id: BR-HIT-002
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
-  source_section: 普通/低表现对照
+  source_section: 对照视频与标准样本包 (第17/17.1章，2026-07-07 补全)
   priority: P1
   domain_scope: all domains
-  trigger: analysis fixture selection
+  status: '2026-07-07: expanded from a one-line migration stub to the document''s
+    full deterministic control-sample spec, per user instruction to backfill every
+    item flagged in this reconciliation pass.'
+  trigger: analysis fixture selection / control-sample recall for a hit candidate
   inputs:
-  - non-hit videos
-  expected_behavior: Migration must preserve normal and low performer examples to
-    prove hit math has contrast cases.
+  - candidate video (the hit being analyzed, needing contrast samples)
+  - same_topic / core_question / full-text or pg_trgm top-K recall results
+  - account baseline (mature_history / formal_d_series / formal_p_series, whichever
+    the candidate itself was judged against)
+  expected_behavior: 'Three-tier match priority, in order: (1) same account, same or
+    near-identical topic, performance near normal level. (2) other benchmark
+    accounts, same topic or near-identical, ordinary performance. (3) same account,
+    related but not identical topic, an ordinary video. A control match is NOT
+    required -- failing to find one does not block analysis of the hit itself.
+    Recall is deterministic: prefer same-account first; pull candidates from
+    same_topic, matching core_question, or full-text/pg_trgm top-K; only call
+    content_relation_judge (an LLM) when the topic relationship is genuinely
+    ambiguous -- never do an all-pairs comparison across the whole library. Default
+    "normal control" bar: at the same observation point as the candidate, the
+    primary metric is between 0.75x and 1.25x this account''s baseline, AND it did
+    NOT itself clear any hit trigger rule; rank further by topic closeness. Default
+    "low-performer counter-example" bar: primary metric <=0.5x baseline at the same
+    observation point, OR at least two available metrics <=0.7x; a low-performer
+    sample MUST have a same-topic or near-topic relationship to the candidate it is
+    contrasting -- a low performer alone does not mechanically disprove the
+    hit-detection formula, it only adds a counter-example / boundary-evidence data
+    point. When there is no matching observation point across baseline modes
+    (e.g. comparing a mature-history video to a formal-D-series video), compare only
+    content structure and wording -- never compare absolute numbers, growth, or
+    multipliers across different baseline_mode values. A user may manually designate
+    a normal, low-performer, or counter-example sample and must record the reason;
+    manually-designated samples still must be tagged with their baseline_mode and
+    comparability caveats.'
   defaults:
     control_groups:
     - normal
     - low
+    normal_control_metric_range:
+    - 0.75
+    - 1.25
+    low_performer_single_metric_ceiling: 0.5
+    low_performer_multi_metric_ceiling: 0.7
+    low_performer_multi_metric_min_count: 2
   thresholds: {}
-  timing_semantics: Controls are read-only evidence and must not be promoted.
+  timing_semantics: Controls are read-only evidence and must not be promoted; recalled
+    and attached at analysis time, not stored as a permanent pairing.
   state_effects: []
-  allowed_side_effects: []
+  allowed_side_effects:
+  - sample-package field capture (see below)
   forbidden_behavior:
   - discard controls during migration
+  - all-pairs library-wide comparison to find a control
+  - comparing absolute numbers/growth/multipliers across different baseline_mode
+    values
+  - treating a low-performer sample as disproving the hit formula on its own
+  - promoting a control/counter-example sample as a hit
   edge_cases:
   - low count from young watching videos may be immature
+  - no matching observation point across baseline modes -- fall back to
+    content-only comparison, do not block analysis
+  - no control found at all -- proceed without one, do not block
   user_confirmation_required: false
   supersedes: []
   validation_required:
   - 'fixture: high/normal/low videos'
+  - normal-control 0.75x/1.25x boundary fixture
+  - low-performer single-metric 0.5x and multi-metric 0.7x/2-of-N boundary fixture
+  - cross-baseline_mode fallback-to-content-only fixture
+  - sample-package required-field completeness fixture (account/video id, publish
+    time, first discovery, duration, title, domain, D/P sequence, snapshot ids,
+    baseline reference, multiplier, missing points, trigger rules, raw/cleaned
+    script + version id, comment batch ids + actual/included/omitted counts,
+    duplicate/same-topic/control relationships, baseline_mode, discovery delay,
+    sample count, collection time, domain_config/Skill/prompt/model/payload_hash)
 - requirement_id: BR-HIT-003
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
   source_section: 爆款状态推进幂等
@@ -576,6 +1041,210 @@ rules:
   supersedes: []
   validation_required:
   - ratio edge fixture
+- requirement_id: BR-HIT-005
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 候选视频：提前触发与双阶段处理 -- 候选记录字段与永久保留 (第15.1/15.2章，2026-07-07 新增)
+  priority: P1
+  domain_scope: all domains
+  status: 'New 2026-07-07: this rule did not previously exist in the catalog. Added
+    per user instruction to backfill every item flagged in the master-doc
+    reconciliation pass. Directly refines BR-HIT-001''s retraction/graduation
+    removal -- see amendment below.'
+  trigger: a video first clears any BR-HIT-001 trigger channel (becomes a candidate)
+  inputs:
+  - first_trigger_observation (the D/P point of first hit)
+  - trigger_rules (cumulative list, not just the first one)
+  - peak_observation
+  expected_behavior: 'A candidate record carries: first_trigger_observation (the
+    D/P point of first hit), first_trigger_at (timestamp), trigger_rules (the
+    CUMULATIVE list of every rule that has ever fired for this video across all
+    observation points, not only the first one), peak_observation (the D/P point
+    where the video performed strongest relative to its baseline), baseline_mode
+    (mature_history / formal_d_series / formal_p_series -- whichever baseline it
+    was actually judged against), judgment_confidence (rough / formal),
+    tracking_completed (has D7/P+7d been reached), light_process_status
+    (pending/completed/failed -- video-level only; deep analysis is tracked
+    separately per sample_id+domain_id, see BR-HIT-006), deep_eligibility
+    (pending/eligible/not_eligible/manual -- resolved at D7/P+7d wrap-up, see
+    BR-HIT-006). PERMANENCE RULE (verbatim from the document, stronger than merely
+    "not mentioned"): once a video first formally triggers, its candidate record is
+    KEPT even if its multiplier later falls back below threshold -- there is no
+    retraction, no un-promotion, ever, once first triggered.'
+  defaults: {}
+  thresholds: {}
+  timing_semantics: trigger_rules accumulates across every daily judgement pass for
+    the life of the video; peak_observation and other derived fields may be updated
+    on later passes, but the fact of first_trigger_observation/first_trigger_at and
+    the historical trigger_rules entries already recorded are never deleted.
+  state_effects:
+  - candidate record insert/update (cumulative fields only ever grow, never shrink)
+  allowed_side_effects: []
+  forbidden_behavior:
+  - retracting/un-promoting a candidate once first triggered, for any reason
+    including a later multiplier drop
+  - overwriting or deleting a prior trigger_rules entry when a later pass adds a
+    new one
+  - a watching/archived/promoted status-machine standing in for these fields (see
+    BR-HIT-001 section F -- deleted, replaced by this rule)
+  edge_cases:
+  - video triggers on day 2, never triggers again, still needs a permanent record
+    with judgment_confidence=rough or formal depending on baseline_mode at time of
+    trigger
+  - video triggers on multiple different D points via different rules -- trigger_rules
+    must list all of them, not just the most recent
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - permanence fixture (trigger, then feed data that would no longer clear the bar,
+    assert record is unchanged/kept)
+  - cumulative trigger_rules fixture (two different rules fire on two different
+    days, both remain listed)
+- requirement_id: BR-HIT-006
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 候选视频：提前触发与双阶段处理 -- 分级处理与深度分析资格 (第15.3/15.4章，2026-07-07 新增)
+  priority: P1
+  domain_scope: all domains
+  status: 'New 2026-07-07: this rule did not previously exist in the catalog. Added
+    per user instruction to backfill every item flagged in the master-doc
+    reconciliation pass. This is a cost-control gate on top of BR-HIT-001/BR-HIT-005
+    -- most candidates are meant to stop at deterministic wrap-up, not automatically
+    receive full LLM-based deep analysis.'
+  trigger: a candidate record (BR-HIT-005) changes tier -- first trigger, D7/P+7d
+    reached, or deep-eligibility resolved
+  inputs:
+  - candidate record fields (BR-HIT-005)
+  - strong_peak threshold (default 5.0x, configurable)
+  - user-selected production_task linkage, or manual research-sample flag
+  expected_behavior: 'Five processing tiers, NOT a single one-shot pass: (1) early
+    lightweight processing -- triggered when D0-D6 first hits a formal D/P candidate,
+    or the user explicitly requests it; collects early comments (see BR-HIT-007) and
+    extracts the original topic, follow-up questions, controversies, and expansion
+    questions; purpose is to capture high-confidence early signal promptly. (2) D7/P+7d
+    lightweight wrap-up -- runs for EVERY video that ever triggered candidate status,
+    regardless of tier; freezes complete data, updates peak_observation and final
+    status; does NOT call a high-cost LLM by default. (3) mature full processing --
+    only for videos meeting the deep_eligibility conditions below; collects mature
+    comments, recalls control/counter-example samples (BR-HIT-002), runs deep
+    analysis, and may extract experience or mark a counter-example. (4) final-point
+    first-formal-trigger -- a video that only first clears formal D/P at D7 or P+7d
+    (never earlier) collects one mature_analysis comment batch and is judged against
+    the deep_eligibility table below; only proceeds to full deep analysis if eligible.
+    (5) cold-start rough signal -- no formal baseline active, D7 is merely anomalous
+    vs. the mature history baseline; saves a rough signal, may seed a topic candidate,
+    but does NOT auto-extract experience. DEEP-ELIGIBILITY TABLE (all conditions are
+    independently sufficient, OR-ed): still clears a formal candidate rule at D7/P+7d
+    -> eligible; an earlier peak reached strong_peak (default 5.0x, configurable) ->
+    eligible; the video is linked to a user-selected production_task, or the user
+    explicitly marked it as a research sample -> eligible; explicitly designated as a
+    normal control, low-performer counter-example, or manual research sample (see
+    BR-HIT-002) -> eligible. NOT eligible (default): only a weak early trigger, D7
+    fell back below threshold, and no topic was generated from it -> deterministic
+    wrap-up only, no deep analysis. Cold-start rough signal is NOT eligible by
+    default -- exception only when a manual or formal topic-selection need specifically
+    requires it.'
+  defaults:
+    strong_peak_multiplier: 5.0
+  thresholds:
+    strong_peak_multiplier: 5.0
+  timing_semantics: Tier (1) runs at first D0-D6 formal trigger; tier (2) runs at
+    every video''s D7/P+7d regardless of eligibility; tiers (3)/(4) run only after
+    deep_eligibility resolves to eligible; tier (5) runs only for cold-start rough
+    signals and never escalates to (3) automatically.
+  state_effects:
+  - light_process_status transition (BR-HIT-005 field)
+  - deep_eligibility transition (BR-HIT-005 field)
+  allowed_side_effects:
+  - comment collection (BR-HIT-007)
+  - control-sample recall (BR-HIT-002)
+  forbidden_behavior:
+  - calling a high-cost LLM during the D7/P+7d lightweight wrap-up by default
+  - running full deep analysis on a video that does not meet any deep_eligibility
+    condition
+  - auto-extracting experience from a cold-start rough signal
+  - treating every candidate as needing the same processing depth
+  edge_cases:
+  - video never reaches D7 (account paused/archived mid-tracking) -- wrap-up tier
+    cannot run; record stays tracking_completed=false
+  - strong_peak reached on an early day but D7 value falls back below the ordinary
+    threshold -- still deep-eligible because of the earlier peak, not re-evaluated
+    away
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - five-tier routing fixture (one video per tier, assert correct tier taken)
+  - deep_eligibility OR-condition fixture (each of the four independently-sufficient
+    conditions tested alone)
+  - cold-start rough signal never auto-promotes to deep analysis fixture
+- requirement_id: BR-HIT-007
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 评论采集 (第16章，2026-07-07 新增)
+  priority: P1
+  domain_scope: all domains
+  status: 'New 2026-07-07: this rule did not previously exist in the catalog. Added
+    per user instruction to backfill every item flagged in the master-doc
+    reconciliation pass. CLAUDE.md''s "MC 抓评论" is a simplified gloss over this
+    more precise design -- this rule is the actual spec.'
+  trigger: a candidate video enters early lightweight processing, D7/P+7d wrap-up,
+    mature full processing, or a tag-searched external video enters full processing
+    or topic validation
+  inputs:
+  - video type / timing (which BR-HIT-006 tier it is in)
+  - purpose tag (early_topic / mature_analysis / mature_history / external_snapshot)
+  expected_behavior: 'Sampling strategy keyed to video type/timing, each producing a
+    tagged purpose: formal D/P video''s first early trigger -> collect the top 60
+    first-level comments by the collector''s own popularity ranking, purpose=early_topic,
+    to identify follow-up questions/controversy/expansion directions. The same
+    candidate reaching D7/P+7d needing mature processing -> collect another (fresh)
+    top 60, purpose=mature_analysis, for mature analysis and the standard sample
+    package (BR-HIT-002). A video that only first formally triggers at D7/P+7d ->
+    collect one purpose=mature_analysis batch only, no earlier batch (avoids
+    duplication). Cold-start rough signal or historical-high-signal video -> collect
+    ONE batch, purpose=mature_history, only if topic validation or manual research
+    actually needs it -- this is weak evidence, not equivalent to a real formal D7
+    trigger. Tag-search external video -> collect one batch, purpose=external_snapshot,
+    only on entering full processing or topic validation -- external signal, never
+    labelled as if it were this account''s own D7. If fewer than 60 comments actually
+    exist, save the actual count. First-level comments only in phase one -- second-level
+    (reply) comments are NOT collected during any of the above. Preserve the
+    collector''s own popularity ordering and sample_rank. Empty-text comments are not
+    stored. Do not build commenter profiles, and do not present "share of sampled
+    popular comments" as if it were "share of the actual audience." A unique
+    constraint on (video, purpose, observation_point, sampling_strategy) enforces
+    idempotent retries -- re-running the same collection step must not create a
+    duplicate batch.'
+  defaults:
+    comments_per_batch: 60
+    reply_comments_collected_in_phase_one: false
+  thresholds:
+    comments_per_batch: 60
+  timing_semantics: Each purpose tag is collected at its own specific trigger point
+    (see expected_behavior); mature_analysis may run twice for the same video
+    (early + mature) but is otherwise a fresh collection each time, not an update
+    to the earlier batch.
+  state_effects:
+  - comment batch insert (per video, purpose, observation_point, sampling_strategy)
+  allowed_side_effects: []
+  forbidden_behavior:
+  - collecting second-level/reply comments in phase one
+  - building commenter profiles
+  - presenting popular-comment-sample share as audience share
+  - creating a duplicate batch for the same (video, purpose, observation_point,
+    sampling_strategy)
+  - labelling external_snapshot or mature_history evidence as if it were a real D7
+    trigger
+  edge_cases:
+  - fewer than 60 comments exist -- save actual count, do not pad or fabricate
+  - empty-text comment -- excluded from storage
+  - retrying the same collection step -- must be idempotent via the unique
+    constraint, not create a second batch
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - purpose-tag routing fixture (one fixture per purpose tag, assert correct
+    trigger point and count)
+  - idempotent-retry fixture (same video/purpose/observation_point/strategy run
+    twice, assert single batch)
+  - under-60-actual-count fixture
 - requirement_id: BR-ASR-001
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
   source_section: 本地ASR备料
