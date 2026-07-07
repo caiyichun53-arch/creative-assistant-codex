@@ -1535,6 +1535,25 @@ business_data_competitor_registration_execution:
     historical trajectory data exists yet to calibrate one). Verified with 2 new tests
     (early promotion fires when the bar is cleared; a still-young video that hasn't
     cleared it stays 'watching').
+  amendment_2026_07_07_day_reference_channel: 'User pushed further -- comparing a
+    still-young video against the MATURE threshold (calibrated for >=7 day-old
+    videos) rarely fires this early, which defeats the point. Added
+    _account_day_reference_median() (median like_count across this account''s other
+    videos'' video_checks history at the SAME day-offset since publish; returns None
+    below DAY_REFERENCE_MIN_SAMPLES=3, channel is skipped rather than fabricating a
+    reference) and a new config value early_excess_threshold=2.0 (deliberately lower
+    than excess_threshold=3.0, same reasoning as excess_threshold itself -- user''s
+    words, a 3x bar pulls the standard too high for large accounts). A still-watching
+    video with no other qualifying channel is promoted if its current like_count
+    clears early_excess_threshold times the day-specific median. Recorded as
+    hit_channel=''like_threshold'' (not a new enum value, avoids migrating the CHECK
+    constraint on the real production hits table); promoted_via_day_reference_count
+    is the source of truth for this channel''s hit count. Verified with 2 new tests
+    (promotes when enough day-specific history exists and the bar is cleared; skipped
+    -- stays watching -- when there''s insufficient day-specific history). Not yet
+    exercised against real data: video_checks was only just created and daily
+    incremental has never run for real, so there is no real day-specific history yet
+    for this channel to use.'
   requirement_alignment:
     BR-COLLECT-001: exact_match
     BR-COLLECT-002: exact_match

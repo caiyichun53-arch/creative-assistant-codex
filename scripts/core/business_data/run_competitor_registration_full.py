@@ -34,6 +34,12 @@ EXECUTION_GUARDRAIL_DOC = "docs/production_execution_guardrails.md"
 # cannot be computed at all -- not a business threshold, so it is not configurable.
 BASELINE_HARD_MINIMUM_SAMPLES = 2
 
+# 2026-07-07 user decision: a day-specific reference median (see
+# _account_day_reference_median) must not be trusted off too few historical
+# video_checks points at that exact day-offset -- this is the floor below which the
+# channel is skipped entirely rather than fabricating an unreliable reference.
+DAY_REFERENCE_MIN_SAMPLES = 3
+
 # BR-BASELINE-002 / BUILD_PLAN.md 阶段1 二次修正 (2026-06-13): a video excluded as
 # 'younger_than_7_days' at ingest time is NOT permanently disqualified -- that flag only
 # means its growth-curve capture is missing its first few frames (noise for future
@@ -559,6 +565,35 @@ def settled_sample_count(conn: sqlite3.Connection, account_id: str, hit_cfg: dic
     return len(sample)
 
 
+def _account_day_reference_median(conn: sqlite3.Connection, account_id: str, day_offset: int) -> float | None:
+    """Median like_count across this account's OTHER videos' video_checks history,
+    restricted to checks recorded exactly `day_offset` days after that video's own
+    publish_time. Returns None (not zero, not a guess) when there are fewer than
+    DAY_REFERENCE_MIN_SAMPLES such checks -- the caller must skip the channel, not
+    fabricate a reference from too few points.
+    """
+    rows = conn.execute(
+        """
+        SELECT vc.like_count, vc.checked_at, cv.publish_time
+          FROM video_checks vc
+          JOIN competitor_videos cv ON cv.video_id = vc.video_id
+         WHERE cv.account_id = ? AND vc.like_count IS NOT NULL AND cv.publish_time IS NOT NULL
+        """,
+        (account_id,),
+    ).fetchall()
+    values: list[int] = []
+    for row in rows:
+        published_at = _parse_datetime(row["publish_time"])
+        checked_at = _parse_datetime(row["checked_at"])
+        if published_at is None or checked_at is None:
+            continue
+        if (checked_at.date() - published_at.date()).days == day_offset:
+            values.append(int(row["like_count"]))
+    if len(values) < DAY_REFERENCE_MIN_SAMPLES:
+        return None
+    return float(statistics.median(values))
+
+
 def _evaluate_hit_channels(
     row: sqlite3.Row, like_threshold: float, comment_like_ratio_threshold: float
 ) -> tuple[bool, bool]:
@@ -687,6 +722,13 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
     # but no published threshold survived contact with the real dataset (see amendment
     # note), so those two dimensions are not judged yet.
     comment_like_ratio_threshold = float(hit_cfg["comment_like_ratio_threshold"])
+    # 2026-07-07 user decision: a day-specific reference channel for still-watching
+    # videos -- see _account_day_reference_median and its use below. Lower than
+    # excess_threshold (3.0) on purpose: the user explicitly rejected reusing 3x here
+    # because it pulls the bar too high for large accounts, same reasoning that shaped
+    # excess_threshold itself, just applied to a day-of-life-specific reference instead
+    # of the mature/settled one.
+    early_excess_threshold = float(hit_cfg.get("early_excess_threshold", 2.0))
     baseline_id = stable_baseline_id(account["account_id"], run_id)
     conn.execute(
         """
@@ -755,15 +797,41 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
     # cleared either channel is left untouched here -- it stays 'watching' and will
     # either clear the bar on a future day or graduate via the loop above once it
     # ages past observe_days without ever clearing it.
+    promoted_via_day_reference = 0
     watching_rows = conn.execute(
         "SELECT * FROM competitor_videos WHERE account_id=? AND status='watching' AND like_count IS NOT NULL",
         (account["account_id"],),
     ).fetchall()
     for row in watching_rows:
         like_channel_hit, ratio_channel_hit = _evaluate_hit_channels(row, like_threshold, comment_like_ratio_threshold)
+        day_reference_hit = False
         if not (like_channel_hit or ratio_channel_hit):
+            # 2026-07-07: comparing a still-young video against the mature threshold
+            # (calibrated for >=7 day-old videos) almost never fires this early, which
+            # defeats the point of checking at all -- so also compare it against this
+            # account's own historical median at the SAME day-of-life, computed from
+            # video_checks. Skipped entirely (not a soft zero) when there isn't enough
+            # day-specific history yet to trust that median.
+            published_at = _parse_datetime(row["publish_time"])
+            if published_at is not None:
+                day_offset = (datetime.now(timezone.utc).date() - published_at.date()).days
+                day_reference_median = _account_day_reference_median(conn, account["account_id"], day_offset)
+                if day_reference_median is not None:
+                    like_count = int(row["like_count"] or 0)
+                    day_reference_hit = like_count >= day_reference_median * early_excess_threshold
+        if not (like_channel_hit or ratio_channel_hit or day_reference_hit):
             continue
-        hit_channel = _hit_channel_label(like_channel_hit, ratio_channel_hit)
+        if day_reference_hit and not (like_channel_hit or ratio_channel_hit):
+            # Reuses the 'like_threshold' label (a magnitude-based like_count check,
+            # same category, just against a day-specific reference instead of the
+            # mature one) rather than adding a new hits.hit_channel enum value, which
+            # would require migrating the CHECK constraint on the real production
+            # table. promoted_via_day_reference_count is the source of truth for how
+            # many hits this specific channel produced.
+            hit_channel = "like_threshold"
+            promoted_via_day_reference += 1
+        else:
+            hit_channel = _hit_channel_label(like_channel_hit, ratio_channel_hit)
         _promote_hit(
             conn, account, row,
             median=median, baseline_id=baseline_id, hit_channel=hit_channel,
@@ -784,6 +852,7 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
         "promoted_count": promoted,
         "promoted_early_count": promoted_early,
         "promoted_via_ratio_channel": promoted_via_ratio_channel,
+        "promoted_via_day_reference_count": promoted_via_day_reference,
         "retracted_count": retracted,
         "graduated_count": graduated,
         "status": "judged",

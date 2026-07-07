@@ -377,12 +377,42 @@ rules:
       row (any age) against the same already-computed like_threshold/comment_like_ratio_threshold
       used for settled samples; a video that clears either channel is promoted
       immediately regardless of how many days it has been observed. This reuses the
-      existing, already-validated hit criteria -- it is NOT a new growth-curve/steepness
-      predictive model (no historical trajectory data exists yet to calibrate one
-      responsibly, so that remains unbuilt). A still-watching video that has not
+      existing, already-validated hit criteria. A still-watching video that has not
       cleared either channel is left untouched by this pass; it either clears the bar
-      on a later day or graduates to archived once it ages past observe_days without
-      ever clearing it.
+      on a later day, clears the day-reference channel below, or graduates to archived
+      once it ages past observe_days without ever clearing anything.
+  amendment_2026_07_07_day_reference_channel:
+    decided_by: user
+    reason: 'The user pointed out that comparing a still-young video (e.g. day 2 of
+      its life) against the mature/settled like_threshold (median * excess_threshold,
+      calibrated for videos that have had the full observe_days to accumulate
+      engagement) is apples-to-oranges -- a young video will almost never clear a bar
+      set for fully-matured videos, which defeats the point of checking early at all.
+      The user required a genuinely day-appropriate reference instead: this account''s
+      OWN historical median like_count at that SAME day-of-life, built from
+      video_checks history across its other videos -- this is what the 0-7 day
+      video_checks curve is actually for, not just archival storage.'
+    change: 'Added _account_day_reference_median() (median like_count across this
+      account''s video_checks rows recorded at the exact same day-offset since
+      publish as the candidate video; returns None, not zero, when fewer than
+      DAY_REFERENCE_MIN_SAMPLES=3 such checks exist, so the channel is skipped rather
+      than fabricating a reference from too few points) and a new
+      early_excess_threshold config value (2.0, see config/settings.yaml).
+      A still-watching video with no other qualifying channel is promoted if its
+      current like_count >= early_excess_threshold times the day-specific median. The
+      user explicitly required early_excess_threshold to be LOWER than excess_threshold
+      (3.0) -- set to 2.0 -- for the same reason excess_threshold itself was tuned
+      -- a 3x bar pulls the standard too high for large accounts. This is still NOT a
+      growth-curve/steepness/trajectory-shape predictive model (that would need
+      historical trajectory data across many complete 0-7 day curves, including both
+      confirmed hits and confirmed non-hits, to calibrate responsibly -- none exists
+      yet since video_checks was only just created and daily incremental has not yet
+      run for real over multiple days). Promoted hits via this channel are recorded
+      as hit_channel=''like_threshold'' (same category: a like_count magnitude check,
+      just against a different reference point) rather than a new enum value, to
+      avoid migrating the CHECK constraint on the real production hits table;
+      promoted_via_day_reference_count in judge_account()''s return value is the
+      source of truth for how many hits this specific channel produced.'
   amendment_2026_07_07:
     decided_by: user
     reason: 'The like_count-only channel left one real production account (财经不眠姐)

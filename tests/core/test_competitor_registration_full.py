@@ -863,6 +863,218 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_day_reference_channel_promotes_early_using_day_specific_median(self) -> None:
+        # 2026-07-07 user decision: comparing a still-young video's current numbers
+        # against the mature/settled threshold (median*3, calibrated for >=7 day-old
+        # videos) is apples-to-oranges -- a 2-day-old video will rarely clear a bar set
+        # for fully-matured videos. Instead, compare it against `early_excess_threshold`
+        # (2x) times this account's OWN historical median like_count at that SAME
+        # day-of-life, computed from video_checks history across other videos.
+        domain = {
+            "name": "fixture-domain",
+            "formal_domain_label": "fan_kepu_social_life",
+            "platform": "douyin",
+            "collector_policy": {
+                "first_crawl": "stock_snapshot_archived",
+                "comments": "reverse_prep_only_for_promoted_hits",
+            },
+            "competitor_seeds": [
+                {"name": "fixture-account", "url": "https://www.douyin.com/user/MS4wLjABAAAAabc"},
+            ],
+        }
+        hit_cfg = {
+            "observe_days": 7,
+            "baseline_window_days": 90,
+            "baseline_min_samples": 30,
+            "excess_threshold": 3.0,
+            "hit_floor_absolute_like_count": 2000,
+            "comment_like_ratio_threshold": 0.2,
+            "early_excess_threshold": 2.0,
+        }
+        now = datetime.now(timezone.utc)
+        settled_time = (now - timedelta(days=30)).isoformat()
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "day_reference.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+
+                # 9 ordinary settled videos so the mature baseline (median=100,
+                # threshold=300) is real and well above what the candidate below has.
+                for idx in range(9):
+                    video_id = stable_video_id(account["account_id"], f"ordinary-{idx}")
+                    conn.execute(
+                        """
+                        INSERT INTO competitor_videos(
+                            video_id, account_id, platform, platform_item_id, publish_time,
+                            like_count, comment_count, excluded_reason, status,
+                            registration_run_id, raw_archive_ref, raw_json
+                        ) VALUES (?, ?, 'douyin', ?, ?, 100, 5, NULL, 'archived', 'run-0', 'raw://fixture', '{}')
+                        """,
+                        (video_id, account["account_id"], f"ordinary-{idx}", settled_time),
+                    )
+
+                # 3 other videos, each with a video_checks row recorded exactly 2 days
+                # after their own publish_time -- this account's day-2 like_count
+                # history is [40, 50, 60], median 50.
+                for idx, day2_like_count in enumerate([40, 50, 60]):
+                    other_video_id = stable_video_id(account["account_id"], f"history-{idx}")
+                    other_publish_time = now - timedelta(days=30)
+                    conn.execute(
+                        """
+                        INSERT INTO competitor_videos(
+                            video_id, account_id, platform, platform_item_id, publish_time,
+                            like_count, comment_count, excluded_reason, status,
+                            registration_run_id, raw_archive_ref, raw_json
+                        ) VALUES (?, ?, 'douyin', ?, ?, 999, 5, NULL, 'archived', 'run-0', 'raw://fixture', '{}')
+                        """,
+                        (other_video_id, account["account_id"], f"history-{idx}", other_publish_time.isoformat()),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO video_checks(check_id, video_id, checked_at, like_count, comment_count, run_id)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            f"check-hist-{idx}",
+                            other_video_id,
+                            (other_publish_time + timedelta(days=2)).isoformat(),
+                            day2_like_count,
+                            2,
+                            "run-0",
+                        ),
+                    )
+
+                # Candidate: published 2 days ago, like_count=150 -- clears 2x the
+                # day-2 median (50*2=100) but nowhere near the mature threshold (300)
+                # and its comment/like ratio (2/150 ~= 1.3%) is nowhere near 20%.
+                candidate_video_id = stable_video_id(account["account_id"], "day2-candidate")
+                conn.execute(
+                    """
+                    INSERT INTO competitor_videos(
+                        video_id, account_id, platform, platform_item_id, publish_time,
+                        like_count, comment_count, excluded_reason, status,
+                        registration_run_id, raw_archive_ref, raw_json
+                    ) VALUES (?, ?, 'douyin', ?, ?, 150, 2, NULL, 'watching', 'run-0', 'raw://fixture', '{}')
+                    """,
+                    (candidate_video_id, account["account_id"], "day2-candidate", (now - timedelta(days=2)).isoformat()),
+                )
+                conn.commit()
+
+                result = judge_account(conn, account, hit_cfg=hit_cfg, run_id="run-1")
+
+                self.assertEqual(result.get("promoted_via_day_reference_count", 0), 1)
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT status FROM competitor_videos WHERE platform_item_id='day2-candidate'"
+                    ).fetchone()["status"],
+                    "promoted",
+                )
+            finally:
+                conn.close()
+
+    def test_day_reference_channel_skipped_when_insufficient_day_specific_history(self) -> None:
+        # Only 2 historical checks at this day-offset (below the minimum needed to
+        # trust a median) -- the channel must not fabricate a reference from too few
+        # points. The candidate stays 'watching' since it clears neither this channel
+        # nor the other two.
+        domain = {
+            "name": "fixture-domain",
+            "formal_domain_label": "fan_kepu_social_life",
+            "platform": "douyin",
+            "collector_policy": {
+                "first_crawl": "stock_snapshot_archived",
+                "comments": "reverse_prep_only_for_promoted_hits",
+            },
+            "competitor_seeds": [
+                {"name": "fixture-account", "url": "https://www.douyin.com/user/MS4wLjABAAAAabc"},
+            ],
+        }
+        hit_cfg = {
+            "observe_days": 7,
+            "baseline_window_days": 90,
+            "baseline_min_samples": 30,
+            "excess_threshold": 3.0,
+            "hit_floor_absolute_like_count": 2000,
+            "comment_like_ratio_threshold": 0.2,
+            "early_excess_threshold": 2.0,
+        }
+        now = datetime.now(timezone.utc)
+        settled_time = (now - timedelta(days=30)).isoformat()
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "day_reference_sparse.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+                for idx in range(9):
+                    video_id = stable_video_id(account["account_id"], f"ordinary-{idx}")
+                    conn.execute(
+                        """
+                        INSERT INTO competitor_videos(
+                            video_id, account_id, platform, platform_item_id, publish_time,
+                            like_count, comment_count, excluded_reason, status,
+                            registration_run_id, raw_archive_ref, raw_json
+                        ) VALUES (?, ?, 'douyin', ?, ?, 100, 5, NULL, 'archived', 'run-0', 'raw://fixture', '{}')
+                        """,
+                        (video_id, account["account_id"], f"ordinary-{idx}", settled_time),
+                    )
+                # Only 2 historical day-2 checks -- below DAY_REFERENCE_MIN_SAMPLES.
+                for idx, day2_like_count in enumerate([40, 50]):
+                    other_video_id = stable_video_id(account["account_id"], f"history-{idx}")
+                    other_publish_time = now - timedelta(days=30)
+                    conn.execute(
+                        """
+                        INSERT INTO competitor_videos(
+                            video_id, account_id, platform, platform_item_id, publish_time,
+                            like_count, comment_count, excluded_reason, status,
+                            registration_run_id, raw_archive_ref, raw_json
+                        ) VALUES (?, ?, 'douyin', ?, ?, 999, 5, NULL, 'archived', 'run-0', 'raw://fixture', '{}')
+                        """,
+                        (other_video_id, account["account_id"], f"history-{idx}", other_publish_time.isoformat()),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO video_checks(check_id, video_id, checked_at, like_count, comment_count, run_id)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            f"check-hist-{idx}",
+                            other_video_id,
+                            (other_publish_time + timedelta(days=2)).isoformat(),
+                            day2_like_count,
+                            2,
+                            "run-0",
+                        ),
+                    )
+                candidate_video_id = stable_video_id(account["account_id"], "day2-candidate")
+                conn.execute(
+                    """
+                    INSERT INTO competitor_videos(
+                        video_id, account_id, platform, platform_item_id, publish_time,
+                        like_count, comment_count, excluded_reason, status,
+                        registration_run_id, raw_archive_ref, raw_json
+                    ) VALUES (?, ?, 'douyin', ?, ?, 150, 2, NULL, 'watching', 'run-0', 'raw://fixture', '{}')
+                    """,
+                    (candidate_video_id, account["account_id"], "day2-candidate", (now - timedelta(days=2)).isoformat()),
+                )
+                conn.commit()
+
+                result = judge_account(conn, account, hit_cfg=hit_cfg, run_id="run-1")
+
+                self.assertEqual(result.get("promoted_via_day_reference_count", 0), 0)
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT status FROM competitor_videos WHERE platform_item_id='day2-candidate'"
+                    ).fetchone()["status"],
+                    "watching",
+                )
+            finally:
+                conn.close()
+
     def test_watching_video_graduates_to_archived_when_it_never_cleared_the_bar(self) -> None:
         # BUILD_PLAN.md 阶段2: "watching 到期(>7天)-> archived 转基线材料". A video that
         # aged out of observation without ever clearing the hit threshold settles as

@@ -16,7 +16,7 @@ $ python scripts/core/staging/verify_goal_v062_phase8_readiness.py
 status: ENGINEERING_READY
 
 $ python -m unittest <31个已知模块,find tests -iname "test_*.py" 取得>
-Ran 284 tests in 17.8s
+Ran 286 tests in 29.5s
 OK
 
 $ python -m scripts.core.business_data.run_competitor_registration_full --rejudge-only
@@ -108,6 +108,12 @@ run_id: competitor_registration_rejudge_20260706T213052Z
     - 抽出了两个共享小函数(`_evaluate_hit_channels`、`_promote_hit`)避免"判定通道"这段逻辑在两个地方各写一份、以后容易漂移。
     - 把之前那个"不能提前判定"的测试**反过来改了**(先明确写清楚为什么反过来,不是偷偷改掉装作没发生过),另外新加一个"没达标就不该提前判"的对照测试。全部284个测试跑过,两个权威闸门仍绿。
     - `BUSINESS_RULE_CATALOG.yaml` BR-HIT-001 和 `REQUIREMENT_CODE_TRACEABILITY.yaml` 都补了新的修订记录,如实写清楚:这条规则的"不能提前判"是从旧文档搬来、没有独立证据的假设,现在被用户直接推翻,改成"能提前判",且这不是新建一个预测模型,是把已经验证过的判定标准提前用而已。
+28. **用户追问下去,指出27条做的还不够**:第27条只是拿"成熟视频的门槛"(中位数×3)去比还没满7天的新视频,这本身就不对等——一条视频才第2天,数据天然就比第7天少,拿这个去够"成熟门槛"基本上只有真的爆炸性的视频才够得着。用户要的是:拿这个账号自己的视频,在**同一个天数**积累的历史数据,算出"第N天通常能长到多少"这么一个参照,新视频拿自己当前第几天的数据去跟"账号自己第几天的历史中位数"比,不是跟成熟门槛比。而且这个倍数用户明确说不能是3倍(会把体量大的账号门槛拉得太高),改成**2倍**——这跟当年定 `excess_threshold=3.0` 的道理一样,只是数字更低。
+    - 新增 `_account_day_reference_median()`:拿 `video_checks` 这张历史表,按"这条视频的检查时间减去发布时间,正好等于N天"筛出同一账号其他视频在第N天时的点赞数,取中位数;**如果这一天的历史记录不够3条,直接返回"没有",不会用不够的数据硬凑一个参照**(不是返回0,是明确"没法用")。
+    - 新增配置 `early_excess_threshold: 2.0`,专门给这条新通道用,不动已经拿真实数据验证过的 `excess_threshold: 3.0`。
+    - 观察中的视频,如果原有两条通道(点赞门槛、评论比例)都没达标,再多加这第三条通道判一次:当前点赞数是不是达到"账号自己同一天历史中位数 × 2"。达标就提前判定爆款(新计数器 `promoted_via_day_reference_count`),复用 `hit_channel='like_threshold'` 这个标签(没建新的枚举值,避免要去改真实生产库那张 `hits` 表已经建好的约束,风险更小)。
+    - **老实说清楚现在的数据现实**:`video_checks` 这张表刚建、增量采集也还没真跑过,现在**没有真实的"第N天历史数据"**,这条新通道写好了、测试过了,但实际生效要等每日增量真的连续跑几天、攒够同一天数的历史记录才有得比——不是写完代码就能立刻在真实数据上看到效果。
+    - 新写了2个测试(历史数据够、能提前判;历史数据不够、该按兵不动),`BUSINESS_RULE_CATALOG.yaml`/`REQUIREMENT_CODE_TRACEABILITY.yaml` 都补了修订记录。全部286个测试跑过,两个权威闸门仍绿。
 
 ## 下一步该干嘛
 

@@ -65,6 +65,21 @@ hit_detection:
   # contact with the real data (the claimed 3-5x collect:like ratio for knowledge
   # content matched zero of 1253 real videos), so those two dimensions are not judged.
   comment_like_ratio_threshold: 0.2
+  # 2026-07-07 user decision: a still-watching video (day 1-6 of its life) should not
+  # be compared against the mature/settled threshold above (median * 3) -- that
+  # threshold is calibrated for fully-matured (>=7 day) videos, so a young video would
+  # almost never clear it except in an extreme viral case, which defeats the point of
+  # checking early at all. Instead, a SEPARATE channel compares a still-watching
+  # video's current like_count against `early_excess_threshold` times the account's
+  # own median like_count AT THAT SAME DAY-OFFSET (computed from video_checks history
+  # across this account's other videos, not from the mature threshold). The user
+  # explicitly set this multiplier lower than excess_threshold (3.0) because a 3x bar
+  # pulls the standard too high for large accounts -- same reasoning as excess_threshold
+  # itself, just applied to the day-specific reference instead of the mature one.
+  # Requires enough video_checks history at that day-offset to trust the median; until
+  # daily incremental has run for real over enough days, this channel has no data to
+  # use yet and is skipped (never blocks or fabricates a threshold from thin samples).
+  early_excess_threshold: 2.0
   # 2026-07-06: pinned and younger-than-observe-window videos are permanently
   # ineligible for baseline computation, so fetching exactly baseline_min_samples raw
   # videos on first crawl structurally falls short of 30 eligible after exclusion.
