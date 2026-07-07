@@ -710,11 +710,17 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
             finally:
                 conn.close()
 
-    def test_watching_video_within_observe_window_is_not_judged_early(self) -> None:
-        # BUILD_PLAN.md 阶段1: "video_checks...攒生长曲线-- 现在只捕获不建模,数据够了再做
-        # 早期预警(第N天异常陡->提前晋升...)". A video still inside the observation
-        # window must stay 'watching' even if its metrics would already clear the hit
-        # threshold -- no early promotion in this phase.
+    def test_watching_video_within_observe_window_is_promoted_early_when_it_clears_the_bar(self) -> None:
+        # 2026-07-07 user decision: the whole point of capturing a video's own 0-7 day
+        # video_checks curve is to actually USE it, not just store it. A video still
+        # inside the observation window that already clears the account's existing
+        # hit threshold (computed from settled samples) must be promoted immediately --
+        # not held back until day 7. This reverses an earlier, incorrect "no early
+        # promotion" design point that had been pulled from BUILD_PLAN.md (the retired
+        # legacy system's build log) without independent confirmation; there is no
+        # separate growth-curve/steepness *model* here, just the same already-validated
+        # hit criteria (like_threshold / comment_like_ratio_threshold) applied to a
+        # still-watching video's current numbers instead of only at exit.
         domain = {
             "name": "fixture-domain",
             "formal_domain_label": "fan_kepu_social_life",
@@ -756,8 +762,8 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
                         """,
                         (video_id, account["account_id"], f"ordinary-{idx}", settled_time),
                     )
-                # Only 2 days old -- would clear the like threshold (median*3=300) many
-                # times over, but must not be promoted yet.
+                # Only 2 days old, but clears the like threshold (median*3=300) many
+                # times over -- must be promoted right now, not held until day 7.
                 early_video_id = stable_video_id(account["account_id"], "early-riser")
                 conn.execute(
                     """
@@ -773,10 +779,84 @@ class FullCompetitorRegistrationTests(unittest.TestCase):
 
                 result = judge_account(conn, account, hit_cfg=hit_cfg, run_id="run-1")
 
-                self.assertEqual(result["sample_count"], 9)  # early-riser not counted yet
+                self.assertEqual(result["sample_count"], 9)  # baseline itself still only uses settled samples
+                self.assertEqual(result["promoted_early_count"], 1)
                 self.assertEqual(
                     conn.execute(
                         "SELECT status FROM competitor_videos WHERE platform_item_id='early-riser'"
+                    ).fetchone()["status"],
+                    "promoted",
+                )
+                self.assertIsNotNone(
+                    conn.execute("SELECT hit_id FROM hits WHERE platform_item_id='early-riser'").fetchone()
+                )
+            finally:
+                conn.close()
+
+    def test_watching_video_within_observe_window_stays_watching_when_it_does_not_clear_the_bar(self) -> None:
+        # The counterpart: a still-young video that has NOT cleared either channel yet
+        # must stay 'watching' -- early promotion only fires when the bar is actually
+        # cleared, it does not shorten the observation window itself.
+        domain = {
+            "name": "fixture-domain",
+            "formal_domain_label": "fan_kepu_social_life",
+            "platform": "douyin",
+            "collector_policy": {
+                "first_crawl": "stock_snapshot_archived",
+                "comments": "reverse_prep_only_for_promoted_hits",
+            },
+            "competitor_seeds": [
+                {"name": "fixture-account", "url": "https://www.douyin.com/user/MS4wLjABAAAAabc"},
+            ],
+        }
+        hit_cfg = {
+            "observe_days": 7,
+            "baseline_window_days": 90,
+            "baseline_min_samples": 30,
+            "excess_threshold": 3.0,
+            "hit_floor_absolute_like_count": 2000,
+            "comment_like_ratio_threshold": 0.2,
+        }
+        settled_time = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        young_time = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = sqlite3.connect(Path(tmp) / "no_premature_promotion.sqlite3")
+            conn.row_factory = sqlite3.Row
+            try:
+                install_schema(conn)
+                register_from_domain(conn, domain, source_config_ref="config/domains/泛科普.yaml")
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+                for idx in range(9):
+                    video_id = stable_video_id(account["account_id"], f"ordinary-{idx}")
+                    conn.execute(
+                        """
+                        INSERT INTO competitor_videos(
+                            video_id, account_id, platform, platform_item_id, publish_time,
+                            like_count, comment_count, excluded_reason, status,
+                            registration_run_id, raw_archive_ref, raw_json
+                        ) VALUES (?, ?, 'douyin', ?, ?, 100, 5, NULL, 'archived', 'run-0', 'raw://fixture', '{}')
+                        """,
+                        (video_id, account["account_id"], f"ordinary-{idx}", settled_time),
+                    )
+                slow_video_id = stable_video_id(account["account_id"], "slow-starter")
+                conn.execute(
+                    """
+                    INSERT INTO competitor_videos(
+                        video_id, account_id, platform, platform_item_id, publish_time,
+                        like_count, comment_count, excluded_reason, status,
+                        registration_run_id, raw_archive_ref, raw_json
+                    ) VALUES (?, ?, 'douyin', ?, ?, 50, 2, NULL, 'watching', 'run-0', 'raw://fixture', '{}')
+                    """,
+                    (slow_video_id, account["account_id"], "slow-starter", young_time),
+                )
+                conn.commit()
+
+                result = judge_account(conn, account, hit_cfg=hit_cfg, run_id="run-1")
+
+                self.assertEqual(result["promoted_early_count"], 0)
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT status FROM competitor_videos WHERE platform_item_id='slow-starter'"
                     ).fetchone()["status"],
                     "watching",
                 )

@@ -357,7 +357,32 @@ rules:
     an account-relative scale channel; or (2) comment_count/like_count >= comment_like_ratio_threshold,
     a fixed engagement-depth channel sourced from published platform operator guidance
     (not from this account''s own baseline). Either channel alone is sufficient;
-    hits.hit_channel records which one(s) fired (like_threshold/comment_like_ratio/both).'
+    hits.hit_channel records which one(s) fired (like_threshold/comment_like_ratio/both).
+    These channels are evaluated against a still-watching video''s CURRENT numbers on
+    every daily judgement pass, not only once it exits the observation window -- a
+    video that already clears either channel is promoted immediately (see
+    amendment_2026_07_07_early_promotion).'
+  amendment_2026_07_07_early_promotion:
+    decided_by: user
+    reason: 'BUSINESS_DECISION_TABLES.md (GOAL-ALIGNMENT-01) documents the observation
+      window as "watch and snapshot" for T+0..T+7 without stating whether a still-watching
+      video can be promoted before it ages out. An earlier session pass had implemented
+      "no early promotion, wait until exit" based on BUILD_PLAN.md (the retired legacy
+      system''s build log, deleted 2026-07-07) -- an unconfirmed borrowing, not a
+      decision recorded against the current system. The user directly overruled this:
+      a video''s own 0-7 day video_checks curve exists to be used, not just archived,
+      and there is no technical reason a still-watching video''s current numbers cannot
+      be checked against the account''s already-computed threshold on every pass.'
+    change: judge_account() now also evaluates every currently status=''watching''
+      row (any age) against the same already-computed like_threshold/comment_like_ratio_threshold
+      used for settled samples; a video that clears either channel is promoted
+      immediately regardless of how many days it has been observed. This reuses the
+      existing, already-validated hit criteria -- it is NOT a new growth-curve/steepness
+      predictive model (no historical trajectory data exists yet to calibrate one
+      responsibly, so that remains unbuilt). A still-watching video that has not
+      cleared either channel is left untouched by this pass; it either clears the bar
+      on a later day or graduates to archived once it ages past observe_days without
+      ever clearing it.
   amendment_2026_07_07:
     decided_by: user
     reason: 'The like_count-only channel left one real production account (财经不眠姐)

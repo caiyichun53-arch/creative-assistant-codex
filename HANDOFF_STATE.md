@@ -16,7 +16,7 @@ $ python scripts/core/staging/verify_goal_v062_phase8_readiness.py
 status: ENGINEERING_READY
 
 $ python -m unittest <31个已知模块,find tests -iname "test_*.py" 取得>
-Ran 283 tests in 18.3s
+Ran 284 tests in 17.8s
 OK
 
 $ python -m scripts.core.business_data.run_competitor_registration_full --rejudge-only
@@ -99,6 +99,15 @@ run_id: competitor_registration_rejudge_20260706T213052Z
     - 权限系统(auto-mode 分类器)两次拦截了删除动作,要求用户逐一亲自点名要删的具体路径(不接受"删除旧系统"这种笼统指令,也不接受我列清单让用户回复"删掉"就算数)——用户照做后,删除了这9个目录 + `BUILD_PLAN.md`(git 有记录,不是真的消失)。
     - 同步修了 `CLAUDE.md`/`AGENTS.md` 里两处指向 `BUILD_PLAN.md` 当权威的说法(开头"每次开工先读"那句、"开工纪律"里"每步对照"那句),改成明确指向 `BUSINESS_RULE_CATALOG.yaml`,并加了一句永久说明:以后任何"设计是不是已经讨论过"的问题,只认 `BUSINESS_RULE_CATALOG.yaml`,不接受旧计划文档当权威。**没有动 `legacy_runtime` 的隔离清单本身**(那是另一套真实在生效、防止旧代码复活的安全机制,跟"文档被误当权威"是两个不同的问题,不能混着改)。
     - 全部283个测试(含 `test_constitution_sync`)跑过,`clean_room_readiness`/权威闸门都仍是绿的/`ENGINEERING_READY`,确认删除没有破坏任何现行代码。
+
+**同一天(2026-07-07)最后一轮:找到独立确证,并按用户明确要求把"提前判定"加回去**
+
+26. **补搜到了一份之前没查到的正式文件**:`BUSINESS_DECISION_TABLES.md`(标题就是 GOAL-ALIGNMENT-01,清空重建后的正式决策记录,不是 `BUILD_PLAN.md` 那种旧系统文档)。这份文件整份(94行,不是摘录)独立确认了:首采年轻存量视频直接归档不进观察池、观察期(0-7天)只记录数据不主动判定、满7天归档为基线材料——前两条跟第22条从 `BUILD_PLAN.md` 查到的一致,不是巧合,是真的有独立正式记录。**但这份文件同样没有解释"为什么观察期内不能提前判定"这个为什么,只是陈述了结论。**
+27. **用户明确要求:新视频自己0-7天攒的 `video_checks` 曲线,必须真的拿来判断,不能只攒不用**——用户原话"不然搞尼玛的0-7天曲线"。查证过没有任何文档说"不能提前判定"是技术限制,只是没写为什么;用户的诉求是直接用**已经算好的账号门槛**(不是重新建一个基于曲线陡峭度的预测模型,那个需要历史数据校准、现在没有)去检查观察中视频的当前数据,只要达标立刻判定,不用等满7天。
+    - `judge_account()` 新增一段:每次判定时,除了处理已经"安全"的样本(archived/promoted/满7天的watching),**还会额外把当前所有"观察中"的视频(不管年龄)拿现有门槛去检查一遍**——达标立刻判定爆款(新计数器 `promoted_early_count`),不达标就不动,继续观察或者等满7天走"毕业"那条路。
+    - 抽出了两个共享小函数(`_evaluate_hit_channels`、`_promote_hit`)避免"判定通道"这段逻辑在两个地方各写一份、以后容易漂移。
+    - 把之前那个"不能提前判定"的测试**反过来改了**(先明确写清楚为什么反过来,不是偷偷改掉装作没发生过),另外新加一个"没达标就不该提前判"的对照测试。全部284个测试跑过,两个权威闸门仍绿。
+    - `BUSINESS_RULE_CATALOG.yaml` BR-HIT-001 和 `REQUIREMENT_CODE_TRACEABILITY.yaml` 都补了新的修订记录,如实写清楚:这条规则的"不能提前判"是从旧文档搬来、没有独立证据的假设,现在被用户直接推翻,改成"能提前判",且这不是新建一个预测模型,是把已经验证过的判定标准提前用而已。
 
 ## 下一步该干嘛
 

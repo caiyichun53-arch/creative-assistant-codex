@@ -536,16 +536,19 @@ def judge_domain(conn: sqlite3.Connection, domain_label: str, *, hit_cfg: dict[s
     total_hits = 0
     total_retracted = 0
     total_graduated = 0
+    total_promoted_early = 0
     for account in rows:
         account_result = judge_account(conn, account, hit_cfg=hit_cfg, run_id=run_id)
         total_hits += account_result["promoted_count"]
         total_retracted += account_result.get("retracted_count", 0)
         total_graduated += account_result.get("graduated_count", 0)
+        total_promoted_early += account_result.get("promoted_early_count", 0)
         results.append(account_result)
     return {
         "total_promoted": total_hits,
         "total_retracted": total_retracted,
         "total_graduated": total_graduated,
+        "total_promoted_early": total_promoted_early,
         "accounts": results,
     }
 
@@ -554,6 +557,89 @@ def settled_sample_count(conn: sqlite3.Connection, account_id: str, hit_cfg: dic
     rows = conn.execute(SETTLED_SAMPLE_QUERY, (account_id,)).fetchall()
     sample, _ = select_baseline_sample(rows, hit_cfg)
     return len(sample)
+
+
+def _evaluate_hit_channels(
+    row: sqlite3.Row, like_threshold: float, comment_like_ratio_threshold: float
+) -> tuple[bool, bool]:
+    like_count = int(row["like_count"] or 0)
+    comment_like_ratio = (
+        row["comment_count"] / like_count if row["comment_count"] is not None and like_count > 0 else None
+    )
+    like_channel_hit = like_count >= like_threshold
+    ratio_channel_hit = comment_like_ratio is not None and comment_like_ratio >= comment_like_ratio_threshold
+    return like_channel_hit, ratio_channel_hit
+
+
+def _hit_channel_label(like_channel_hit: bool, ratio_channel_hit: bool) -> str:
+    if like_channel_hit and ratio_channel_hit:
+        return "both"
+    if like_channel_hit:
+        return "like_threshold"
+    return "comment_like_ratio"
+
+
+def _promote_hit(
+    conn: sqlite3.Connection,
+    account: sqlite3.Row,
+    row: sqlite3.Row,
+    *,
+    median: float,
+    baseline_id: str,
+    hit_channel: str,
+    evidence_status: str,
+    run_id: str,
+) -> None:
+    like_count = int(row["like_count"] or 0)
+    hit_id = stable_hit_id(account["account_id"], row["platform_item_id"])
+    excess_ratio = round(like_count / median, 2) if median else None
+    share_comment_ratio = (
+        round(int(row["share_count"]) / int(row["comment_count"]), 2)
+        if row["share_count"] and row["comment_count"]
+        else None
+    )
+    conn.execute(
+        """
+        INSERT INTO hits(
+            hit_id, video_id, account_id, platform, platform_item_id, title, url,
+            publish_time, like_count, comment_count, share_count, collect_count,
+            excess_ratio, share_comment_ratio, baseline_id, hit_channel, evidence_status, run_id
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(account_id, platform_item_id) DO UPDATE SET
+            like_count=excluded.like_count,
+            comment_count=excluded.comment_count,
+            share_count=excluded.share_count,
+            collect_count=excluded.collect_count,
+            excess_ratio=excluded.excess_ratio,
+            share_comment_ratio=excluded.share_comment_ratio,
+            baseline_id=excluded.baseline_id,
+            hit_channel=excluded.hit_channel,
+            evidence_status=excluded.evidence_status,
+            run_id=excluded.run_id
+        """,
+        (
+            hit_id,
+            row["video_id"],
+            account["account_id"],
+            row["platform"],
+            row["platform_item_id"],
+            row["title"],
+            row["url"],
+            row["publish_time"],
+            row["like_count"],
+            row["comment_count"],
+            row["share_count"],
+            row["collect_count"],
+            excess_ratio,
+            share_comment_ratio,
+            baseline_id,
+            hit_channel,
+            evidence_status,
+            run_id,
+        ),
+    )
+    conn.execute("UPDATE competitor_videos SET status='promoted' WHERE video_id=?", (row["video_id"],))
 
 
 def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: dict[str, Any], run_id: str) -> dict[str, Any]:
@@ -627,13 +713,9 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
     retracted = 0
     graduated = 0
     promoted_via_ratio_channel = 0
+    promoted_early = 0
     for row in sample:
-        like_count = int(row["like_count"] or 0)
-        comment_like_ratio = (
-            row["comment_count"] / like_count if row["comment_count"] is not None and like_count > 0 else None
-        )
-        like_channel_hit = like_count >= like_threshold
-        ratio_channel_hit = comment_like_ratio is not None and comment_like_ratio >= comment_like_ratio_threshold
+        like_channel_hit, ratio_channel_hit = _evaluate_hit_channels(row, like_threshold, comment_like_ratio_threshold)
         if not (like_channel_hit or ratio_channel_hit):
             # BR-HIT-003 (idempotent judgement): a video re-evaluated in this same
             # judgement pass that no longer clears either recomputed channel must not
@@ -653,64 +735,45 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
                 conn.execute("UPDATE competitor_videos SET status='archived' WHERE video_id=?", (row["video_id"],))
                 graduated += 1
             continue
-        if like_channel_hit and ratio_channel_hit:
-            hit_channel = "both"
-        elif like_channel_hit:
-            hit_channel = "like_threshold"
-        else:
-            hit_channel = "comment_like_ratio"
-        hit_id = stable_hit_id(account["account_id"], row["platform_item_id"])
-        excess_ratio = round(like_count / median, 2) if median else None
-        share_comment_ratio = (
-            round(int(row["share_count"]) / int(row["comment_count"]), 2)
-            if row["share_count"] and row["comment_count"]
-            else None
+        hit_channel = _hit_channel_label(like_channel_hit, ratio_channel_hit)
+        _promote_hit(
+            conn, account, row,
+            median=median, baseline_id=baseline_id, hit_channel=hit_channel,
+            evidence_status=evidence_status, run_id=run_id,
         )
-        conn.execute(
-            """
-            INSERT INTO hits(
-                hit_id, video_id, account_id, platform, platform_item_id, title, url,
-                publish_time, like_count, comment_count, share_count, collect_count,
-                excess_ratio, share_comment_ratio, baseline_id, hit_channel, evidence_status, run_id
-            )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(account_id, platform_item_id) DO UPDATE SET
-                like_count=excluded.like_count,
-                comment_count=excluded.comment_count,
-                share_count=excluded.share_count,
-                collect_count=excluded.collect_count,
-                excess_ratio=excluded.excess_ratio,
-                share_comment_ratio=excluded.share_comment_ratio,
-                baseline_id=excluded.baseline_id,
-                hit_channel=excluded.hit_channel,
-                evidence_status=excluded.evidence_status,
-                run_id=excluded.run_id
-            """,
-            (
-                hit_id,
-                row["video_id"],
-                account["account_id"],
-                row["platform"],
-                row["platform_item_id"],
-                row["title"],
-                row["url"],
-                row["publish_time"],
-                row["like_count"],
-                row["comment_count"],
-                row["share_count"],
-                row["collect_count"],
-                excess_ratio,
-                share_comment_ratio,
-                baseline_id,
-                hit_channel,
-                evidence_status,
-                run_id,
-            ),
-        )
-        conn.execute("UPDATE competitor_videos SET status='promoted' WHERE video_id=?", (row["video_id"],))
         promoted += 1
         if hit_channel in ("comment_like_ratio", "both"):
             promoted_via_ratio_channel += 1
+
+    # 2026-07-07 user decision: the point of capturing a still-watching video's own
+    # 0-7 day video_checks curve is to actually use it, not just store it. A video
+    # still inside the observation window that already clears the account's existing
+    # hit threshold is promoted right now -- not held back until it ages out. This
+    # uses the same already-validated hit criteria as the settled-sample loop above,
+    # not a separate growth-curve/steepness model (no historical trajectory data
+    # exists yet to calibrate one responsibly). A still-watching video that has NOT
+    # cleared either channel is left untouched here -- it stays 'watching' and will
+    # either clear the bar on a future day or graduate via the loop above once it
+    # ages past observe_days without ever clearing it.
+    watching_rows = conn.execute(
+        "SELECT * FROM competitor_videos WHERE account_id=? AND status='watching' AND like_count IS NOT NULL",
+        (account["account_id"],),
+    ).fetchall()
+    for row in watching_rows:
+        like_channel_hit, ratio_channel_hit = _evaluate_hit_channels(row, like_threshold, comment_like_ratio_threshold)
+        if not (like_channel_hit or ratio_channel_hit):
+            continue
+        hit_channel = _hit_channel_label(like_channel_hit, ratio_channel_hit)
+        _promote_hit(
+            conn, account, row,
+            median=median, baseline_id=baseline_id, hit_channel=hit_channel,
+            evidence_status=evidence_status, run_id=run_id,
+        )
+        promoted += 1
+        promoted_early += 1
+        if hit_channel in ("comment_like_ratio", "both"):
+            promoted_via_ratio_channel += 1
+
     return {
         "account": account["account_name"],
         "sample_count": len(likes),
@@ -719,6 +782,7 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
         "threshold": round(like_threshold, 2),
         "comment_like_ratio_threshold": comment_like_ratio_threshold,
         "promoted_count": promoted,
+        "promoted_early_count": promoted_early,
         "promoted_via_ratio_channel": promoted_via_ratio_channel,
         "retracted_count": retracted,
         "graduated_count": graduated,

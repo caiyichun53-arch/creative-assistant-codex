@@ -1518,9 +1518,23 @@ business_data_competitor_registration_execution:
     不吃亏" -- broadened the settled-sample query (status IN (...,'watching') and
     excluded_reason IN (...,'younger_than_7_days')) so a row flows through once
     select_baseline_sample's own live age-check confirms it has genuinely aged past
-    the window; only 'pinned' remains a real permanent exclusion. No early judgement
-    is performed on still-watching videos (BUILD_PLAN.md says "现在只捕获不建模") --
-    video_checks only accumulates a growth curve for a future modeling phase.
+    the window; only 'pinned' remains a real permanent exclusion. (This entry originally
+    said no early judgement is performed on still-watching videos, citing BUILD_PLAN.md
+    -- that specific point has since been reversed, see amendment_2026_07_07_early_promotion
+    below; BUILD_PLAN.md itself was deleted the same day for describing the retired
+    legacy system, not current design.)
+  amendment_2026_07_07_early_promotion: User-decided reversal (see BUSINESS_RULE_CATALOG.yaml
+    BR-HIT-001 amendment_2026_07_07_early_promotion) -- the "no early judgement, wait
+    until exit" behavior above had been borrowed from BUILD_PLAN.md (retired legacy
+    system's build log) without independent confirmation, and BUSINESS_DECISION_TABLES.md
+    (the actual current GOAL-ALIGNMENT-01 decision record) doesn't state either way.
+    judge_account() now also checks every currently 'watching' row (any age) against
+    the already-computed hit thresholds on every judgement pass; a video that clears
+    either channel is promoted immediately instead of waiting for it to age out. Reuses
+    the existing validated hit criteria -- not a new growth-curve/steepness model (no
+    historical trajectory data exists yet to calibrate one). Verified with 2 new tests
+    (early promotion fires when the bar is cleared; a still-young video that hasn't
+    cleared it stays 'watching').
   requirement_alignment:
     BR-COLLECT-001: exact_match
     BR-COLLECT-002: exact_match
