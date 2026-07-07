@@ -723,11 +723,12 @@ def judge_account(conn: sqlite3.Connection, account: sqlite3.Row, *, hit_cfg: di
     # note), so those two dimensions are not judged yet.
     comment_like_ratio_threshold = float(hit_cfg["comment_like_ratio_threshold"])
     # 2026-07-07 user decision: a day-specific reference channel for still-watching
-    # videos -- see _account_day_reference_median and its use below. Lower than
-    # excess_threshold (3.0) on purpose: the user explicitly rejected reusing 3x here
-    # because it pulls the bar too high for large accounts, same reasoning that shaped
-    # excess_threshold itself, just applied to a day-of-life-specific reference instead
-    # of the mature/settled one.
+    # videos -- see _account_day_reference_median and its use below. Same numeric
+    # value (2.0) as excess_threshold itself now (both were lowered from 3.0 for the
+    # same reason -- a 3x bar pulls the standard too high for large accounts) but
+    # this is a separately configurable value on purpose: it multiplies a
+    # day-of-life-specific reference, not the mature/settled one, so the two are free
+    # to diverge again later without one change silently dragging the other along.
     early_excess_threshold = float(hit_cfg.get("early_excess_threshold", 2.0))
     baseline_id = stable_baseline_id(account["account_id"], run_id)
     conn.execute(

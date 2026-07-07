@@ -413,6 +413,23 @@ rules:
       avoid migrating the CHECK constraint on the real production hits table;
       promoted_via_day_reference_count in judge_account()''s return value is the
       source of truth for how many hits this specific channel produced.'
+  amendment_2026_07_07_excess_threshold_2x:
+    decided_by: user
+    reason: The user directly overruled excess_threshold=3.0 for the mature/settled
+      channel too (not only the new day-reference channel) -- 3x pulls the standard
+      too high for large accounts, the exact same reasoning that shaped
+      early_excess_threshold=2.0. The user was explicit that this applies to ALL
+      like-count-magnitude judging, not just the day-of-life reference channel.
+    change: 'excess_threshold lowered from 3.0 to 2.0 in config/settings.yaml and
+      config/settings.example.yaml. This changes the primary mature-video threshold
+      formula (max(median * excess_threshold, min(P90, hit_floor_absolute_like_count)))
+      used to judge every settled/archived/promoted video, not just newly-observed
+      ones. Re-ran via --rejudge-only against the real production database
+      immediately after this change -- 198 -> 245 hits (+47), 28/28 accounts still
+      have at least one hit (0 zeroed), per-account hit counts range 1-17 (no account
+      exploded to a degenerate share of its sample). hit_channel distribution shifted
+      to like_threshold=177/comment_like_ratio=43/both=25 (previously 130/48/20) --
+      consistent with a lower like-count bar, not a sign of a broken formula.'
   amendment_2026_07_07:
     decided_by: user
     reason: 'The like_count-only channel left one real production account (财经不眠姐)
@@ -458,7 +475,7 @@ rules:
       bar instead of a permanently unreachable absolute one.
   defaults: {}
   thresholds:
-    excess_threshold: 3.0
+    excess_threshold: 2.0
     hit_floor_absolute_like_count: 2000
     p90_bounded_by_floor: true
     comment_like_ratio_threshold: 0.2

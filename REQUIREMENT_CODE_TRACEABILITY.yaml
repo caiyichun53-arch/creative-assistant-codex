@@ -1535,6 +1535,15 @@ business_data_competitor_registration_execution:
     historical trajectory data exists yet to calibrate one). Verified with 2 new tests
     (early promotion fires when the bar is cleared; a still-young video that hasn't
     cleared it stays 'watching').
+  amendment_2026_07_07_excess_threshold_2x: 'User directly overruled excess_threshold=3.0
+    for the mature/settled channel too, not just the new day-reference channel -- 3x
+    pulls the standard too high for large accounts. Lowered to 2.0 in both config
+    files (see BUSINESS_RULE_CATALOG.yaml BR-HIT-001 amendment_2026_07_07_excess_threshold_2x).
+    Re-ran via --rejudge-only against the real production database immediately: 198
+    -> 245 hits (+47), 28/28 accounts still have >=1 hit (none zeroed), per-account
+    range 1-17 hits (no degenerate blowout), hit_channel distribution shifted to
+    like_threshold=177/comment_like_ratio=43/both=25 (was 130/48/20) -- consistent
+    with a lower bar, not a broken formula.'
   amendment_2026_07_07_day_reference_channel: 'User pushed further -- comparing a
     still-young video against the MATURE threshold (calibrated for >=7 day-old
     videos) rarely fires this early, which defeats the point. Added

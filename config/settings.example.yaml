@@ -38,7 +38,10 @@ llm:
 hit_detection:
   baseline_window_days: 90
   baseline_min_samples: 30
-  excess_threshold: 3.0
+  excess_threshold: 2.0
+  # 2026-07-07 user decision: lowered from 3.0 to 2.0 -- 3x pulls the standard too
+  # high for large accounts. See BUSINESS_RULE_CATALOG.yaml BR-HIT-001
+  # amendment_2026_07_07_excess_threshold_2x.
   # 2026-07-06 business decision (see BUSINESS_RULE_CATALOG.yaml BR-HIT-001):
   # threshold = max(median * excess_threshold, min(P90, hit_floor_absolute_like_count)).
   # P90 computed on the same small recent sample being judged is close to tautological
