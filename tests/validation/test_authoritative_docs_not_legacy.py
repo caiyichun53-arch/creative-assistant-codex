@@ -14,19 +14,19 @@ ROOT = Path(__file__).resolve().parents[2]
 # scripts/analyze/judge_hits.py, scripts/topics/daily_topics.py, scripts/feishu/push.py)
 # was already declared legacy_runtime.quarantined_entrypoints (LEGACY_QUARANTINE_ROOTS)
 # at the time it was read. Nobody checked that before trusting it. This test makes
-# that check automatic for PROSE design docs -- CLAUDE.md/AGENTS.md/BUSINESS_DECISION_TABLES.md
-# describe how the current system works and should never need to name a quarantined
-# legacy path; if one shows up, the doc is very likely describing the retired system.
-#
-# BUSINESS_RULE_CATALOG.yaml and REQUIREMENT_CODE_TRACEABILITY.yaml are deliberately
-# NOT in this list: their whole job is migration/traceability bookkeeping, so fields
-# like observed_legacy_behavior and code_artifacts legitimately cite legacy paths as
-# "here is what the old code did" evidence -- that is not the same mistake as a prose
-# doc silently describing legacy code as if it were the current system.
+# that check automatic across every authoritative doc -- no exceptions. An earlier
+# version of this test exempted BUSINESS_RULE_CATALOG.yaml and
+# REQUIREMENT_CODE_TRACEABILITY.yaml because their legacy_files/legacy_functions/
+# evidence.defaults fields legitimately cited old code paths as migration evidence.
+# The user rejected that carve-out outright ("别搞任何旧代码,一切按新设计的来") -- those
+# fields were stripped from both files (see the same commit as this change) so the
+# exemption is no longer needed at all.
 AUTHORITATIVE_DESIGN_DOCS = (
     "CLAUDE.md",
     "AGENTS.md",
     "BUSINESS_DECISION_TABLES.md",
+    "BUSINESS_RULE_CATALOG.yaml",
+    "REQUIREMENT_CODE_TRACEABILITY.yaml",
 )
 
 

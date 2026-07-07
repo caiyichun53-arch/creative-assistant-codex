@@ -67,6 +67,7 @@ ALLOWED_GUARD_REFERENCE_FILES = {
     "scripts/core/business_data/README.md",
     "tests/core/test_phase5_business_workflow.py",
     "tests/validation/test_clean_room_readiness.py",
+    "tests/validation/test_authoritative_docs_not_legacy.py",
 }
 ALLOWED_EXCLUSION_REFERENCE_FILES = {
     "BUSINESS_MODEL_ROUTE_REGISTRY.yaml",

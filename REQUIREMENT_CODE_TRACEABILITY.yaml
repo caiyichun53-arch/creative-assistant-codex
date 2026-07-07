@@ -31,14 +31,6 @@ supported_difference_types:
 - ambiguous
 traceability:
 - requirement_id: BR-COLLECT-001
-  legacy_files:
-  - scripts/collect/crawl_competitors.py
-  - scripts/collect/common.py
-  - scripts/reverse/fetch_comments.py
-  legacy_functions:
-  - crawl_account
-  - store_hit_comments
-  - fetch_fresh_aweme
   observed_legacy_behavior: 'First crawl is a stock snapshot: existing videos become
     baseline material and must not enter the watching observation pool.'
   target_component: CollectorAdapter + Core materializer
@@ -59,14 +51,6 @@ traceability:
     thresholds:
       observe_days: 7
 - requirement_id: BR-COLLECT-002
-  legacy_files:
-  - scripts/collect/crawl_competitors.py
-  - scripts/collect/common.py
-  - scripts/reverse/fetch_comments.py
-  legacy_functions:
-  - crawl_account
-  - store_hit_comments
-  - fetch_fresh_aweme
   observed_legacy_behavior: Only daily incremental newly published videos within the
     observation window enter watching.
   target_component: CollectorAdapter + Core materializer
@@ -86,14 +70,6 @@ traceability:
     thresholds:
       observe_days: 7
 - requirement_id: BR-COLLECT-003
-  legacy_files:
-  - scripts/collect/crawl_competitors.py
-  - scripts/collect/common.py
-  - scripts/reverse/fetch_comments.py
-  legacy_functions:
-  - crawl_account
-  - store_hit_comments
-  - fetch_fresh_aweme
   observed_legacy_behavior: Video identity is platform item id scoped to competitor/source;
     duplicate discoveries update metrics and must not create duplicate business objects.
   target_component: CollectorAdapter + Core materializer
@@ -114,14 +90,6 @@ traceability:
       - platform_item_id
     thresholds: {}
 - requirement_id: BR-COLLECT-004
-  legacy_files:
-  - scripts/collect/crawl_competitors.py
-  - scripts/collect/common.py
-  - scripts/reverse/fetch_comments.py
-  legacy_functions:
-  - crawl_account
-  - store_hit_comments
-  - fetch_fresh_aweme
   observed_legacy_behavior: Watching videos are refreshed during T+1..T+7 and each
     check records a metric snapshot.
   target_component: CollectorAdapter + Core materializer
@@ -141,14 +109,6 @@ traceability:
     thresholds:
       max_observe_days: 7
 - requirement_id: BR-COLLECT-005
-  legacy_files:
-  - scripts/collect/crawl_competitors.py
-  - scripts/collect/common.py
-  - scripts/reverse/fetch_comments.py
-  legacy_functions:
-  - crawl_account
-  - store_hit_comments
-  - fetch_fresh_aweme
   observed_legacy_behavior: Comments for hit analysis are collected as reverse-prep
     evidence, not formal research evidence.
   target_component: CollectorAdapter + Core materializer
@@ -168,14 +128,6 @@ traceability:
     thresholds:
       top_comments: 60
 - requirement_id: BR-COLLECT-006
-  legacy_files:
-  - scripts/collect/crawl_competitors.py
-  - scripts/collect/common.py
-  - scripts/reverse/fetch_comments.py
-  legacy_functions:
-  - crawl_account
-  - store_hit_comments
-  - fetch_fresh_aweme
   observed_legacy_behavior: Keep high-signal comments after deterministic noise filtering
     and idempotent comment_id insertion.
   target_component: CollectorAdapter + Core materializer
@@ -195,14 +147,6 @@ traceability:
     thresholds:
       top_comments: 60
 - requirement_id: BR-COLLECT-007
-  legacy_files:
-  - scripts/collect/crawl_competitors.py
-  - scripts/collect/common.py
-  - scripts/reverse/fetch_comments.py
-  legacy_functions:
-  - crawl_account
-  - store_hit_comments
-  - fetch_fresh_aweme
   observed_legacy_behavior: Collection, ranking, storage, retrieval, tracking and
     dedupe are deterministic code paths with no LLM calls.
   target_component: CollectorAdapter + Core materializer
@@ -221,13 +165,6 @@ traceability:
       llm_allowed: false
     thresholds: {}
 - requirement_id: BR-BASELINE-001
-  legacy_files:
-  - scripts/analyze/judge_hits.py
-  - scripts/db/schema.sql
-  legacy_functions:
-  - get_sample
-  - judge_account
-  - expire_watching
   observed_legacy_behavior: Baseline is account-relative and computed from settled
     videos, using median and P90 as threshold ingredients.
   target_component: HitObservationService
@@ -247,13 +184,6 @@ traceability:
     thresholds:
       baseline_min_samples: 30
 - requirement_id: BR-BASELINE-002
-  legacy_files:
-  - scripts/analyze/judge_hits.py
-  - scripts/db/schema.sql
-  legacy_functions:
-  - get_sample
-  - judge_account
-  - expire_watching
   observed_legacy_behavior: Videos that leave the observation window become baseline
     material; stock snapshots are conservative historical baseline seeds.
   target_component: HitObservationService
@@ -272,13 +202,6 @@ traceability:
     thresholds:
       observe_days: 7
 - requirement_id: BR-BASELINE-003
-  legacy_files:
-  - scripts/analyze/judge_hits.py
-  - scripts/db/schema.sql
-  legacy_functions:
-  - get_sample
-  - judge_account
-  - expire_watching
   observed_legacy_behavior: If there is not enough valid sample, hit judgement must
     be skipped or marked not enough evidence; legacy supplement behavior is a conflict
     needing decision.
@@ -300,13 +223,6 @@ traceability:
     thresholds:
       minimum_sample_count: 30
 - requirement_id: BR-HIT-001
-  legacy_files:
-  - scripts/analyze/judge_hits.py
-  - scripts/db/schema.sql
-  legacy_functions:
-  - get_sample
-  - judge_account
-  - expire_watching
   observed_legacy_behavior: 'A hit requires performance over an account-relative threshold:
     like_count >= max(median * excess_threshold, P90 when enabled).'
   target_component: HitObservationService
@@ -326,13 +242,6 @@ traceability:
     thresholds:
       excess_threshold: 3.0
 - requirement_id: BR-HIT-002
-  legacy_files:
-  - scripts/analyze/judge_hits.py
-  - scripts/db/schema.sql
-  legacy_functions:
-  - get_sample
-  - judge_account
-  - expire_watching
   observed_legacy_behavior: Migration must preserve normal and low performer examples
     to prove hit math has contrast cases.
   target_component: HitObservationService
@@ -353,13 +262,6 @@ traceability:
       - low
     thresholds: {}
 - requirement_id: BR-HIT-003
-  legacy_files:
-  - scripts/analyze/judge_hits.py
-  - scripts/db/schema.sql
-  legacy_functions:
-  - get_sample
-  - judge_account
-  - expire_watching
   observed_legacy_behavior: Promoting the same source video twice must be idempotent
     and must not duplicate hit artifacts.
   target_component: HitObservationService
@@ -378,13 +280,6 @@ traceability:
       idempotency_key: platform_item_id or source observation
     thresholds: {}
 - requirement_id: BR-HIT-004
-  legacy_files:
-  - scripts/analyze/judge_hits.py
-  - scripts/db/schema.sql
-  legacy_functions:
-  - get_sample
-  - judge_account
-  - expire_watching
   observed_legacy_behavior: share_comment_ratio is derived evidence for ranking/analysis,
     not a standalone promotion threshold unless formally specified.
   target_component: HitObservationService
@@ -403,12 +298,6 @@ traceability:
       ratio_when_comment_zero: guarded
     thresholds: {}
 - requirement_id: BR-ASR-001
-  legacy_files:
-  - tools/asr/transcribe.py
-  - tools/asr/reverse_prep_worker.py
-  legacy_functions:
-  - transcribe_hit
-  - fetch_fresh_aweme
   observed_legacy_behavior: ASR is local deterministic/ML runtime used to produce
     transcript artifacts; it must not call LLM.
   target_component: ASRAdapter + transcript materializer
@@ -428,12 +317,6 @@ traceability:
       provider: local SenseVoice
     thresholds: {}
 - requirement_id: BR-ASR-002
-  legacy_files:
-  - tools/asr/transcribe.py
-  - tools/asr/reverse_prep_worker.py
-  legacy_functions:
-  - transcribe_hit
-  - fetch_fresh_aweme
   observed_legacy_behavior: Signed platform download URLs are ephemeral and must be
     fetched fresh when needed; they are not durable source truth.
   target_component: ASRAdapter + transcript materializer
@@ -452,15 +335,6 @@ traceability:
       persist_download_url: false
     thresholds: {}
 - requirement_id: BR-DNA-001
-  legacy_files:
-  - scripts/reverse/dna.py
-  - scripts/reverse/reduce.py
-  - scripts/reverse/comment_filter.py
-  legacy_functions:
-  - run_one
-  - _eligible
-  - run_batch
-  - run_dim
   observed_legacy_behavior: DNA analysis is per-hit map work and must not batch multiple
     hits into one note.
   target_component: ReverseAnalysisSkill + ModelGateway
@@ -479,15 +353,6 @@ traceability:
       batch_unit: single_hit
     thresholds: {}
 - requirement_id: BR-DNA-002
-  legacy_files:
-  - scripts/reverse/dna.py
-  - scripts/reverse/reduce.py
-  - scripts/reverse/comment_filter.py
-  legacy_functions:
-  - run_one
-  - _eligible
-  - run_batch
-  - run_dim
   observed_legacy_behavior: Only representative or unique hits are eligible for batch
     DNA to avoid washing/duplicate tactics.
   target_component: ReverseAnalysisSkill + ModelGateway
@@ -506,15 +371,6 @@ traceability:
       eligible_cluster: cluster_id is null or cluster_id=id
     thresholds: {}
 - requirement_id: BR-DNA-003
-  legacy_files:
-  - scripts/reverse/dna.py
-  - scripts/reverse/reduce.py
-  - scripts/reverse/comment_filter.py
-  legacy_functions:
-  - run_one
-  - _eligible
-  - run_batch
-  - run_dim
   observed_legacy_behavior: Do not continue the remaining DNA batch until formal ModelGateway,
     persistence and Skill boundaries exist.
   target_component: ReverseAnalysisSkill + ModelGateway
@@ -531,15 +387,6 @@ traceability:
       current_pending: 14
     thresholds: {}
 - requirement_id: BR-DNA-004
-  legacy_files:
-  - scripts/reverse/dna.py
-  - scripts/reverse/reduce.py
-  - scripts/reverse/comment_filter.py
-  legacy_functions:
-  - run_one
-  - _eligible
-  - run_batch
-  - run_dim
   observed_legacy_behavior: Reduce produces domain-level examples and method route
     tables; it must not become global prompt rules.
   target_component: ReverseAnalysisSkill + ModelGateway
@@ -560,12 +407,6 @@ traceability:
       max_per_play: 3
       section_cap: 1200
 - requirement_id: BR-RESEARCH-001
-  legacy_files:
-  - scripts/research/research.py
-  - scripts/core/research/goal06_formal_research.py
-  legacy_functions:
-  - run
-  - FormalResearchService.run
   observed_legacy_behavior: Formal research structurally has no video platform search/read/download/ASR/comment/MediaCrawler
     path.
   target_component: FormalResearchService
@@ -585,12 +426,6 @@ traceability:
       video_platform_allowed: false
     thresholds: {}
 - requirement_id: BR-RESEARCH-002
-  legacy_files:
-  - scripts/research/research.py
-  - scripts/core/research/goal06_formal_research.py
-  legacy_functions:
-  - run
-  - FormalResearchService.run
   observed_legacy_behavior: Video learning/reverse evidence and formal research evidence
     are separate tracks with separate provenance.
   target_component: FormalResearchService
@@ -608,12 +443,6 @@ traceability:
       provenance_required: true
     thresholds: {}
 - requirement_id: BR-RESEARCH-003
-  legacy_files:
-  - scripts/research/research.py
-  - scripts/core/research/goal06_formal_research.py
-  legacy_functions:
-  - run
-  - FormalResearchService.run
   observed_legacy_behavior: Live search/fetch providers require explicit gate opening;
     dry-run or fake provider otherwise.
   target_component: FormalResearchService
@@ -631,14 +460,6 @@ traceability:
       live_enabled: false
     thresholds: {}
 - requirement_id: BR-TOPIC-001
-  legacy_files:
-  - scripts/topics/daily_topics.py
-  - scripts/topics/new_topic.py
-  - scripts/topics/spinoff.py
-  legacy_functions:
-  - spawn_from_hits
-  - recompute_candidates
-  - push_daily
   observed_legacy_behavior: Daily recommendations group new hit-derived ideas and
     warmed candidates; sources rank independently rather than one merged opaque rank.
   target_component: TopicPlanningService
@@ -659,14 +480,6 @@ traceability:
     thresholds:
       cluster_boost: 0.3
 - requirement_id: BR-TOPIC-002
-  legacy_files:
-  - scripts/topics/daily_topics.py
-  - scripts/topics/new_topic.py
-  - scripts/topics/spinoff.py
-  legacy_functions:
-  - spawn_from_hits
-  - recompute_candidates
-  - push_daily
   observed_legacy_behavior: Unselected topics become candidates, decay over time and
     can be reheated by related fresh hits.
   target_component: TopicPlanningService
@@ -687,14 +500,6 @@ traceability:
     thresholds:
       expire_heat: 0.1
 - requirement_id: BR-TOPIC-003
-  legacy_files:
-  - scripts/topics/daily_topics.py
-  - scripts/topics/new_topic.py
-  - scripts/topics/spinoff.py
-  legacy_functions:
-  - spawn_from_hits
-  - recompute_candidates
-  - push_daily
   observed_legacy_behavior: Formal target must support topic-first preparation; legacy
     is hit-anchored and this is a missing behavior relative to current direction.
   target_component: TopicPlanningService
@@ -712,14 +517,6 @@ traceability:
       legacy_source_type: hit
     thresholds: {}
 - requirement_id: BR-TOPIC-004
-  legacy_files:
-  - scripts/topics/daily_topics.py
-  - scripts/topics/new_topic.py
-  - scripts/topics/spinoff.py
-  legacy_functions:
-  - spawn_from_hits
-  - recompute_candidates
-  - push_daily
   observed_legacy_behavior: A topic must not silently become production content or
     publishable state without user confirmation.
   target_component: TopicPlanningService
@@ -738,14 +535,6 @@ traceability:
       autonomy: human_in_loop
     thresholds: {}
 - requirement_id: BR-CONTENT-001
-  legacy_files:
-  - scripts/content/check_banned.py
-  - scripts/content/diff_draft.py
-  - scripts/content/save_draft.py
-  legacy_functions:
-  - check_text
-  - diff_draft
-  - save_draft
   observed_legacy_behavior: Banned/risk word constraints are deterministic post-generation
     checks and must not bloat generation prompts.
   target_component: ContentWorkflow/ContentGuard
@@ -760,18 +549,9 @@ traceability:
   - banned checker fixtures
   evidence:
     source_section: 禁令进代码
-    defaults:
-      checker: scripts/content/check_banned.py
+    defaults: {}
     thresholds: {}
 - requirement_id: BR-CONTENT-002
-  legacy_files:
-  - scripts/content/check_banned.py
-  - scripts/content/diff_draft.py
-  - scripts/content/save_draft.py
-  legacy_functions:
-  - check_text
-  - diff_draft
-  - save_draft
   observed_legacy_behavior: Examples are retrieved selectively by relevance and strength;
     never inject the whole library.
   target_component: ContentWorkflow/ContentGuard
@@ -791,14 +571,6 @@ traceability:
     thresholds:
       example_count: small bounded set
 - requirement_id: BR-CONTENT-003
-  legacy_files:
-  - scripts/content/check_banned.py
-  - scripts/content/diff_draft.py
-  - scripts/content/save_draft.py
-  legacy_functions:
-  - check_text
-  - diff_draft
-  - save_draft
   observed_legacy_behavior: Human edits create diff evidence and candidate examples;
     promotion to style examples requires repeated patterns or explicit approval.
   target_component: ContentWorkflow/ContentGuard
@@ -874,14 +646,6 @@ traceability:
       ban_prompt_bloat: true
     thresholds: {}
 - requirement_id: BR-ARCH-001
-  legacy_files:
-  - scripts/core/**
-  - scripts/validation/live_gates.py
-  legacy_functions:
-  - ModelGateway.complete
-  - RuntimeHost.run_batch
-  - HermesCoreBridge.dispatch
-  - run_gate_mode
   observed_legacy_behavior: Hermes is production host entry; it maps messages into
     Core commands and must not be bypassed by direct Feishu scripts.
   target_component: Core/Runtime/ModelGateway
@@ -898,14 +662,6 @@ traceability:
       production_host: Hermes
     thresholds: {}
 - requirement_id: BR-ARCH-002
-  legacy_files:
-  - scripts/core/**
-  - scripts/validation/live_gates.py
-  legacy_functions:
-  - ModelGateway.complete
-  - RuntimeHost.run_batch
-  - HermesCoreBridge.dispatch
-  - run_gate_mode
   observed_legacy_behavior: Core/Materializer owns state writes, versions, receipts
     and audit; adapters return payloads only.
   target_component: Core/Runtime/ModelGateway
@@ -924,14 +680,6 @@ traceability:
       state_owner: Core
     thresholds: {}
 - requirement_id: BR-ARCH-003
-  legacy_files:
-  - scripts/core/**
-  - scripts/validation/live_gates.py
-  legacy_functions:
-  - ModelGateway.complete
-  - RuntimeHost.run_batch
-  - HermesCoreBridge.dispatch
-  - run_gate_mode
   observed_legacy_behavior: RuntimeHost/Runner executes allowlisted handlers with
     declared input/output contracts; failures are recorded and retriable.
   target_component: Core/Runtime/ModelGateway
@@ -948,14 +696,6 @@ traceability:
       external_io_allowed_by_adapter: true
     thresholds: {}
 - requirement_id: BR-ARCH-004
-  legacy_files:
-  - scripts/core/**
-  - scripts/validation/live_gates.py
-  legacy_functions:
-  - ModelGateway.complete
-  - RuntimeHost.run_batch
-  - HermesCoreBridge.dispatch
-  - run_gate_mode
   observed_legacy_behavior: All cloud/local model calls go through ModelGateway and
     record provider/model/envelope/hash/usage/cost/correlation.
   target_component: Core/Runtime/ModelGateway
@@ -973,14 +713,6 @@ traceability:
       direct_vendor_sdk_in_business: false
     thresholds: {}
 - requirement_id: BR-ARCH-005
-  legacy_files:
-  - scripts/core/**
-  - scripts/validation/live_gates.py
-  legacy_functions:
-  - ModelGateway.complete
-  - RuntimeHost.run_batch
-  - HermesCoreBridge.dispatch
-  - run_gate_mode
   observed_legacy_behavior: Adapters may pass provider-specific features; target must
     not reduce all engines to a lowest common denominator.
   target_component: Core/Runtime/ModelGateway
@@ -997,14 +729,6 @@ traceability:
       profile_specific_params: true
     thresholds: {}
 - requirement_id: BR-ARCH-006
-  legacy_files:
-  - scripts/core/**
-  - scripts/validation/live_gates.py
-  legacy_functions:
-  - ModelGateway.complete
-  - RuntimeHost.run_batch
-  - HermesCoreBridge.dispatch
-  - run_gate_mode
   observed_legacy_behavior: Token and cost metadata are recorded; daily/domain/Skill
     budgets can defer low-priority work.
   target_component: Core/Runtime/ModelGateway
@@ -1025,14 +749,6 @@ traceability:
     thresholds:
       cost_cap_unit: USD when metered
 - requirement_id: BR-ARCH-007
-  legacy_files:
-  - scripts/core/**
-  - scripts/validation/live_gates.py
-  legacy_functions:
-  - ModelGateway.complete
-  - RuntimeHost.run_batch
-  - HermesCoreBridge.dispatch
-  - run_gate_mode
   observed_legacy_behavior: Formal Skills require schema, version/hash, declared side
     effects and standalone/boundary/fault validation.
   target_component: Core/Runtime/ModelGateway
@@ -1050,14 +766,6 @@ traceability:
       candidate_skill_status: not formal
     thresholds: {}
 - requirement_id: BR-ARCH-008
-  legacy_files:
-  - scripts/core/**
-  - scripts/validation/live_gates.py
-  legacy_functions:
-  - ModelGateway.complete
-  - RuntimeHost.run_batch
-  - HermesCoreBridge.dispatch
-  - run_gate_mode
   observed_legacy_behavior: Local Skills can guide operators but do not become production
     authority until formalized.
   target_component: Core/Runtime/ModelGateway
@@ -1075,14 +783,6 @@ traceability:
       operator_docs_allowed: true
     thresholds: {}
 - requirement_id: BR-ARCH-009
-  legacy_files:
-  - scripts/core/**
-  - scripts/validation/live_gates.py
-  legacy_functions:
-  - ModelGateway.complete
-  - RuntimeHost.run_batch
-  - HermesCoreBridge.dispatch
-  - run_gate_mode
   observed_legacy_behavior: Business outputs and state changes need version, source
     hash, actor, correlation/causation and audit evidence.
   target_component: Core/Runtime/ModelGateway
@@ -1100,12 +800,6 @@ traceability:
       immutable_versions: true
     thresholds: {}
 - requirement_id: BR-DOMAIN-001
-  legacy_files:
-  - config/domains/*.yaml
-  - config/accounts/*.yaml
-  - scripts/setup/create_domain_account.py
-  legacy_functions:
-  - create_domain_account
   observed_legacy_behavior: Adding a domain/account is config/data plus empty example
     buckets; pipeline code remains shared.
   target_component: DomainAccountConfig
@@ -1123,12 +817,6 @@ traceability:
       domain_code_fork: false
     thresholds: {}
 - requirement_id: BR-DOMAIN-002
-  legacy_files:
-  - config/domains/*.yaml
-  - config/accounts/*.yaml
-  - scripts/setup/create_domain_account.py
-  legacy_functions:
-  - create_domain_account
   observed_legacy_behavior: Migration must prove a third domain can exist without
     code changes and without copying another domain's examples.
   target_component: DomainAccountConfig
@@ -1184,14 +872,6 @@ traceability:
       source_text_copy: forbidden
     thresholds: {}
 - requirement_id: BR-GATE-001
-  legacy_files:
-  - scripts/core/**
-  - scripts/validation/live_gates.py
-  legacy_functions:
-  - ModelGateway.complete
-  - RuntimeHost.run_batch
-  - HermesCoreBridge.dispatch
-  - run_gate_mode
   observed_legacy_behavior: Only one external dependency is opened at a time with
     preflight, explicit authorization and evidence.
   target_component: ExternalLiveGateHarness
@@ -1208,14 +888,6 @@ traceability:
       run_all_live: false
     thresholds: {}
 - requirement_id: BR-GATE-002
-  legacy_files:
-  - scripts/core/**
-  - scripts/validation/live_gates.py
-  legacy_functions:
-  - ModelGateway.complete
-  - RuntimeHost.run_batch
-  - HermesCoreBridge.dispatch
-  - run_gate_mode
   observed_legacy_behavior: Evidence stores hashes/metadata and redacts secrets; no
     API keys, Authorization headers or cookies in reports.
   target_component: ExternalLiveGateHarness
@@ -1232,14 +904,6 @@ traceability:
       redaction_required: true
     thresholds: {}
 - requirement_id: BR-GATE-003
-  legacy_files:
-  - scripts/core/**
-  - scripts/validation/live_gates.py
-  legacy_functions:
-  - ModelGateway.complete
-  - RuntimeHost.run_batch
-  - HermesCoreBridge.dispatch
-  - run_gate_mode
   observed_legacy_behavior: Validation uses isolated DB/workspace and shadow-only
     sinks unless a dedicated test external endpoint is explicitly configured.
   target_component: ExternalLiveGateHarness
@@ -1256,14 +920,6 @@ traceability:
       shadow_only: true
     thresholds: {}
 - requirement_id: BR-GATE-004
-  legacy_files:
-  - scripts/core/**
-  - scripts/validation/live_gates.py
-  legacy_functions:
-  - ModelGateway.complete
-  - RuntimeHost.run_batch
-  - HermesCoreBridge.dispatch
-  - run_gate_mode
   observed_legacy_behavior: Gate-specific small output caps constrain only the single
     validation request and must not change production task/Profile/Skill budgets.
   target_component: ExternalLiveGateHarness
@@ -1283,13 +939,6 @@ traceability:
       max_retries: 0
       timeout_ms: 30000
 - requirement_id: BR-LEGACY-001
-  legacy_files:
-  - scripts/llm/call.py
-  - data/creation.db
-  - scripts/**/*.py
-  legacy_functions:
-  - call_llm
-  - legacy direct SQL writes
   observed_legacy_behavior: Legacy call_llm implementation is evidence of old behavior
     but cannot be reused as formal production model authority.
   target_component: Migration boundary
@@ -1308,13 +957,6 @@ traceability:
       legacy_allowed: read-only evidence
     thresholds: {}
 - requirement_id: BR-LEGACY-002
-  legacy_files:
-  - scripts/llm/call.py
-  - data/creation.db
-  - scripts/**/*.py
-  legacy_functions:
-  - call_llm
-  - legacy direct SQL writes
   observed_legacy_behavior: The legacy SQLite DB is read-only source during alignment;
     target migration must use copied rehearsal DB.
   target_component: Migration boundary
@@ -1331,13 +973,6 @@ traceability:
       source_db_mode: read-only
     thresholds: {}
 - requirement_id: BR-LEGACY-003
-  legacy_files:
-  - scripts/llm/call.py
-  - data/creation.db
-  - scripts/**/*.py
-  legacy_functions:
-  - call_llm
-  - legacy direct SQL writes
   observed_legacy_behavior: Undocumented legacy behavior with business value is listed
     for decision, not silently retained or discarded.
   target_component: Migration boundary
@@ -1355,14 +990,6 @@ traceability:
       decision_policy: document then decide
     thresholds: {}
 - requirement_id: BR-DATARESET-001
-  legacy_files:
-  - data/creation.db
-  - data/**
-  - vault/**
-  - scripts/**/*.py
-  legacy_functions:
-  - legacy SQLite readers/writers
-  - legacy artifact loaders
   observed_legacy_behavior: Old project persisted business data, derived outputs and
     runtime state in local SQLite/files.
   target_component: clean_room_startup_and_fixture_boundary
@@ -1380,14 +1007,6 @@ traceability:
     inventory: LEGACY_DATA_INVENTORY.yaml
     fixture_policy: FIXTURE_RETENTION_MANIFEST.yaml
 - requirement_id: BR-DATARESET-002
-  legacy_files:
-  - data/creation.db
-  - data/**
-  - vault/**
-  - scripts/**/*.py
-  legacy_functions:
-  - legacy SQLite readers/writers
-  - legacy artifact loaders
   observed_legacy_behavior: Old project persisted business data, derived outputs and
     runtime state in local SQLite/files.
   target_component: clean_room_startup_and_fixture_boundary
@@ -1405,14 +1024,6 @@ traceability:
     inventory: LEGACY_DATA_INVENTORY.yaml
     fixture_policy: FIXTURE_RETENTION_MANIFEST.yaml
 - requirement_id: BR-DATARESET-003
-  legacy_files:
-  - data/creation.db
-  - data/**
-  - vault/**
-  - scripts/**/*.py
-  legacy_functions:
-  - legacy SQLite readers/writers
-  - legacy artifact loaders
   observed_legacy_behavior: Old project persisted business data, derived outputs and
     runtime state in local SQLite/files.
   target_component: clean_room_startup_and_fixture_boundary
@@ -1428,14 +1039,6 @@ traceability:
     inventory: LEGACY_DATA_INVENTORY.yaml
     fixture_policy: FIXTURE_RETENTION_MANIFEST.yaml
 - requirement_id: BR-DATARESET-004
-  legacy_files:
-  - data/creation.db
-  - data/**
-  - vault/**
-  - scripts/**/*.py
-  legacy_functions:
-  - legacy SQLite readers/writers
-  - legacy artifact loaders
   observed_legacy_behavior: Old project persisted business data, derived outputs and
     runtime state in local SQLite/files.
   target_component: clean_room_startup_and_fixture_boundary

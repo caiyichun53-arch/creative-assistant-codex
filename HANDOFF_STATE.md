@@ -118,7 +118,13 @@ run_id: competitor_registration_rejudge_20260707T023426Z
     - `excess_threshold` 从 3.0 改成 2.0(`config/settings.yaml`、`config/settings.example.yaml`、`BUSINESS_RULE_CATALOG.yaml` 的 `thresholds.excess_threshold` 三处同步改)。
     - **这次改动影响的是判定所有已归档/已判定爆款视频的主门槛公式,不只是新观察视频**,所以立刻用 `--rejudge-only` 对真实生产库重新判定一遍验证,不是改完就当完事:**28账号,总爆款数从198涨到245(+47),0个账号挂零,每账号爆款数1~17条(没有账号暴增到不正常的比例)**,`hit_channel` 分布从 `like_threshold=130/comment_like_ratio=48/both=20` 变成 `like_threshold=177/comment_like_ratio=43/both=25`——涨幅集中在点赞门槛通道,符合"门槛降低、点赞门槛更容易达标"这个预期,不是判定逻辑坏了。
     - `BUSINESS_RULE_CATALOG.yaml`/`REQUIREMENT_CODE_TRACEABILITY.yaml` 都补了这次修订记录(含真实验证数字)。全部286个测试跑过,两个权威闸门仍绿。
-30. **用户追问:测试这么多,为什么连"有没有按设计执行"这种基本问题都测不出来**——查了实际网上通行做法(ADR"供奉人"机制、文档当代码一样跑CI检查/linting)确认这类问题确实有正经解法,不是没法测。新增 `tests/validation/test_authoritative_docs_not_legacy.py`:任何被 `CLAUDE.md`/`AGENTS.md` 点名要读的权威设计文档(现在是 `CLAUDE.md`、`AGENTS.md`、`BUSINESS_DECISION_TABLES.md`),自动扫描有没有提到 `scripts/validation/clean_room_readiness.py` 里 `LEGACY_QUARANTINE_ROOTS` 那份已隔离旧路径清单——提到了就直接报错,不用等人发现。`BUSINESS_RULE_CATALOG.yaml`/`REQUIREMENT_CODE_TRACEABILITY.yaml` 故意不放进这份清单——这两份文件的正经工作就是记录"老代码当年是怎么做的"当迁移依据(`observed_legacy_behavior`/`code_artifacts` 这类字段合法引用旧路径,不是同一种错误)。已验证过这道闸门真的管用(手动模拟一段引用旧路径的文本,闸门立刻报错)。全部287个测试跑过,两个权威闸门仍绿。
+30. **用户追问:测试这么多,为什么连"有没有按设计执行"这种基本问题都测不出来**——查了实际网上通行做法(ADR"供奉人"机制、文档当代码一样跑CI检查/linting)确认这类问题确实有正经解法,不是没法测。新增 `tests/validation/test_authoritative_docs_not_legacy.py`:任何被 `CLAUDE.md`/`AGENTS.md` 点名要读的权威设计文档,自动扫描有没有提到 `scripts/validation/clean_room_readiness.py` 里 `LEGACY_QUARANTINE_ROOTS` 那份已隔离旧路径清单——提到了就直接报错,不用等人发现。已验证过这道闸门真的管用(手动模拟一段引用旧路径的文本,闸门立刻报错)。
+31. **用户看到"`BUSINESS_RULE_CATALOG.yaml`/`REQUIREMENT_CODE_TRACEABILITY.yaml` 故意不检查"这句解释后炸了**——原话"别搞任何旧代码,一切按新设计的来"。用户不接受"这两份文件合法引用旧代码"这种例外,要求彻底清干净,不留任何例外。
+    - 查了这两份文件里到底有多少处引用旧路径:`BUSINESS_RULE_CATALOG.yaml` 2处,`REQUIREMENT_CODE_TRACEABILITY.yaml` 57个条目里有104处(`legacy_files`/`legacy_functions` 这两个字段,专门存旧代码路径用的)。
+    - **中途写脚本删除时出过一次真实事故**:第一版脚本逻辑写反了,直接把 `REQUIREMENT_CODE_TRACEABILITY.yaml` 改坏了(字段名被删掉、只剩列表项,YAML结构损坏)。**立刻用 `git checkout --` 撤回**(还没提交,能完整恢复),重写脚本、这次先输出到临时文件、用 `yaml.safe_load` 验证解析正常+条目数没少(57条都还在)才正式替换,不是改完就当完事。
+    - 干净删除了两份文件里全部旧路径引用(`legacy_files`/`legacy_functions` 整段删除,另外2处零散引用改写成不点名旧路径的说法)。`test_authoritative_docs_not_legacy.py` 的例外名单也去掉了,现在这两份文件也一起接受检查,没有例外。
+    - 这次改动顺带把我自己新写的检查脚本也检出一个假阳性(脚本里为了举例写的旧路径字符串,被另一个闸门当成"生产代码引用旧路径"报错)——按现有惯例加进白名单,不是放松检测。
+    - 全部287个测试跑过,两个权威闸门仍绿,`legacy_removal_gate`/`clean_room_readiness` 都确认干净。
 
 ## 下一步该干嘛
 

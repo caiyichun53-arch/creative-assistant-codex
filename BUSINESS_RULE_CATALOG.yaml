@@ -708,7 +708,7 @@ rules:
   state_effects: []
   allowed_side_effects: []
   forbidden_behavior:
-  - run scripts/reverse/dna.py --batch
+  - run remaining DNA batch processing
   - write production DNA notes during audit
   edge_cases:
   - manual user explicitly opens future Goal
@@ -950,8 +950,7 @@ rules:
   - banned_words config
   expected_behavior: Banned/risk word constraints are deterministic post-generation
     checks and must not bloat generation prompts.
-  defaults:
-    checker: scripts/content/check_banned.py
+  defaults: {}
   thresholds: {}
   timing_semantics: Runs after draft generation and before approval.
   state_effects:
