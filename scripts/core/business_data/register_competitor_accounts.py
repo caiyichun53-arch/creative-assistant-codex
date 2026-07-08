@@ -51,12 +51,38 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def install_schema(conn: sqlite3.Connection) -> None:
+    # 2026-07-08: hit_transcripts/hit_comments were redesigned (raw/cleaned
+    # transcript versioning + provenance, comment sample_rank) the same day
+    # they were first introduced -- CREATE TABLE IF NOT EXISTS cannot reshape
+    # an existing table, so drop the old-shaped ones (if present) before
+    # recreating. User-confirmed 2026-07-08: only ever held this session's own
+    # 2 verification rows, nothing else reads the old shape.
+    _drop_table_if_old_shape(conn, "hit_transcripts", removed_column="transcript_text")
+    _drop_table_if_old_shape(conn, "hit_comments", added_not_null_column="sample_rank")
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     # 2026-07-08: CREATE TABLE IF NOT EXISTS does not retroactively add columns
     # to a table that already exists (e.g. the real production DB) -- this
     # lazily backfills newly-added nullable columns on every call, so no
     # separate migration invocation is needed.
     _ensure_column(conn, "video_checks", "day_since_publish", "INTEGER")
+    # Source document section 13 vocabulary is pending/running/completed/
+    # failed; the field was first introduced this session with none/done --
+    # normalize any rows already written under the old vocabulary.
+    conn.execute("UPDATE hits SET reverse_status='pending' WHERE reverse_status='none'")
+    conn.execute("UPDATE hits SET reverse_status='completed' WHERE reverse_status='done'")
+
+
+def _drop_table_if_old_shape(
+    conn: sqlite3.Connection, table: str, *, removed_column: str | None = None, added_not_null_column: str | None = None
+) -> None:
+    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if not columns:
+        return  # table doesn't exist yet -- nothing to migrate
+    is_old_shape = (removed_column is not None and removed_column in columns) or (
+        added_not_null_column is not None and added_not_null_column not in columns
+    )
+    if is_old_shape:
+        conn.execute(f"DROP TABLE {table}")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, column_type: str) -> None:

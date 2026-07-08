@@ -177,6 +177,18 @@ rules:
   source_section: 逆向备料/评论采集阶段
   priority: P0
   domain_scope: all domains
+  status: '2026-07-08: implemented in scripts/core/business_data/run_reverse_prep.py
+    (fetch_detail_with_comments) -- comments are read from the same MediaCrawler
+    detail crawl (get_comment=yes) used to resolve the fresh download URL, not a
+    separate collector.comments pass. Scope: only already-promoted hits, not the
+    broader purpose-tagged multi-stage pipeline BR-HIT-002/006/007 still describe
+    (those remain acknowledged gaps). Cross-checked against source document section
+    16 the same day and extended to also preserve the crawler''s own hotness
+    ordering via hit_comments.sample_rank (assigned before filtering, so a gap in
+    the sequence shows a dropped comment); reply/second-level comments were
+    already excluded at the crawler level (--get_sub_comment no, hardcoded in
+    LocalMediaCrawlerExecutor), matching section 16''s "第一阶段关闭二级评论"
+    with no code change needed.'
   trigger: hit promoted or prep worker runs
   inputs:
   - hit platform_item_id
@@ -208,6 +220,11 @@ rules:
   source_section: 逆向备料/评论过滤去重
   priority: P1
   domain_scope: all domains
+  status: '2026-07-08: implemented in scripts/core/business_data/run_reverse_prep.py
+    (filter_comments) -- pure deterministic filtering (min length, dedup by
+    comment_id, content-hash fallback when comment_id is missing), no LLM
+    involved. Storage is hit_comments INSERT OR IGNORE keyed on (hit_id,
+    comment_id), so retries cannot create duplicate rows.'
   trigger: store hit comments
   inputs:
   - comment_id
@@ -1250,6 +1267,38 @@ rules:
   source_section: 本地ASR备料
   priority: P0
   domain_scope: all domains
+  status: '2026-07-08: local SenseVoice default empirically confirmed, not changed,
+    per BR-ASR-003''s one-off comparison (see that entry''s outcome note below for
+    the real-data result and root cause). Same day: the actual production reverse-prep
+    path implementing this rule (not just the one-off comparison) was built and
+    committed for the first time as scripts/core/business_data/run_reverse_prep.py --
+    previously only BR-ASR-003''s benchmark tool existed, and it never touches
+    hits.reverse_status. Cross-checked directly against the source document''s
+    section 13 (not just this catalog entry, which was a narrower distillation)
+    and extended the same day to match: raw_transcript/cleaned_transcript
+    versioning (hit_transcripts is append-only, never overwritten), provenance
+    (asr_model/vad_model/processing_method/audio_sha256 recorded per attempt),
+    the pending/running/completed/failed status vocabulary, deterministic
+    quality-anomaly flags (empty/too_short/high_repetition), and a best-effort
+    5-tier processing-priority order (section 13.2) against what the schema can
+    currently express. A real, separate bug was found and fixed in the same
+    session: scripts/tools/
+    _local_asr_transcribe.py let funasr/torchaudio''s own stdout notices leak
+    into the captured transcript, and its subprocess stdout defaulted to the
+    OS codepage instead of UTF-8, corrupting every non-ASCII character in a
+    real stored transcript -- both fixed (stdout redirected during model
+    load/generation, explicit UTF-8 reconfigure before the final write) and
+    verified against real re-processed data.
+
+    Same-day follow-up (explicit user decision: "爆款文案是要提取经验的,所以
+    备料这里最后自动执行" -- a promoted hit is not useful for DNA/experience
+    extraction until it has a transcript): run_full_registration()/
+    run_rejudge_only()/run_daily_incremental() in run_competitor_registration_
+    full.py now each call run_reverse_prep() synchronously right after
+    judge_domain(), scoped via judgement_run_id to only the hits THAT
+    judgement run just promoted (not the whole historical pending backlog).
+    Judgement itself stays instant; the calling entry point now also waits for
+    prep to finish (real network + local ASR per hit) before returning.'
   trigger: hit needs transcript
   inputs:
   - fresh download url
@@ -1281,6 +1330,10 @@ rules:
   source_section: 下载链接时效
   priority: P1
   domain_scope: all domains
+  status: '2026-07-08: implemented in scripts/core/business_data/run_reverse_prep.py --
+    the fresh download URL is used in-memory to download audio inside the same
+    temporary directory as the transcode/transcribe steps and never written to
+    hit_transcripts/hit_comments/hits.'
   trigger: ASR download
   inputs:
   - platform item url
@@ -1302,6 +1355,83 @@ rules:
   supersedes: []
   validation_required:
   - raw_json scrub check
+- requirement_id: BR-ASR-003
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 13 音频、ASR 与文本清理 ("模型大小、量化和 VAD 参数必须用中文口播样本测试后锁定")
+  priority: P2
+  domain_scope: all domains
+  status: '2026-07-08: this entry exists outside the master document''s literal text
+    -- it exists by explicit user decision (decided_by: user), added the same way
+    comment_like_ratio was added to BR-HIT-001: kept by explicit user decision, not
+    invented unilaterally. BR-ASR-001''s default (local SenseVoice) was never actually
+    benchmarked against the document''s own stated requirement to test with real
+    Chinese 口播 samples before locking a choice; the user separately wants a real
+    cloud alternative (MiMo''s ASR endpoint) benchmarked against it before deciding
+    whether BR-ASR-001''s default should change. Neither BR-ASR-001 nor BR-ASR-002
+    covers running that comparison itself -- this entry exists specifically so the
+    comparison has a real citation to point execution_contract.require_catalog_citations()
+    at, instead of being force-fit onto a rule about production transcript generation.'
+  trigger: user requests a one-off ASR provider comparison (local vs cloud) on a
+    real promoted hit's audio, to inform whether BR-ASR-001's default should change
+  inputs:
+  - one real promoted hit's freshly-fetched download URL (per BR-ASR-002, fetched
+    immediately before use, never persisted)
+  - local SenseVoice/VAD model path
+  - MiMo ASR endpoint credentials (HERMES_BUSINESS_API_KEY, local-machine .env only)
+  expected_behavior: A bounded, one-off, user-initiated benchmark run -- not a
+    change to the production reverse-prep path, not a recurring job, not a default
+    change. Produces two transcripts (local SenseVoice, MiMo cloud ASR) from the
+    SAME audio for the user to compare; does not itself decide or write a new
+    BR-ASR-001 default. Calling MiMo here is not "LLM transcript correction in
+    formal path" (BR-ASR-001's forbidden_behavior) because this is not the formal
+    path -- it is a calibration input to a future, separate decision about what the
+    formal path's default should be.
+  defaults:
+    scope: single video, single run, not automated/scheduled
+  thresholds: {}
+  timing_semantics: One-off, on explicit user request each time -- not triggered
+    automatically by any hit promotion.
+  state_effects:
+  - no BR-ASR-001 default changed by this entry alone
+  - no reverse_status/hits row touched
+  allowed_side_effects:
+  - local temp audio file
+  - one real MiMo API call (billed, per MiMo's token-based pricing)
+  - two transcript outputs for user comparison
+  forbidden_behavior:
+  - running this unattended/on a schedule
+  - treating its output as a silent authorization to change BR-ASR-001's default
+  - persisting the fetched download URL (same as BR-ASR-002)
+  edge_cases:
+  - download URL expired before either ASR call completes (re-fetch fresh per
+    BR-ASR-002, do not reuse a stale URL)
+  - the account's "music" track is unrelated background music, not the video's own
+    narration (verified real case, 2026-07-08) -- per explicit user instruction,
+    do not attempt to filter/validate this by duration or other heuristics; use it
+    directly as the video's audio
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - manual: user reviews both transcripts side by side
+  outcome: '2026-07-08: run twice against two different real promoted hits via
+    scripts/tools/compare_asr_providers.py (Token Plan base URL: the public docs''
+    example endpoint api.xiaomimimo.com 401s for a Token Plan key -- the correct
+    base URL, https://token-plan-cn.xiaomimimo.com/v1, was confirmed from the
+    user''s own account console). Video 1 (~11 min): local SenseVoice produced a
+    complete 6709-character transcript; MiMo returned only 377 characters (just
+    the closing remarks, missing everything before it). Video 2 (shorter): local
+    SenseVoice produced a complete 3892-character transcript; MiMo returned only
+    497 characters covering roughly the first eighth of the content, ending in a
+    repeated/looped sentence rather than a real stop. Root cause confirmed via
+    MiMo''s own official model page (mimo.mi.com/models/zh-CN/mimo-v2.5-asr):
+    mimo-v2.5-asr has an 8K-token context window shared between audio input
+    tokens and text output (2K-token max output) -- a several-minute audio clip''s
+    own token cost leaves too little of that shared budget for a complete
+    transcript, which is a structural limit of the model, not a request-formatting
+    bug (confirmed: identical result re-sending the exact same audio file twice).
+    Decision (decided_by: user): BR-ASR-001''s local SenseVoice default is
+    confirmed and kept unchanged -- MiMo is not adopted for reverse-prep
+    transcription.'
 - requirement_id: BR-DNA-001
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
   source_section: 单条DNA拆解

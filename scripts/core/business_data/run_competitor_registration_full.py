@@ -21,6 +21,8 @@ from scripts.core.business_data.register_competitor_accounts import (  # noqa: E
     register_from_domain,
     stable_account_id,
 )
+from scripts.core.business_data.run_reverse_prep import run_reverse_prep  # noqa: E402
+from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
 from scripts.core.external_adapters import ExternalAdapterCommand  # noqa: E402
 from scripts.core.external_adapters.local_mediacrawler_executor import LocalMediaCrawlerExecutor  # noqa: E402
 
@@ -66,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     domain = _read_yaml(domain_path)
     settings = _read_yaml(DEFAULT_SETTINGS if DEFAULT_SETTINGS.exists() else FALLBACK_SETTINGS)
     hit_cfg = settings["hit_detection"]
+    reverse_cfg = settings["reverse_engine"]
     db_path = _safe_db_path(Path(args.db))
 
     conn = sqlite3.connect(db_path)
@@ -73,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         install_schema(conn)
         if args.rejudge_only:
-            report = run_rejudge_only(conn, domain, hit_cfg=hit_cfg, account_limit=args.account_limit)
+            report = run_rejudge_only(conn, domain, hit_cfg=hit_cfg, reverse_cfg=reverse_cfg, account_limit=args.account_limit)
         else:
             max_notes, max_notes_source = resolve_max_notes(args.max_notes, settings)
             report = run_full_registration(
@@ -81,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
                 domain,
                 domain_path=domain_path,
                 hit_cfg=hit_cfg,
+                reverse_cfg=reverse_cfg,
                 max_notes=max_notes,
                 max_notes_source=max_notes_source,
                 account_limit=args.account_limit,
@@ -103,12 +107,28 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if report["status"] == "succeeded" else 2
 
 
+def _auto_reverse_prep(conn: sqlite3.Connection, *, judgement_run_id: str, reverse_cfg: dict[str, Any]) -> dict[str, Any]:
+    """Synchronous auto-trigger (2026-07-08, explicit user decision -- see
+    run_reverse_prep.py's module docstring): a hit judge_domain() just
+    promoted is not yet useful for DNA/experience extraction until it has a
+    transcript, so every judgement entry point backfills its own newly
+    promoted hits before returning. Scoped to judgement_run_id so this stays
+    bounded by what THIS run promoted, not the whole historical backlog."""
+    pending_count = conn.execute(
+        "SELECT COUNT(*) FROM hits WHERE reverse_status='pending' AND run_id=?", (judgement_run_id,)
+    ).fetchone()[0]
+    if pending_count == 0:
+        return {"status": "succeeded", "attempted": 0, "completed": 0, "failed": 0, "results": []}
+    return run_reverse_prep(conn, limit=pending_count, reverse_cfg=reverse_cfg, judgement_run_id=judgement_run_id)
+
+
 def run_full_registration(
     conn: sqlite3.Connection,
     domain: dict[str, Any],
     *,
     domain_path: Path,
     hit_cfg: dict[str, Any],
+    reverse_cfg: dict[str, Any],
     max_notes: int,
     max_notes_source: str,
     account_limit: int | None,
@@ -138,6 +158,7 @@ def run_full_registration(
 
     judgement = judge_domain(conn, domain_label, hit_cfg=hit_cfg, run_id=run_id)
     conn.commit()
+    reverse_prep = _auto_reverse_prep(conn, judgement_run_id=run_id, reverse_cfg=reverse_cfg)
     summary = summarize(conn, domain_label)
 
     return {
@@ -163,6 +184,7 @@ def run_full_registration(
             "max_notes_source": max_notes_source,
             "results": crawl_results,
         },
+        "reverse_prep": reverse_prep,
         "judgement": judgement,
         "summary": summary,
     }
@@ -173,6 +195,7 @@ def run_rejudge_only(
     domain: dict[str, Any],
     *,
     hit_cfg: dict[str, Any],
+    reverse_cfg: dict[str, Any],
     account_limit: int | None = None,
 ) -> dict[str, Any]:
     """Re-run baseline/hit judgement against already-collected data only.
@@ -189,6 +212,7 @@ def run_rejudge_only(
     accounts = _load_accounts(conn, domain_label, limit=account_limit)
     judgement = judge_domain(conn, domain_label, hit_cfg=hit_cfg, run_id=run_id)
     conn.commit()
+    reverse_prep = _auto_reverse_prep(conn, judgement_run_id=run_id, reverse_cfg=reverse_cfg)
     summary = summarize(conn, domain_label)
 
     return {
@@ -206,6 +230,7 @@ def run_rejudge_only(
         "registration": None,
         "crawl": {"requested_accounts": len(accounts), "results": []},
         "judgement": judgement,
+        "reverse_prep": reverse_prep,
         "summary": summary,
     }
 
@@ -596,6 +621,7 @@ def run_daily_incremental(
     *,
     hit_cfg: dict[str, Any],
     crawler_cfg: dict[str, Any],
+    reverse_cfg: dict[str, Any],
     account_limit: int | None = None,
     executor: LocalMediaCrawlerExecutor | None = None,
 ) -> dict[str, Any]:
@@ -623,6 +649,7 @@ def run_daily_incremental(
 
     judgement = judge_domain(conn, domain_label, hit_cfg=hit_cfg, run_id=run_id)
     conn.commit()
+    reverse_prep = _auto_reverse_prep(conn, judgement_run_id=run_id, reverse_cfg=reverse_cfg)
     summary = summarize(conn, domain_label)
 
     return {
@@ -645,6 +672,7 @@ def run_daily_incremental(
             "results": crawl_results,
         },
         "judgement": judgement,
+        "reverse_prep": reverse_prep,
         "summary": summary,
     }
 
@@ -1291,6 +1319,11 @@ def resolve_max_notes(cli_value: int | None, settings: dict[str, Any]) -> tuple[
 
 
 def validate_registration_execution_contract(domain: dict[str, Any], hit_cfg: dict[str, Any]) -> dict[str, Any]:
+    # 2026-07-08: every threshold checked below is governed by BR-HIT-001 (see
+    # BUSINESS_RULE_CATALOG.yaml) -- require_catalog_citations() raises if that
+    # requirement_id does not actually exist in the catalog, so this function
+    # cannot silently keep gating against a rule that has been deleted/renamed.
+    require_catalog_citations(["BR-HIT-001"])
     policy = domain.get("collector_policy") or {}
     errors: list[str] = []
     if policy.get("first_crawl") != "stock_snapshot_archived":

@@ -12,6 +12,30 @@
 - **真实数据重判结果**(`reset_judgement_state` 清空后 `--rejudge-only` 重新判定,28 账号):`total_promoted=441`(112 formal + 363 rough,5 个账号用到了新回补机制),`小椰子专栏`(此前挂零的高体量账号)现在有 4 条基线(sample_count=50,回补生效)、19 条真实命中。
 - **紧接着又补了一个字段**:用户追问"过渡期视频每天观察,到底记在哪儿"——发现`discovery_batch_index`只服务正式跟踪视频的D0-D7(发现批次锚定),过渡期视频每天的check完全没有"第几天"标签。加了`video_checks.day_since_publish`(日历天数锚定,跟discovery_batch_index刻意分开存,不混用),`install_schema()`现在会对已存在的库懒加这个新列(`CREATE TABLE IF NOT EXISTS`不会给已有表补列)。已经通过`--rejudge-only`真实调用过一次,确认真实生产库`video_checks`表已经有这一列。
 - **测试**:`tests/core` 259 个、`tests/validation` 44 个全过(新增 6 个测试:回补机制 3 个、计数修复 1 个、每日刷新 1 个、day_since_publish 1 个)。
+- **紧接着,同一天,追加了一次治理机制修复**(用户发起的备料层/ASR 探索期间,连续三次绕开 `BUSINESS_RULE_CATALOG.yaml` 直接翻总控文档原文,又直接用 Bash/PowerShell 装 ffmpeg、调真实 MediaCrawler 下载、存真实密钥,完全没走任何受控入口——用户判定这是机制问题,不是习惯问题):
+  1. 总控文档三个文件(`.md`/`.docx`/旧代码审计提示词)从仓库彻底移出,物理搬到本机 `Documents\创作助手_源文档\`,不再入库;新增 `tests/validation/test_source_document_not_tracked.py` 强制检查它们不得再被跟踪。
+  2. CLAUDE.md/AGENTS.md 的"真实数据写操作只能走一个受控入口"规则,从"只管数据库写"扩大为"一切会产生真实外部后果的执行"(网络请求、装软件、真实付费 API 调用都算),两份文件同步更新、`test_constitution_sync` 验证通过。
+  3. 新增 `scripts/core/execution_contract.py`(`require_catalog_citations()`):任何受控入口在真正执行前,必须先明确点名它依据 `BUSINESS_RULE_CATALOG.yaml` 哪个 `requirement_id`,该函数会真的去查 catalog 有没有这个 id,查不到就拒绝执行——不是靠记性。已经把 `run_competitor_registration_full.py` 的 `validate_registration_execution_contract()` 接入这道共享闸门(引用 `BR-HIT-001`),回归测试全过,证明是无损抽取不是重写。
+  4. `HERMES_BUSINESS_API_KEY` 已经拿到并写入本机 `.env`(未入库)。
+- **ASR 对比测试已经真正跑完,结论是维持本地**(经过 `scripts/tools/compare_asr_providers.py`,受 `BR-ASR-003` 契约闸门约束,对两条真实爆款视频分别测试):
+  - MiMo 端点踩过一次坑:公开文档给的示例域名 `api.xiaomimimo.com` 对 Token Plan 的 key 返回 401,真正能用的域名是用户账号控制台里的 `https://token-plan-cn.xiaomimimo.com/v1`,换过来后 key 立刻生效(用纯文本对话请求验证过)。
+  - 两条视频都测了本地 SenseVoice vs MiMo:视频1(约11分钟)本地完整转写 6709 字,MiMo 只出 377 字(只有结尾一小段);视频2(较短)本地完整转写 3892 字,MiMo 只出 497 字(覆盖开头约1/8内容,结尾还复读了一句)。两次都是请求成功(200,不报错)但转写不全,重复发同一份音频结果一致,排除了偶发/代码问题。
+  - 根因查到了:MiMo 官方模型页(`mimo.mi.com/models/zh-CN/mimo-v2.5-asr`)写明"上下文长度8K tokens,最大输出2K tokens",而且计费方式里音频本身也算 token、跟文本共用同一个上下文预算——几分钟音频光编码就吃掉大半个窗口,留给输出转写文字的空间自然不够,这是模型结构性限制,不是我这边调用方式的问题。
+  - **最终决定(用户拍板):`BR-ASR-001` 的"默认本地 SenseVoice"维持不变,不切 MiMo**。结论和真实数据已经记进 `BUSINESS_RULE_CATALOG.yaml` 的 `BR-ASR-003.outcome` 字段。
+- **同一天,紧接着:补齐"备料"(reverse-prep)的正式生产入口——用户明确要求"真的对现有爆款跑一次备料(转写+拉评论)"**,不是又一次一次性对比脚本:
+  1. **新建 `scripts/core/business_data/run_reverse_prep.py`**:受契约约束(`BR-ASR-001/002`、`BR-COLLECT-005/006`),对已判定爆款(`hits.reverse_status`)逐条跑一趟 MediaCrawler detail 抓取(`get_comment=yes`,下载链接+评论一次拿,不分两次抓)、本地 SenseVoice 转写、评论确定性过滤后落库。签名下载链接只在内存用,从不落库。
+  2. **先用真实数据小范围验证(用户明确要求"先搭好入口,小范围试跑1-2条"),过程中抓到一个真实 bug**:`scripts/tools/_local_asr_transcribe.py`(转写子进程脚本)——① funasr/torchaudio 在 import/建模时会自己往 stdout 打印提示文字("ffmpeg is not installed..."等),混进了被当成转写结果捕获的 stdout,污染了存进库的文字稿;② 该子进程在 Windows 上默认用系统代码页(不是 UTF-8)写 stdout,导致中文字符被父进程按 UTF-8 解码后乱码。两处都已修(转写全过程包在 `contextlib.redirect_stdout` 里、写结果前显式 `reconfigure(encoding="utf-8")`),用同一条真实视频重新跑验证,文字稿干净可读。
+  3. **用户随后要求"检查是否按文档写代码"**:直接对照总控文档原文第13章(音频/ASR/文本清理)、第16章(评论采集),发现最初实现只对齐了 `BUSINESS_RULE_CATALOG.yaml` 这份精简摘要,漏了文档原文的几条硬要求——已按用户"全部按文档补齐"的明确决定重写:
+     - `hit_transcripts` 从"一条爆款一行、可覆盖"改成**只增不改的版本化表**(`raw_transcript_text`/`cleaned_transcript_text` 分开存,`cleaned` 只做确定性空白/连续重复句清理,不用 LLM),带溯源字段(`asr_model`/`vad_model`/`processing_method`/`audio_sha256`)——对应文档"转写版本不可覆盖,必须记录 asr_model、参数、处理方法和输入音频哈希"。
+     - 状态词汇从自造的 `none/done/failed` 改成文档原文的 `pending/running/completed/failed`。
+     - 新增确定性质量异常检测(`empty`/`too_short`/`high_repetition`,纯代码判断,复读检测对应 `BR-ASR-003` 真实观测到的云端复读失败模式)。
+     - `select_pending_hits()` 加了按文档 13.2 节设计的 5 档处理优先级(join `competitor_videos` 的 `baseline_mode`/`first_contact_category` 近似映射)——**如实标注了数据模型目前撑不住的部分**:tier1(已选生产任务)现在没有任何数据能匹配(经验库/创作流水线还没建),tier2/4 里"深度分析合格样本"/"普通对照和低表现反例"是 `BR-HIT-002/006` 的已知缺口,没有编字段硬凑。
+     - `hit_comments` 加 `sample_rank`(过滤前赋值,保留抓取器原始热度顺序,断号说明哪条被过滤掉了);二级评论确认在抓取执行器层已经关闭(`--get_sub_comment no` 写死),不用额外处理。
+     - **schema 迁移需要删表重建**(`hit_transcripts`/`hit_comments` 两张新表当天刚建、只有 2 条测试数据),这个动作被 Claude Code 自动权限分类器拦下(代码里出现 `DROP TABLE` 字样),向用户说明原因和影响范围后用户明确批准,执行前对生产库整体做了时间戳备份。
+     - **两轮真实数据验证**(重设计前后各对 2 条真实爆款完整跑通,共 4 条),字段/优先级/幂等重跑(追加新版本、不覆盖)行为都用真实数据核对过。
+  4. **测试**:`tests/core/test_run_reverse_prep.py` 从 14 个测试扩到 22 个(新增优先级排序、清理/去重复句、质量异常检测、sample_rank),全部 mock 掉真实网络/ffmpeg/ASR 子进程;`tests/validation/test_business_rule_traceability.py` 加了 `BR-COLLECT-005/006` 阈值核对和契约拒绝测试。`tests/core`(286个)、`tests/validation`(47个)全绿,两个权威闸门(`verify_goal_v062_phase8_readiness.py`→`ENGINEERING_READY`、`legacy_removal_gate`/`clean_room_readiness`→PASS)仍绿。
+  5. **接着,用户明确要求接自动触发**:"爆款文案是要提取经验的,所以备料这里最后自动执行"——判定爆款完了不跟着备料,后面拆经验就是空的。跟用户确认过阻塞方式(判定完就地同步跑完备料,再往下走,不是踢给后台异步),按此实现:`run_full_registration()`/`run_rejudge_only()`/`run_daily_incremental()` 三个判定入口,在 `judge_domain()` 提交后都会调用新的 `_auto_reverse_prep()`,只处理**这一轮判定新产生的** `pending` 爆款(按 `hits.run_id` 限定范围,不会误扫历史积压),同步跑完才返回。判定本身仍是纯本地计算、很快;真正慢的是备料这一步(每条真实联网+跑本地模型),现在是判定入口自己选择等它跑完。新增 `AutoReversePrepTests`(无待办短路、按 run_id 限定范围)+ 三个入口的端到端测试都验证了会带正确 `judgement_run_id` 触发。`tests/core` 全绿(288个),两个权威闸门仍绿。
+  6. **下一步(未做,留给用户决定)**:441 条历史积压的待备料爆款(在这次接自动触发之前就已经存在,不属于任何"当前判定轮次")里,只有 4 条真的跑过全流程;这批历史积压不会被新接的自动触发扫到(按设计只管当轮新产生的)。要不要专门跑一次把这 441 条也补上,还是先做别的,需要用户明确同意——单条真实运行涉及联网抓取+下载+本地模型推理,不是纯本地计算。
 - **写这份文件的人/时间**:Claude Code,2026-07-08。
 
 ## 历史记录(2026-07-07,上一次收工时)

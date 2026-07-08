@@ -1206,6 +1206,14 @@ business_data_competitor_registration_execution:
     amendment_2026_07_08_backfill_counting_and_daily_refresh for the full decision
     trail and BR-BASELINE-003''s current status (unified_min_samples=20 remains
     authoritative; this only widens WHICH videos can be pooled to reach it).'
+  amendment_2026_07_08_asr_provider_comparison: 'One-off local-vs-cloud ASR
+    comparison (BUSINESS_RULE_CATALOG.yaml BR-ASR-003), run via
+    scripts/tools/compare_asr_providers.py against two real promoted hits.
+    Local SenseVoice produced complete transcripts both times (6709 and 3892
+    chars); MiMo-V2.5-ASR truncated both times (377 and 497 chars) -- root
+    cause confirmed as MiMo''s 8K-token context window shared between audio
+    input and text output, per its own model page. BR-ASR-001''s local
+    SenseVoice default is confirmed, not changed.'
   amendment_2026_07_08_day_since_publish_column: 'Follow-up: video_checks.
     day_since_publish (nullable INTEGER) added so a transition video''s daily
     checks record which day of its own 0-7 lifecycle each one happened on --
@@ -1220,9 +1228,11 @@ business_data_competitor_registration_execution:
     BR-COLLECT-002: exact_match
     BR-COLLECT-003: exact_match
     BR-COLLECT-004: exact_match
-    BR-COLLECT-005: missing_in_code
-    BR-COLLECT-006: missing_in_code
+    BR-COLLECT-005: exact_match
+    BR-COLLECT-006: exact_match
     BR-COLLECT-007: exact_match
+    BR-ASR-001: exact_match
+    BR-ASR-002: exact_match
     BR-BASELINE-001: exact_match
     BR-BASELINE-002: exact_match
     BR-BASELINE-003: exact_match
@@ -1233,21 +1243,68 @@ business_data_competitor_registration_execution:
     BR-HIT-005: exact_match
     BR-HIT-006: missing_in_code
     BR-HIT-007: missing_in_code
-  missing_in_code_note: 'BR-COLLECT-005/006 (reverse-prep comment collection, comment
-    noise filtering) are not yet built -- this is an acknowledged gap, not a drift,
-    since nothing in code contradicts them; they belong to the separate 备料层
-    (reverse-prep) track, not the daily incremental collection track. BR-HIT-002
-    (control/counter-example sample recall), BR-HIT-006 (five-tier processing/
-    deep_eligibility), and BR-HIT-007 (purpose-tagged comment collection) are
-    likewise acknowledged gaps, not drift -- deferred in the 2026-07-07 rewrite
-    because no comment-collection pipeline exists yet to hook them into. BR-HIT-004
-    (the old share_comment_ratio derived-evidence-only rule) is superseded, not
-    merely missing -- the new design folds share_count into its own independent
-    share_anomaly channel (BR-HIT-001 section D), so BR-HIT-004 as literally worded
-    no longer describes a real code path.'
+  missing_in_code_note: 'BR-HIT-002 (control/counter-example sample recall),
+    BR-HIT-006 (five-tier processing/deep_eligibility), and BR-HIT-007
+    (purpose-tagged multi-stage comment collection) are acknowledged gaps, not
+    drift -- deferred in the 2026-07-07 rewrite because no broader
+    comment-collection pipeline exists yet to hook them into. BR-COLLECT-005/006
+    (reverse-prep comment collection, comment noise filtering) were also in this
+    list until 2026-07-08, when scripts/core/business_data/run_reverse_prep.py
+    implemented them for the narrower scope those two rules actually describe
+    (already-promoted hits) -- BR-HIT-002/006/007''s broader pipeline is still
+    not built. BR-HIT-004 (the old share_comment_ratio derived-evidence-only
+    rule) is superseded, not merely missing -- the new design folds share_count
+    into its own independent share_anomaly channel (BR-HIT-001 section D), so
+    BR-HIT-004 as literally worded no longer describes a real code path.'
+  amendment_2026_07_08_reverse_prep_production_path: 'First production entry
+    point for reverse-prep: scripts/core/business_data/run_reverse_prep.py.
+    Implements BR-ASR-001 (local SenseVoice transcript, never LLM), BR-ASR-002
+    (fresh download URL used in-memory, never persisted), BR-COLLECT-005
+    (comments read from the same MediaCrawler detail crawl as the download URL,
+    not a separate pass), and BR-COLLECT-006 (deterministic min-length/dedup
+    comment filtering, content-hash fallback for missing comment_id, INSERT OR
+    IGNORE storage). New config keys reverse_engine.top_comments=60 and
+    reverse_engine.min_comment_len=5 added to settings.yaml/settings.example.yaml,
+    checked by validate_reverse_prep_execution_contract(). Verified against 2 real
+    promoted hits end-to-end (real MediaCrawler crawl, real download, real local
+    SenseVoice transcription, real comments) -- caught and fixed a real bug in
+    the process: scripts/tools/_local_asr_transcribe.py let funasr/torchaudio''s
+    stdout notices leak into the stored transcript and defaulted to the OS
+    codepage instead of UTF-8, corrupting non-ASCII text.
+
+    Same-day follow-up after cross-checking against source document sections 13/16
+    directly (not just this catalog''s prior distillation, which was narrower):
+    redesigned hit_transcripts to be append-only/versioned (raw_transcript_text +
+    cleaned_transcript_text, never overwritten -- "转写版本不可覆盖") with
+    provenance (asr_model/vad_model/processing_method/audio_sha256 per attempt),
+    added deterministic quality_flags (empty/too_short/high_repetition), renamed
+    the pending/none/done vocabulary to the document''s literal pending/running/
+    completed/failed, added hit_comments.sample_rank (crawler''s own ordering,
+    assigned pre-filter), and added a best-effort 5-tier processing-priority order
+    in select_pending_hits() against what the schema can express today (tier 1 --
+    selected production task -- has no schema equivalent yet; tiers 2/4''s
+    deep_eligibility/control-sample dimensions are BR-HIT-002/006 gaps). User-
+    confirmed migration: register_competitor_accounts.install_schema() drops and
+    recreates hit_transcripts/hit_comments if the old shape is detected (only ever
+    held this session''s own 2 verification rows), with a timestamped full-DB
+    backup taken first. Re-verified against the same 2 real hits under the new
+    schema after migrating.
+
+    Deliberately out of scope, not an oversight: BR-HIT-002/006/007''s broader
+    purpose-tagged multi-stage comment pipeline -- this worker only prepares
+    already-promoted hits, one fetch each.
+
+    Same-day follow-up: run_full_registration()/run_rejudge_only()/
+    run_daily_incremental() now each call run_reverse_prep() synchronously
+    right after judge_domain() commits, via a new _auto_reverse_prep() helper
+    scoped to hits.run_id so a judgement run only backfills what it just
+    promoted. New tests: AutoReversePrepTests (no-pending short-circuit,
+    run_id scoping) plus updated EntrypointSmokeTests assertions on all three
+    entry points.'
   code_artifacts:
   - scripts/core/business_data/register_competitor_accounts.py
   - scripts/core/business_data/run_competitor_registration_full.py
+  - scripts/core/business_data/run_reverse_prep.py
   - scripts/core/business_data/competitor_accounts_schema.sqlite.sql
   - scripts/core/external_adapters/local_mediacrawler_executor.py
   - docs/production_execution_guardrails.md
@@ -1255,6 +1312,7 @@ business_data_competitor_registration_execution:
   - tests/core/test_competitor_account_registration.py
   - tests/core/test_competitor_registration_full.py
   - tests/core/test_local_mediacrawler_executor.py
+  - tests/core/test_run_reverse_prep.py
   - tests/validation/test_business_rule_traceability.py
   - tests/validation/test_business_rule_test_coverage.py
   formal_db:

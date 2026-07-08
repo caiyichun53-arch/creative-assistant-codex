@@ -172,10 +172,76 @@ CREATE TABLE IF NOT EXISTS hits (
     -- rows), not a single literal baselines.baseline_id row.
     baseline_id TEXT,
     run_id TEXT NOT NULL,
-    reverse_status TEXT NOT NULL DEFAULT 'none',
+    -- Source document section 13: "处理状态只保留 pending、running、completed、
+    -- failed" -- this is the reverse-prep (transcript+comment) queue status,
+    -- not a business judgement field. No CHECK constraint (would need a full
+    -- table rebuild on an existing production table); enforced in Python by
+    -- run_reverse_prep.py, which is the only writer.
+    reverse_status TEXT NOT NULL DEFAULT 'pending',
     promoted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(account_id, platform_item_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_hits_account
 ON hits(account_id, promoted_at);
+
+-- Reverse-prep transcript output (BR-ASR-001/BR-ASR-002), matching source
+-- document section 13's raw/cleaned versioning: APPEND-ONLY, one row per
+-- attempt, never overwritten ("转写版本不可覆盖") -- a hit_id can have several
+-- rows (retries), version increasing; the latest completed row is the current
+-- one. raw_transcript_text is the verbatim local SenseVoice output;
+-- cleaned_transcript_text is a deterministic (no LLM) whitespace/duplicate-
+-- line cleanup pass over it -- section 13.1's "cleaned_transcript v1" tier.
+-- Provenance fields (asr_model/vad_model/audio_sha256/processing_method) are
+-- section 13's explicit traceability requirement. Never stores the signed
+-- MediaCrawler download URL (BR-ASR-002 forbidden_behavior) -- only a hash of
+-- the downloaded audio bytes.
+CREATE TABLE IF NOT EXISTS hit_transcripts (
+    transcript_id TEXT PRIMARY KEY,
+    hit_id TEXT NOT NULL REFERENCES hits(hit_id) ON DELETE RESTRICT,
+    version INTEGER NOT NULL,
+    raw_transcript_text TEXT NOT NULL,
+    cleaned_transcript_text TEXT NOT NULL,
+    char_count INTEGER NOT NULL,
+    asr_model TEXT NOT NULL,
+    vad_model TEXT NOT NULL,
+    processing_method TEXT NOT NULL DEFAULT 'local_sensevoice_funasr',
+    audio_sha256 TEXT NOT NULL,
+    -- Deterministic (no LLM) anomaly checks section 13.1 requires: comma-
+    -- joined subset of empty/too_short/high_repetition.
+    quality_flags TEXT NOT NULL DEFAULT '',
+    -- Per-attempt lifecycle, same 4-value vocabulary as hits.reverse_status
+    -- (source document section 13).
+    processing_status TEXT NOT NULL CHECK(processing_status IN ('pending', 'running', 'completed', 'failed')),
+    run_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_hit_transcripts_hit
+ON hit_transcripts(hit_id, version);
+
+-- One row per top-level comment fetched alongside the same MediaCrawler
+-- detail call that resolved the download URL (source document section 16 /
+-- CLAUDE.md: "合并成一趟 detail 爬 -- 下载链接+评论一次拿"), not a separate
+-- comment-collection pass. Reply/second-level comments are excluded at the
+-- crawler level (LocalMediaCrawlerExecutor always passes --get_sub_comment
+-- no), matching section 16's "第一阶段关闭二级评论". sample_rank preserves
+-- the crawler's own hotness ordering (section 16: "保留采集器热度顺序和
+-- sample_rank"), assigned before any filtering/dedup so gaps in the sequence
+-- are visible where a comment was dropped. INSERT OR IGNORE on retry:
+-- comments are append-only evidence, a rerun should not duplicate rows
+-- already captured.
+CREATE TABLE IF NOT EXISTS hit_comments (
+    hit_id TEXT NOT NULL REFERENCES hits(hit_id) ON DELETE RESTRICT,
+    comment_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    like_count INTEGER NOT NULL DEFAULT 0,
+    parent_comment_id TEXT,
+    sample_rank INTEGER NOT NULL,
+    run_id TEXT NOT NULL,
+    fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (hit_id, comment_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_hit_comments_hit
+ON hit_comments(hit_id, sample_rank);

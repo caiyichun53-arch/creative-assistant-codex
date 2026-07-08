@@ -133,6 +133,10 @@ reverse_engine:
   asr_model: sensevoice/sensevoice-small
   vad_model: modelscope_cache/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
   min_transcript_chars: 80
+  # BR-COLLECT-005/006: comments collected in the same detail crawl used for
+  # the download URL, then deterministically filtered (no LLM) before storage.
+  top_comments: 60
+  min_comment_len: 5
 
 humanize:
   # Local source corpus path. Leave empty until configured.

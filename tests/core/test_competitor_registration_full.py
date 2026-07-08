@@ -13,6 +13,7 @@ from unittest.mock import patch
 from scripts.core.business_data.register_competitor_accounts import install_schema, register_from_domain
 from scripts.core.business_data.run_competitor_registration_full import (
     ROOT,
+    _auto_reverse_prep,
     classify_first_contact_category,
     ingest_daily_incremental_items,
     ingest_stock_items,
@@ -66,6 +67,15 @@ HIT_CFG = {
     "mature_history_absolute_like_floor": 2000,
     "small_account_p90_percentile": 0.9,
     "comment_like_ratio_threshold": 0.2,
+}
+
+REVERSE_CFG = {
+    "models_root": "models",
+    "asr_model": "sensevoice/sensevoice-small",
+    "vad_model": "modelscope_cache/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+    "min_transcript_chars": 10,
+    "top_comments": 60,
+    "min_comment_len": 5,
 }
 
 
@@ -917,6 +927,60 @@ class ResolveMaxNotesTests(unittest.TestCase):
         self.assertEqual((max_notes, source), (20, "cli"))
 
 
+def _insert_hit(conn: sqlite3.Connection, hit_id: str, *, video_id: str, account_id: str, run_id: str, reverse_status: str = "pending") -> None:
+    conn.execute(
+        """
+        INSERT INTO hits(
+            hit_id, video_id, account_id, platform, platform_item_id, title, url,
+            hit_channel, judgment_confidence, run_id, reverse_status
+        ) VALUES (?, ?, ?, 'douyin', ?, 't', 'https://x', 'like_anomaly', 'formal', ?, ?)
+        """,
+        (hit_id, video_id, account_id, hit_id + "_item", run_id, reverse_status),
+    )
+
+
+class AutoReversePrepTests(unittest.TestCase):
+    """BR-ASR-001/BR-COLLECT-005: a judgement run must auto-trigger reverse-prep
+    for the hits IT just promoted (2026-07-08, explicit user decision -- "爆款
+    文案是要提取经验的,所以备料这里最后自动执行")."""
+
+    def test_no_pending_hits_short_circuits_without_calling_run_reverse_prep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                with patch("scripts.core.business_data.run_competitor_registration_full.run_reverse_prep") as fake:
+                    result = _auto_reverse_prep(conn, judgement_run_id="run_empty", reverse_cfg=REVERSE_CFG)
+                fake.assert_not_called()
+                self.assertEqual(result, {"status": "succeeded", "attempted": 0, "completed": 0, "failed": 0, "results": []})
+            finally:
+                conn.close()
+
+    def test_pending_hits_for_this_run_trigger_reverse_prep_scoped_to_that_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn, "acc1")
+                _insert_video(conn, "vid1", "acc1", "item1", category="historical_mature", publish_time=None)
+                _insert_video(conn, "vid2", "acc1", "item2", category="historical_mature", publish_time=None)
+                _insert_hit(conn, "hit_this_run", video_id="vid1", account_id="acc1", run_id="run_a")
+                # A pending hit from a DIFFERENT judgement run must not be swept in.
+                _insert_hit(conn, "hit_other_run", video_id="vid2", account_id="acc1", run_id="run_b")
+
+                with patch(
+                    "scripts.core.business_data.run_competitor_registration_full.run_reverse_prep",
+                    return_value={"status": "succeeded", "attempted": 1, "completed": 1, "failed": 0, "results": []},
+                ) as fake:
+                    result = _auto_reverse_prep(conn, judgement_run_id="run_a", reverse_cfg=REVERSE_CFG)
+
+                fake.assert_called_once()
+                self.assertEqual(fake.call_args.kwargs["judgement_run_id"], "run_a")
+                self.assertEqual(fake.call_args.kwargs["limit"], 1)
+                self.assertEqual(fake.call_args.kwargs["reverse_cfg"], REVERSE_CFG)
+                self.assertEqual(result["completed"], 1)
+            finally:
+                conn.close()
+
+
 class EntrypointSmokeTests(unittest.TestCase):
     def test_run_full_registration_wires_register_crawl_and_judge_together(self) -> None:
         now = datetime.now(timezone.utc)
@@ -951,10 +1015,13 @@ class EntrypointSmokeTests(unittest.TestCase):
                 with patch(
                     "scripts.core.external_adapters.local_mediacrawler_executor.subprocess.run",
                     side_effect=fake_run,
-                ):
+                ), patch(
+                    "scripts.core.business_data.run_competitor_registration_full.run_reverse_prep",
+                    return_value={"status": "succeeded", "attempted": 1, "completed": 1, "failed": 0, "results": []},
+                ) as fake_reverse_prep:
                     report = run_full_registration(
                         conn, DOMAIN, domain_path=Path("config/domains/泛科普.yaml"),
-                        hit_cfg=HIT_CFG, max_notes=21, max_notes_source="settings",
+                        hit_cfg=HIT_CFG, reverse_cfg=REVERSE_CFG, max_notes=21, max_notes_source="settings",
                         account_limit=None, timeout_seconds=60,
                     )
                 self.addCleanup(shutil.rmtree, ROOT / "data" / "formal" / "competitor_registration" / report["run_id"], True)
@@ -964,6 +1031,11 @@ class EntrypointSmokeTests(unittest.TestCase):
                 self.assertEqual(report["crawl"]["results"][0]["inserted_videos"], 21)
                 self.assertEqual(report["judgement"]["total_promoted"], 1)
                 self.assertEqual(report["summary"]["historical_mature_videos"], 21)
+                # BR-ASR-001/BR-COLLECT-005: a judgement run that promoted hits must
+                # auto-trigger reverse-prep for exactly those hits before returning.
+                self.assertEqual(report["reverse_prep"]["completed"], 1)
+                fake_reverse_prep.assert_called_once()
+                self.assertEqual(fake_reverse_prep.call_args.kwargs["judgement_run_id"], report["run_id"])
             finally:
                 conn.close()
 
@@ -974,7 +1046,7 @@ class EntrypointSmokeTests(unittest.TestCase):
             try:
                 register_from_domain(conn, DOMAIN, source_config_ref="config/domains/x.yaml")
                 with self.assertRaises(ValueError):
-                    run_rejudge_only(conn, DOMAIN, hit_cfg=bad_hit_cfg)
+                    run_rejudge_only(conn, DOMAIN, hit_cfg=bad_hit_cfg, reverse_cfg=REVERSE_CFG)
             finally:
                 conn.close()
 
@@ -997,9 +1069,12 @@ class EntrypointSmokeTests(unittest.TestCase):
                 with patch(
                     "scripts.core.external_adapters.local_mediacrawler_executor.subprocess.run",
                     side_effect=fake_run,
+                ), patch(
+                    "scripts.core.business_data.run_competitor_registration_full.run_reverse_prep",
+                    return_value={"status": "succeeded", "attempted": 0, "completed": 0, "failed": 0, "results": []},
                 ):
                     report = run_daily_incremental(
-                        conn, DOMAIN, hit_cfg=HIT_CFG, crawler_cfg={"daily_max_notes": 5},
+                        conn, DOMAIN, hit_cfg=HIT_CFG, crawler_cfg={"daily_max_notes": 5}, reverse_cfg=REVERSE_CFG,
                     )
                 self.assertEqual(report["status"], "succeeded")
                 self.assertEqual(report["mode"], "daily_incremental")
@@ -1013,7 +1088,7 @@ class EntrypointSmokeTests(unittest.TestCase):
             try:
                 register_from_domain(conn, DOMAIN, source_config_ref="config/domains/x.yaml")
                 with self.assertRaises(ValueError):
-                    run_daily_incremental(conn, DOMAIN, hit_cfg=HIT_CFG, crawler_cfg={"daily_max_notes": 0})
+                    run_daily_incremental(conn, DOMAIN, hit_cfg=HIT_CFG, crawler_cfg={"daily_max_notes": 0}, reverse_cfg=REVERSE_CFG)
             finally:
                 conn.close()
 
