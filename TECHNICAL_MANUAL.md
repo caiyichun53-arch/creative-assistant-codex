@@ -142,7 +142,58 @@
 
 ## 14. 出问题了怎么办
 
-[占位] 待补：常见故障排查入口（测试怎么跑、闸门脚本怎么跑、日志在哪看），面向不懂代码的人，教怎么描述问题给下一个开发者/AI，而不是教怎么改代码。
+`[已完成]` 2026-07-09（这一节从占位补成实际内容，起因是 2026-07-09 的一次外部工程审计——见下文"审计发现"——审计过程中新建了三个检查脚本，按项目自己"模块建好即写手册"的纪律在同一批工作里补上说明，不留到"以后"）
+
+### 收工/交接前，跑这一条命令就够了
+
+```
+python -m scripts.validation.preflight_checkpoint_check
+```
+
+这一条命令把"执行纪律"要求的三件事一次性跑完，不用再分别记着做：
+1. `git status` 是否干净（没有该提交但忘了提交的改动）
+2. 全部测试是否绿（`tests/core` + `tests/validation`）
+3. 权威闸门 `verify_goal_v062_phase8_readiness.py` 是否 `ENGINEERING_READY`
+4. 运维基础设施检查（见下一节）是否干净
+
+任何一项没过，命令会打印具体是哪一项、哪个文件/哪条测试没过，返回码非0。想跳过测试只看另外三项（比如中途快速自查）可以加 `--skip-tests`，但**收工前的最终检查不要跳**。
+
+### 运维基础设施检查（凭证、硬编码路径、忽略规则）
+
+```
+python -m scripts.validation.ops_infra_checklist
+```
+
+这道检查管的是业务规则文档管不到的一类问题——2026-07-09 审计发现的真实案例：本地 ffmpeg 和 ASR Python 解释器的绝对路径被硬编码在两个文件里、且不在任何配置文件中，换机器就会失效，而且这类问题不会被任何 `BR-*` 业务规则闸门发现，因为它压根不是业务规则。现在这个脚本机械检查三件事：
+1. 有没有新的硬编码绝对路径（`C:/`、`I:/`、`/Users/`、`/home/` 这类）混进了非测试的正式代码——真实值应该放进 `config/settings.yaml`，不是写死在代码里。
+2. `.gitignore` 是否仍然覆盖了敏感/机器本地文件（`.env`、真实的 `config/settings.yaml`、`*.sqlite3`、`vendor/`、`logs/`、`data/`）。
+3. 有没有真实的 `.env`/`.env.*` 文件被误提交（只允许 `.env.example` 这类模板）。
+
+**这个脚本管不到、需要人工定期核对的运维项**（没有假装自动化，说清楚现在还得靠人）：
+- Windows 计划任务是否健康：`Get-ScheduledTask -TaskName CreationAssistant_Daily | Select TaskName,State`，`Get-ScheduledTaskInfo -TaskName CreationAssistant_Daily` 看 `LastTaskResult` 是不是 0（失败会是非0错误码）。
+- 生产数据库最近一次备份是多久之前——`data/formal/production_activation.sqlite3` 的时间戳备份副本（命名规律是 `production_activation_pre_<操作>_<时间戳>.sqlite3`，可以直接在 `data/formal/` 下用文件名搜）多久没更新过。
+- 第三方依赖（`vendor/MediaCrawler`、本地 ASR 模型 `I:/AI_Models`）是否还是当初验证过的版本，有没有被后续操作意外改动。
+
+### 测试怎么跑
+
+```
+python -m pytest tests/core tests/validation -q
+```
+
+（`python -m unittest discover` 在这个仓库跑不起来——`tests/` 下没有 `__init__.py`，unittest 的旧式 discovery 会报 `Start directory is not importable`；用 pytest。）
+
+### 日志在哪看
+
+- `logs/daily_incremental_YYYYMMDD.log`：每日定时增量采集的完整输出。
+- `logs/reverse_prep_*.log`：手动批量跑备料流水线时的输出（文件名里带具体动作，比如 `_backfill_`/`_daily_backlog_`）。
+- Windows 事件层面的计划任务历史：`Get-ScheduledTaskInfo -TaskName CreationAssistant_Daily`（`LastRunTime`/`LastTaskResult`），不是文件日志，是系统状态。
+
+### 不懂代码，怎么描述问题给下一个开发者/AI
+
+不用去猜是哪个函数的问题。把下面这三样直接贴给下一个人（或下一次对话）就够：
+1. `python -m scripts.validation.preflight_checkpoint_check` 的完整输出（哪一项失败、失败详情）。
+2. 你实际做了什么操作、看到了什么和预期不一样的现象（比如"定时任务弹出了一个黑框窗口"这种，不用翻译成技术术语）。
+3. 如果是数据看起来不对，直接说"我看到 XX 数字是 Y，我以为应该是 Z"，不用自己先猜原因——本项目的纪律要求任何人（包括AI）核实问题时都要去查真实数据/真实闸门输出，而不是听转述就下结论。
 
 ## 15. 工程验收脚本（production / runtime / staging）
 

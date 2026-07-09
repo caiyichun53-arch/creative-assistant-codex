@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from scripts.validation.preflight_checkpoint_check import (
     check_git_clean,
+    check_ops_infra,
     check_readiness_gate,
     check_tests,
     run_all_checks,
@@ -62,18 +63,35 @@ class CheckReadinessGateTests(unittest.TestCase):
         self.assertEqual(result["detail"], ["clean_room"])
 
 
+class CheckOpsInfraTests(unittest.TestCase):
+    def test_passes_when_ops_checklist_is_clean(self) -> None:
+        with patch("scripts.validation.ops_infra_checklist.run_checklist", return_value={"status": "PASS", "checks": []}):
+            result = check_ops_infra()
+        self.assertTrue(result["passed"])
+
+    def test_fails_when_ops_checklist_finds_something(self) -> None:
+        with patch(
+            "scripts.validation.ops_infra_checklist.run_checklist",
+            return_value={"status": "FAIL", "checks": [{"name": "no_hardcoded_absolute_machine_paths", "passed": False, "detail": ["x"]}]},
+        ):
+            result = check_ops_infra()
+        self.assertFalse(result["passed"])
+
+
 class RunAllChecksTests(unittest.TestCase):
-    def test_overall_ready_only_when_all_three_checks_pass(self) -> None:
+    def test_overall_ready_only_when_all_checks_pass(self) -> None:
         with patch("scripts.validation.preflight_checkpoint_check.check_git_clean", return_value={"name": "git", "passed": True}), \
              patch("scripts.validation.preflight_checkpoint_check.check_tests", return_value={"name": "tests", "passed": True}), \
-             patch("scripts.validation.preflight_checkpoint_check.check_readiness_gate", return_value={"name": "gate", "passed": True}):
+             patch("scripts.validation.preflight_checkpoint_check.check_readiness_gate", return_value={"name": "gate", "passed": True}), \
+             patch("scripts.validation.preflight_checkpoint_check.check_ops_infra", return_value={"name": "ops", "passed": True}):
             result = run_all_checks(skip_tests=False)
         self.assertEqual(result["status"], "READY_TO_CHECKPOINT")
 
     def test_overall_not_ready_when_any_single_check_fails(self) -> None:
         with patch("scripts.validation.preflight_checkpoint_check.check_git_clean", return_value={"name": "git", "passed": False, "detail": ["dirty"]}), \
              patch("scripts.validation.preflight_checkpoint_check.check_tests", return_value={"name": "tests", "passed": True}), \
-             patch("scripts.validation.preflight_checkpoint_check.check_readiness_gate", return_value={"name": "gate", "passed": True}):
+             patch("scripts.validation.preflight_checkpoint_check.check_readiness_gate", return_value={"name": "gate", "passed": True}), \
+             patch("scripts.validation.preflight_checkpoint_check.check_ops_infra", return_value={"name": "ops", "passed": True}):
             result = run_all_checks(skip_tests=False)
         self.assertEqual(result["status"], "NOT_READY")
 

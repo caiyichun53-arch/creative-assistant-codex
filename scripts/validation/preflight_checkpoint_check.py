@@ -1,19 +1,22 @@
 """One command to run before wrapping up a session (收工) or handing off to
 another executor (Codex/Claude Code taking over from each other).
 
-AGENTS.md/CLAUDE.md "执行纪律" already requires all three of the following
-before anything gets called done/completed/ENGINEERING_READY:
+AGENTS.md/CLAUDE.md "执行纪律" already requires all of the following before
+anything gets called done/completed/ENGINEERING_READY:
   1. the working tree is committed cleanly (no uncommitted changes left
      behind for a reset/handoff to silently drop)
   2. the full test suite is green
   3. the authoritative readiness gate (scripts/core/staging/
      verify_goal_v062_phase8_readiness.py) reports ENGINEERING_READY
-Until now these were three separate manual steps someone had to remember to
-run, in order, every time -- exactly the kind of "remembering" this project's
-own incident history (see HANDOFF_STATE.md) shows doesn't hold up under
+  4. the operational-infrastructure checklist (scripts/validation/
+     ops_infra_checklist.py) is clean -- no hardcoded machine paths,
+     .gitignore still covers secrets, no real .env file committed
+Until now these were separate manual steps someone had to remember to run,
+in order, every time -- exactly the kind of "remembering" this project's own
+incident history (see HANDOFF_STATE.md) shows doesn't hold up under
 context-window/quota pressure at the end of a session. This script runs all
-three and prints one PASS/FAIL verdict per check plus a combined status, so
-the check is "run one command", not "remember three things".
+of them and prints one PASS/FAIL verdict per check plus a combined status, so
+the check is "run one command", not "remember N things".
 
 Usage:
     python -m scripts.validation.preflight_checkpoint_check
@@ -68,8 +71,19 @@ def check_readiness_gate() -> dict[str, Any]:
     }
 
 
+def check_ops_infra() -> dict[str, Any]:
+    from scripts.validation.ops_infra_checklist import run_checklist
+
+    result = run_checklist()
+    return {
+        "name": "ops_infra_checklist_clean",
+        "passed": result["status"] == "PASS",
+        "detail": "clean" if result["status"] == "PASS" else [c for c in result["checks"] if not c["passed"]],
+    }
+
+
 def run_all_checks(*, skip_tests: bool) -> dict[str, Any]:
-    checks = [check_git_clean(), check_tests(skip=skip_tests), check_readiness_gate()]
+    checks = [check_git_clean(), check_tests(skip=skip_tests), check_readiness_gate(), check_ops_infra()]
     overall_passed = all(check["passed"] for check in checks)
     return {"status": "READY_TO_CHECKPOINT" if overall_passed else "NOT_READY", "checks": checks}
 
