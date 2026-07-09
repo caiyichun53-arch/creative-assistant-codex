@@ -38,12 +38,19 @@ def _rule(catalog: dict, requirement_id: str) -> dict:
     raise AssertionError(f"{requirement_id} not found in BUSINESS_RULE_CATALOG.yaml")
 
 
-class BusinessRuleTraceabilityTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.catalog = _load_catalog()
-        settings = yaml.safe_load((ROOT / "config" / "settings.example.yaml").read_text(encoding="utf-8"))
-        self.hit_cfg = settings["hit_detection"]
-        self.reverse_cfg = settings["reverse_engine"]
+class _BusinessRuleTraceabilityAssertions:
+    """Every assertion below is checked against whichever settings file the
+    concrete subclass's setUp() loads into self.hit_cfg/self.reverse_cfg --
+    NOT unittest.TestCase itself, so it isn't collected/run on its own.
+
+    2026-07-09: previously this class only ever loaded config/settings.example.yaml,
+    so a real config/settings.yaml (the file that actually runs in production,
+    gitignored/machine-local) could drift from BUSINESS_RULE_CATALOG.yaml
+    without any test ever catching it -- an audit finding. Moving the shared
+    assertions into a mixin, run by both BusinessRuleTraceabilityTests
+    (example file) and RealSettingsYamlBusinessRuleTraceabilityTests (real
+    file, skipped when absent), closes that gap without duplicating the
+    assertion logic itself into two sources of truth."""
 
     def test_br_collect_001_first_crawl_observe_window(self) -> None:
         rule = _rule(self.catalog, "BR-COLLECT-001")
@@ -169,6 +176,32 @@ class BusinessRuleTraceabilityTests(unittest.TestCase):
         drifted_len = dict(self.reverse_cfg, min_comment_len=1)
         with self.assertRaises(ValueError):
             validate_reverse_prep_execution_contract(drifted_len)
+
+
+class BusinessRuleTraceabilityTests(_BusinessRuleTraceabilityAssertions, unittest.TestCase):
+    """Checks config/settings.example.yaml -- always present, always runs."""
+
+    def setUp(self) -> None:
+        self.catalog = _load_catalog()
+        settings = yaml.safe_load((ROOT / "config" / "settings.example.yaml").read_text(encoding="utf-8"))
+        self.hit_cfg = settings["hit_detection"]
+        self.reverse_cfg = settings["reverse_engine"]
+
+
+class RealSettingsYamlBusinessRuleTraceabilityTests(_BusinessRuleTraceabilityAssertions, unittest.TestCase):
+    """Checks the real, gitignored config/settings.yaml that production
+    actually runs against -- skipped on a checkout that doesn't have one
+    (e.g. CI, a fresh clone before local setup), never silently skipped on a
+    machine that does."""
+
+    def setUp(self) -> None:
+        real_path = ROOT / "config" / "settings.yaml"
+        if not real_path.exists():
+            self.skipTest("config/settings.yaml is a local-only file, not present in this checkout")
+        self.catalog = _load_catalog()
+        settings = yaml.safe_load(real_path.read_text(encoding="utf-8"))
+        self.hit_cfg = settings["hit_detection"]
+        self.reverse_cfg = settings["reverse_engine"]
 
 
 if __name__ == "__main__":
