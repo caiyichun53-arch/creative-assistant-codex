@@ -8,10 +8,10 @@
 
 ### 1. 接通"选题→大纲→成稿"全链路(优先级最高,2026-07-09 用户拍板)
 
-`runtime_skills/` 下 12 个业务 Skill 里,目前只有 `sample_deep_analyze` 真正接上了真实数据(见 `scripts/core/experience/run_sample_deep_analyze.py`),其余 11 个只能吃 `fixtures.yaml` 里的假样例过契约测试,拿不到一条真实数据的产出。用户明确要求按这个顺序接下去:
+`runtime_skills/` 下 12 个业务 Skill,接入真实数据的进度:
 
-1. **`source_to_topic`**:从证据/来源转成候选选题。需要先确认输入从哪来(哪些真实数据表能组装出它的 input_schema)。
-2. **`content_plan`**:选题→钩子+大纲(内部会连续调用 `business.creation_hook`/`business.creation_outline` 两个模型路由,见 `formal_skill_adapter.py:653-725`)。
+1. ~~**`source_to_topic`**:从证据/来源转成候选选题。~~ **[已完成 2026-07-09]** `scripts/core/experience/run_source_to_topic.py`——吃 `hit_deep_analysis`(sample_deep_analyze 的真实输出:选题/开头/结构手法)当证据,生成候选选题,写入新表 `topic_candidates`(带版本号)。10个测试全过。**明确的简化**:`relation_summary`(这条选题和现有内容是否重复/冲突)现在是老实的占位文字,不是真判断过——`content_relation_judge` 还没接,不冒充。**还没花钱调用过真实大模型**,测试用的是确定性假模型端口,凭据缺口同 `sample_deep_analyze`。
+2. **`content_plan`**(下一项):选题→钩子+大纲(内部会连续调用 `business.creation_hook`/`business.creation_outline` 两个模型路由,见 `formal_skill_adapter.py:653-725`)。输入需要 `topic_candidates` 里 `topic_status='generated'` 的候选选题。
 3. **`script_generate`**:大纲+brief→成稿草稿。
 
 三个绑定脚本的写法参照已验证过的先例 `scripts/core/experience/run_sample_deep_analyze.py`(真实数据组装→调用 Skill 的 `make_*_harness()`→写回业务库,Skill 本身不改)。**这是一块新的工程量,不是文档/治理层面的小修补**,建议单独开一次会话/一个 GOAL 来做,不要和治理修复混在一次提交里。

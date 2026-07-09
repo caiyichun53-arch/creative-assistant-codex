@@ -271,3 +271,34 @@ CREATE TABLE IF NOT EXISTS hit_deep_analysis (
 
 CREATE INDEX IF NOT EXISTS idx_hit_deep_analysis_hit
 ON hit_deep_analysis(hit_id, version);
+
+-- One row per source_to_topic run over a hit_deep_analysis record.
+-- Append-only like hit_deep_analysis -- a re-run over the same analysis adds
+-- a new version rather than overwriting a prior candidate topic. The Skill
+-- itself never writes here (CR-003A) -- this is Core's Output Binding,
+-- converting source_to_topic's public output_schema (topic_status/
+-- candidate_topic/topic_angle/supporting_evidence/source_constraints/
+-- no_result_reason/confidence) into a business record. supporting_evidence
+-- and source_constraints are stored as JSON-encoded text (both are bounded
+-- arrays of short strings per the Skill's own schema, not queried by value).
+CREATE TABLE IF NOT EXISTS topic_candidates (
+    topic_id TEXT PRIMARY KEY,
+    source_analysis_id TEXT NOT NULL REFERENCES hit_deep_analysis(analysis_id) ON DELETE RESTRICT,
+    version INTEGER NOT NULL,
+    request_id TEXT NOT NULL,
+    correlation_id TEXT NOT NULL,
+    topic_status TEXT NOT NULL,
+    candidate_topic TEXT NOT NULL,
+    topic_angle TEXT NOT NULL,
+    supporting_evidence TEXT NOT NULL,
+    source_constraints TEXT NOT NULL,
+    no_result_reason TEXT NOT NULL,
+    confidence TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_analysis_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_topic_candidates_source_analysis
+ON topic_candidates(source_analysis_id, version);
