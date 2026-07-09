@@ -263,11 +263,16 @@ def phase_two_findings(root: Path) -> list[Finding]:
     # "refusing to write old data/creation.db" guard message. Exclude this one formal
     # module the same way "tests" is already excluded; every other scripts/core path and
     # every legacy pattern still gets scanned.
+    # scripts/core/experience carries the same exemption for the same reason (2026-07-08):
+    # run_sample_deep_analyze.py reads the same real "hits" table and has the same
+    # _safe_db_path() creation.db guard, just deliberately kept out of business_data
+    # itself (BR-COLLECT-007 requires business_data stay LLM-free; this module's whole
+    # job is an LLM call, see tests/validation/test_business_data_no_llm.py).
     formal_refs = find_references(
         root,
         LEGACY_REFERENCE_PATTERNS,
         scan_roots=PRODUCTION_SCAN_ROOTS,
-        exclude_prefixes=("tests", "scripts/core/business_data"),
+        exclude_prefixes=("tests", "scripts/core/business_data", "scripts/core/experience"),
     )
     findings.append(
         Finding(

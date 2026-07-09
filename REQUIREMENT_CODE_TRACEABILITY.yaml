@@ -335,20 +335,27 @@ traceability:
       persist_download_url: false
     thresholds: {}
 - requirement_id: BR-DNA-001
-  observed_legacy_behavior: DNA analysis is per-hit map work and must not batch multiple
-    hits into one note.
-  target_component: ReverseAnalysisSkill + ModelGateway
-  current_implementation_status: legacy behavior observed; target formalization pending
-    unless noted exact_match
-  alignment_status: naming_only
-  difference_type:
-  - ownership_changed
-  migration_action: Preserve business semantics while moving state/external side effects
-    to formal Core/Adapter boundaries.
+  observed_legacy_behavior: 'SUPERSEDED 2026-07-08: real Core-side wiring now exists
+    (scripts/core/experience/run_sample_deep_analyze.py), not just an observed legacy
+    behavior. One hit per call is enforced by construction (assemble_sample_deep_
+    analyze_input takes a single hit row; there is no batching parameter), matching
+    "DNA analysis is per-hit map work and must not batch multiple hits into one note."'
+  target_component: runtime_skills/sample_deep_analyze + ModelGateway (via
+    scripts/core/experience/run_sample_deep_analyze.py)
+  current_implementation_status: exact_match
+  alignment_status: exact_match
+  difference_type: []
+  migration_action: 'Done: select_hits_pending_analysis() picks one real hit at a
+    time; assemble_sample_deep_analyze_input() builds only the Skill''s public input
+    contract; analyze_one_hit() invokes it through the existing
+    make_sample_deep_analyze_harness() job/worker/materializer path; the result is
+    persisted to hit_deep_analysis (Core-side Output Binding, not the Skill). No real
+    live-model invocation against production data has happened yet -- tests use the
+    Skill''s existing deterministic fixture port, not a real Hermes call.'
   test_ids:
-  - one-hit shadow fixture
+  - tests/core/test_run_sample_deep_analyze.py
   evidence:
-    source_section: 单条DNA拆解
+    source_section: 单条深度分析(原文称"单条DNA拆解")
     defaults:
       batch_unit: single_hit
     thresholds: {}
@@ -371,20 +378,27 @@ traceability:
       eligible_cluster: cluster_id is null or cluster_id=id
     thresholds: {}
 - requirement_id: BR-DNA-003
-  observed_legacy_behavior: Do not continue the remaining DNA batch until formal ModelGateway,
-    persistence and Skill boundaries exist.
-  target_component: ReverseAnalysisSkill + ModelGateway
-  current_implementation_status: legacy behavior observed; target formalization pending
-    unless noted exact_match
-  alignment_status: exact_match
-  difference_type: []
-  migration_action: Maintain freeze; no implementation action.
-  test_ids:
-  - git/db mtime check
+  observed_legacy_behavior: 'SUPERSEDED 2026-07-08 (see BUSINESS_RULE_CATALOG.yaml
+    BR-DNA-003 amendment_2026_07_08_freeze_lifted): the freeze this entry described
+    is lifted by explicit user decision now that runtime_skills/sample_deep_analyze
+    and runtime_skills/tactic_extract exist. The "current_pending: 14" figure was a
+    pre-clean-room legacy-system count, already deleted in the clean-room
+    legacy removal -- not a real current number, removed rather than carried forward.'
+  target_component: sample_deep_analyze/tactic_extract Skills + ModelGateway
+  current_implementation_status: freeze lifted; real production wiring (Core-side
+    assembly from scripts/core/business_data hits into the Skill's public input
+    contract, and Output Binding back into production data) is in progress
+  alignment_status: naming_only
+  difference_type:
+  - ownership_changed
+  migration_action: Build the Core orchestration layer that selects an eligible hit,
+    assembles sample_deep_analyze's public input contract, invokes it through
+    ModelGateway, and persists the output -- without the Skill itself gaining any
+    dependency on production_activation.sqlite3's schema (CR-003A portability).
+  test_ids: []
   evidence:
-    source_section: DNA队列冻结
-    defaults:
-      current_pending: 14
+    source_section: 单条深度分析队列冻结(原文称"DNA队列冻结")
+    defaults: {}
     thresholds: {}
 - requirement_id: BR-DNA-004
   observed_legacy_behavior: Reduce produces domain-level examples and method route

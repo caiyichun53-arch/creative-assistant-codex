@@ -149,6 +149,14 @@ crawler:
   daily_max_notes: 20
   rate_limit_jitter_sec: [3, 10]
   incremental: true
+  # 2026-07-08: how many accounts share one MediaCrawler subprocess/browser
+  # session per _crawl_accounts_batch() call. MediaCrawler's --creator_id
+  # accepts a comma-joined list natively; batching cuts subprocess launches
+  # from len(accounts) down to ceil(len(accounts)/accounts_per_batch), which
+  # is where almost all the per-account overhead (browser cold start + login
+  # check) was going. Kept well under the full account count so one crashed
+  # browser session only takes out this many accounts, not the whole run.
+  accounts_per_batch: 10
 
 language_fuel:
   vault_dir: 语感燃料

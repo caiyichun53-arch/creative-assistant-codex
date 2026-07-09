@@ -5,43 +5,28 @@
 > **总控文档(`爆款口播内容经验库系统_...`)已于 2026-07-08 从仓库彻底移出、不再入库(真实路径写在本机配置)**:同一次会话里,绕开 `BUSINESS_RULE_CATALOG.yaml` 直接翻总控文档原文,真实导致跑偏三次(把已被 catalog 明确覆盖的旧数字/旧候选方案当成现行设计)。用户的诊断:这不是"记得先查 catalog"的习惯问题,是"仓库里放着源文档"这个机制本身在诱导跳过 catalog——所以不留在仓库里,`tests/validation/test_source_document_not_tracked.py` 强制检查它不得再被跟踪。常规开发期间不该、也不能读到它;只有用户主动发起的、逐条对照复核的正式重新对齐会话(如 BR-HIT-001 那次)才需要用户重新提供该文件,且仅限那次会话使用,用完即弃,不写回仓库。
 
 ## 这是什么
-一个 **Claude Code 工程**(不是独立程序):写死的 Python 脚本干确定性脏活,Claude Code 当创作驾驶舱,飞书当远程指挥/数据视图。目标 = 一个"越用越好"的抖音内容创作系统(自进化 agent 的**实质**,载体是程序)。开发用 Claude Code(Opus 4.8 / 可切 Fable 5),日常 LLM 节点走 Claude 订阅低阶模型(Claude Code 无头;Claude Code 不装 cc-switch 用不了 DeepSeek,故不接),创作走用户的 Claude 订阅。
+一个 **Claude Code 工程**(不是独立程序):写死的 Python 脚本干确定性脏活,Claude Code 当创作驾驶舱。目标 = 一个"越用越好"的抖音内容创作系统(自进化 agent 的**实质**,载体是程序)。开发用 Claude Code(Opus 4.8 / 可切 Fable 5),日常 LLM 节点走 Claude 订阅低阶模型(Claude Code 无头;Claude Code 不装 cc-switch 用不了 DeepSeek,故不接),创作走用户的 Claude 订阅。飞书/Obsidian 目前只是 `scripts/core/host/` 预留的适配器位置(`DEFAULT_ALLOWED_HOSTS` 里的 `feishu`),**不是现状**——飞书实时集成在一次 legacy removal 里被整体删掉、还没重建;Obsidian 在当前代码里几乎没有真实写入(只有 `scripts/core/workflow/goal_phase5_business_workflow.py` 一处引用)。不要假设这两者已经在跑。
 
 ## 三根支柱(一切决策的总纲)
-1. **记忆 = 范例,不是规则手册**。禁令进代码、品味进范例。
-2. **存储分工**:SQLite/文件(状态)+ Obsidian(知识)+ 飞书/web(视图·远程)。
-3. **确定性执行 ⟂ 生成**。固定路线写死成被调用的脚本/函数,LLM 只在生成节点、在轨道里跑。
+1. **设计权威只有一份**:`BUSINESS_RULE_CATALOG.yaml`(+ `REQUIREMENT_CODE_TRACEABILITY.yaml` 核对实现对齐状态)。不接受旧文档、聊天记忆、或本文件自己的旧版描述当权威——本文件下面的"模块/数据地图"故意写得很薄,就是为了不再重蹈"这里写了细节、代码往前走了、文档没跟上"的覆辙(已经真实发生过两次:一次是 `BUILD_PLAN.md` 被当权威引用,一次是这份文件自己的模块地图,一直停在 clean-room 重建前的旧架构,直到 2026-07-08 才被用户发现)。
+2. **确定性执行 ⟂ 生成**。采集/判定/存储/检索/追踪固定路线写死成被调用的脚本/函数;LLM 只允许出现在 CR-003A 定义的"原子 Skill"节点里,经 Runner/Model Port 调用,不允许决定确定性流程该怎么走。
+3. **一切会产生真实外部后果的执行只能走一个受控入口**:真实数据库写入、真实网络请求、装真实软件、调真实付费模型接口,都必须经 `scripts/core/execution_contract.py` 的 `require_catalog_citations()` 校验(点名一个 `BUSINESS_RULE_CATALOG.yaml` 的 `requirement_id`,查不到就拒绝执行),不能用临时命令/代码片段直接碰真实世界。
 
 ## 硬规则(违反即跑偏)
-- **确定性 vs 生成**:采集/爆款判定/排序/存储/检索/追踪 = 代码,无 LLM、不漂。LLM 只用于:选题判断、研究综合、创作、逆向 DNA 拆解、AI 味判官。
 - **禁令进代码**:内容硬约束(禁词等)= 写完后的代码校验器(regex/检测),**绝不塞进生成 prompt**(否则禁令 bloat 把文案写废)。
-- **范例不是规则**:学到的东西 → 范例库(Obsidian),不是越堆越多的 prompt 规则。AI 味靠**正向范例驱动文风 + 代码兜底**,不靠堆禁令。
-- **数据真相源本地**:SQLite/文件为准,飞书只镜像。别让飞书当主数据库。
+- **范例不是规则**:学到的东西 → 范例库,不是越堆越多的 prompt 规则。AI 味靠**正向范例驱动文风 + 代码兜底**,不靠堆禁令。范例库的物理载体(Obsidian 还是别的)尚未锁定,不要假设是 Obsidian。
+- **数据真相源本地**:业务数据以 `data/formal/*.sqlite3` 为准,任何外部视图(飞书等)只镜像、不当主数据库。
 - **模型路由 per-node**:默认 Claude 低阶(haiku,走订阅);逆向/研究用中阶(sonnet);创作走 Claude Code 对话。可替换适配器(以后要 DeepSeek/MiMo 再接),**透传各引擎特性,不做最小公分母**。
 - **固定技术路线 = 函数**:如本地 ASR 提口播文案,写死成被调用的函数,不给 LLM "重新决定怎么做"的余地(电梯拆了只留楼梯)。
 - **领域 = 数据不是代码**:新建领域/账号 = 加配置 + 空范例桶;流水线一份代码、领域无关。
 - **范例:少而厚**:限量 + 强度 + 去重 + 时效淘汰;检索按 `相关度 × 强度` 取少量注入,**绝不全量**。
-- **经验只在一个共享库(Obsidian),不散在各 agent / 各维度**;捕获在阶段,晋升在结果。
+- **经验只在一个共享库,不散在各 agent / 各维度**;捕获在阶段,晋升在结果。
 
-## 模块 / 数据地图(领域 > 账号 > 平台,全是数据)
-- **存储**:SQLite(账号/对标账号/观察池/爆款库/候选池/选题/追踪/diff/基线)+ Obsidian 范例库(选题/钩子/结构/文风/对照 + 爆款拆解 + 分类词表 + 人设)。
-- **生产 Host 边界**:`scripts/core/host/` 是平台中立入口,外部平台先变成 Host message,再经白名单 Tool/Core/Job/Outbox;Hermes、Codex、Claude Code、飞书等只能是适配器,不直接写 Core 或业务库(`DEFAULT_ALLOWED_HOSTS` 现含 `hermes`/`codex`/`claude`)。
-- **竞品业务数据层**:`scripts/core/business_data/`(账号注册 + 首采存量 + 基线/爆款判定),独立库 `data/formal/production_activation.sqlite3`,受 `docs/production_execution_guardrails.md` 的执行契约闸门约束——配置对不上设计契约(观察期/窗口/样本数)直接拒绝执行。真实数据的重判(rejudge)只能走 `run_competitor_registration_full.py --rejudge-only`,不能用临时脚本片段绕过契约闸门。
-- **两类池(别混)**:
-  - 竞品数据侧:`采集 → 观察池(仅新发布≤7天的视频·定期复查)→ 爆款判定(过相对基线)→ 爆款库(已验证赢家)`。**注册时的存量视频不进观察池(含年轻的——观察=日常增量里看着新发布的,首采全是存量快照)**:存量 → 算基线(中位数/P90)+判定(爆款直接入库),其余 archived 当基线材料;archived 计数仍被 daily 刷新、每轮重判,过阈值照样晋升。表是 competitor_videos(全部视频),观察池=其 watching 子集视图。
-  - 选题侧:`候选池`(推了没选中的;常驻块 + 关联爆款回温 + 衰减淘汰)
-- **三条独立轨**:
-  - ① 每日选题流(定时·快·不碰逆向转写):采集增量 → 爆款判定 → 多源汇总(各排各的、分组)→ 推飞书
-  - ② 逆向知识引擎(独立后台):**备料与逆向分两层**(2026-06-14 细化,详见记忆 `reverse-prep-vs-analysis`)。
-    - **备料层**(确定性·属"入库"非"逆向"):爆款【入库时】(judge_hits 晋升进 hits)→ 标 pending → 后台备料 worker 跑 `prep_hit()`:本地 SenseVoice ASR 转写(纯本地不接 LLM)+ MC 抓评论,**合并成一趟 detail 爬**(`fetch_fresh_aweme` 的 get_comment 改 yes,下载链接+评论一次拿)。幂等;写成函数三处复用:入库批量 / 单条逆向缺料按需补 / 临时逆向库外视频传 url。
-    - **逆向分析层**(LLM·消费已备料):两用途 ——「攒经验建库」=**逐条**拆 DNA(单篇,非多条一起)→ 多条**归纳共性**(reduce)→ 选题/钩子/结构范例 + 方法论路由表(**只进领域层**);「为某篇创作」=拆来源爆款 DNA + 评论 + 研究 → 二创/重新找选题(并入轨③)。
-  - ③ 选中一个选题 → 来源爆款插队逆向 + 研究 → 创作
-- **进化闭环**:竞品爆款(主燃料)+ 改稿 diff/认可(短周期·即时入文风)+ 自营 Day7(长周期·盖章选题/结构)→ 范例库。评分 = 预估→数据校准(只读诊断,不自动改 prompt)。自主度旋钮:逐阶段审批→自动可中断→全自动。
-
-## 三个资源库(开建时挖料归进新库:捞数据/料,不捞旧代码与旧散结构)
-- 用户自己的本机 Obsidian 创作资料库:人类公众号范文、j2 提示词模板、角色经验(散乱,挖有用的)。真实路径写在本机配置,不入库。
-- 本机知识库:humanizer 代码壳(英文,留流程骨架)、真人痕迹库框架、周小辣口播文案、科普/情感语料、朱雀报告、写作方法论。真实路径写在本机配置,不入库。
-- 旧 `creation_assistant` 归档:捞数据(禁词表/人设/词表),不捞代码。真实路径写在本机配置,不入库。
+## 模块 / 数据地图(只做定位,不复述细节——细节以 `BUSINESS_RULE_CATALOG.yaml`/`REQUIREMENT_CODE_TRACEABILITY.yaml`/`TECHNICAL_MANUAL.md`/`HANDOFF_STATE.md` 为准,不在本文件重复,防止再次和实现进度脱节)
+- **生产 Host 边界**:`scripts/core/host/` 是平台中立入口,外部平台先变成 Host message,再经白名单 Tool/Core/Job/Outbox;Hermes、Codex、Claude Code、飞书等只能是适配器,不直接写 Core 或业务库(`DEFAULT_ALLOWED_HOSTS` 现含 `hermes`/`codex`/`claude`/`feishu`)。
+- **竞品业务数据层**:`scripts/core/business_data/`——账号注册、首采存量分类、基线/爆款判定(`BR-HIT-001`)、每日增量采集(`BR-COLLECT-*`)、逆向备料/转写+评论(`BR-ASR-*`),独立库 `data/formal/production_activation.sqlite3`,受 `execution_contract.py` 契约闸门约束。真实数据的重判/每日采集只能走 `run_competitor_registration_full.py` 的 `--rejudge-only`/`--daily-incremental`,不能用临时脚本片段绕过契约闸门。**没有"观察池"/"候选池"这类独立状态机或视图**——BR-HIT-001 用"三类首次接触(historical_mature/transition/formal_new)+ D0-D7 发现批次锚定 + 四种基线"取代了这套旧设计,不要再假设 watching/archived 状态或候选池表存在。
+- **原子 Skill 层**:`runtime_skills/`——按 CR-003A(可移植原子 Skill:自带输入输出 schema、不读数据库、不串联其他 Skill)设计的独立 Skill 包,目前已建好并过本地+真实模型验证的有 `sample_deep_analyze`/`tactic_extract`(替代旧称"DNA拆解"/"归纳共性")、`source_to_topic`/`script_generate`/`script_review`/`content_plan`(选题与创作)、`content_classify`/`content_relation_judge`(分类与去重)等 13 个。**已知的共同缺口**:这些 Skill 本身完工,但"从 `scripts/core/business_data` 的真实数据组装成 Skill 输入、再把输出写回业务库"这层 Binding/编排代码,目前一个都还没接——不要假设某个 Skill "能直接跑起来处理真实数据"。
+- **旧 `.claude/skills/*` 的 Claude Code 会话技能**(选题/大纲/钩子/成稿/审稿/拆解/归纳等):这是 clean-room 重建前的另一套实现,和上面的 `runtime_skills/` 原子 Skill 是同一批业务问题的两套不同实现。两者关系(保留哪个、要不要合并)尚未有定论,发现依赖了其中一套时不要默认另一套已经废弃或仍然权威,先确认。
 
 ## 开工纪律
 - 每步对照 `BUSINESS_RULE_CATALOG.yaml` + `REQUIREMENT_CODE_TRACEABILITY.yaml`,**做完一步验一步,不跳建**。

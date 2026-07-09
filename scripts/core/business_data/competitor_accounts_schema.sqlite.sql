@@ -245,3 +245,29 @@ CREATE TABLE IF NOT EXISTS hit_comments (
 
 CREATE INDEX IF NOT EXISTS idx_hit_comments_hit
 ON hit_comments(hit_id, sample_rank);
+
+-- Output of runtime_skills/sample_deep_analyze (BR-DNA-001), one already-
+-- prepared hit analyzed per row. Append-only like hit_transcripts -- a re-run
+-- adds a new version rather than overwriting a prior analysis. The Skill
+-- itself never writes here (CR-003A: no database access from inside a
+-- portable Skill) -- this is Core's Output Binding, converting the Skill's
+-- public output_schema (topic_pattern/hook_pattern/structure_pattern) into a
+-- business record. request_id doubles as the Skill's idempotency key
+-- (SAMPLE_DEEP_ANALYZE_BUSINESS_CONTRACT.yaml: "sample_deep_analyze:{request_id}").
+CREATE TABLE IF NOT EXISTS hit_deep_analysis (
+    analysis_id TEXT PRIMARY KEY,
+    hit_id TEXT NOT NULL REFERENCES hits(hit_id) ON DELETE RESTRICT,
+    version INTEGER NOT NULL,
+    request_id TEXT NOT NULL,
+    correlation_id TEXT NOT NULL,
+    topic_pattern TEXT NOT NULL,
+    hook_pattern TEXT NOT NULL,
+    structure_pattern TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(hit_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_hit_deep_analysis_hit
+ON hit_deep_analysis(hit_id, version);

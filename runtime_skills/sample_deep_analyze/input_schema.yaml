@@ -28,7 +28,17 @@ properties:
   transcript_excerpt:
     type: string
     minLength: 1
-    maxLength: 2200
+    # 2026-07-09: raised from 2200. That number was truncating ~24% of real
+    # transcripts mid-content (confirmed on real production data -- a 4409-char
+    # transcript got cut to its first half, and the model's structure_pattern
+    # output visibly fabricated an ending it never saw). 7000 is derived from
+    # this contract's own context_budget.max_input_tokens=12000: reserve ~1500
+    # tokens for the prompt template + metrics + JSON overhead, leaving ~10500
+    # tokens for the transcript, at a conservative 1.5 chars/token for Chinese
+    # text -> ~7000 chars. Covers the real observed max (4528 chars) with
+    # margin, without being an arbitrary round number disconnected from the
+    # actual token budget it has to fit inside.
+    maxLength: 7000
   metrics:
     type: object
   domain_label:

@@ -64,6 +64,7 @@ ALLOWED_GUARD_REFERENCE_FILES = {
     "scripts/validation/production_startup_smoke.py",
     "scripts/core/business_data/register_competitor_accounts.py",
     "scripts/core/business_data/run_competitor_registration_full.py",
+    "scripts/core/business_data/run_reverse_prep.py",
     "scripts/core/business_data/README.md",
     "tests/core/test_phase5_business_workflow.py",
     "tests/validation/test_clean_room_readiness.py",
@@ -79,6 +80,7 @@ ALLOWED_EXCLUSION_REFERENCE_FILES = {
 ALLOWED_NEW_EXECUTABLE_PATHS = {
     "启动监控面板.bat",
     "停止监控面板.bat",
+    "scripts/scheduled/run_daily_incremental.bat",
 }
 HISTORICAL_DOC_PREFIXES = (
     "implementation_progress/",

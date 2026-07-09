@@ -25,7 +25,7 @@ current_business_model_binding:
   active_binding_count: 1
   fallback_enabled: false
 production_scheduled_tasks:
-  CreationAssistant_Daily: disabled
+  CreationAssistant_Daily: enabled_2026_07_08_daily_08_00_local
   CreationAssistant_Listener: disabled
 future_user_initiated_activation:
   business_model_switch_to_gpt:
@@ -41,7 +41,17 @@ future_user_initiated_activation:
     manual: FEISHU_PRODUCTION_ACTIVATION_RUNBOOK.md
     current_goal_blocker: false
   production_schedules:
-    status: disabled
+    status: enabled_2026_07_08
+    decided_by: user
+    detail: 'CreationAssistant_Daily registered as a real Windows Scheduled Task
+      (see scripts/scheduled/register_daily_task.ps1), daily 08:00 local time,
+      running scripts/scheduled/run_daily_incremental.bat ->
+      run_competitor_registration_full.py --daily-incremental. A task with this
+      exact name pre-existed (LastRunTime 2026-07-03, LastTaskResult=1/failed)
+      and was overwritten by this registration (Register-ScheduledTask -Force)
+      before its prior configuration was inspected -- the Task Scheduler
+      operational event log was disabled, so the prior task''s action/trigger
+      could not be recovered. Flagged to the user as an oversight, not hidden.'
     current_goal_blocker: false
 safety:
   gpt_called: false

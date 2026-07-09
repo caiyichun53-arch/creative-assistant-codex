@@ -299,12 +299,26 @@ def production_task_status() -> dict[str, Any]:
         if "=" in line:
             key, value = line.split("=", 1)
             tasks[key.strip()] = value.strip()
+
+    phase8 = read_yaml(ROOT / "PHASE_8_AUTHORIZATION_GATE_STATUS.yaml")
+    declared = phase8.get("production_scheduled_tasks") or {}
+
+    def _task_ok(name: str) -> bool:
+        # A task may only be non-disabled if PHASE_8_AUTHORIZATION_GATE_STATUS.yaml
+        # itself records an explicit "enabled_..." decision for that exact task
+        # name -- this is the one place a real production schedule gets turned
+        # on, and it must be a deliberate, dated, user-authorized status change,
+        # not silently tolerated just because live Task Scheduler state says Ready.
+        if tasks.get(name) in {"Disabled", "missing"}:
+            return True
+        return str(declared.get(name, "")).startswith("enabled_")
+
     return {
         "checked": completed.returncode == 0,
         "tasks": tasks,
         "all_disabled": all(tasks.get(name) in {"Disabled", "missing"} for name in PRODUCTION_TASK_NAMES),
-        "passed": completed.returncode == 0
-        and all(tasks.get(name) in {"Disabled", "missing"} for name in PRODUCTION_TASK_NAMES),
+        "declared_authorization": {name: declared.get(name) for name in PRODUCTION_TASK_NAMES},
+        "passed": completed.returncode == 0 and all(_task_ok(name) for name in PRODUCTION_TASK_NAMES),
     }
 
 

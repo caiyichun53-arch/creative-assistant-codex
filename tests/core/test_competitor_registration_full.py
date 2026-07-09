@@ -11,14 +11,18 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from scripts.core.business_data.register_competitor_accounts import install_schema, register_from_domain
+from scripts.core.external_adapters.local_mediacrawler_executor import LocalMediaCrawlerExecutor
 from scripts.core.business_data.run_competitor_registration_full import (
     ROOT,
     _auto_reverse_prep,
+    _chunked,
+    _crawl_accounts_batch,
     classify_first_contact_category,
     ingest_daily_incremental_items,
     ingest_stock_items,
     judge_account,
     judge_domain,
+    main,
     resolve_max_notes,
     run_daily_incremental,
     run_full_registration,
@@ -603,6 +607,67 @@ class TriggerChannelTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_new_hit_gets_pending_reverse_status_even_on_a_table_with_a_stale_default(self) -> None:
+        # 2026-07-08: real bug found on the actual production database. SQLite
+        # bakes a column's DEFAULT into the table at CREATE TABLE time -- it does
+        # NOT retroactively pick up a later change to the schema file's DEFAULT
+        # clause on an already-existing table. The live hits table was created
+        # back when this schema said `DEFAULT 'none'`; install_schema() migrates
+        # pre-existing 'none' rows to 'pending' once at startup, but any hit
+        # created AFTER that migration (i.e. every hit judge_domain() promotes
+        # during the same run) still fell back to the table's real, stale
+        # default ('none') because the INSERT never named reverse_status
+        # explicitly. Fixed by having _record_trigger()'s INSERT set
+        # reverse_status='pending' itself, instead of relying on the table's
+        # default at all.
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                # Simulate the real production table's drift: drop the freshly
+                # installed hits table (DEFAULT 'pending') and recreate it with
+                # the old, stale default, exactly like the live database.
+                conn.execute("DROP TABLE hits")
+                conn.execute("""
+                    CREATE TABLE hits (
+                        hit_id TEXT PRIMARY KEY,
+                        video_id TEXT NOT NULL REFERENCES competitor_videos(video_id) ON DELETE RESTRICT,
+                        account_id TEXT NOT NULL REFERENCES competitor_accounts(account_id) ON DELETE RESTRICT,
+                        platform TEXT NOT NULL,
+                        platform_item_id TEXT NOT NULL,
+                        title TEXT,
+                        url TEXT,
+                        publish_time TEXT,
+                        like_count INTEGER,
+                        comment_count INTEGER,
+                        share_count INTEGER,
+                        collect_count INTEGER,
+                        hit_channel TEXT NOT NULL,
+                        judgment_confidence TEXT NOT NULL CHECK(judgment_confidence IN ('rough', 'formal')),
+                        baseline_id TEXT,
+                        run_id TEXT NOT NULL,
+                        reverse_status TEXT NOT NULL DEFAULT 'none',
+                        promoted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(account_id, platform_item_id)
+                    )
+                """)
+
+                _insert_account(conn)
+                _seed_formal_d_predecessors(conn, "acc1", count=20, like_at_d3=100)
+                candidate_id = stable_video_id("acc1", "cand1")
+                _insert_video(
+                    conn, candidate_id, "acc1", "cand1", category="formal_new",
+                    publish_time=datetime.now(timezone.utc) - timedelta(days=3),
+                    like_count=200, comment_count=1, tracking_completed=0, discovery_delay_hours=1.0,
+                )
+                _insert_check(conn, candidate_id, "run0", discovery_batch_index=3, like_count=200, comment_count=1, share_count=1, collect_count=1)
+                account = conn.execute("SELECT * FROM competitor_accounts").fetchone()
+                judge_account(conn, account, hit_cfg=HIT_CFG, run_id="run1")
+
+                hit = conn.execute("SELECT * FROM hits WHERE video_id=?", (candidate_id,)).fetchone()
+                self.assertEqual(hit["reverse_status"], "pending")
+            finally:
+                conn.close()
+
     def test_multi_indicator_channel_fires_at_1_6x_without_any_single_metric_clearing_2x(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
@@ -914,6 +979,99 @@ class ExecutionContractTests(unittest.TestCase):
             validate_registration_execution_contract(DOMAIN, dict(HIT_CFG, discovery_delay_hours_max=24))
 
 
+def _insert_batch_account(conn: sqlite3.Connection, account_id: str, sec_uid: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO competitor_accounts(
+            account_id, platform, domain_label, domain_name, account_name, sec_uid,
+            homepage_url, source_config_ref, registration_status, first_crawl_policy, comments_policy
+        )
+        VALUES (?, 'douyin', ?, 'domain', ?, ?, ?, 'cfg', 'active',
+                'stock_snapshot_archived', 'reverse_prep_only_for_promoted_hits')
+        """,
+        (account_id, DOMAIN_LABEL, account_id, sec_uid, f"https://www.douyin.com/user/{sec_uid}"),
+    )
+
+
+class ChunkedTests(unittest.TestCase):
+    def test_splits_into_even_groups_with_remainder_last(self) -> None:
+        self.assertEqual(_chunked([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]])
+
+    def test_size_larger_than_list_returns_one_chunk(self) -> None:
+        self.assertEqual(_chunked([1, 2], 10), [[1, 2]])
+
+    def test_empty_list_returns_no_chunks(self) -> None:
+        self.assertEqual(_chunked([], 5), [])
+
+
+class CrawlAccountsBatchTests(unittest.TestCase):
+    def test_splits_one_subprocess_response_by_sec_uid_across_accounts(self) -> None:
+        def fake_run(args, **kwargs):
+            self.assertEqual(
+                args[args.index("--creator_id") + 1],
+                "https://www.douyin.com/user/sec_a,https://www.douyin.com/user/sec_b",
+            )
+            raw_dir = Path(args[args.index("--save_data_path") + 1])
+            jsonl_dir = raw_dir / "douyin" / "jsonl"
+            jsonl_dir.mkdir(parents=True)
+            items = [
+                {"aweme_id": "a1", "liked_count": 1, "sec_uid": "sec_a"},
+                {"aweme_id": "b1", "liked_count": 2, "sec_uid": "sec_b"},
+                {"aweme_id": "a2", "liked_count": 3, "sec_uid": "sec_a"},
+                {"aweme_id": "unmatched", "liked_count": 4, "sec_uid": "sec_unknown"},
+            ]
+            jsonl_dir.joinpath("1_contents_2026.jsonl").write_text(
+                "\n".join(json.dumps(item, ensure_ascii=False) for item in items), encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(args, returncode=0, stdout="ok", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_batch_account(conn, "acc_a", "sec_a")
+                _insert_batch_account(conn, "acc_b", "sec_b")
+                accounts = conn.execute("SELECT * FROM competitor_accounts ORDER BY account_id").fetchall()
+                executor = LocalMediaCrawlerExecutor(archive_root=Path(tmp) / "mc", python_executable=Path("fake-python"))
+                with patch(
+                    "scripts.core.external_adapters.local_mediacrawler_executor.subprocess.run", side_effect=fake_run,
+                ):
+                    result = _crawl_accounts_batch(executor, accounts, max_notes=20, run_id="run1")
+            finally:
+                conn.close()
+
+        self.assertEqual(result["acc_a"]["status"], "succeeded")
+        self.assertEqual(result["acc_b"]["status"], "succeeded")
+        self.assertEqual([item["aweme_id"] for item in result["acc_a"]["items"]], ["a1", "a2"])
+        self.assertEqual([item["aweme_id"] for item in result["acc_b"]["items"]], ["b1"])
+        self.assertEqual(result["acc_a"]["fetched_items"], 2)
+        # The unmatched sec_uid item is dropped, not crashed on or misattributed.
+        all_ids = {item["aweme_id"] for entry in result.values() for item in entry["items"]}
+        self.assertNotIn("unmatched", all_ids)
+
+    def test_batch_level_failure_marks_every_account_in_the_batch_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_batch_account(conn, "acc_a", "sec_a")
+                _insert_batch_account(conn, "acc_b", "sec_b")
+                accounts = conn.execute("SELECT * FROM competitor_accounts ORDER BY account_id").fetchall()
+                executor = LocalMediaCrawlerExecutor(archive_root=Path(tmp) / "mc", python_executable=Path("fake-python"))
+                with patch(
+                    "scripts.core.external_adapters.local_mediacrawler_executor.subprocess.run",
+                    side_effect=lambda args, **kwargs: subprocess.CompletedProcess(args, returncode=1, stdout="", stderr="boom"),
+                ):
+                    result = _crawl_accounts_batch(executor, accounts, max_notes=20, run_id="run1")
+            finally:
+                conn.close()
+
+        self.assertNotEqual(result["acc_a"]["status"], "succeeded")
+        self.assertNotEqual(result["acc_b"]["status"], "succeeded")
+
+    def test_empty_accounts_returns_empty_dict_without_calling_executor(self) -> None:
+        result = _crawl_accounts_batch(LocalMediaCrawlerExecutor(), [], max_notes=20, run_id="run1")
+        self.assertEqual(result, {})
+
+
 class ResolveMaxNotesTests(unittest.TestCase):
     def test_uses_first_crawl_max_notes_plus_buffer(self) -> None:
         settings = {"hit_detection": dict(HIT_CFG, first_crawl_max_notes=50, first_crawl_fetch_buffer=5)}
@@ -991,11 +1149,11 @@ class EntrypointSmokeTests(unittest.TestCase):
         # fire the mature-history magnitude channel).
         items = [
             {"aweme_id": f"m{idx}", "liked_count": 1000, "comment_count": 100,
-             "create_time": int((now - timedelta(days=30)).timestamp())}
+             "create_time": int((now - timedelta(days=30)).timestamp()), "sec_uid": "MS4wLjABAAAAabc"}
             for idx in range(20)
         ] + [
             {"aweme_id": "hit1", "liked_count": 1000, "comment_count": 400,
-             "create_time": int((now - timedelta(days=30)).timestamp())}
+             "create_time": int((now - timedelta(days=30)).timestamp()), "sec_uid": "MS4wLjABAAAAabc"}
         ]
 
         def fake_run(args, **kwargs):
@@ -1056,7 +1214,7 @@ class EntrypointSmokeTests(unittest.TestCase):
             jsonl_dir = raw_dir / "douyin" / "jsonl"
             jsonl_dir.mkdir(parents=True)
             (jsonl_dir / "1_contents_2026.jsonl").write_text(
-                json.dumps({"aweme_id": "new1", "liked_count": 5}), encoding="utf-8",
+                json.dumps({"aweme_id": "new1", "liked_count": 5, "sec_uid": "MS4wLjABAAAAabc"}), encoding="utf-8",
             )
             return subprocess.CompletedProcess(args, returncode=0, stdout="ok", stderr="")
 
@@ -1091,6 +1249,24 @@ class EntrypointSmokeTests(unittest.TestCase):
                     run_daily_incremental(conn, DOMAIN, hit_cfg=HIT_CFG, crawler_cfg={"daily_max_notes": 0}, reverse_cfg=REVERSE_CFG)
             finally:
                 conn.close()
+
+    def test_cli_rejects_rejudge_only_and_daily_incremental_together(self) -> None:
+        with self.assertRaises(SystemExit):
+            main(["--rejudge-only", "--daily-incremental"])
+
+    def test_cli_dispatches_daily_incremental_flag_to_run_daily_incremental(self) -> None:
+        # _safe_db_path requires the DB to live under data/formal/ -- use a
+        # disposable file there, not a tempdir, and clean it up afterward.
+        db_path = ROOT / "data" / "formal" / "test_cli_daily_incremental.sqlite3"
+        self.addCleanup(db_path.unlink, True)
+        with patch(
+            "scripts.core.business_data.run_competitor_registration_full.run_daily_incremental",
+            return_value={"status": "succeeded", "run_id": "fake_daily_run", "mode": "daily_incremental"},
+        ) as fake_daily:
+            self.addCleanup(shutil.rmtree, ROOT / "data" / "formal" / "competitor_registration" / "fake_daily_run", True)
+            exit_code = main(["--daily-incremental", "--json", "--db", str(db_path)])
+        self.assertEqual(exit_code, 0)
+        fake_daily.assert_called_once()
 
 
 class SummarizeTests(unittest.TestCase):

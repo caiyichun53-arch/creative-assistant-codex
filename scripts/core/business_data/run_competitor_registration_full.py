@@ -62,13 +62,23 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Skip registration and crawl; only re-run baseline/hit judgement against existing data under the same execution contract.",
     )
+    parser.add_argument(
+        "--daily-incremental",
+        action="store_true",
+        help="Run one daily pass: discover new videos, advance every formal_new video's "
+        "D-series, mature any transition videos that turned 7 days published, judge, "
+        "and auto-backfill reverse-prep for newly promoted hits.",
+    )
     args = parser.parse_args(argv)
+    if args.rejudge_only and args.daily_incremental:
+        parser.error("--rejudge-only and --daily-incremental are mutually exclusive")
 
     domain_path = _repo_path(args.domain_config)
     domain = _read_yaml(domain_path)
     settings = _read_yaml(DEFAULT_SETTINGS if DEFAULT_SETTINGS.exists() else FALLBACK_SETTINGS)
     hit_cfg = settings["hit_detection"]
     reverse_cfg = settings["reverse_engine"]
+    crawler_cfg = settings["crawler"]
     db_path = _safe_db_path(Path(args.db))
 
     conn = sqlite3.connect(db_path)
@@ -77,6 +87,11 @@ def main(argv: list[str] | None = None) -> int:
         install_schema(conn)
         if args.rejudge_only:
             report = run_rejudge_only(conn, domain, hit_cfg=hit_cfg, reverse_cfg=reverse_cfg, account_limit=args.account_limit)
+        elif args.daily_incremental:
+            report = run_daily_incremental(
+                conn, domain, hit_cfg=hit_cfg, crawler_cfg=crawler_cfg, reverse_cfg=reverse_cfg,
+                account_limit=args.account_limit,
+            )
         else:
             max_notes, max_notes_source = resolve_max_notes(args.max_notes, settings)
             report = run_full_registration(
@@ -89,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
                 max_notes_source=max_notes_source,
                 account_limit=args.account_limit,
                 timeout_seconds=args.timeout_seconds,
+                accounts_per_batch=crawler_cfg.get("accounts_per_batch", 10),
             )
     finally:
         conn.close()
@@ -133,6 +149,7 @@ def run_full_registration(
     max_notes_source: str,
     account_limit: int | None,
     timeout_seconds: int,
+    accounts_per_batch: int = 10,
 ) -> dict[str, Any]:
     execution_contract = validate_registration_execution_contract(domain, hit_cfg)
     run_id = "competitor_registration_full_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -145,16 +162,23 @@ def run_full_registration(
     accounts = _load_accounts(conn, domain_label, limit=account_limit)
     executor = LocalMediaCrawlerExecutor(archive_root=report_dir / "mediacrawler", timeout_seconds=timeout_seconds)
     crawl_results: list[dict[str, Any]] = []
-    for account in accounts:
-        result = crawl_registration_stock_once(
-            conn,
-            executor,
-            account,
-            max_notes=max_notes,
-            hit_cfg=hit_cfg,
-            run_id=run_id,
-        )
-        crawl_results.append({key: value for key, value in result.items() if key != "items"})
+    for batch in _chunked(accounts, accounts_per_batch):
+        # timeout_seconds is a per-account budget; scale it by batch size since
+        # one subprocess call now crawls the whole batch sequentially inside
+        # the same browser session.
+        batch_timeout = timeout_seconds * max(len(batch), 1)
+        batch_results = _crawl_accounts_batch(executor, batch, max_notes=max_notes, run_id=run_id, timeout_seconds=batch_timeout)
+        for account in batch:
+            result = crawl_registration_stock_once(
+                conn,
+                executor,
+                account,
+                max_notes=max_notes,
+                hit_cfg=hit_cfg,
+                run_id=run_id,
+                crawl_result=batch_results[account["account_id"]],
+            )
+            crawl_results.append({key: value for key, value in result.items() if key != "items"})
 
     judgement = judge_domain(conn, domain_label, hit_cfg=hit_cfg, run_id=run_id)
     conn.commit()
@@ -569,8 +593,13 @@ def crawl_registration_stock_once(
     max_notes: int,
     hit_cfg: dict[str, Any],
     run_id: str,
+    crawl_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    result = _crawl_account(executor, account, max_notes=max_notes, run_id=run_id)
+    """crawl_result, when given, is a pre-fetched result for this account (see
+    _crawl_accounts_batch) -- skips the per-account MediaCrawler subprocess
+    call entirely. Falls back to a fresh single-account call when omitted,
+    which is what every existing caller/test still does."""
+    result = crawl_result if crawl_result is not None else _crawl_account(executor, account, max_notes=max_notes, run_id=run_id)
     if result["status"] != "succeeded":
         result["inserted_videos"] = 0
         result["updated_videos"] = 0
@@ -598,8 +627,13 @@ def crawl_daily_incremental_once(
     max_notes: int,
     hit_cfg: dict[str, Any],
     run_id: str,
+    crawl_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    result = _crawl_account(executor, account, max_notes=max_notes, run_id=run_id)
+    """crawl_result, when given, is a pre-fetched result for this account (see
+    _crawl_accounts_batch) -- skips the per-account MediaCrawler subprocess
+    call entirely. Falls back to a fresh single-account call when omitted,
+    which is what every existing caller/test still does."""
+    result = crawl_result if crawl_result is not None else _crawl_account(executor, account, max_notes=max_notes, run_id=run_id)
     if result["status"] != "succeeded":
         result["inserted"] = 0
         result["updated"] = 0
@@ -639,13 +673,21 @@ def run_daily_incremental(
     domain_label = domain["formal_domain_label"]
     accounts = _load_accounts(conn, domain_label, limit=account_limit)
     executor = executor or LocalMediaCrawlerExecutor()
+    accounts_per_batch = crawler_cfg.get("accounts_per_batch", 10)
+    if not isinstance(accounts_per_batch, int) or accounts_per_batch < 1:
+        raise ValueError("crawler.accounts_per_batch must be a positive integer")
 
     crawl_results: list[dict[str, Any]] = []
-    for account in accounts:
-        result = crawl_daily_incremental_once(
-            conn, executor, account, max_notes=daily_max_notes, hit_cfg=hit_cfg, run_id=run_id,
+    for batch in _chunked(accounts, accounts_per_batch):
+        batch_results = _crawl_accounts_batch(
+            executor, batch, max_notes=daily_max_notes, run_id=run_id, timeout_seconds=900 * max(len(batch), 1),
         )
-        crawl_results.append(result)
+        for account in batch:
+            result = crawl_daily_incremental_once(
+                conn, executor, account, max_notes=daily_max_notes, hit_cfg=hit_cfg, run_id=run_id,
+                crawl_result=batch_results[account["account_id"]],
+            )
+            crawl_results.append(result)
 
     judgement = judge_domain(conn, domain_label, hit_cfg=hit_cfg, run_id=run_id)
     conn.commit()
@@ -1175,9 +1217,9 @@ def _record_trigger(
             INSERT INTO hits(
                 hit_id, video_id, account_id, platform, platform_item_id, title, url,
                 publish_time, like_count, comment_count, share_count, collect_count,
-                hit_channel, judgment_confidence, baseline_id, run_id
+                hit_channel, judgment_confidence, baseline_id, run_id, reverse_status
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
             ON CONFLICT(account_id, platform_item_id) DO NOTHING
             """,
             (
@@ -1301,6 +1343,88 @@ def _crawl_account(executor: LocalMediaCrawlerExecutor, account: sqlite3.Row, *,
         "fetched_items": len(items),
         "items": items,
     }
+
+
+def _chunked(items: list[Any], size: int) -> list[list[Any]]:
+    size = max(int(size), 1)
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def _crawl_accounts_batch(
+    executor: LocalMediaCrawlerExecutor, accounts: list[sqlite3.Row], *, max_notes: int, run_id: str, timeout_seconds: int = 900,
+) -> dict[str, dict[str, Any]]:
+    """One MediaCrawler subprocess call (one browser launch, one login) for a
+    whole batch of accounts, instead of _crawl_account's one-subprocess-per-
+    account. MediaCrawler's --creator_id natively accepts a comma-joined list
+    (cmd_arg/arg.py splits it into DY_CREATOR_ID_LIST) and applies max_notes
+    per creator, not as a shared total across the batch -- confirmed by
+    reading get_all_user_aweme_posts, whose result/CRAWLER_MAX_NOTES_COUNT
+    check resets on every call. Real timing (2026-07-08, 28 accounts): 28
+    separate subprocess calls took ~7.4 min; the point of this function is to
+    cut that down to len(accounts)/batch_size subprocess launches instead.
+
+    Returns {account_id: {status, raw_archive_ref, items, fetched_items}},
+    one entry per account in the same shape crawl_registration_stock_once/
+    crawl_daily_incremental_once already expect from _crawl_account -- so a
+    batch failure (executor.execute() itself not succeeding, e.g. the whole
+    subprocess timed out or crashed) marks every account in the batch failed,
+    while a single account's own fetch error inside a successful batch run
+    (see the [创作助手改] try/except added to douyin/core.py's
+    get_creators_and_videos) just yields that one account 0 items -- the
+    other accounts in the same batch are unaffected either way.
+    """
+    if not accounts:
+        return {}
+    platform = accounts[0]["platform"]
+    by_account_id = {
+        account["account_id"]: {
+            "account": account["account_name"], "account_id": account["account_id"],
+            "status": "pending", "raw_archive_ref": None, "fetched_items": 0, "items": [],
+        }
+        for account in accounts
+    }
+    command = ExternalAdapterCommand(
+        adapter_id="collector.mediacrawler",
+        capability="platform.video_snapshot",
+        executable="vendor/MediaCrawler/main.py",
+        args=(platform, "creator", "--get_comment", "no"),
+        input_payload={
+            "platform": platform,
+            "source_url": ",".join(account["homepage_url"] for account in accounts),
+            "source_kind": "creator",
+            "with_comments": False,
+            "headless": True,
+            "registration_run_id": run_id,
+        },
+        max_items=max_notes,
+        timeout_seconds=timeout_seconds,
+    )
+    result = executor.execute(command)
+    if result.status != "succeeded":
+        for entry in by_account_id.values():
+            entry["status"] = result.status
+            entry["raw_archive_ref"] = result.raw_archive_ref
+        return by_account_id
+
+    by_sec_uid = {account["sec_uid"]: account["account_id"] for account in accounts}
+    items = result.payload.get("items")
+    if not isinstance(items, list):
+        items = []
+    for item in items:
+        account_id = by_sec_uid.get(item.get("sec_uid"))
+        if account_id is None:
+            # Item didn't match any account in this batch by sec_uid -- drop
+            # it rather than guess which account it belongs to or crash the
+            # whole batch over one unexpected row.
+            continue
+        by_account_id[account_id]["items"].append(item)
+
+    for account in accounts:
+        entry = by_account_id[account["account_id"]]
+        entry["status"] = "succeeded"
+        entry["raw_archive_ref"] = result.raw_archive_ref
+        entry["fetched_items"] = len(entry["items"])
+    return by_account_id
 
 
 def resolve_max_notes(cli_value: int | None, settings: dict[str, Any]) -> tuple[int, str]:

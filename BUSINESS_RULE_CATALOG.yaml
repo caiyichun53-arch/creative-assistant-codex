@@ -1492,29 +1492,64 @@ rules:
   - representative and ordinary fixture
 - requirement_id: BR-DNA-003
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
-  source_section: DNA队列冻结
+  source_section: 单条深度分析队列冻结(原文称"DNA队列冻结",旧系统用语,2026-07-08 起不再使用)
   priority: P0
   domain_scope: all domains
-  trigger: migration planning
+  status: '2026-07-08: freeze lifted by explicit user decision -- see
+    amendment_2026_07_08_freeze_lifted below. The original "current_pending: 14"
+    referred to a pre-clean-room legacy-system queue that no longer exists;
+    it is not a real current count and has been removed rather than carried
+    forward as stale data.'
+  trigger: single-sample deep analysis requested for one hit (sample_deep_analyze,
+    per CR-003A/runtime_skills/sample_deep_analyze -- not "DNA batch processing",
+    the old system's name for this step)
   inputs:
-  - pending DNA count
-  expected_behavior: Do not continue the remaining DNA batch until formal ModelGateway,
-    persistence and Skill boundaries exist.
+  - transcript
+  - hit metrics
+  - domain_label
+  expected_behavior: 'Formal ModelGateway, persistence and Skill boundaries now
+    exist (runtime_skills/sample_deep_analyze + tactic_extract, validated
+    COMPLETED_LOCAL and live-provider-validated per SAMPLE_DEEP_ANALYZE_STATUS.yaml/
+    TACTIC_EXTRACT_STATUS.yaml/PHASE_3_LIVE_PROVIDER_MATRIX_STATUS.yaml) --
+    real production invocation against scripts/core/business_data''s real hits
+    is permitted. The skill itself must stay portable (CR-003A) -- no
+    host-specific fields, no database access, runnable standalone or in a
+    different production environment -- only the Core-side orchestration layer
+    is allowed to know about production_activation.sqlite3''s schema.'
   defaults:
-    current_pending: 14
+    batch_unit: single_hit
   thresholds: {}
-  timing_semantics: Freeze applies before GOAL-MIGRATION-01.
-  state_effects: []
-  allowed_side_effects: []
+  timing_semantics: Runs after a hit has a completed transcript (hits.reverse_status=
+    'completed'); comments enrich the sample package but a missing comment set
+    does not block.
+  state_effects:
+  - deep-analysis output persisted by Core (Output Binding), not by the Skill
+  allowed_side_effects:
+  - real model call through ModelGateway/Hermes in the production route
   forbidden_behavior:
-  - run remaining DNA batch processing
-  - write production DNA notes during audit
+  - multi-hit prompt for a single sample_deep_analyze call
+  - Core-side or Skill-side code that bypasses ModelGateway to call a provider directly
   edge_cases:
-  - manual user explicitly opens future Goal
-  user_confirmation_required: true
+  - no comments
+  - transcript missing (hit not yet reverse-prepped)
+  user_confirmation_required: false
   supersedes: []
   validation_required:
-  - git/db mtime check
+  - one-hit real-data fixture against production_activation.sqlite3
+  amendment_2026_07_08_freeze_lifted:
+    decided_by: user
+    reason: 'The original freeze (from the pre-clean-room master document) held
+      single-sample deep analysis until formal ModelGateway/persistence/Skill
+      boundaries existed and a user explicitly opened a follow-up Goal for it.
+      Both conditions are now met: the boundaries exist (runtime_skills/
+      sample_deep_analyze, runtime_skills/tactic_extract) and the user explicitly
+      confirmed continuing this work in this session, explicitly rejecting the
+      old system''s "DNA" terminology for it going forward.'
+    change: 'Freeze cleared; user_confirmation_required flipped from true to
+      false since the one-time confirmation this rule was gating on has now
+      happened. The stale "current_pending: 14" legacy-system count was deleted,
+      not carried forward -- it described a queue in code that was already
+      deleted in the clean-room legacy removal.'
 - requirement_id: BR-DNA-004
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
   source_section: Reduce经验提取

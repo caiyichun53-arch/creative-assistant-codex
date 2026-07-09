@@ -63,7 +63,14 @@ input_length_limits:
   correlation_id_max: 80
   sample_id_max: 80
   candidate_topic_max: 120
-  transcript_excerpt_max: 2200
+  # 2026-07-09: raised from 2200 -- derived from context_budget.max_input_tokens
+  # below (~1500 tokens reserved for prompt+metrics overhead, ~10500 left for
+  # transcript at a conservative 1.5 chars/token for Chinese). 2200 was cutting
+  # ~24% of real transcripts mid-content; confirmed on real data that this
+  # visibly degraded structure_pattern output (the model fabricated an ending
+  # for content it never saw). See runtime_skills/sample_deep_analyze/
+  # input_schema.yaml for the same derivation.
+  transcript_excerpt_max: 7000
 context_budget:
   max_input_tokens: 12000
 token_budget:
@@ -218,7 +225,7 @@ input_schema:
     transcript_excerpt:
       type: string
       minLength: 1
-      maxLength: 2200
+      maxLength: 7000
     metrics:
       type: object
     domain_label:
