@@ -84,17 +84,33 @@ class LiveGateHarnessTests(unittest.TestCase):
             status = yaml.safe_load((tmp / "status.yaml").read_text(encoding="utf-8"))
             self.assertEqual(status["gates"]["GATE-FEISHU-THIN-BINDING"]["status"], "BLOCKED_MISSING_CREDENTIAL")
 
+    # Gates whose dry-run implementation imports the Goal01-12 Hermes/host/staging
+    # boundary modules that were archived to archive/dead_goal_chain_20260709/ on
+    # 2026-07-09 (DEAD_GOAL_CHAIN: zero real production entrypoint ever imported
+    # them). Feishu real-time integration is explicitly "未重建" per
+    # HANDOFF_STATE.md, so these gates now honestly report NOT_READY instead of a
+    # DRY_RUN_PASSED that was only ever exercising retired scaffolding.
+    RETIRED_DEPENDENCY_GATES = frozenset(
+        {"GATE-HERMES-REAL-HOST", "GATE-FEISHU-THIN-BINDING", "GATE-CONTINUOUS-FAULT-RECOVERY", "GATE-SHADOW-E2E"}
+    )
+
     def test_dry_run_all_gates_passes_without_external_side_effects(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
             config = self.make_config(tmp)
             code = command_dry_run(config, None, status_path=tmp / "status.yaml")
-            self.assertEqual(code, 0)
+            # command_dry_run correctly fails closed (non-zero) once any gate is
+            # NOT_READY -- it must not silently report 0 while
+            # RETIRED_DEPENDENCY_GATES are broken.
+            self.assertNotEqual(code, 0)
             status = yaml.safe_load((tmp / "status.yaml").read_text(encoding="utf-8"))
             for gate_id in GATE_IDS:
                 latest = status["gates"][gate_id]["latest_result"]
-                self.assertEqual(status["gates"][gate_id]["status"], "DRY_RUN_PASSED")
-                self.assertFalse(latest["external_side_effect"])
+                if gate_id in self.RETIRED_DEPENDENCY_GATES:
+                    self.assertEqual(status["gates"][gate_id]["status"], "NOT_READY")
+                else:
+                    self.assertEqual(status["gates"][gate_id]["status"], "DRY_RUN_PASSED")
+                    self.assertFalse(latest["external_side_effect"])
 
     def test_single_gate_isolation(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -387,6 +403,11 @@ class LiveGateHarnessTests(unittest.TestCase):
             self.assertIn("must report subscription billing", result.failure_reason)
 
     def test_hermes_host_gate_dry_run_unchanged(self) -> None:
+        # GATE-HERMES-REAL-HOST's dry-run path imports scripts.core.hermes,
+        # archived to archive/dead_goal_chain_20260709/ on 2026-07-09 (zero real
+        # production entrypoint ever imported it). The live path (see
+        # test_hermes_host_live_path_calls_authenticated_api_server below) does
+        # not depend on that module and is unaffected.
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
             config = self.make_config(tmp)
@@ -396,7 +417,7 @@ class LiveGateHarnessTests(unittest.TestCase):
                 mode="dry-run",
                 status_path=tmp / "status.yaml",
             )
-            self.assertEqual(result.status, "DRY_RUN_PASSED")
+            self.assertEqual(result.status, "NOT_READY")
 
     def test_hermes_host_live_path_calls_authenticated_api_server(self) -> None:
         class FakeResponse:

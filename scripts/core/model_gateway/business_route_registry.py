@@ -46,9 +46,12 @@ FORMAL_VERIFICATION_ONLY_FILES = {
     (ROOT / "scripts" / "core" / "model_gateway" / "business_route_registry.py").resolve(),
     (ROOT / "scripts" / "core" / "model_gateway" / "model_router.py").resolve(),
 }
-FORMAL_HOST_BOUNDARY_FILES = {
-    (ROOT / "scripts" / "core" / "host" / "production_host.py").resolve(),
-}
+FORMAL_HOST_BOUNDARY_FILES: set[Path] = set()
+# scripts/core/host/production_host.py was archived to
+# archive/dead_goal_chain_20260709/ on 2026-07-09 (DEAD_GOAL_CHAIN: no real
+# production entrypoint ever imported it). This set is intentionally empty --
+# there is currently no host-boundary file under scripts/core to exempt from
+# the direct-model-call scan below.
 LEGACY_DIRECT_MODEL_ROOTS = (
     ROOT / "scripts" / "llm",
     ROOT / "scripts" / "reverse",
@@ -363,12 +366,23 @@ def _match_payload(path: Path, line_no: int, line: str) -> dict[str, Any]:
 
 def verify_hermes_isolation(registry: dict[str, Any]) -> dict[str, Any]:
     defaults = registry["runtime_policy_defaults"]
+    hermes_host_binding_path = ROOT / "scripts" / "core" / "hermes" / "goal11_host_binding.py"
     static_edges = {
-        "hermes_host_binding_imports_model_gateway": bool(
-            re.search(
-                r"ModelGateway|HermesModelProviderAdapter",
-                (ROOT / "scripts" / "core" / "hermes" / "goal11_host_binding.py").read_text(encoding="utf-8"),
+        # scripts/core/hermes/goal11_host_binding.py was archived to
+        # archive/dead_goal_chain_20260709/ on 2026-07-09 (DEAD_GOAL_CHAIN: no
+        # real production entrypoint ever imported it). If the file does not
+        # exist in the active tree, the edge it could create cannot exist
+        # either -- this is a structural check, not a hardcoded False, so it
+        # re-activates automatically if the file is ever reintroduced.
+        "hermes_host_binding_imports_model_gateway": (
+            bool(
+                re.search(
+                    r"ModelGateway|HermesModelProviderAdapter",
+                    hermes_host_binding_path.read_text(encoding="utf-8"),
+                )
             )
+            if hermes_host_binding_path.exists()
+            else False
         ),
         "model_gateway_imports_hermes_core_bridge": bool(
             re.search(
