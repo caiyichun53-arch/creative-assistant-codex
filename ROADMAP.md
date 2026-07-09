@@ -6,17 +6,34 @@
 
 ## 进行中 / 下一项
 
-### 1. 接通"选题→大纲→成稿"全链路 —— **[链路已打通 2026-07-09]**
+### 1. 接通"选题→大纲→成稿"技术链路 —— **[技术环节已打通,业务流程还不完整]**
 
-`runtime_skills/` 下 12 个业务 Skill,这条主链路的三环全部接上真实数据,且有一条端到端集成测试(`tests/core/test_topic_to_script_chain_integration.py`)证明"一条爆款分析结果"真的能一路流转成"一份成稿草稿"，外键全程可追溯(`hit_deep_analysis → topic_candidates → content_plans → script_drafts`)：
+> **2026-07-10 用户纠偏**:2026-07-09 汇报"链路打通"时说法过头了——验证的只是"数据格式对得上、四个环节能串起来跑",不是"选题这件事做对了"。用户当场指出两个真实缺口:①三个环节之间完全没有人工审核,内容会自动一路流到成稿;②选题只用了"对标爆款"一种料源,项目自己原有的选题方法论(见下方"真实选题流程还缺什么")要求四种料源+打分排序+人工终审,被跳过了大半。①已经在 2026-07-10 修复,②只补了四分之一(评论区),其余留在下面单独列出,不装作已经做完。
 
-1. **`source_to_topic`**:从证据/来源转成候选选题。`scripts/core/experience/run_source_to_topic.py`——吃 `hit_deep_analysis`(sample_deep_analyze 的真实输出:选题/开头/结构手法)当证据,生成候选选题,写入新表 `topic_candidates`(带版本号)。10个测试。**明确的简化**:`relation_summary`(这条选题和现有内容是否重复/冲突)现在是老实的占位文字,不是真判断过——`content_relation_judge` 还没接,不冒充。
-2. **`content_plan`**:选题→钩子+大纲。`scripts/core/experience/run_content_plan.py`——吃 `topic_candidates` 里 `topic_status='generated'` 的候选选题,写入新表 `content_plans`(带版本号)。14个测试。**明确的简化**:`tactic_candidates`(应由 `tactic_extract` 产出,还没接)复用同一条 `hit_deep_analysis` 的选题/开头/结构手法;`style_examples`(应来自范例库,物理载体还没定)复用同一条视频的真实转写文字稿摘句——都是真实数据、老实标注了替代关系,不是编造。已核实这两个字段目前不影响 `_run_content_plan()` 实际调模型的两次调用(只有 `brief`/`style_examples` 真正进了 prompt),风险可控。
-3. **`script_generate`**:大纲+brief→成稿草稿。`scripts/core/experience/run_script_generate.py`——吃 `content_plans` 里还没生成过草稿的规划,写入新表 `script_drafts`(带版本号)。10个测试。**明确的简化**:`research_summary`(应由 `research_evidence_extract`/`production_research_plan` 产出,都还没接)现在是"汇总已有证据,不是真研究"的老实标注文字。
+`runtime_skills/` 下 12 个业务 Skill,这条主链路的三环都已接上真实数据,且有一条端到端集成测试(`tests/core/test_topic_to_script_chain_integration.py`)证明"一条爆款分析结果"真的能一路流转成"一份成稿草稿",外键全程可追溯(`hit_deep_analysis → topic_candidates → content_plans → script_drafts`),**且中途卡在人工审核闸门上,不会没人看就自动流完**：
 
-**共同的、还没解决的缺口(四个绑定都一样)**:还没花钱调用过一次真实大模型——测试全部用各 Skill 自带的确定性假模型端口,真正调真实模型需要的密钥(`HERMES_BUSINESS_MODEL_TOKEN` 等)只存在于 `.env.live-gates`(专门给一次性受限验证用),没进真实 `.env`。要不要把这几个值搬进真实 `.env`、真的花一次钱验证端到端,需要用户决定——这是这条链路"打通"和"能真的产出一条能用的文案"之间剩下的唯一距离。
+1. **`source_to_topic`**:从证据/来源转成候选选题。`scripts/core/experience/run_source_to_topic.py`——吃 `hit_deep_analysis`(sample_deep_analyze 的真实输出:选题/开头/结构手法)+ `hit_comments`(2026-07-10 新增:同一条爆款下面最热的3条真实评论)当证据,生成候选选题,写入新表 `topic_candidates`(带版本号)。18个测试。**明确的简化**:`relation_summary`(这条选题和现有内容是否重复/冲突)现在是老实的占位文字,不是真判断过——`content_relation_judge` 还没接,不冒充。
+2. **`content_plan`**:选题→钩子+大纲。`scripts/core/experience/run_content_plan.py`——吃 `topic_candidates` 里 `topic_status='generated'` **且人工已审核通过**的候选选题,写入新表 `content_plans`(带版本号)。16个测试。**明确的简化**:`tactic_candidates`(应由 `tactic_extract` 产出,还没接)复用同一条 `hit_deep_analysis` 的选题/开头/结构手法;`style_examples`(应来自范例库,物理载体还没定)复用同一条视频的真实转写文字稿摘句——都是真实数据、老实标注了替代关系,不是编造。已核实这两个字段目前不影响 `_run_content_plan()` 实际调模型的两次调用(只有 `brief`/`style_examples` 真正进了 prompt),风险可控。
+3. **`script_generate`**:大纲+brief→成稿草稿。`scripts/core/experience/run_script_generate.py`——吃 `content_plans` 里**人工已审核通过**、还没生成过草稿的规划,写入新表 `script_drafts`(带版本号)。12个测试。**明确的简化**:`research_summary`(应由 `research_evidence_extract`/`production_research_plan` 产出,都还没接)现在是"汇总已有证据,不是真研究"的老实标注文字。
+
+**人工审核闸门**(2026-07-10 新增,`scripts/core/experience/review_queue.py`):`topic_candidates`/`content_plans`/`script_drafts` 三张表各带一个 `human_review_status` 字段,默认"待审核",第2/3步的查询都要求上一环已经明确标记"通过"才会处理。`python -m scripts.core.experience.review_queue --list` 看有哪些在等审核,`--approve`/`--reject` 标记。**现在只有命令行,没有界面**——先把闸门本身做对,界面是以后的事。8个测试。
+
+**共同的、还没解决的缺口(四个绑定都一样)**:还没花钱调用过一次真实大模型——测试全部用各 Skill 自带的确定性假模型端口,真正调真实模型需要的密钥(`HERMES_BUSINESS_MODEL_TOKEN` 等)只存在于 `.env.live-gates`(专门给一次性受限验证用),没进真实 `.env`。要不要把这几个值搬进真实 `.env`、真的花一次钱验证端到端,需要用户决定。
 
 四个绑定脚本的写法都参照同一个已验证过的先例 `scripts/core/experience/run_sample_deep_analyze.py`(真实数据组装→调用 Skill 的 `make_*_harness()`→写回业务库,Skill 本身不改)。
+
+#### 真实选题流程还缺什么(2026-07-10 用户指出,不是这几天才发现的边角问题)
+
+项目自己原有的选题方法论(选题这个环节的会话技能文档)要求:从**对标爆款/评论区/研究缺口/当下热点**四种料源出候选 → 用"选题判断维度"(从爆款数据提炼的评分标准)逐项打分 → 收拢排序取前3-5个、"宁缺毋滥" → **人工拍板选哪个**。现在 `source_to_topic` 只做到:
+
+- ✅ 对标爆款(`hit_deep_analysis`)——已接。
+- ✅ 评论区(`hit_comments` 最热3条)——2026-07-10 已接。
+- ❌ 研究缺口——`research_evidence_extract` 还没接真实数据,这个料源目前完全没有。
+- ❌ 当下热点——**现在完全没有采集"热点"这件事的任何机制**,需要新建一条采集链路(工作量接近再建一个采集模块,不是小改动),需要用户决定用什么数据源。
+- ❌ 打分排序(判 + 选)——"选题判断维度"这个评分标准本身要从每个领域的真实爆款数据里分析提炼出来,不是能凭空编的,需要单独做一轮数据分析才能建出这份标准;标准建出来之后,还要把 `source_to_topic` 从"一条证据生成一个选题"改造成"能产出多个候选、逐个打分、排序取前几个"。
+- ❌ 人工拍板——`review_queue.py` 现在能做"通过/不通过",但还不是"从多个候选里挑一个"这种真正的选题终审形态,等打分排序做出来之后需要重新设计这一步怎么呈现给人看。
+
+**建议节奏**:这几项工作量都不小,而且②③依赖①(打分排序要先有评分标准),不建议在治理修复的同一批里赶工。下一次专门做选题流程,建议顺序:研究缺口(复用已有的 research_evidence_extract 骨架)→ 选题判断维度分析(从真实爆款数据提炼)→ 热点采集(需要用户先定数据源)→ 多候选打分排序 → 终审形态重新设计。
 
 ### 2. 两套 Skill 实现的迁移(2026-07-09 用户拍板方向,尚未开始执行)
 

@@ -66,6 +66,16 @@ NO_RELATION_JUDGEMENT_YET = (
     "尚未做过来源关联判断(content_relation_judge 这个 Skill 还没有接上真实数据)——"
     "本次候选选题只依据下面列出的证据本身生成,不代表已经和现有内容/选题库比对过是否重复或冲突。"
 )[:RELATION_SUMMARY_MAX_CHARS]
+# 2026-07-10: comments are the second of four evidence sources the project's
+# own 选题 methodology (the topic-selection session skill's writeup, see
+# ROADMAP.md for the exact reference) calls for -- "评论区（最值钱）：来源爆款
+# 评论里观众反复追问/争论/喊你该讲讲X的 → 直接立题" -- real hit_comments data
+# already existed (collected during reverse-prep) but was never used here
+# before. \x1e (record separator) cannot appear in real crawled text, unlike
+# a delimiter like '||' a comment could plausibly contain.
+TOP_COMMENTS_DELIMITER = "\x1e"
+TOP_COMMENTS_PER_HIT = 3
+SOURCE_EVIDENCE_ITEMS_MAX = 8
 
 
 def validate_source_to_topic_execution_contract() -> dict[str, Any]:
@@ -76,11 +86,25 @@ def select_analyses_pending_topic(conn: sqlite3.Connection, *, limit: int) -> li
     """Real hit_deep_analysis rows (sample_deep_analyze's completed output)
     that have never been through source_to_topic (no topic_candidates row
     yet). Oldest-created first, same ordering convention as
-    select_hits_pending_analysis()."""
+    select_hits_pending_analysis().
+
+    2026-07-10: also pulls this hit's top real comments (by the crawler's own
+    hotness ordering, hit_comments.sample_rank -- lower is hotter), joined as
+    one delimited column rather than a second query, so
+    assemble_source_to_topic_input() can stay a pure function that only reads
+    the row it's given. TOP_COMMENTS_DELIMITER is a control character that
+    cannot appear in real comment text, not '||' or similar (which a comment
+    could plausibly, if rarely, contain)."""
     return conn.execute(
         """
         SELECT hit_deep_analysis.*, hits.title AS hit_title, account.domain_label AS account_domain_label,
-               account.account_name AS account_name
+               account.account_name AS account_name,
+               (SELECT GROUP_CONCAT(text, ?) FROM (
+                    SELECT text FROM hit_comments
+                     WHERE hit_comments.hit_id = hits.hit_id
+                     ORDER BY sample_rank
+                     LIMIT ?
+                )) AS top_comments_text
           FROM hit_deep_analysis
           JOIN hits ON hits.hit_id = hit_deep_analysis.hit_id
           JOIN competitor_accounts AS account ON account.account_id = hits.account_id
@@ -93,14 +117,32 @@ def select_analyses_pending_topic(conn: sqlite3.Connection, *, limit: int) -> li
          ORDER BY hit_deep_analysis.created_at
          LIMIT ?
         """,
-        (limit,),
+        (TOP_COMMENTS_DELIMITER, TOP_COMMENTS_PER_HIT, limit),
     ).fetchall()
 
 
+def _comment_evidence_items(top_comments_text: str | None) -> list[str]:
+    """Splits the GROUP_CONCAT'd top-comments column back into individual
+    evidence items, each labeled so the model (and any human reading the
+    stored input payload later) can tell this is real audience reaction, not
+    the analysis-derived pattern items."""
+    if not top_comments_text:
+        return []
+    comments = [c for c in top_comments_text.split(TOP_COMMENTS_DELIMITER) if c.strip()]
+    return [f"热门评论:{c}"[:EVIDENCE_ITEM_MAX_CHARS] for c in comments]
+
+
 def assemble_source_to_topic_input(analysis_row: sqlite3.Row, *, run_id: str) -> dict[str, Any]:
-    """Pure function: a real hit_deep_analysis row in, source_to_topic's exact
-    public input contract out. No database handle, no internal id beyond the
-    Skill's own request_id/source_id fields, no raw path."""
+    """Pure function: a real hit_deep_analysis row (joined with its hit's top
+    real comments, see select_analyses_pending_topic()) in, source_to_topic's
+    exact public input contract out. No database handle, no internal id
+    beyond the Skill's own request_id/source_id fields, no raw path.
+
+    2026-07-10: source_evidence_items now mixes two of the four evidence
+    sources 选题 methodology calls for -- analysis patterns (对标爆款) and real
+    top comments (评论区, "最值钱" per the topic-selection session skill's
+    writeup, see ROADMAP.md). 研究缺口/当下热点 are not wired yet (see
+    ROADMAP.md)."""
     domain_label = analysis_row["account_domain_label"]
     if domain_label not in ALLOWED_DOMAIN_LABELS:
         domain_label = "unknown"
@@ -112,6 +154,12 @@ def assemble_source_to_topic_input(analysis_row: sqlite3.Row, *, run_id: str) ->
         f"开头手法:{analysis_row['hook_pattern']}"[:EVIDENCE_ITEM_MAX_CHARS],
         f"结构手法:{analysis_row['structure_pattern']}"[:EVIDENCE_ITEM_MAX_CHARS],
     ]
+    try:
+        top_comments_text = analysis_row["top_comments_text"]
+    except (IndexError, KeyError):
+        top_comments_text = None
+    evidence_items.extend(_comment_evidence_items(top_comments_text))
+    evidence_items = evidence_items[:SOURCE_EVIDENCE_ITEMS_MAX]
     return {
         "request_id": f"source_to_topic_{analysis_row['analysis_id']}",
         "correlation_id": run_id,

@@ -9,6 +9,7 @@ from pathlib import Path
 from scripts.core.business_data.register_competitor_accounts import install_schema
 from scripts.core.experience.run_source_to_topic import (
     ALLOWED_DOMAIN_LABELS,
+    _comment_evidence_items,
     assemble_source_to_topic_input,
     generate_one_topic,
     run_source_to_topic,
@@ -78,6 +79,16 @@ def _insert_analysis(
     )
 
 
+def _insert_comment(conn: sqlite3.Connection, hit_id: str, comment_id: str, *, text: str, sample_rank: int, like_count: int = 10) -> None:
+    conn.execute(
+        """
+        INSERT INTO hit_comments(hit_id, comment_id, text, like_count, sample_rank, run_id)
+        VALUES (?, ?, ?, ?, ?, 'run1')
+        """,
+        (hit_id, comment_id, text, like_count, sample_rank),
+    )
+
+
 class ValidateExecutionContractTests(unittest.TestCase):
     def test_cites_br_dna_001(self) -> None:
         contract = validate_source_to_topic_execution_contract()
@@ -130,6 +141,51 @@ class SelectAnalysesPendingTopicTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_pulls_top_3_comments_by_sample_rank(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1")
+                _insert_analysis(conn, "a1", "h1")
+                _insert_comment(conn, "h1", "c3", text="第四热评论,不该出现", sample_rank=3)
+                _insert_comment(conn, "h1", "c1", text="最热评论", sample_rank=0)
+                _insert_comment(conn, "h1", "c2", text="第二热评论", sample_rank=1)
+                _insert_comment(conn, "h1", "c0", text="第三热评论", sample_rank=2)
+                row = select_analyses_pending_topic(conn, limit=1)[0]
+                comments = row["top_comments_text"].split("\x1e")
+                self.assertEqual(comments, ["最热评论", "第二热评论", "第三热评论"])
+            finally:
+                conn.close()
+
+    def test_hit_with_no_comments_has_null_top_comments_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1")
+                _insert_analysis(conn, "a1", "h1")
+                row = select_analyses_pending_topic(conn, limit=1)[0]
+                self.assertIsNone(row["top_comments_text"])
+            finally:
+                conn.close()
+
+
+class CommentEvidenceItemsTests(unittest.TestCase):
+    def test_splits_delimited_comments_into_labeled_items(self) -> None:
+        items = _comment_evidence_items("评论一\x1e评论二\x1e评论三")
+        self.assertEqual(items, ["热门评论:评论一", "热门评论:评论二", "热门评论:评论三"])
+
+    def test_none_returns_empty_list(self) -> None:
+        self.assertEqual(_comment_evidence_items(None), [])
+
+    def test_empty_string_returns_empty_list(self) -> None:
+        self.assertEqual(_comment_evidence_items(""), [])
+
+    def test_truncates_to_240_chars_per_item(self) -> None:
+        items = _comment_evidence_items("字" * 500)
+        self.assertEqual(len(items[0]), 240)
+
 
 class AssembleSourceToTopicInputTests(unittest.TestCase):
     def test_maps_real_fields_into_the_exact_public_contract(self) -> None:
@@ -157,6 +213,37 @@ class AssembleSourceToTopicInputTests(unittest.TestCase):
         self.assertTrue(any("现象-原因-反转" in item for item in payload["source_evidence_items"]))
         self.assertTrue(payload["relation_summary"])
         self.assertLessEqual(len(payload["relation_summary"]), 600)
+
+    def test_top_comments_are_mixed_into_evidence_items_alongside_the_analysis_patterns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1")
+                _insert_analysis(conn, "a1", "h1")
+                _insert_comment(conn, "h1", "c1", text="求你讲讲这个话题", sample_rank=0)
+                _insert_comment(conn, "h1", "c2", text="太真实了", sample_rank=1)
+                row = select_analyses_pending_topic(conn, limit=1)[0]
+                payload = assemble_source_to_topic_input(row, run_id="run_test")
+            finally:
+                conn.close()
+        self.assertEqual(len(payload["source_evidence_items"]), 5)
+        self.assertTrue(any("求你讲讲这个话题" in item for item in payload["source_evidence_items"]))
+        self.assertTrue(any("太真实了" in item for item in payload["source_evidence_items"]))
+        self.assertTrue(any(item.startswith("热门评论:") for item in payload["source_evidence_items"]))
+
+    def test_no_comments_still_produces_the_three_pattern_items_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1")
+                _insert_analysis(conn, "a1", "h1")
+                row = select_analyses_pending_topic(conn, limit=1)[0]
+                payload = assemble_source_to_topic_input(row, run_id="run_test")
+            finally:
+                conn.close()
+        self.assertEqual(len(payload["source_evidence_items"]), 3)
 
     def test_unrecognized_domain_label_falls_back_to_unknown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
