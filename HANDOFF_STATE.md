@@ -5,7 +5,21 @@
 ## 基本信息
 
 - **分支**:`activation/goal-v0.6.2-production-activation-01`
-- **上次更新**:2026-07-11(第二轮),Claude Code(2026-07-09 做了一轮外部工程审计+治理修复,2026-07-10 接通了"选题→大纲→成稿"创作链路的三个 Skill,2026-07-11 第一轮按用户指令执行"清场式保留重构"——归档 Goal01-12 死链、统一模型路由为三个显性位点、修正文档口径;2026-07-11 第二轮补收尾:归档 `scripts/core/runtime/`、补回 `Goal05WorkflowOrchestrator` 的独立测试、清场闸门新增 3 项检查,细节见下方)
+- **上次更新**:2026-07-11(第四轮,清场收尾+封 tag),Claude Code(2026-07-09 做了一轮外部工程审计+治理修复,2026-07-10 接通了"选题→大纲→成稿"创作链路的三个 Skill,2026-07-11 三轮"清场式保留重构"——归档 Goal01-12 死链/`scripts/core/runtime/`/`verify_goal_05.py`/`verify_goal_06.py`、统一模型路由为三个显性位点、修正 BR-TOPIC-001 口径与其他文档措辞,细节见下方;2026-07-11 第四轮:清场阶段正式结束,基线封存为 tag `v0.6.3-clean-activation-base`)
+
+## 阶段状态(2026-07-11 第四轮新增)
+
+**清场阶段已结束**。基线已封存为 tag `v0.6.3-clean-activation-base`(commit `3232c4b5ae72b464b0836067ae3675e6f41fce70`)——如果需要回到清场刚完成、production activation 还没开始的干净状态,`git checkout v0.6.3-clean-activation-base`。
+
+**下一阶段:production activation**。当前首要任务是建立唯一最小生产入口,不是继续审计/清理旧代码——不要再凭"发现了另一处可疑代码"就主动开一轮新的全仓库扫描或扩大 `archive/` 范围,那是清场阶段的活,已经做完。
+
+**后续清理收紧为例外触发,不再是常规工作**:只有下面四种情况出现时,才允许做局部清理,且清理范围只限于触及到的具体文件,不得借机扩大成新一轮审计:
+1. **阻塞真实运行**——某个真实生产入口(`business_data`/`experience` 下的 `run_*.py`/`review_queue.py`)跑不起来。
+2. **`archive/` import 复发**——有 active 文件重新 import 了 `archive/dead_goal_chain_20260709/` 下的死链(`dead_goal_chain_gate.py` 的 `no_active_reference_into_archive`/`active_verify_goal_scripts_dont_import_dead_chain` 检查会先报警)。
+3. **fallback/provider 混入**——出现隐式 provider 切换、`fallback` 非 `none`、或 Codex/Claude Code 被当成运行期 provider。
+4. **死配置复发**——出现读不到的配置键、或幽灵 `target_component`(指向代码里不存在的类)。
+
+除以上四种,不要主动扩大清理范围、不要新增资产分类、不要为了"顺手"再审一遍旧代码。
 
 ## 当前状态表
 
