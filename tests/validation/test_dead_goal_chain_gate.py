@@ -9,12 +9,15 @@ import yaml
 from scripts.validation.dead_goal_chain_gate import (
     ARCHIVE_ROOT,
     DEAD_MODULE_DOTTED_PREFIXES,
+    REQUIRED_INDEPENDENT_TEST_COVERAGE,
     ROOT,
+    check_archive_not_reachable_from_real_entrypoints,
     check_claude_md_no_runtime_claude_claim,
     check_creation_status_disclaimer_present,
     check_dead_chain_not_reachable,
     check_env_example_no_dead_config,
     check_fallback_disabled,
+    check_goal05_workflow_orchestrator_has_independent_coverage,
     check_model_positions,
     check_no_active_reference_into_archive,
     check_no_content_workflow_ghost_reference,
@@ -67,6 +70,86 @@ class DeadChainNotReachableTests(unittest.TestCase):
             result = check_dead_chain_not_reachable()
         self.assertFalse(result["passed"])
         self.assertIn("scripts/core/correction/goal10_corrections.py", result["detail"])
+
+    def test_scripts_core_runtime_is_covered_by_the_dead_prefix_list(self) -> None:
+        # 2026-07-11: scripts/core/runtime/ was confirmed DEAD_GOAL_CHAIN by
+        # this same closure check and archived. Pin it here so a later commit
+        # can't quietly remove "scripts.core.runtime" from the prefix list.
+        self.assertIn("scripts.core.runtime", DEAD_MODULE_DOTTED_PREFIXES)
+        reachable = compute_real_reachable_modules()
+        rel = {p.relative_to(ROOT).as_posix() for p in reachable}
+        self.assertFalse(any(path.startswith("scripts/core/runtime/") for path in rel))
+
+
+class ArchiveNotReachableFromRealEntrypointsTests(unittest.TestCase):
+    def test_no_real_reachable_module_resolves_under_archive(self) -> None:
+        result = check_archive_not_reachable_from_real_entrypoints()
+        self.assertTrue(result["passed"], result["detail"])
+
+    def test_a_path_under_archive_in_the_closure_is_actually_detected(self) -> None:
+        # Path-based detection must have teeth independent of
+        # DEAD_MODULE_DOTTED_PREFIXES -- prove it catches an archived path
+        # even without relying on that list.
+        fake_reachable = {ARCHIVE_ROOT / "scripts_core_correction" / "goal10_corrections.py"}
+        with patch(
+            "scripts.validation.dead_goal_chain_gate.compute_real_reachable_modules",
+            return_value=fake_reachable,
+        ):
+            result = check_archive_not_reachable_from_real_entrypoints()
+        self.assertFalse(result["passed"])
+        self.assertTrue(any("archive/dead_goal_chain_20260709" in item for item in result["detail"]))
+
+
+class Goal05WorkflowOrchestratorCoverageTests(unittest.TestCase):
+    def test_required_coverage_mapping_points_at_goal05_workflow(self) -> None:
+        self.assertIn(
+            "scripts.core.workflow.goal05_workflow.Goal05WorkflowOrchestrator",
+            REQUIRED_INDEPENDENT_TEST_COVERAGE,
+        )
+
+    def test_the_real_test_file_exists_and_imports_the_real_class(self) -> None:
+        result = check_goal05_workflow_orchestrator_has_independent_coverage()
+        self.assertTrue(result["passed"], result["detail"])
+
+    def test_a_missing_test_file_is_actually_detected(self) -> None:
+        fake_mapping = {
+            "scripts.core.workflow.goal05_workflow.Goal05WorkflowOrchestrator": ROOT
+            / "tests"
+            / "core"
+            / "test_this_file_does_not_exist.py"
+        }
+        with patch(
+            "scripts.validation.dead_goal_chain_gate.REQUIRED_INDEPENDENT_TEST_COVERAGE",
+            fake_mapping,
+        ):
+            result = check_goal05_workflow_orchestrator_has_independent_coverage()
+        self.assertFalse(result["passed"])
+        self.assertIn("does not exist", str(result["detail"]))
+
+    def test_a_test_file_that_never_imports_the_real_class_is_detected(self) -> None:
+        # Must be a real path under ROOT (the checked function does
+        # path.relative_to(ROOT) for its report), so write a scratch file
+        # inside tests/core/ and clean it up afterward rather than using a
+        # tempdir outside the repo.
+        fake_test = ROOT / "tests" / "core" / "_scratch_fake_goal05_test.py"
+        fake_test.write_text(
+            "import unittest\n\n"
+            "class FakeTests(unittest.TestCase):\n"
+            "    def test_something(self):\n"
+            "        self.assertTrue(True)\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(fake_test.unlink)
+        fake_mapping = {
+            "scripts.core.workflow.goal05_workflow.Goal05WorkflowOrchestrator": fake_test
+        }
+        with patch(
+            "scripts.validation.dead_goal_chain_gate.REQUIRED_INDEPENDENT_TEST_COVERAGE",
+            fake_mapping,
+        ):
+            result = check_goal05_workflow_orchestrator_has_independent_coverage()
+        self.assertFalse(result["passed"])
+        self.assertIn("does not import", str(result["detail"]))
 
 
 class NoActiveReferenceIntoArchiveTests(unittest.TestCase):

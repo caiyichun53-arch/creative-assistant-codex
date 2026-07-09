@@ -5,7 +5,7 @@
 ## 基本信息
 
 - **分支**:`activation/goal-v0.6.2-production-activation-01`
-- **上次更新**:2026-07-11,Claude Code(2026-07-09 做了一轮外部工程审计+治理修复,2026-07-10 接通了"选题→大纲→成稿"创作链路的三个 Skill,2026-07-11 按用户指令执行了一次"清场式保留重构"——归档 Goal01-12 死链、统一模型路由为三个显性位点、修正文档口径,细节见下方)
+- **上次更新**:2026-07-11(第二轮),Claude Code(2026-07-09 做了一轮外部工程审计+治理修复,2026-07-10 接通了"选题→大纲→成稿"创作链路的三个 Skill,2026-07-11 第一轮按用户指令执行"清场式保留重构"——归档 Goal01-12 死链、统一模型路由为三个显性位点、修正文档口径;2026-07-11 第二轮补收尾:归档 `scripts/core/runtime/`、补回 `Goal05WorkflowOrchestrator` 的独立测试、清场闸门新增 3 项检查,细节见下方)
 
 ## 当前状态表
 
@@ -17,7 +17,8 @@
 | 人工审核闸门(`review_queue.py`) | 能用,但只有"通过/不通过"二选一 | 是否要接入已存在但未连接的 `goal10_corrections`(修正+留痕框架),涉及架构级决策 | 用户 |
 | `runtime_skills/` 绑定(12个业务Skill) | 4个已接通真实数据,8个仍只能吃假样例 | 8个待接的具体绑定工程还没排期 | 用户 |
 | 两套 Skill 实现取舍(`.claude/skills/` vs `runtime_skills/`) | 方向已定:`runtime_skills/` 为唯一权威 | 迁移/淘汰尚未执行,`.claude/skills/` 仍在正常使用 | 用户已定方向,执行节奏待定 |
-| 两套平行架构(Goal01-12 正式链路 vs `business_data`/`experience` 轻量层) | **2026-07-11 清场完成**:`correction`/`production`/`host`/`hermes`/`state` 整个目录 + `workflow/goal_phase5_business_workflow.py`,经全仓库传递闭包核实零真实生产入口依赖后,归档到 `archive/dead_goal_chain_20260709/`。`persistence`/`scheduler`/`workflow/goal05_workflow.py`/`research/goal06_formal_research.py` 意外保留(被 `model_gateway`/`external_adapters` 真实传递依赖) | `goal10_corrections.py` 的"修正+留痕"能力已随 correction/ 一起归档,若未来需要该能力,是一次新的架构决策,不是"接入" | 用户 |
+| 两套平行架构(Goal01-12 正式链路 vs `business_data`/`experience` 轻量层) | **2026-07-11 清场完成(两轮)**:`correction`/`production`/`host`/`hermes`/`state`/`runtime` 整个目录 + `workflow/goal_phase5_business_workflow.py`,经全仓库传递闭包核实零真实生产入口依赖后,归档到 `archive/dead_goal_chain_20260709/`。`persistence`/`scheduler`/`workflow/goal05_workflow.py`/`research/goal06_formal_research.py`/`external_adapters/goal_phase4_external_adapters.py` 意外保留(被 `model_gateway`/`external_adapters` 真实传递依赖)。归档 `runtime/` 时连带修了两处真实断链:`config/settings.{yaml,example.yaml}` 的 schema chain 曾引用已归档的 `goal_runtime_vertical_slice_schema.*.sql`(已移除);`test_external_executor_adapters.py` 里两个测 `RuntimeHost` 的用例已随 runtime 一起移除,其余 6 个测真实 `external_adapters` 类的用例保留在原文件 | `goal10_corrections.py` 的"修正+留痕"能力已随 correction/ 一起归档,若未来需要该能力,是一次新的架构决策,不是"接入" | 用户 |
+| `Goal05WorkflowOrchestrator` 测试覆盖 | **2026-07-11 补回**:第一轮归档 `test_phase5_business_workflow.py` 时连带丢了唯一覆盖它的测试,新增 `tests/core/test_goal05_workflow_orchestrator.py`(13个测试,真实 `Goal03Scheduler.in_memory()`,无 mock 核心逻辑) | 无 | - |
 | Windows 定时任务 | `CreationAssistant_Daily` 已启用,弹窗问题已修复 | `CreationAssistant_Listener` 仍 disabled | - |
 | 治理文档体系(CLAUDE.md/AGENTS.md/闸门脚本) | 2026-07-09 完成一轮外部审计修复,2026-07-10 补了"未注明来源常量"闸门,2026-07-11 修正了"创作走 Codex/Claude 订阅"这类把开发工具和运行期 provider 混为一谈的表述 | 无 | - |
 | 模型路由(`config/model_routes.yaml`) | **2026-07-11 重构**:唯一显性入口,三个具名位点 `dialogue_model`/`business_model`/`writing_model`,当前全部 = Mimo(经 Hermes),移除了此前混进来的 `engineering_execution` 路由(那本质是 Codex/Claude Code 的开发工具活动,不该被建模成运行期业务路由) | 无 | - |
@@ -29,18 +30,19 @@
 
 ```
 $ python -m scripts.validation.preflight_checkpoint_check --skip-tests
-[FAIL] git_working_tree_clean   (本次清场重构改动尚未提交,预期内——见下方"本次会话")
+[PASS] git_working_tree_clean
 [PASS] test_suite_green
 [PASS] readiness_gate_engineering_ready
 [PASS] ops_infra_checklist_clean
 [PASS] production_data_sanity
 [PASS] no_unsourced_constants
-overall: NOT_READY
+[PASS] dead_goal_chain_clean_sweep
+overall: READY_TO_CHECKPOINT
 
 $ python -m pytest tests/core tests/validation -q
-454 passed
+473 passed
 ```
-（收工前请重新跑一次这条命令确认仍然全绿,不要直接信这里贴的历史输出。提交本次改动后 `git_working_tree_clean` 应转为 PASS。)
+（收工前请重新跑一次这条命令确认仍然全绿,不要直接信这里贴的历史输出。上面这次是提交后跑的。)
 
 ## 本次会话(2026-07-09 至 2026-07-10)做了什么
 
@@ -63,7 +65,16 @@ $ python -m pytest tests/core tests/validation -q
 2. **统一模型路由为三个显性位点**:`config/model_routes.yaml` 新增 `model_positions:` 顶层块,明确点名 `dialogue_model`/`business_model`/`writing_model`,当前全部指向同一个 `mimo_main` provider(Mimo/Hermes)。删除了此前混入的 `engineering_execution` 路由——那描述的是 Codex/Claude Code 写代码这件事本身,不是运行期业务路由,留着就是"把开发工具误建模成 runtime provider"。两个 example 配置文件同步更新;`model_routes.example.multi_provider.yaml` 里原来有一个 `gpt_subscription_codex`(`type: codex_cli_subscription`)provider,直接把 Codex 列成业务模型候选项——已删除,换成 `gpt_api_gateway`(标准 OpenAI 兼容 API)示范"未来可以换 provider",不再示范"可以把 Codex CLI 当业务 provider"。
 3. **清理死配置**:`.env.example` 里 `CREATION_LLM_PROVIDER`/`CREATION_LLM_MODEL`/`CREATION_LLM_FALLBACK_ENABLED` 三个键——读它们的 `scripts/llm/call.py` 早在 2026-07-04 就被删除,这三行已经是没人读的死配置,换成真正生效的 `HERMES_BUSINESS_API_KEY`/`HERMES_BUSINESS_BASE_URL`/`HERMES_BUSINESS_MODEL_NAME`/`HERMES_BUSINESS_MODEL_CLASS`。
 4. **修正文档口径**:`AGENTS.md`(CLAUDE.md 由此机械生成)里"开发用 Codex...创作走用户的 Codex 订阅"、"模型路由 per-node:默认 Codex 低阶...创作走 Codex 对话"这两处原文,是审计报告点名的"把写代码工具误当成业务 runtime 模型"的源头之一——已重写,明确"Codex/Claude Code 只是工程工具,系统运行期统一 Mimo,见三个显性位点"。`REQUIREMENT_CODE_TRACEABILITY.yaml` 里 BR-CONTENT-001/002/003 三条的 `target_component: ContentWorkflow/ContentGuard`——这个类全仓库不存在,是幽灵引用——已改为老实标注 `UNIMPLEMENTED`。
-5. **未做的事**(有意,不是遗漏):没有重命名 `runtime_skills/*/binding.yaml` 里的 `route_id: business_analysis`/`writing_generation` 字符串去匹配 `business_model`/`writing_model` 这两个新名字——那需要同时改 12 个 binding.yaml + `model_router.py` 的两个常量,风险和收益不对等,`model_positions:` 这个新增的顶层映射已经能让"三个位点叫什么、各自绑定哪个 route_id"一眼可查,不需要底层也重命名。`scripts/core/runtime/`(`goal04_runtime_host.py` 等)和 `scripts/core/external_adapters/goal_phase4_external_adapters.py` 本次也没动——前者闭包计算证实同样是死代码,但不在用户这次列的清单里;后者是真实依赖,本来就不该动。
+5. **未做的事**(有意,不是遗漏):没有重命名 `runtime_skills/*/binding.yaml` 里的 `route_id: business_analysis`/`writing_generation` 字符串去匹配 `business_model`/`writing_model` 这两个新名字——那需要同时改 12 个 binding.yaml + `model_router.py` 的两个常量,风险和收益不对等,`model_positions:` 这个新增的顶层映射已经能让"三个位点叫什么、各自绑定哪个 route_id"一眼可查,不需要底层也重命名。`scripts/core/runtime/`(`goal04_runtime_host.py` 等,已在下面第二轮处理)和 `scripts/core/external_adapters/goal_phase4_external_adapters.py` 本轮没动——后者是真实依赖,本来就不该动。
+
+## 本次会话(2026-07-11 第二轮,清场收尾)做了什么
+
+上一轮报告点名的两个"仍然未完成的问题"——`scripts/core/runtime/` 没处理、`Goal05WorkflowOrchestrator` 丢了测试覆盖——本轮补上:
+
+1. **`scripts/core/runtime/` 归档**:重新基于当轮代码(前一轮 4 个 commit 之后)跑真实闭包,12 个文件(`goal04_runtime_host.py`/`goal_runtime_vertical_slice.py` 等)确认零真实生产入口依赖,归档到 `archive/dead_goal_chain_20260709/scripts_core_runtime/`。归档暴露了两处上一轮没扫到的真实断链(都不是 Python import,闭包脚本本身扫不到):①`config/settings.yaml`/`config/settings.example.yaml` 的 `sqlite_schema_chain`/`postgres_schema_chain` 引用了 runtime 自带的 schema 文件,已从两处配置移除;②`tests/core/test_external_executor_adapters.py` 里 8 个测试有 2 个(`test_runtime_host_rejects_external_adapter_by_default_and_allows_phase4_opt_in`、`test_external_adapter_failure_does_not_fallback_or_complete_runtime_job`)依赖 `RuntimeHost`——这 2 个随 runtime 一起从活跃测试里移除,其余 6 个测真实 `external_adapters` 类的用例原地保留,没有像上一轮 `test_phase5_business_workflow.py` 那样整个文件一锅端。
+2. **补回 `Goal05WorkflowOrchestrator` 测试覆盖**:新增 `tests/core/test_goal05_workflow_orchestrator.py`,13 个测试全部用真实 `Goal03Scheduler.in_memory()`(不 mock 调度器/持久层),覆盖:初始化、合法多步 workflow 真实入队(读 `scheduler.get_job()` 验证 job_kind/status/priority/`_workflow`血缘元数据/correlation_id)、workflow_id 是确定性 content_hash(两个独立 scheduler 同输入得同 id)、同 idempotency_key 重放不重复入队、7 种非法输入(空 workflow_name/空 idempotency_key/零步骤/重复 step_key/空 step_key/空 job_kind/max_attempts≤0)各自显式抛 `WorkflowError`、非法输入不产生部分入队(`scheduler_job` 表行数验证为 0)、模块源码不引用任何已归档模块或 `fallback` 字样。
+3. **清场闸门新增 3 项检查**(`scripts/validation/dead_goal_chain_gate.py`,共 11 项):`scripts.core.runtime` 加入 `DEAD_MODULE_DOTTED_PREFIXES`;新增 `archive_unreachable_from_real_entrypoints`(路径而非清单判断,即使某天有人忘记维护前缀清单也能兜底);新增 `goal05_workflow_orchestrator_has_independent_test_coverage`(机械验证测试文件存在、真的 import 了 `Goal05WorkflowOrchestrator`、有 `test_*` 方法)。
+4. **仍未处理、本轮核实过确实是死代码但仍不在任何清单里的**:无——本轮结束后闭包计算未再发现新的孤立模块。
 
 ## 需要用户决定的事项(未决,不是遗漏)
 

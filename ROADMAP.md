@@ -86,3 +86,12 @@
 - `.env.example` 移除死配置(`CREATION_LLM_*`),换成真正生效的 `HERMES_BUSINESS_*` 键。
 - `AGENTS.md`(CLAUDE.md 机械生成)修正"开发用 Codex...创作走 Codex 订阅"等把开发工具和运行期 provider 混为一谈的表述。
 - `REQUIREMENT_CODE_TRACEABILITY.yaml` 里 `ContentWorkflow/ContentGuard` 幽灵引用(BR-CONTENT-001/002/003)改为老实标注 `UNIMPLEMENTED`。
+
+## 已完成(2026-07-11 第二轮,清场收尾)
+
+第一轮报告里点名"未处理"的两个遗留问题,本轮补上:
+
+- 重新基于当轮代码状态跑真实 import 传递闭包,确认 `scripts/core/runtime/`(`goal04_runtime_host.py`/`goal_runtime_vertical_slice.py` 等 12 个文件)同样零真实生产入口依赖,归档到 `archive/dead_goal_chain_20260709/`。归档时发现并修了一处配置层面的真实断链:`config/settings.{yaml,example.yaml}` 的 `sqlite_schema_chain`/`postgres_schema_chain` 曾引用已归档模块自带的 schema 文件,已移除对应条目。
+- `tests/core/test_external_executor_adapters.py` 里混着 2 个测 `RuntimeHost`(依赖已归档模块)和 6 个测真实 `external_adapters` 类的用例——没有整个文件一起归档(会连带丢真实覆盖),只移除了那 2 个,6 个真实测试保留在原文件。
+- 新增 `tests/core/test_goal05_workflow_orchestrator.py`(13个测试),补回第一轮归档 `test_phase5_business_workflow.py` 时连带丢掉的 `Goal05WorkflowOrchestrator` 覆盖——真实 `Goal03Scheduler.in_memory()`,不 mock 核心逻辑,覆盖初始化/合法输入下真实入队/幂等重放/workflow_id 确定性/7种非法输入显式失败/不产生部分入队。
+- `dead_goal_chain_gate.py` 新增 3 项检查:`scripts.core.runtime` 加入死链前缀清单;新增基于路径而非清单的 `archive_unreachable_from_real_entrypoints` 检查(不依赖手工维护的前缀清单,直接判断真实闭包里是否有路径落在 `archive/` 下);新增 `goal05_workflow_orchestrator_has_independent_test_coverage`(机械验证 `test_goal05_workflow_orchestrator.py` 存在且真的 import 了 `Goal05WorkflowOrchestrator`)。

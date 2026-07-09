@@ -53,10 +53,23 @@ DEAD_MODULE_DOTTED_PREFIXES = (
     "scripts.core.host",
     "scripts.core.hermes",
     "scripts.core.state",
+    "scripts.core.runtime",
     "scripts.core.workflow.goal_phase5_business_workflow",
     "scripts.core.experience.goal09_experiments",
     "scripts.monitor.queries",
 )
+
+# A module that must still have its own dedicated, non-archived test file
+# importing the real class directly -- added after archiving
+# test_phase5_business_workflow.py silently dropped the only test covering
+# Goal05WorkflowOrchestrator (a real, kept dependency), and it took a second
+# pass to notice and fix.
+REQUIRED_INDEPENDENT_TEST_COVERAGE = {
+    "scripts.core.workflow.goal05_workflow.Goal05WorkflowOrchestrator": ROOT
+    / "tests"
+    / "core"
+    / "test_goal05_workflow_orchestrator.py",
+}
 
 
 def _module_to_path(dotted: str) -> Path | None:
@@ -118,6 +131,71 @@ def check_dead_chain_not_reachable() -> dict[str, Any]:
         "name": "dead_goal_chain_unreachable_from_real_entrypoints",
         "passed": not violations,
         "detail": violations or f"{len(reachable)} modules reachable, none from the archived set",
+    }
+
+
+def check_archive_not_reachable_from_real_entrypoints() -> dict[str, Any]:
+    """Path-based counterpart to check_dead_chain_not_reachable(): checks that
+    no module in the real closure resolves to a path physically under
+    archive/, regardless of whether its dotted name happens to be listed in
+    DEAD_MODULE_DOTTED_PREFIXES. This does not depend on that list being kept
+    up to date -- if a future entrypoint somehow re-imported archived code
+    under a path DEAD_MODULE_DOTTED_PREFIXES does not cover, this still
+    catches it, because it asks "is this path under archive/" directly."""
+    if not ARCHIVE_ROOT.exists():
+        return {"name": "archive_unreachable_from_real_entrypoints", "passed": True, "detail": "archive directory absent"}
+    reachable = compute_real_reachable_modules()
+    violations = [
+        path.relative_to(ROOT).as_posix()
+        for path in reachable
+        if ARCHIVE_ROOT in path.parents or path == ARCHIVE_ROOT
+    ]
+    return {
+        "name": "archive_unreachable_from_real_entrypoints",
+        "passed": not violations,
+        "detail": violations or f"{len(reachable)} modules reachable, none under {ARCHIVE_ROOT.relative_to(ROOT).as_posix()}",
+    }
+
+
+def check_goal05_workflow_orchestrator_has_independent_coverage() -> dict[str, Any]:
+    problems = []
+    for qualified_name, test_path in REQUIRED_INDEPENDENT_TEST_COVERAGE.items():
+        module_dotted, class_name = qualified_name.rsplit(".", 1)
+        if not test_path.exists():
+            problems.append(f"{test_path.relative_to(ROOT).as_posix()} does not exist")
+            continue
+        text = test_path.read_text(encoding="utf-8")
+        try:
+            tree = ast.parse(text, filename=str(test_path))
+        except SyntaxError as exc:
+            problems.append(f"{test_path.relative_to(ROOT).as_posix()} failed to parse: {exc}")
+            continue
+        imports_real_class = any(
+            isinstance(node, ast.ImportFrom)
+            and node.module == module_dotted
+            and any(alias.name == class_name for alias in node.names)
+            for node in ast.walk(tree)
+        )
+        if not imports_real_class:
+            problems.append(f"{test_path.relative_to(ROOT).as_posix()} does not import {class_name} from {module_dotted}")
+        if "archive" in text and "dead_goal_chain" in text.lower().replace(" ", "_"):
+            # Allow prose mentions in the module docstring (e.g. explaining
+            # why the old test was archived), but reject any actual import
+            # statement reaching into archive/.
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    module_name = getattr(node, "module", None) or (node.names[0].name if node.names else "")
+                    if module_name and module_name.startswith("archive"):
+                        problems.append(f"{test_path.relative_to(ROOT).as_posix()} imports from archive/: {module_name}")
+        if not any(
+            isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
+            for node in ast.walk(tree)
+        ):
+            problems.append(f"{test_path.relative_to(ROOT).as_posix()} has no test_* methods")
+    return {
+        "name": "goal05_workflow_orchestrator_has_independent_test_coverage",
+        "passed": not problems,
+        "detail": problems or "clean",
     }
 
 
@@ -256,7 +334,9 @@ def check_creation_status_disclaimer_present() -> dict[str, Any]:
 def run_checklist() -> dict[str, Any]:
     checks = [
         check_dead_chain_not_reachable(),
+        check_archive_not_reachable_from_real_entrypoints(),
         check_no_active_reference_into_archive(),
+        check_goal05_workflow_orchestrator_has_independent_coverage(),
         check_model_positions(),
         check_fallback_disabled(),
         check_no_engineering_execution_route(),
