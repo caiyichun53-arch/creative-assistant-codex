@@ -3,35 +3,33 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from scripts.validation.generate_constitution_mirror import generate_claude_md
+
 ROOT = Path(__file__).resolve().parents[2]
-
-# The only line allowed to differ between CLAUDE.md and AGENTS.md: which tool
-# name is used for the daily model routing / creation conversation reference.
-# Everything else describes shared architecture/rules and must stay identical,
-# so that neither file can silently drift out of sync with the other again
-# (see AGENTS.md/CLAUDE.md "执行纪律": CLAUDE.md/AGENTS.md 从第一次提交后
-# 124 次提交都没有互相同步过).
-EXEMPT_LINE_PREFIX = "- **模型路由 per-node**"
-SHARED_SECTION_MARKER = "## 三根支柱"
-
-
-def _shared_body(text: str) -> str:
-    lines = text.splitlines()
-    start = next(i for i, line in enumerate(lines) if line.startswith(SHARED_SECTION_MARKER))
-    body_lines = [line for line in lines[start:] if not line.startswith(EXEMPT_LINE_PREFIX)]
-    return "\n".join(body_lines)
 
 
 class ConstitutionSyncTests(unittest.TestCase):
-    def test_claude_md_and_agents_md_share_rules_body(self) -> None:
-        claude_md = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    def test_claude_md_matches_what_the_generator_would_produce_from_agents_md(self) -> None:
+        # Replaces the old "shared body diff, minus one exempt line" check,
+        # which only compared text from '## 三根支柱' onward and so never
+        # actually verified the "这是什么" section above it -- exactly the
+        # section that drifted for 124 commits (see AGENTS.md "开工纪律").
+        # This compares the WHOLE file against a real regeneration, so
+        # there's no unguarded section left, and a failure's fix is
+        # mechanical: run scripts/validation/generate_constitution_mirror.py,
+        # not hand-copy prose between two files again.
         agents_md = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        claude_md = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+
+        generated = generate_claude_md(agents_md)
 
         self.assertEqual(
-            _shared_body(claude_md),
-            _shared_body(agents_md),
-            "CLAUDE.md and AGENTS.md have drifted apart outside the one exempt "
-            "model-routing line. Edit both files together and keep them in sync.",
+            claude_md,
+            generated,
+            "CLAUDE.md does not match what generate_constitution_mirror.py would "
+            "produce from the current AGENTS.md. AGENTS.md is the only file to "
+            "hand-edit -- run `python -m scripts.validation.generate_constitution_mirror` "
+            "to refresh CLAUDE.md, then commit both.",
         )
 
 

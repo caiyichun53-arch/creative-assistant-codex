@@ -33,6 +33,8 @@ REVERSE_CFG = {
     "models_root": "models",
     "asr_model": "sensevoice/sensevoice-small",
     "vad_model": "modelscope_cache/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+    "ffmpeg_path": "ffmpeg",
+    "local_asr_python": "python",
     "min_transcript_chars": 10,
     "top_comments": 60,
     "min_comment_len": 5,
@@ -310,6 +312,41 @@ class PrepOneHitTests(unittest.TestCase):
                 self.assertEqual(hit["reverse_status"], "completed")
             finally:
                 conn.close()
+
+    def test_ffmpeg_and_asr_python_paths_come_from_reverse_cfg_not_hardcoded(self) -> None:
+        # Regression test for the ffmpeg/local-ASR-python absolute paths that
+        # used to be hardcoded module constants (duplicated identically in
+        # scripts/tools/compare_asr_providers.py) -- proves the values are
+        # actually read from reverse_cfg, not just cosmetically no longer
+        # module-level, by using distinctive paths and asserting they appear
+        # in the real subprocess.run call args.
+        distinctive_cfg = dict(REVERSE_CFG, ffmpeg_path="C:/distinctive/ffmpeg.exe", local_asr_python="C:/distinctive/python.exe")
+        captured_calls: list[list[str]] = []
+
+        def fake_run(args, **kwargs):
+            captured_calls.append(list(args))
+            if str(LOCAL_ASR_SCRIPT) in args:
+                return subprocess.CompletedProcess(args, returncode=0, stdout="这是一段足够长的转写文本用于测试", stderr="")
+            return subprocess.CompletedProcess(args, returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_hit(conn, "h1")
+                executor = _FakeExecutor(_fake_detail_result(tmp))
+                with patch("scripts.core.business_data.run_reverse_prep.requests.get", return_value=_fake_response()), \
+                     patch("scripts.core.business_data.run_reverse_prep.subprocess.run", side_effect=fake_run):
+                    prep_one_hit(
+                        conn, executor, conn.execute("SELECT * FROM hits WHERE hit_id='h1'").fetchone(),
+                        reverse_cfg=distinctive_cfg, run_id="run_test",
+                    )
+            finally:
+                conn.close()
+
+        ffmpeg_calls = [c for c in captured_calls if "C:/distinctive/ffmpeg.exe" in c]
+        asr_calls = [c for c in captured_calls if "C:/distinctive/python.exe" in c]
+        self.assertEqual(len(ffmpeg_calls), 1)
+        self.assertEqual(len(asr_calls), 1)
 
     def test_transcript_too_short_marks_hit_failed_but_keeps_transcript_row(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

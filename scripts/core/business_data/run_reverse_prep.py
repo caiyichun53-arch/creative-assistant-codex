@@ -96,11 +96,12 @@ from scripts.core.external_adapters.local_mediacrawler_executor import LocalMedi
 DEFAULT_SETTINGS = ROOT / "config" / "settings.yaml"
 FALLBACK_SETTINGS = ROOT / "config" / "settings.example.yaml"
 
-# Same local-machine paths scripts/tools/compare_asr_providers.py already
-# established for this exact feature (see BUSINESS_RULE_CATALOG.yaml
-# BR-ASR-003's outcome note for why the MiMo cloud alternative was rejected).
-FFMPEG = Path("I:/AI_Models/ffmpeg/ffmpeg.exe")
-LOCAL_ASR_PYTHON = Path("C:/Users/15891/anaconda3/envs/voxcpm2/python.exe")
+# ffmpeg/local-ASR-python are machine-specific absolute paths -- read from
+# reverse_cfg (config/settings.yaml reverse_engine.ffmpeg_path/local_asr_python)
+# instead of hardcoding here. Previously hardcoded identically in this file
+# and in scripts/tools/compare_asr_providers.py -- the exact "two sources of
+# truth" pattern this project has fixed elsewhere (see first_crawl_excluded_reason
+# in run_competitor_registration_full.py for precedent).
 LOCAL_ASR_SCRIPT = ROOT / "scripts" / "tools" / "_local_asr_transcribe.py"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
@@ -245,9 +246,9 @@ def _download(url: str, dst: Path) -> None:
     dst.write_bytes(response.content)
 
 
-def _to_wav_16k_mono(src: Path, dst: Path) -> None:
+def _to_wav_16k_mono(src: Path, dst: Path, ffmpeg_path: str) -> None:
     subprocess.run(
-        [str(FFMPEG), "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000", str(dst)],
+        [ffmpeg_path, "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000", str(dst)],
         capture_output=True,
         check=True,
     )
@@ -257,8 +258,9 @@ def run_local_asr(wav_path: Path, reverse_cfg: dict[str, Any]) -> str:
     models_root = Path(reverse_cfg["models_root"])
     asr_model = str(models_root / reverse_cfg["asr_model"])
     vad_model = str(models_root / reverse_cfg["vad_model"])
+    local_asr_python = reverse_cfg["local_asr_python"]
     completed = subprocess.run(
-        [str(LOCAL_ASR_PYTHON), str(LOCAL_ASR_SCRIPT), str(wav_path), "--asr-model", asr_model, "--vad-model", vad_model],
+        [local_asr_python, str(LOCAL_ASR_SCRIPT), str(wav_path), "--asr-model", asr_model, "--vad-model", vad_model],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -368,7 +370,7 @@ def prep_one_hit(
             _download(download_url, raw_audio)
             audio_sha256 = hashlib.sha256(raw_audio.read_bytes()).hexdigest()
             wav_path = work_dir / "audio_16k_mono.wav"
-            _to_wav_16k_mono(raw_audio, wav_path)
+            _to_wav_16k_mono(raw_audio, wav_path, reverse_cfg["ffmpeg_path"])
             raw_transcript_text = run_local_asr(wav_path, reverse_cfg)
 
         min_transcript_chars = int(reverse_cfg["min_transcript_chars"])

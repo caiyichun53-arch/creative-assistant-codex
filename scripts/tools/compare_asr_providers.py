@@ -38,8 +38,9 @@ from scripts.core.external_adapters import ExternalAdapterCommand  # noqa: E402
 from scripts.core.external_adapters.local_mediacrawler_executor import LocalMediaCrawlerExecutor  # noqa: E402
 
 DB_PATH = ROOT / "data" / "formal" / "production_activation.sqlite3"
-FFMPEG = Path("I:/AI_Models/ffmpeg/ffmpeg.exe")
-LOCAL_ASR_PYTHON = Path("C:/Users/15891/anaconda3/envs/voxcpm2/python.exe")
+# ffmpeg/local-ASR-python are machine-specific -- read from settings.yaml
+# reverse_engine.ffmpeg_path/local_asr_python (see run_reverse_prep.py, which
+# uses the same config keys) instead of hardcoding here.
 LOCAL_ASR_SCRIPT = Path(__file__).with_name("_local_asr_transcribe.py")
 # 2026-07-08: the public docs' example endpoint (api.xiaomimimo.com) 401s for a
 # Token Plan key -- Token Plan subscriptions have their own dedicated base URL,
@@ -105,18 +106,18 @@ def _download(url: str, dst: Path) -> None:
     dst.write_bytes(response.content)
 
 
-def _to_wav_16k_mono(src: Path, dst: Path) -> None:
+def _to_wav_16k_mono(src: Path, dst: Path, ffmpeg_path: str) -> None:
     subprocess.run(
-        [str(FFMPEG), "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000", str(dst)],
+        [ffmpeg_path, "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000", str(dst)],
         capture_output=True,
         check=True,
     )
 
 
-def _to_mp3_for_mimo(src: Path, dst: Path) -> None:
+def _to_mp3_for_mimo(src: Path, dst: Path, ffmpeg_path: str) -> None:
     # 64kbps mono keeps a several-minute clip well under MiMo's 10MB base64 cap.
     subprocess.run(
-        [str(FFMPEG), "-y", "-i", str(src), "-vn", "-ac", "1", "-b:a", "64k", str(dst)],
+        [ffmpeg_path, "-y", "-i", str(src), "-vn", "-ac", "1", "-b:a", "64k", str(dst)],
         capture_output=True,
         check=True,
     )
@@ -127,8 +128,9 @@ def _run_local_asr(wav_path: Path, settings: dict) -> str:
     models_root = Path(reverse_cfg["models_root"])
     asr_model = str(models_root / reverse_cfg["asr_model"])
     vad_model = str(models_root / reverse_cfg["vad_model"])
+    local_asr_python = reverse_cfg["local_asr_python"]
     completed = subprocess.run(
-        [str(LOCAL_ASR_PYTHON), str(LOCAL_ASR_SCRIPT), str(wav_path), "--asr-model", asr_model, "--vad-model", vad_model],
+        [local_asr_python, str(LOCAL_ASR_SCRIPT), str(wav_path), "--asr-model", asr_model, "--vad-model", vad_model],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -193,8 +195,9 @@ def main() -> int:
 
         wav_path = work_dir / "audio_16k_mono.wav"
         mp3_path = work_dir / "audio_64k.mp3"
-        _to_wav_16k_mono(raw_audio, wav_path)
-        _to_mp3_for_mimo(raw_audio, mp3_path)
+        ffmpeg_path = settings["reverse_engine"]["ffmpeg_path"]
+        _to_wav_16k_mono(raw_audio, wav_path, ffmpeg_path)
+        _to_mp3_for_mimo(raw_audio, mp3_path, ffmpeg_path)
 
         print("running local SenseVoice ASR...")
         local_text = _run_local_asr(wav_path, settings)

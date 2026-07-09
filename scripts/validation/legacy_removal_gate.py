@@ -65,10 +65,12 @@ ALLOWED_GUARD_REFERENCE_FILES = {
     "scripts/core/business_data/register_competitor_accounts.py",
     "scripts/core/business_data/run_competitor_registration_full.py",
     "scripts/core/business_data/run_reverse_prep.py",
+    "scripts/core/experience/run_sample_deep_analyze.py",
     "scripts/core/business_data/README.md",
     "tests/core/test_phase5_business_workflow.py",
     "tests/validation/test_clean_room_readiness.py",
     "tests/validation/test_authoritative_docs_not_legacy.py",
+    "tests/validation/test_legacy_removal_gate.py",
 }
 ALLOWED_EXCLUSION_REFERENCE_FILES = {
     "BUSINESS_MODEL_ROUTE_REGISTRY.yaml",
@@ -81,6 +83,7 @@ ALLOWED_NEW_EXECUTABLE_PATHS = {
     "启动监控面板.bat",
     "停止监控面板.bat",
     "scripts/scheduled/run_daily_incremental.bat",
+    "scripts/scheduled/run_daily_incremental_hidden.vbs",
 }
 HISTORICAL_DOC_PREFIXES = (
     "implementation_progress/",

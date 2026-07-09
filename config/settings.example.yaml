@@ -132,6 +132,14 @@ reverse_engine:
   models_root: models
   asr_model: sensevoice/sensevoice-small
   vad_model: modelscope_cache/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
+  # Local ffmpeg binary and the Python interpreter that has funasr/torchaudio
+  # installed for _local_asr_transcribe.py. Keep real absolute paths in
+  # config/settings.yaml only -- these were previously hardcoded directly in
+  # scripts/core/business_data/run_reverse_prep.py and scripts/tools/
+  # compare_asr_providers.py (duplicated in both), which is exactly the
+  # "two sources of truth" pattern this project has fixed elsewhere.
+  ffmpeg_path: ffmpeg
+  local_asr_python: python
   min_transcript_chars: 80
   # BR-COLLECT-005/006: comments collected in the same detail crawl used for
   # the download URL, then deterministically filtered (no LLM) before storage.
