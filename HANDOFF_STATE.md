@@ -38,7 +38,7 @@
 | 模型路由(`config/model_routes.yaml`) | **2026-07-11 重构**:唯一显性入口,三个具名位点 `dialogue_model`/`business_model`/`writing_model`,当前全部 = Mimo(经 Hermes),移除了此前混进来的 `engineering_execution` 路由(那本质是 Codex/Claude Code 的开发工具活动,不该被建模成运行期业务路由) | 无 | - |
 | 飞书实时集成 | 未重建 | 需要确认是否现在需要 | 用户 |
 | GPT 供应商切换 | 未开始 | 非当前阻塞项 | 用户主动触发 |
-| 真实付费模型端到端验证 | 未做过,全部 Skill 测试用确定性假 Provider——**创作链路当前只到"状态机已验证",不得宣称"创作功能已完成"** | `HERMES_BUSINESS_MODEL_TOKEN` 等凭据只在 `.env.live-gates`,没进真实 `.env` | 用户 |
+| 真实付费模型端到端验证 | **2026-07-11 更正**:`sample_deep_analyze` 曾在 2026-07-08 真实调用过一次 Hermes(`hit_deep_analysis` 表里那 2 条记录,用户已确认是真调用、不是回填数据)——"从没花过一次钱"这句话之前是错的。但**产出结果从没被人看过、没判断过好不好用**,`source_to_topic`/`content_plan`/`script_generate` 这三步则真的一次都没被真实调用过(对应的表在真实库里目前都不存在)。全部 Skill 的**测试套件**仍然只用确定性假 Provider,这句话没变——**创作链路当前只到"状态机已验证",不得宣称"创作功能已完成"或"内容质量已验证"** | `HERMES_BUSINESS_BASE_URL`/`HERMES_BUSINESS_MODEL_NAME` 当前不在真实 `.env` 里(只有 `HERMES_BUSINESS_API_KEY`) | 用户 |
 
 ## 权威闸门真实输出(不是转述)
 

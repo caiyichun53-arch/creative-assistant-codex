@@ -17,7 +17,7 @@
 - 顺手修了 `REQUIREMENT_CODE_TRACEABILITY.yaml` 里 `BR-EXPERIENCE-001` 的幽灵 `target_component: ExperienceEngine`,改成指向真实复活的 `goal09_experiments.py`。
 - **对齐检查**:这一步做的是"让一个真实 formal artifact 存在",对应 `BR-EXPERIENCE-001`"经验真相源应为 formal artifact"这句话——只搭地基,`tactic_state`/`trace_root`/`trace_version` 目前全部是空表,还没有任何真实经验数据写进去,不冒充已经完成。
 
-**已知发现,尚待你确认**(阻塞阶段3才需要答案,不阻塞已完成的阶段1):`hit_deep_analysis` 表里已有的 2 条记录(`model_name=xiaomi/mimo-v2.5-pro`,2026-07-08)看起来像是真实调用过 Hermes 的产物,但跟"还没花过一次钱"这句反复出现的表述矛盾——需要你确认这是①之前 `.env` 配置更全时的真实调用(说明这句表述本身错了,需要改),还是②别的方式回填的非真实数据(说明生产库里混进过来源不明的数据)。
+**已确认(用户 2026-07-11 核实)**:`hit_deep_analysis` 表里已有的 2 条记录(`model_name=xiaomi/mimo-v2.5-pro`,2026-07-08)确实是真实调用过 Hermes 的产物,不是回填的假数据——"还没花过一次钱"这句反复出现的表述是错的,已在 `HANDOFF_STATE.md` 更正。但**这次真实调用的分析结果从没被人看过**,不代表内容质量已经验证过,阶段3该先解决的"两条不同 hit 才能跑 tactic_extract"这个真实数据缺口依然存在(这 2 条记录是同一个 hit 的两次分析,不是两个不同的 hit)。
 
 **阶段2-5(未开始,待你确认阶段1结果后再继续)**:登记真实证据进 VersionRef → 绑定 `tactic_extract` → 人工改稿变证据(升级 `review_queue.py`)→ 真实 Hermes 创作质量验证。完整验收标准见计划文件。
 
@@ -34,7 +34,7 @@
 
 **人工审核闸门**(2026-07-10 新增,`scripts/core/experience/review_queue.py`):`topic_candidates`/`content_plans`/`script_drafts` 三张表各带一个 `human_review_status` 字段,默认"待审核",第2/3步的查询都要求上一环已经明确标记"通过"才会处理。`python -m scripts.core.experience.review_queue --list` 看有哪些在等审核,`--approve`/`--reject` 标记。**现在只有命令行,没有界面**——先把闸门本身做对,界面是以后的事。8个测试。
 
-**共同的、还没解决的缺口(四个绑定都一样)**:还没花钱调用过一次真实大模型——测试全部用各 Skill 自带的确定性假模型端口,真正调真实模型需要的密钥(`HERMES_BUSINESS_MODEL_TOKEN` 等)只存在于 `.env.live-gates`(专门给一次性受限验证用),没进真实 `.env`。要不要把这几个值搬进真实 `.env`、真的花一次钱验证端到端,需要用户决定。
+**共同的、还没解决的缺口**:**2026-07-11 更正**——`sample_deep_analyze` 曾在 2026-07-08 真实调用过一次 Hermes(用户已确认),但产出从没被人看过;`source_to_topic`/`content_plan`/`script_generate` 这三个绑定则真的一次都没被真实调用过(对应表在真实库里都还不存在)。测试套件全部用各 Skill 自带的确定性假模型端口,这个没变。真正调真实模型需要的 `HERMES_BUSINESS_BASE_URL`/`HERMES_BUSINESS_MODEL_NAME` 当前不在真实 `.env` 里(只有 `HERMES_BUSINESS_API_KEY`)。要不要补全这两个值、真的花一次钱验证端到端,需要用户决定。
 
 四个绑定脚本的写法都参照同一个已验证过的先例 `scripts/core/experience/run_sample_deep_analyze.py`(真实数据组装→调用 Skill 的 `make_*_harness()`→写回业务库,Skill 本身不改)。
 
