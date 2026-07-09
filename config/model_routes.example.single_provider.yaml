@@ -1,4 +1,13 @@
 schema_version: model_routes.v1
+
+# Three explicit runtime model positions -- see config/model_routes.yaml for
+# the full explanation. Claude Code/Codex are engineering tools, never a
+# runtime model position.
+model_positions:
+  dialogue_model: daily_chat
+  business_model: business_analysis
+  writing_model: writing_generation
+
 model_providers:
   mimo_main:
     type: mimo
@@ -29,18 +38,6 @@ model_routes:
       - experience_matching
       - risk_initial_review
       - workflow_execution_summary
-
-  engineering_execution:
-    provider_ref: mimo_main
-    fallback: none
-    allowed_task_types:
-      - code_editing
-      - command_execution
-      - test_running
-      - config_modification
-      - bug_fixing
-      - migration_script_generation
-      - repo_inspection
 
   writing_generation:
     provider_ref: mimo_main

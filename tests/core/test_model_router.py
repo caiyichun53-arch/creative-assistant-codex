@@ -39,11 +39,17 @@ class ModelRouterTests(unittest.TestCase):
         self.assertEqual(route.provider_ref, "mimo_main")
 
     def test_routes_can_point_to_different_providers(self) -> None:
+        # 2026-07-09: the multi_provider example no longer includes a "codex"
+        # provider type. Claude Code/Codex are engineering tools used to
+        # write this repo's code, never a valid runtime model provider -- an
+        # example config that showed Codex as a business_model provider
+        # option was itself a documented instance of the conflation this
+        # repo now forbids.
         router = ModelRouter.from_file(ROOT / "config" / "model_routes.example.multi_provider.yaml")
         providers = {router.resolve(route_id).provider_ref for route_id in router.routes}
         self.assertIn("mimo_main", providers)
-        self.assertIn("gpt_subscription_codex", providers)
         self.assertIn("gpt_api_gateway", providers)
+        self.assertNotIn("gpt_subscription_codex", providers)
 
     def test_active_production_readiness_config_is_mimo_only(self) -> None:
         router = ModelRouter.from_file(DEFAULT_MODEL_ROUTES_PATH)

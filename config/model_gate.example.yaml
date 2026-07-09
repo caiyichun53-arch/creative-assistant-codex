@@ -3,7 +3,7 @@
 goal: GOAL-RUNTIME-MODEL-GATE-01
 route:
   route_name: runtime_probe.test
-  route_id: engineering_execution
+  route_id: business_analysis   # business_model position, see config/model_routes.yaml
   config_version: goal-runtime-model-gate-01.live.v1
   timeout_ms: 30000
   parameters:

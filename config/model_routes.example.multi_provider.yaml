@@ -1,4 +1,17 @@
 schema_version: model_routes.v1
+
+# Illustrates that each of the three runtime model positions can be repointed
+# to a DIFFERENT provider independently -- this is an example of a possible
+# future state, not the current one (config/model_routes.yaml keeps all three
+# on mimo_main today). Note what is deliberately absent: there is no
+# "codex"/"claude_cli" provider type here. Claude Code and Codex are
+# engineering tools used to write this repo's code; they are never a valid
+# provider for a runtime model position, in this file or any other.
+model_positions:
+  dialogue_model: daily_chat
+  business_model: business_analysis
+  writing_model: writing_generation
+
 model_providers:
   mimo_main:
     type: mimo
@@ -11,13 +24,6 @@ model_providers:
     model_class_ref: HERMES_BUSINESS_MODEL_CLASS
     billing_mode: subscription
 
-  gpt_subscription_codex:
-    type: codex_cli_subscription
-    enabled: true
-    auth_ref: CODEX_SUBSCRIPTION_AUTH
-    execution_mode: cli
-    model_ref: CODEX_SUBSCRIPTION_MODEL
-
   gpt_api_gateway:
     type: openai_compatible_api
     enabled: true
@@ -26,7 +32,7 @@ model_providers:
     model_ref: GPT_API_GATEWAY_MODEL
 
 model_routes:
-  daily_chat:
+  daily_chat:   # dialogue_model -- stays on mimo_main in this example
     provider_ref: mimo_main
     fallback: none
     allowed_task_types:
@@ -34,8 +40,8 @@ model_routes:
       - system_status_explanation
       - user_instruction_intake
 
-  business_analysis:
-    provider_ref: gpt_subscription_codex
+  business_analysis:   # business_model -- example of switching to a GPT API gateway
+    provider_ref: gpt_api_gateway
     fallback: none
     allowed_task_types:
       - business_planning
@@ -50,19 +56,7 @@ model_routes:
       - risk_initial_review
       - workflow_execution_summary
 
-  engineering_execution:
-    provider_ref: gpt_subscription_codex
-    fallback: none
-    allowed_task_types:
-      - code_editing
-      - command_execution
-      - test_running
-      - config_modification
-      - bug_fixing
-      - migration_script_generation
-      - repo_inspection
-
-  writing_generation:
+  writing_generation:   # writing_model -- example of switching to a GPT API gateway
     provider_ref: gpt_api_gateway
     fallback: none
     allowed_task_types:
