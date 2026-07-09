@@ -6,7 +6,7 @@
 
 ## 进行中 / 下一项
 
-### 0. 生产激活:真实经验闭环 + Hermes 创作质量验证 —— **[阶段1已完成,阶段2-5待做]**
+### 0. 生产激活:真实经验闭环 + Hermes 创作质量验证 —— **[阶段1-2已完成,阶段3-5待做]**
 
 > 执行计划见 `C:\Users\15891\.claude\plans\warm-orbiting-kahn.md`(用户已批准)。目标:把"真实数据→经验提炼→人工审核+改稿变证据→经验影响下一次生成→真实 Hermes 产出质量由人评判"这条闭环打通。每阶段做完停下汇报,等用户确认再进下一阶段,不自动连续执行。
 
@@ -19,7 +19,13 @@
 
 **已确认(用户 2026-07-11 核实)**:`hit_deep_analysis` 表里已有的 2 条记录(`model_name=xiaomi/mimo-v2.5-pro`,2026-07-08)确实是真实调用过 Hermes 的产物,不是回填的假数据——"还没花过一次钱"这句反复出现的表述是错的,已在 `HANDOFF_STATE.md` 更正。但**这次真实调用的分析结果从没被人看过**,不代表内容质量已经验证过,阶段3该先解决的"两条不同 hit 才能跑 tactic_extract"这个真实数据缺口依然存在(这 2 条记录是同一个 hit 的两次分析,不是两个不同的 hit)。
 
-**阶段2-5(未开始,待你确认阶段1结果后再继续)**:登记真实证据进 VersionRef → 绑定 `tactic_extract` → 人工改稿变证据(升级 `review_queue.py`)→ 真实 Hermes 创作质量验证。完整验收标准见计划文件。
+**阶段2(已完成,2026-07-11)—— 把真实证据登记进 VersionRef**:
+- 新增 `scripts/core/experience/evidence_registry.py`,提供幂等函数 `register_hit_deep_analysis_evidence(conn, analysis_id)`,复用 `goal01_store.content_hash`,给一条真实 `hit_deep_analysis` 行(`topic_pattern`/`hook_pattern`/`structure_pattern` 三字段)登记一个 `trace_root`(`object_kind='hit_deep_analysis_evidence'`)+ `trace_version` + 一条指回真实来源的 `object_reference`(`target_object_kind='hit_deep_analysis'`,`target_stable_id=analysis_id`)。
+- 真实对库里唯一存在的真实记录 `analysis_id='hit_37ae1202dd597fcc3039_v2'` 登记一次(装表前先打真实备份 `production_activation_pre_evidence_registration_20260709T220416Z.sqlite3`):产出的 `trace_version.content_hash` 与 `object_reference.target_content_hash` 都等于独立用 `content_hash()` 对同一份三字段 payload 重新算出来的哈希(`a316fc5d...`),`object_reference.target_stable_id` 真实等于 `hit_37ae1202dd597fcc3039_v2`。原地重复调用一次,返回值完全相同(`replayed=true`,同一个 root_id/version_id/reference_id),`trace_version`/`object_reference` 最终各只有 1 行——不是接口层面"看起来幂等",是真的没有插入第二行。装表前后 26 张既有真实业务表逐表内容哈希核对完全一致(`hits`=431/`hit_deep_analysis`=2/`competitor_accounts`=28/`hit_comments`=23893 等一个字节都没变)。
+- 5个新测试(`tests/core/test_evidence_registry.py`):正向(真实哈希核对、root/version/reference 字段核对、两条不同 analysis 各自独立建 root)+ 反向(不存在的 analysis_id 显式抛 `EvidenceRegistrationError` 且不留任何孤儿 trace_root/trace_version/object_reference 行、空库同样拒绝)。
+- **对齐检查**:这一步让这条真实分析结果第一次"有资格"被 `tactic_state.basis_version_id` 引用,还没有真的被引用——阶段3 才会真的产生引用它的 `tactic_state` 行。
+
+**阶段3-5(未开始,待你确认阶段2结果后再继续)**:绑定 `tactic_extract`(需要先解决"只有1个真实hit"的数据缺口)→ 人工改稿变证据(升级 `review_queue.py`)→ 真实 Hermes 创作质量验证。完整验收标准见计划文件。
 
 ### 1. 接通"选题→大纲→成稿"技术链路 —— **[技术环节已打通,业务流程还不完整]**
 

@@ -11,7 +11,9 @@
 
 **清场阶段已结束**。基线已封存为 tag `v0.6.3-clean-activation-base`(commit `3232c4b5ae72b464b0836067ae3675e6f41fce70`)——如果需要回到清场刚完成、production activation 还没开始的干净状态,`git checkout v0.6.3-clean-activation-base`。
 
-**当前阶段:production activation,正在执行**。执行方案见 `C:\Users\15891\.claude\plans\warm-orbiting-kahn.md`(用户已批准),目标是"生产激活:真实经验闭环 + Hermes 创作质量验证",分5个阶段、每阶段做完停下等确认,不自动连续执行——详见 `ROADMAP.md` 第0项,阶段1(把 VersionRef 基础设施接回真实库)已完成。不要再凭"发现了另一处可疑代码"就主动开一轮新的全仓库扫描或扩大 `archive/` 范围,那是清场阶段的活,已经做完;当前阶段的范围以计划文件为准,不要中途改去做计划外的事。
+**当前阶段:production activation,正在执行**。执行方案见 `C:\Users\15891\.claude\plans\warm-orbiting-kahn.md`(用户已批准),目标是"生产激活:真实经验闭环 + Hermes 创作质量验证",分5个阶段、每阶段做完停下等确认,不自动连续执行——详见 `ROADMAP.md` 第0项,阶段1(把 VersionRef 基础设施接回真实库)、阶段2(把真实证据登记进 VersionRef)已完成。不要再凭"发现了另一处可疑代码"就主动开一轮新的全仓库扫描或扩大 `archive/` 范围,那是清场阶段的活,已经做完;当前阶段的范围以计划文件为准,不要中途改去做计划外的事。
+
+**阶段2(2026-07-11)做了什么**:新增 `scripts/core/experience/evidence_registry.py`,给真实 `hit_deep_analysis` 行登记 `trace_root`+`trace_version`+`object_reference` 的幂等函数。真实对库里唯一存在的记录 `hit_37ae1202dd597fcc3039_v2` 登记一次(登记前打了真实备份 `production_activation_pre_evidence_registration_20260709T220416Z.sqlite3`),验证了:①`trace_version.content_hash`/`object_reference.target_content_hash` 与独立重算的哈希一致;②`object_reference.target_stable_id` 等于真实 `analysis_id`;③原地重复登记一次,返回同一个 root_id/version_id/reference_id(`replayed=true`),`trace_version`/`object_reference` 各自只有 1 行;④装表前后 26 张既有真实业务表逐表哈希核对完全一致,没有动过一条已有数据。5个新测试(正向+反向各有),详见 `ROADMAP.md` 第0项。**下一步是阶段3(绑定 `tactic_extract`),但阶段3执行前必须先解决"库里只有1个真实hit"这个数据缺口(需要真实调用一次 Hermes,涉及真实花费,需要你授权),不会拿假数据凑过测试。
 
 **后续清理收紧为例外触发,不再是常规工作**:只有下面四种情况出现时,才允许做局部清理,且清理范围只限于触及到的具体文件,不得借机扩大成新一轮审计:
 1. **阻塞真实运行**——某个真实生产入口(`business_data`/`experience` 下的 `run_*.py`/`review_queue.py`)跑不起来。
