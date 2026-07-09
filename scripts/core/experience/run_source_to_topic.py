@@ -74,6 +74,14 @@ NO_RELATION_JUDGEMENT_YET = (
 # before. \x1e (record separator) cannot appear in real crawled text, unlike
 # a delimiter like '||' a comment could plausibly contain.
 TOP_COMMENTS_DELIMITER = "\x1e"
+# UNSOURCED (2026-07-10): this "3" is not derived from BUSINESS_RULE_CATALOG.yaml
+# or any other design document -- it was picked by whoever wrote this binding
+# (no reasoning beyond "seemed reasonable"), the exact failure mode this
+# project has already been burned by once (see BR-BASELINE-003's history of
+# a fabricated "10" threshold). Flagged explicitly rather than presented as
+# if grounded. Needs a real decision: how many comments is actually useful
+# evidence for topic generation, and should it scale with how many comments
+# a hit has (a viral hit might have thousands; a borderline one, a handful).
 TOP_COMMENTS_PER_HIT = 3
 SOURCE_EVIDENCE_ITEMS_MAX = 8
 

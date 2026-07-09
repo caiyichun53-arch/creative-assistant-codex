@@ -15,6 +15,12 @@ anything gets called done/completed/ENGINEERING_READY:
      production_data_sanity_check.py) has nothing visibly stuck (e.g. a
      hit stuck in reverse_status='pending' for days -- the exact 2026-07-08
      bug this check exists to catch mechanically instead of by luck)
+  6. no new business-logic constant in the real-data binding layer
+     (scripts/validation/unsourced_constant_check.py) was added without
+     saying where its value came from -- catches a number picked with no
+     source presented as if it were reasoned, the exact failure mode
+     TOP_COMMENTS_PER_HIT=3 reproduced on 2026-07-10 in the same session
+     that was fixing this class of problem elsewhere
 Until now these were separate manual steps someone had to remember to run,
 in order, every time -- exactly the kind of "remembering" this project's own
 incident history (see HANDOFF_STATE.md) shows doesn't hold up under
@@ -97,6 +103,17 @@ def check_production_data() -> dict[str, Any]:
     }
 
 
+def check_unsourced_constants() -> dict[str, Any]:
+    from scripts.validation.unsourced_constant_check import run_checklist
+
+    result = run_checklist()
+    return {
+        "name": "no_unsourced_constants",
+        "passed": result["status"] == "PASS",
+        "detail": "clean" if result["status"] == "PASS" else result["unsourced_constants"],
+    }
+
+
 def run_all_checks(*, skip_tests: bool) -> dict[str, Any]:
     checks = [
         check_git_clean(),
@@ -104,6 +121,7 @@ def run_all_checks(*, skip_tests: bool) -> dict[str, Any]:
         check_readiness_gate(),
         check_ops_infra(),
         check_production_data(),
+        check_unsourced_constants(),
     ]
     overall_passed = all(check["passed"] for check in checks)
     return {"status": "READY_TO_CHECKPOINT" if overall_passed else "NOT_READY", "checks": checks}

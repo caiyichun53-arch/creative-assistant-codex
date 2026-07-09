@@ -10,6 +10,7 @@ from scripts.validation.preflight_checkpoint_check import (
     check_production_data,
     check_readiness_gate,
     check_tests,
+    check_unsourced_constants,
     run_all_checks,
 )
 
@@ -99,6 +100,21 @@ class CheckProductionDataTests(unittest.TestCase):
         self.assertFalse(result["passed"])
 
 
+class CheckUnsourcedConstantsTests(unittest.TestCase):
+    def test_passes_when_scanner_finds_nothing(self) -> None:
+        with patch("scripts.validation.unsourced_constant_check.run_checklist", return_value={"status": "PASS", "unsourced_constants": []}):
+            result = check_unsourced_constants()
+        self.assertTrue(result["passed"])
+
+    def test_fails_when_scanner_finds_an_ungrounded_constant(self) -> None:
+        with patch(
+            "scripts.validation.unsourced_constant_check.run_checklist",
+            return_value={"status": "FAIL", "unsourced_constants": [{"path": "x.py", "line": 1, "name": "X"}]},
+        ):
+            result = check_unsourced_constants()
+        self.assertFalse(result["passed"])
+
+
 class RunAllChecksTests(unittest.TestCase):
     def _patched(self, **overrides):
         defaults = {
@@ -107,6 +123,7 @@ class RunAllChecksTests(unittest.TestCase):
             "check_readiness_gate": {"name": "gate", "passed": True},
             "check_ops_infra": {"name": "ops", "passed": True},
             "check_production_data": {"name": "data", "passed": True},
+            "check_unsourced_constants": {"name": "constants", "passed": True},
         }
         defaults.update(overrides)
         patches = [
