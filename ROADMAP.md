@@ -6,17 +6,17 @@
 
 ## 进行中 / 下一项
 
-### 1. 接通"选题→大纲→成稿"全链路(优先级最高,2026-07-09 用户拍板)
+### 1. 接通"选题→大纲→成稿"全链路 —— **[链路已打通 2026-07-09]**
 
-`runtime_skills/` 下 12 个业务 Skill,接入真实数据的进度:
+`runtime_skills/` 下 12 个业务 Skill,这条主链路的三环全部接上真实数据,且有一条端到端集成测试(`tests/core/test_topic_to_script_chain_integration.py`)证明"一条爆款分析结果"真的能一路流转成"一份成稿草稿"，外键全程可追溯(`hit_deep_analysis → topic_candidates → content_plans → script_drafts`)：
 
-1. **`source_to_topic`**:从证据/来源转成候选选题。**[已完成 2026-07-09]** `scripts/core/experience/run_source_to_topic.py`——吃 `hit_deep_analysis`(sample_deep_analyze 的真实输出:选题/开头/结构手法)当证据,生成候选选题,写入新表 `topic_candidates`(带版本号)。10个测试全过。**明确的简化**:`relation_summary`(这条选题和现有内容是否重复/冲突)现在是老实的占位文字,不是真判断过——`content_relation_judge` 还没接,不冒充。
-2. **`content_plan`**:选题→钩子+大纲。**[已完成 2026-07-09]** `scripts/core/experience/run_content_plan.py`——吃 `topic_candidates` 里 `topic_status='generated'` 的候选选题,写入新表 `content_plans`(带版本号)。14个测试全过。**明确的简化**:`tactic_candidates`(应由 `tactic_extract` 产出,还没接)复用同一条 `hit_deep_analysis` 的选题/开头/结构手法;`style_examples`(应来自范例库,物理载体还没定)复用同一条视频的真实转写文字稿摘句——都是真实数据、老实标注了替代关系,不是编造。已核实这两个字段目前不影响 `_run_content_plan()` 实际调模型的两次调用(只有 `brief`/`style_examples` 真正进了 prompt),风险可控。
-3. **`script_generate`**:大纲+brief→成稿草稿。**下一项。**
+1. **`source_to_topic`**:从证据/来源转成候选选题。`scripts/core/experience/run_source_to_topic.py`——吃 `hit_deep_analysis`(sample_deep_analyze 的真实输出:选题/开头/结构手法)当证据,生成候选选题,写入新表 `topic_candidates`(带版本号)。10个测试。**明确的简化**:`relation_summary`(这条选题和现有内容是否重复/冲突)现在是老实的占位文字,不是真判断过——`content_relation_judge` 还没接,不冒充。
+2. **`content_plan`**:选题→钩子+大纲。`scripts/core/experience/run_content_plan.py`——吃 `topic_candidates` 里 `topic_status='generated'` 的候选选题,写入新表 `content_plans`(带版本号)。14个测试。**明确的简化**:`tactic_candidates`(应由 `tactic_extract` 产出,还没接)复用同一条 `hit_deep_analysis` 的选题/开头/结构手法;`style_examples`(应来自范例库,物理载体还没定)复用同一条视频的真实转写文字稿摘句——都是真实数据、老实标注了替代关系,不是编造。已核实这两个字段目前不影响 `_run_content_plan()` 实际调模型的两次调用(只有 `brief`/`style_examples` 真正进了 prompt),风险可控。
+3. **`script_generate`**:大纲+brief→成稿草稿。`scripts/core/experience/run_script_generate.py`——吃 `content_plans` 里还没生成过草稿的规划,写入新表 `script_drafts`(带版本号)。10个测试。**明确的简化**:`research_summary`(应由 `research_evidence_extract`/`production_research_plan` 产出,都还没接)现在是"汇总已有证据,不是真研究"的老实标注文字。
 
-**共同的、还没解决的缺口(三个绑定都一样)**:还没花钱调用过一次真实大模型——测试全部用各 Skill 自带的确定性假模型端口,真正调真实模型需要的密钥(`HERMES_BUSINESS_MODEL_TOKEN` 等)只存在于 `.env.live-gates`(专门给一次性受限验证用),没进真实 `.env`。要不要把这几个值搬进真实 `.env`、真的花一次钱验证端到端,需要用户决定。
+**共同的、还没解决的缺口(四个绑定都一样)**:还没花钱调用过一次真实大模型——测试全部用各 Skill 自带的确定性假模型端口,真正调真实模型需要的密钥(`HERMES_BUSINESS_MODEL_TOKEN` 等)只存在于 `.env.live-gates`(专门给一次性受限验证用),没进真实 `.env`。要不要把这几个值搬进真实 `.env`、真的花一次钱验证端到端,需要用户决定——这是这条链路"打通"和"能真的产出一条能用的文案"之间剩下的唯一距离。
 
-三个绑定脚本的写法参照已验证过的先例 `scripts/core/experience/run_sample_deep_analyze.py`(真实数据组装→调用 Skill 的 `make_*_harness()`→写回业务库,Skill 本身不改)。**这是一块新的工程量,不是文档/治理层面的小修补**,建议单独开一次会话/一个 GOAL 来做,不要和治理修复混在一次提交里。
+四个绑定脚本的写法都参照同一个已验证过的先例 `scripts/core/experience/run_sample_deep_analyze.py`(真实数据组装→调用 Skill 的 `make_*_harness()`→写回业务库,Skill 本身不改)。
 
 ### 2. 两套 Skill 实现的迁移(2026-07-09 用户拍板方向,尚未开始执行)
 

@@ -323,3 +323,22 @@ CREATE TABLE IF NOT EXISTS content_plans (
 
 CREATE INDEX IF NOT EXISTS idx_content_plans_source_topic
 ON content_plans(source_topic_id, version);
+
+-- One row per script_generate run over a content_plans record. Append-only
+-- like content_plans. draft_text is the Skill's raw output_schema field
+-- (50-6000 chars per script_generate's own schema).
+CREATE TABLE IF NOT EXISTS script_drafts (
+    draft_id TEXT PRIMARY KEY,
+    source_plan_id TEXT NOT NULL REFERENCES content_plans(plan_id) ON DELETE RESTRICT,
+    version INTEGER NOT NULL,
+    request_id TEXT NOT NULL,
+    correlation_id TEXT NOT NULL,
+    draft_text TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_plan_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_script_drafts_source_plan
+ON script_drafts(source_plan_id, version);
