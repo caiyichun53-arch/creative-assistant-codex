@@ -39,11 +39,11 @@
 
 `run_source_to_topic.py` 里 `TOP_COMMENTS_PER_HIT = 3` 已显式标注 `UNSOURCED`——这个数字没有任何文档依据,是随手定的。需要用户决定一个合理值(是否应该随该条爆款评论总数浮动,而不是固定数字)。
 
-#### 人工审核该不该接 `goal10_corrections`(2026-07-10 新发现,架构级问题)
+#### 人工审核该不该接 `goal10_corrections`(2026-07-10 新发现,2026-07-11 清场后状态变化)
 
-`review_queue.py` 现在的"通过/不通过"是我图省事写的简化版。代码库里其实已经有一套专门做"修正登记 + 影响传播 + 留痕"的框架(`scripts/core/correction/goal10_corrections.py`,1402行 + 独立验证脚本728行),概念上更贴近"审核不只是通过/不通过,还可能涉及编辑、要记下怎么改的、为什么改"这个真实需求。但它绑定在另一套完全独立的持久化系统(`PersistenceStore`/`VersionRef`,即 Goal01-12 那条"正式生产链路")上,而 `topic_candidates`/`content_plans`/`script_drafts` 这些新表用的是普通 SQLite 表,两套机制从来没有打通过。
+`review_queue.py` 现在的"通过/不通过"是简化版。代码库里曾经有一套专门做"修正登记 + 影响传播 + 留痕"的框架(`scripts/core/correction/goal10_corrections.py`,1402行 + 独立验证脚本728行),概念上更贴近"审核不只是通过/不通过,还可能涉及编辑、要记下怎么改的、为什么改"这个真实需求。但它绑定在另一套完全独立的持久化系统(`PersistenceStore`/`VersionRef`,即 Goal01-12 那条"正式生产链路")上,而 `topic_candidates`/`content_plans`/`script_drafts` 这些新表用的是普通 SQLite 表,两套机制从来没有打通过。
 
-这揭示了一个更大的、之前没写进任何文档的事实:**这个代码库里同时存在两套平行架构**——Goal01-12 那条完整但从未接过真实数据的"正式链路"(workflow/scheduler/materializer/correction 都在这套里),和 `business_data`/`experience` 这套务实但轻量、目前真正在跑真实数据的层。要不要把 `topic_candidates` 等表迁移到 `VersionRef` 体系、真正接上 `goal10_corrections`,还是继续用轻量方案单独给审核加"编辑+留痕"字段,是一次架构级决策,需要用户拍板,不是顺手能改的。
+**2026-07-11 更新**:经全仓库真实 import 传递闭包核实(不是凭文件名),`correction/`(含 `goal10_corrections.py`)、`production/`、`host/`、`hermes/`、`state/` 整个目录 + `workflow/goal_phase5_business_workflow.py` 确认零真实生产入口依赖,已按用户指令的"清场式保留重构"归档到 `archive/dead_goal_chain_20260709/`(详见该目录的 `README.md`)。这不是删除这个需求本身——如果未来确实需要"编辑+留痕"这个能力,是一次新的、独立的架构决策(要么给轻量方案单独加字段,要么重新设计一套接得上 `topic_candidates` 等真实表的修正框架),不是简单地把归档代码接回来。`persistence`/`scheduler`/`workflow/goal05_workflow.py`/`research/goal06_formal_research.py` 反而是这次闭包计算证实的、被真实生产代码(`model_gateway`/`external_adapters`)传递依赖的模块,保留在原地——这四个模块名字虽然带着旧的 `goal0X` 编号,但不能凭名字判断该不该归档。
 
 ### 2. 两套 Skill 实现的迁移(2026-07-09 用户拍板方向,尚未开始执行)
 
@@ -76,3 +76,13 @@
 - 真实生产 `config/settings.yaml`(不只是 example 文件)现在也接受 `BUSINESS_RULE_CATALOG.yaml` 阈值核对。
 - 新增 `scripts/validation/preflight_checkpoint_check.py`(收工/交接前一条命令跑完全部纪律检查)、`scripts/validation/ops_infra_checklist.py`(硬编码路径/凭证管理/`.gitignore` 覆盖率检查)、`scripts/validation/production_data_sanity_check.py`(真实生产库健全性抽查,复现2026-07-08"备料自动触发静默失效"那类坑)。
 - 新增可选安装的 git post-commit 自检钩子(`scripts/scheduled/post_commit_self_check.py` + `install_post_commit_hook.ps1`)——默认不装,装了之后每次提交自动跑一遍轻量检查,不用等下次对话才发现问题。
+
+## 已完成(2026-07-11,清场式保留重构批次)
+
+同样不是业务功能,是一次基于《实现可信度审计报告》的清理动作,详细过程见 `HANDOFF_STATE.md`:
+
+- 归档 `scripts/core/{correction,production,host,hermes,state}` 整个目录 + `workflow/goal_phase5_business_workflow.py` 到 `archive/dead_goal_chain_20260709/`(经真实 import 传递闭包核实零生产依赖,不是凭文件名)。
+- `config/model_routes.yaml` 新增显性的 `model_positions:`(`dialogue_model`/`business_model`/`writing_model`),移除混入的 `engineering_execution` 路由;两个 example 配置同步,`multi_provider` 示例不再把 Codex CLI 列为业务模型候选。
+- `.env.example` 移除死配置(`CREATION_LLM_*`),换成真正生效的 `HERMES_BUSINESS_*` 键。
+- `AGENTS.md`(CLAUDE.md 机械生成)修正"开发用 Codex...创作走 Codex 订阅"等把开发工具和运行期 provider 混为一谈的表述。
+- `REQUIREMENT_CODE_TRACEABILITY.yaml` 里 `ContentWorkflow/ContentGuard` 幽灵引用(BR-CONTENT-001/002/003)改为老实标注 `UNIMPLEMENTED`。

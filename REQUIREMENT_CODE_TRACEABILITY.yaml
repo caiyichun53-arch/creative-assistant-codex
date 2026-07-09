@@ -551,7 +551,10 @@ traceability:
 - requirement_id: BR-CONTENT-001
   observed_legacy_behavior: Banned/risk word constraints are deterministic post-generation
     checks and must not bloat generation prompts.
-  target_component: ContentWorkflow/ContentGuard
+  target_component: UNIMPLEMENTED (no ContentWorkflow/ContentGuard class exists anywhere
+    in the current codebase as of 2026-07-09; this was a ghost reference caught during a
+    清场式保留重构 pass -- see BUSINESS_RULE_CATALOG.yaml for the rule text this row
+    traces; there is currently no active-tree implementation to point to)
   current_implementation_status: legacy behavior observed; target formalization pending
     unless noted exact_match
   alignment_status: naming_only
@@ -568,7 +571,10 @@ traceability:
 - requirement_id: BR-CONTENT-002
   observed_legacy_behavior: Examples are retrieved selectively by relevance and strength;
     never inject the whole library.
-  target_component: ContentWorkflow/ContentGuard
+  target_component: UNIMPLEMENTED (no ContentWorkflow/ContentGuard class exists anywhere
+    in the current codebase as of 2026-07-09; this was a ghost reference caught during a
+    清场式保留重构 pass -- see BUSINESS_RULE_CATALOG.yaml for the rule text this row
+    traces; there is currently no active-tree implementation to point to)
   current_implementation_status: legacy behavior observed; target formalization pending
     unless noted exact_match
   alignment_status: naming_only
@@ -587,7 +593,10 @@ traceability:
 - requirement_id: BR-CONTENT-003
   observed_legacy_behavior: Human edits create diff evidence and candidate examples;
     promotion to style examples requires repeated patterns or explicit approval.
-  target_component: ContentWorkflow/ContentGuard
+  target_component: UNIMPLEMENTED (no ContentWorkflow/ContentGuard class exists anywhere
+    in the current codebase as of 2026-07-09; this was a ghost reference caught during a
+    清场式保留重构 pass -- see BUSINESS_RULE_CATALOG.yaml for the rule text this row
+    traces; there is currently no active-tree implementation to point to)
   current_implementation_status: legacy behavior observed; target formalization pending
     unless noted exact_match
   alignment_status: naming_only

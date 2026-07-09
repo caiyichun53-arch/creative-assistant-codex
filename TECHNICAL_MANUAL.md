@@ -80,11 +80,24 @@
 
 ## 4. 生产 Host 边界（host）
 
-[占位] 待补：`ProductionHostBridge` 是干什么用的、为什么外部系统（飞书/Codex/Claude Code）不能直接碰业务库、新增一个外部入口（比如以后要接别的助手）大概要做什么。
+`[已归档]` 2026-07-11:`scripts/core/host/`(`production_host.py`,提供 `ProductionHostBridge` 概念)经全仓库真实 import 传递闭包核实——从真实生产入口(`run_competitor_registration_full.py`/`run_reverse_prep.py`/`run_source_to_topic.py`/`run_content_plan.py`/`run_script_generate.py`/`run_sample_deep_analyze.py`/`review_queue.py`)出发,没有任何一条路径依赖这个模块,只被自己家族的 `verify_goal_*.py` 自证脚本调用过。已归档到 `archive/dead_goal_chain_20260709/`,`scripts/core/` 下目前**没有**这一层。
+
+**现状**:外部系统(飞书/Codex/Claude Code)目前并没有一个真正生效的"先变成 Host message 再经白名单进 Core"边界——`.claude/skills/*` 直接在 Claude Code 会话内读写业务库相关文件,`runtime_skills/` 经 `scripts/core/experience/run_*.py` 绑定脚本直接连业务 sqlite,都没有经过任何 Host 边界。如果未来真的需要这层隔离(比如要接入一个新的外部助手,又不想让它直接碰数据库),这是一次新的架构决策,不能假设归档代码可以直接复活复用——它当初设计时绑定的 `PersistenceStore`/`Goal03Scheduler` 中 `PersistenceStore` 部分还在(`scripts/core/persistence/`),但 `state/goal02_core.py`(`CoreCommandEnvelope`/`CoreMaterializer`)已经一起归档了。
 
 ## 5. 模型路由（model_gateway）
 
-[占位] 待补：不同任务用什么模型、怎么配置、换模型/换供应商大概要改哪里。
+`[已完成]` 2026-07-11,按"清场式保留重构"要求补齐:
+
+**唯一显性配置入口**:`config/model_routes.yaml`。文件顶部的 `model_positions:` 块点名系统运行期恰好三个模型位点:
+- `dialogue_model`(对应 `model_routes.daily_chat`)——日常对话/系统状态说明。
+- `business_model`(对应 `model_routes.business_analysis`)——选题判断、研究综合、关系判定等分析类 Skill 节点(`runtime_skills/` 里除 `content_plan`/`script_generate`/`script_review` 外的 9 个 Skill 都走这条)。
+- `writing_model`(对应 `model_routes.writing_generation`)——钩子、大纲、成稿、润色、AI 味判定等创作生成类节点(`content_plan`/`script_generate`/`script_review` 走这条)。
+
+**当前状态**:三个位点全部绑定同一个 provider `model_providers.mimo_main`(`type: mimo`,`provider_name: hermes`,真实凭据来自 `.env` 的 `HERMES_BUSINESS_API_KEY`/`HERMES_BUSINESS_BASE_URL`/`HERMES_BUSINESS_MODEL_NAME`/`HERMES_BUSINESS_MODEL_CLASS`)。三条路由都写死 `fallback: none`——`scripts/core/model_gateway/model_router.py` 的 `ModelRouter.from_config()` 会在任何路由的 `fallback` 不等于 `"none"` 时直接拒绝加载整个配置文件,不存在"允许一部分路由有 fallback"的中间状态。
+
+**Claude Code / Codex 不是运行期 provider**:写这个仓库代码用的工具(Claude Code、Codex)和上面三个位点绑定什么模型完全无关——`config/model_routes.yaml` 里原来混入过一个 `engineering_execution` 路由(描述 code_editing/command_execution 等开发活动),2026-07-11 已删除,因为那本质是在给"写代码"这件事配一个"运行期业务路由",违反"开发工具 ≠ 业务 runtime 模型"这条规则。`scripts/core/model_gateway/business_route_registry.py` 里的 `BANNED_CLI_PATTERNS`/`HARDCODED_MODEL_PATTERN`/`LEGACY_ACTIVE_MODEL_PATTERNS` 三组正则会扫描 `scripts/core`/`runtime_skills` 下所有非 verify 文件,禁止出现 `claude`/`codex`/硬编码模型名字符串/`scripts.llm.call_llm` 这类旧式直连调用。
+
+**换 provider 怎么做**:不是改代码,是改 `config/model_routes.yaml` 里对应位点的 `provider_ref`(先在 `model_providers:` 下新增一个 provider 定义,再把 `model_routes.<route>.provider_ref` 指过去)。`config/model_routes.example.multi_provider.yaml` 演示了 `business_model`/`writing_model` 换成一个 `openai_compatible_api` 类型 provider 的样子(`dialogue_model` 仍留在 Mimo)——注意这个示例里没有、也不应该出现任何 `codex`/`claude_cli` 类型的 provider。真实的"切到 GPT"流程见 `BUSINESS_MODEL_SWITCH_TO_GPT_PLAN.md`,要求原子切换、单一生效绑定、旧绑定仅作历史记录、不允许自动回退。
 
 ## 6. 业务工作流（workflow）
 

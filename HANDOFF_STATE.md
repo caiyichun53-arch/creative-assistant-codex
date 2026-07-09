@@ -5,7 +5,7 @@
 ## 基本信息
 
 - **分支**:`activation/goal-v0.6.2-production-activation-01`
-- **上次更新**:2026-07-10,Claude Code(2026-07-09 做了一轮外部工程审计+治理修复,2026-07-10 接通了"选题→大纲→成稿"创作链路的三个 Skill,过程中用户发现并纠正了两处真实跑偏,细节见下方)
+- **上次更新**:2026-07-11,Claude Code(2026-07-09 做了一轮外部工程审计+治理修复,2026-07-10 接通了"选题→大纲→成稿"创作链路的三个 Skill,2026-07-11 按用户指令执行了一次"清场式保留重构"——归档 Goal01-12 死链、统一模型路由为三个显性位点、修正文档口径,细节见下方)
 
 ## 当前状态表
 
@@ -17,29 +17,30 @@
 | 人工审核闸门(`review_queue.py`) | 能用,但只有"通过/不通过"二选一 | 是否要接入已存在但未连接的 `goal10_corrections`(修正+留痕框架),涉及架构级决策 | 用户 |
 | `runtime_skills/` 绑定(12个业务Skill) | 4个已接通真实数据,8个仍只能吃假样例 | 8个待接的具体绑定工程还没排期 | 用户 |
 | 两套 Skill 实现取舍(`.claude/skills/` vs `runtime_skills/`) | 方向已定:`runtime_skills/` 为唯一权威 | 迁移/淘汰尚未执行,`.claude/skills/` 仍在正常使用 | 用户已定方向,执行节奏待定 |
-| 两套平行架构(Goal01-12 正式链路 vs `business_data`/`experience` 轻量层) | 2026-07-10 发现,从未调和过 | 要不要把新表迁移到 `VersionRef` 体系 | 用户 |
+| 两套平行架构(Goal01-12 正式链路 vs `business_data`/`experience` 轻量层) | **2026-07-11 清场完成**:`correction`/`production`/`host`/`hermes`/`state` 整个目录 + `workflow/goal_phase5_business_workflow.py`,经全仓库传递闭包核实零真实生产入口依赖后,归档到 `archive/dead_goal_chain_20260709/`。`persistence`/`scheduler`/`workflow/goal05_workflow.py`/`research/goal06_formal_research.py` 意外保留(被 `model_gateway`/`external_adapters` 真实传递依赖) | `goal10_corrections.py` 的"修正+留痕"能力已随 correction/ 一起归档,若未来需要该能力,是一次新的架构决策,不是"接入" | 用户 |
 | Windows 定时任务 | `CreationAssistant_Daily` 已启用,弹窗问题已修复 | `CreationAssistant_Listener` 仍 disabled | - |
-| 治理文档体系(CLAUDE.md/AGENTS.md/闸门脚本) | 2026-07-09 完成一轮外部审计修复,2026-07-10 补了"未注明来源常量"闸门 | 无 | - |
+| 治理文档体系(CLAUDE.md/AGENTS.md/闸门脚本) | 2026-07-09 完成一轮外部审计修复,2026-07-10 补了"未注明来源常量"闸门,2026-07-11 修正了"创作走 Codex/Claude 订阅"这类把开发工具和运行期 provider 混为一谈的表述 | 无 | - |
+| 模型路由(`config/model_routes.yaml`) | **2026-07-11 重构**:唯一显性入口,三个具名位点 `dialogue_model`/`business_model`/`writing_model`,当前全部 = Mimo(经 Hermes),移除了此前混进来的 `engineering_execution` 路由(那本质是 Codex/Claude Code 的开发工具活动,不该被建模成运行期业务路由) | 无 | - |
 | 飞书实时集成 | 未重建 | 需要确认是否现在需要 | 用户 |
 | GPT 供应商切换 | 未开始 | 非当前阻塞项 | 用户主动触发 |
-| 真实付费模型端到端验证 | 未做过,全部 Skill 测试用确定性假 Provider | `HERMES_BUSINESS_MODEL_TOKEN` 等凭据只在 `.env.live-gates`,没进真实 `.env` | 用户 |
+| 真实付费模型端到端验证 | 未做过,全部 Skill 测试用确定性假 Provider——**创作链路当前只到"状态机已验证",不得宣称"创作功能已完成"** | `HERMES_BUSINESS_MODEL_TOKEN` 等凭据只在 `.env.live-gates`,没进真实 `.env` | 用户 |
 
 ## 权威闸门真实输出(不是转述)
 
 ```
 $ python -m scripts.validation.preflight_checkpoint_check --skip-tests
-[PASS] git_working_tree_clean
+[FAIL] git_working_tree_clean   (本次清场重构改动尚未提交,预期内——见下方"本次会话")
 [PASS] test_suite_green
 [PASS] readiness_gate_engineering_ready
 [PASS] ops_infra_checklist_clean
 [PASS] production_data_sanity
 [PASS] no_unsourced_constants
-overall: READY_TO_CHECKPOINT
+overall: NOT_READY
 
 $ python -m pytest tests/core tests/validation -q
-484 passed
+454 passed
 ```
-（收工前请重新跑一次这条命令确认仍然全绿,不要直接信这里贴的历史输出。)
+（收工前请重新跑一次这条命令确认仍然全绿,不要直接信这里贴的历史输出。提交本次改动后 `git_working_tree_clean` 应转为 PASS。)
 
 ## 本次会话(2026-07-09 至 2026-07-10)做了什么
 
@@ -54,13 +55,24 @@ $ python -m pytest tests/core tests/validation -q
 
 全部改动分批提交为独立 commit,每次提交前都跑过完整测试和权威闸门,细节见 git log。
 
+## 本次会话(2026-07-11,清场式保留重构)做了什么
+
+用户拿着上一份《实现可信度审计报告》,要求执行一次"清场式保留重构":不新增功能,只清理"真系统"和"假系统"并存的问题。全部改动跑过 `python -m pytest tests/core tests/validation -q`(454 passed,比归档前的 484 少 30 条——4 个只测试被归档模块的 pytest 文件一并归档,详见下方)。
+
+1. **归档 DEAD_GOAL_CHAIN**:不凭文件名判断,而是从真实生产入口(`run_competitor_registration_full.py`/`run_reverse_prep.py`/`run_source_to_topic.py`/`run_content_plan.py`/`run_script_generate.py`/`run_sample_deep_analyze.py`/`review_queue.py`/`compare_asr_providers.py`)出发算了一遍真实的 Python import 传递闭包(脚本见 `archive/dead_goal_chain_20260709/README.md` 的方法说明),再决定谁能归档。结果:`correction`/`production`/`host`/`hermes`/`state` 整个目录 + `workflow/goal_phase5_business_workflow.py`(不是整个 `workflow/`)确认零真实依赖,归档到 `archive/dead_goal_chain_20260709/`,连同只测试它们的 `tests/core/test_phase5_business_workflow.py`/`test_phase6_hermes_whitelist_tool.py`/`test_phase7_synthetic_acceptance.py`/`test_production_host_boundary.py`、以及 `experience/goal09_experiments.py`+`verify_goal_09.py`(production 归档后断链的死代码)、`scripts/monitor/queries.py`(state 归档后断链、且本来就没人调用)。**闭包计算揭示了两个反直觉的结果**:`persistence`(`content_hash`/`PersistenceStore`)、`scheduler`(`Goal03Scheduler`)、`workflow/goal05_workflow.py`、`research/goal06_formal_research.py` 这四个名字里带着 `goal0X`、看起来像旧链路的模块,实际被 `model_gateway/formal_skill_adapter.py` 的 `make_*_harness()` 或 `external_adapters/goal_phase4_external_adapters.py` 真实传递依赖,而后者又被两个真实生产脚本直接 import——全部保留在原地,没有归档。归档后修了两处真实断链(`scripts/core/model_gateway/business_route_registry.py` 里两处硬编码路径读取归档文件的逻辑,改成存在性检查,不是硬编码 False)和两个测试(`test_live_gates.py` 里 4 个依赖 Feishu/Hermes-host 的 gate 从"DRY_RUN_PASSED"改为诚实的"NOT_READY"——这些 gate 本来测的就是"未重建"的飞书集成,不是新的功能回退)。
+2. **统一模型路由为三个显性位点**:`config/model_routes.yaml` 新增 `model_positions:` 顶层块,明确点名 `dialogue_model`/`business_model`/`writing_model`,当前全部指向同一个 `mimo_main` provider(Mimo/Hermes)。删除了此前混入的 `engineering_execution` 路由——那描述的是 Codex/Claude Code 写代码这件事本身,不是运行期业务路由,留着就是"把开发工具误建模成 runtime provider"。两个 example 配置文件同步更新;`model_routes.example.multi_provider.yaml` 里原来有一个 `gpt_subscription_codex`(`type: codex_cli_subscription`)provider,直接把 Codex 列成业务模型候选项——已删除,换成 `gpt_api_gateway`(标准 OpenAI 兼容 API)示范"未来可以换 provider",不再示范"可以把 Codex CLI 当业务 provider"。
+3. **清理死配置**:`.env.example` 里 `CREATION_LLM_PROVIDER`/`CREATION_LLM_MODEL`/`CREATION_LLM_FALLBACK_ENABLED` 三个键——读它们的 `scripts/llm/call.py` 早在 2026-07-04 就被删除,这三行已经是没人读的死配置,换成真正生效的 `HERMES_BUSINESS_API_KEY`/`HERMES_BUSINESS_BASE_URL`/`HERMES_BUSINESS_MODEL_NAME`/`HERMES_BUSINESS_MODEL_CLASS`。
+4. **修正文档口径**:`AGENTS.md`(CLAUDE.md 由此机械生成)里"开发用 Codex...创作走用户的 Codex 订阅"、"模型路由 per-node:默认 Codex 低阶...创作走 Codex 对话"这两处原文,是审计报告点名的"把写代码工具误当成业务 runtime 模型"的源头之一——已重写,明确"Codex/Claude Code 只是工程工具,系统运行期统一 Mimo,见三个显性位点"。`REQUIREMENT_CODE_TRACEABILITY.yaml` 里 BR-CONTENT-001/002/003 三条的 `target_component: ContentWorkflow/ContentGuard`——这个类全仓库不存在,是幽灵引用——已改为老实标注 `UNIMPLEMENTED`。
+5. **未做的事**(有意,不是遗漏):没有重命名 `runtime_skills/*/binding.yaml` 里的 `route_id: business_analysis`/`writing_generation` 字符串去匹配 `business_model`/`writing_model` 这两个新名字——那需要同时改 12 个 binding.yaml + `model_router.py` 的两个常量,风险和收益不对等,`model_positions:` 这个新增的顶层映射已经能让"三个位点叫什么、各自绑定哪个 route_id"一眼可查,不需要底层也重命名。`scripts/core/runtime/`(`goal04_runtime_host.py` 等)和 `scripts/core/external_adapters/goal_phase4_external_adapters.py` 本次也没动——前者闭包计算证实同样是死代码,但不在用户这次列的清单里;后者是真实依赖,本来就不该动。
+
 ## 需要用户决定的事项(未决,不是遗漏)
 
 - **评论数量**:`TOP_COMMENTS_PER_HIT=3` 没有依据,需要一个真实合理值(是否该随评论总数浮动)。
 - **选题判断维度**:谁来重建这把"评分尺子"、怎么建(不能简单复用 `tactic_extract`)。
 - **热点采集**:用什么数据源/工具(旧系统里没有可复用的现成方案)。
-- **人工审核该不该接 `goal10_corrections`**:架构级决策,涉及是否要把新表迁移到 `VersionRef` 体系。
+- **`goal10_corrections.py` 要不要复活**:已随 correction/ 一起归档到 `archive/dead_goal_chain_20260709/`,若未来确实需要它的"修正+留痕"能力,是一次新的、独立的架构决策,不是简单地"接回来"。
 - `runtime_skills/` 剩余 8 个 Skill 的绑定工程什么时候开始。
 - `.claude/skills/*` 具体什么时候开始迁移/淘汰。
+- `scripts/core/runtime/`、`external_adapters/goal_phase4_external_adapters.py` 本次清场没有处理(前者是本次才发现的另一处死代码,后者是真实依赖)——要不要在下一轮清场里处理。
 - 是否现在授权真实付费模型调用做一次端到端验证(涉及真实花费)。
 - 飞书集成要不要重建、GPT供应商切换要不要启动——一直是"未来用户主动触发项",不是当前阻塞。

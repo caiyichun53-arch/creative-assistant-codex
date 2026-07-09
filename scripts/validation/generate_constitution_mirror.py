@@ -39,14 +39,18 @@ SUBSTITUTIONS: tuple[tuple[str, str], ...] = (
     ("工程章程(AGENTS.md)", "工程章程(CLAUDE.md)"),
     ("一个 **Codex 工程**", "一个 **Claude Code 工程**"),
     ("Codex 当创作驾驶舱", "Claude Code 当创作驾驶舱"),
-    ("开发用 Codex(", "开发用 Claude Code("),
-    ("节点走 Codex 订阅低阶模型", "节点走 Claude 订阅低阶模型"),
-    ("Codex 无头", "Claude Code 无头"),
-    ("Codex 不装 cc-switch", "Claude Code 不装 cc-switch"),
-    ("用户的 Codex 订阅", "用户的 Claude 订阅"),
-    ("默认 Codex 低阶", "默认 Claude 低阶"),
-    ("创作走 Codex 对话", "创作走 Claude Code 对话"),
 )
+# 2026-07-09: removed six entries ("开发用 Codex(" / "节点走 Codex 订阅低阶模型" /
+# "Codex 无头" / "Codex 不装 cc-switch" / "用户的 Codex 订阅" / "默认 Codex 低阶" /
+# "创作走 Codex 对话") after a "清场式保留重构" rewrote the AGENTS.md passages
+# that used them -- those phrases described exactly the "engineering tool vs.
+# runtime business provider" conflation the rewrite exists to fix (system
+# runtime is unified on Mimo via config/model_routes.yaml's three explicit
+# positions, independent of which tool -- Codex or Claude Code -- is used to
+# write the code). The remaining three entries are still literal, tool-name-
+# only mentions ("a Codex/Claude Code project", "Codex/Claude Code is the
+# creation cockpit") that legitimately differ only by which coding agent is
+# reading this file.
 
 
 def generate_claude_md(agents_md_text: str) -> str:
