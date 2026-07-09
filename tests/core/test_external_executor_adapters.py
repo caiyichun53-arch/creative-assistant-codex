@@ -1,5 +1,20 @@
 from __future__ import annotations
 
+# 2026-07-11: this file used to also cover RuntimeAdapter/RuntimeHost from
+# scripts/core/runtime/goal04_runtime_host.py (two tests:
+# test_runtime_host_rejects_external_adapter_by_default_and_allows_phase4_opt_in,
+# test_external_adapter_failure_does_not_fallback_or_complete_runtime_job).
+# scripts/core/runtime/ was archived to archive/dead_goal_chain_20260709/ after
+# a real production-entrypoint import closure proved it has zero real caller
+# (see that archive's README). Those two tests moved with it -- they tested
+# RuntimeHost's own adapter-registration/failure semantics, not the adapter
+# classes below. The six tests that remain are unaffected: they test the
+# adapter classes themselves (MediaCrawlerCollectorAdapter/CommentCollection
+# Adapter/AsrAdapter/SearchProviderAdapter/NetEaseMusicCollectorAdapter,
+# defined in the real, still-imported scripts/core/external_adapters/
+# goal_phase4_external_adapters.py) against a fake ExternalAdapterCommand
+# executor, with no dependency on the archived runtime host.
+
 import unittest
 
 from scripts.core.external_adapters import (
@@ -12,17 +27,14 @@ from scripts.core.external_adapters import (
     NetEaseMusicCollectorAdapter,
     ResearchFetcherAdapter,
     SearchProviderAdapter,
-    make_comment_collection_runtime_handler,
 )
-from scripts.core.persistence.goal01_store import PersistenceStore, UUIDv7Generator
+from scripts.core.persistence.goal01_store import PersistenceStore
 from scripts.core.research.goal06_formal_research import (
     ExtractedEvidence,
     FormalResearchMaterializer,
     FormalResearchService,
     ResearchQuery,
 )
-from scripts.core.runtime.goal04_runtime_host import RuntimeAdapter, RuntimeHandlerContract, RuntimeHost, RuntimeHostError
-from scripts.core.scheduler.goal03_scheduler import Goal03Scheduler
 
 
 class RecordingExecutor:
@@ -60,11 +72,6 @@ class FixtureExtractor:
                 extractor=self.extractor_name,
             )
         ]
-
-
-def make_scheduler() -> Goal03Scheduler:
-    generator = UUIDv7Generator(now_ms=lambda: 1_770_000_000_000, randbits=lambda bits: 42)
-    return Goal03Scheduler.in_memory(id_factory=generator.new, now_ms=lambda: 1_770_000_000_000)
 
 
 class ExternalExecutorAdapterTests(unittest.TestCase):
@@ -210,75 +217,6 @@ class ExternalExecutorAdapterTests(unittest.TestCase):
         self.assertEqual(result.item_count, 1)
         self.assertEqual(result.payload["comments"][0]["platform"], "netease_music")
         self.assertEqual(executor.commands[0].executable, "adapter.netease_music.comments")
-
-    def test_runtime_host_rejects_external_adapter_by_default_and_allows_phase4_opt_in(self) -> None:
-        executor = RecordingExecutor(
-            {
-                "platform.comment_collection": {
-                    "comments": [{"comment_id": "c1", "text": "fixture comment"}],
-                }
-            }
-        )
-        adapter = RuntimeAdapter(
-            adapter_name="comment-collector",
-            job_kind="adapter.comments.collect",
-            handler=make_comment_collection_runtime_handler(CommentCollectionAdapter(executor)),
-            contract=RuntimeHandlerContract(
-                job_kind="adapter.comments.collect",
-                required_payload_keys=("platform", "source_id", "source_url"),
-                required_result_keys=("adapter_id", "capability", "item_count", "output_hash"),
-            ),
-            uses_external_io=True,
-        )
-        scheduler = make_scheduler()
-        self.addCleanup(scheduler.store.conn.close)
-        with self.assertRaises(RuntimeHostError):
-            RuntimeHost(scheduler, worker_id="default-worker").register_adapter(adapter)
-
-        host = RuntimeHost(scheduler, worker_id="phase4-worker", allow_external_adapters=True)
-        host.register_adapter(adapter)
-        queued = scheduler.enqueue_job(
-            job_kind="adapter.comments.collect",
-            payload={"platform": "douyin", "source_id": "aweme-1", "source_url": "https://example.invalid/video/1"},
-            idempotency_key="phase4-comment-collect",
-            max_attempts=1,
-        )
-        step = host.run_once()
-        self.assertEqual(step.status, "succeeded")
-        self.assertEqual(scheduler.get_job(queued.job_id)["status"], "succeeded")
-        self.assertEqual(len(executor.commands), 1)
-
-    def test_external_adapter_failure_does_not_fallback_or_complete_runtime_job(self) -> None:
-        executor = RecordingExecutor({}, error=RuntimeError("collector unavailable"))
-        scheduler = make_scheduler()
-        self.addCleanup(scheduler.store.conn.close)
-        host = RuntimeHost(scheduler, worker_id="phase4-worker", allow_external_adapters=True)
-        host.register_adapter(
-            RuntimeAdapter(
-                adapter_name="comment-collector",
-                job_kind="adapter.comments.collect",
-                handler=make_comment_collection_runtime_handler(CommentCollectionAdapter(executor)),
-                contract=RuntimeHandlerContract(
-                    job_kind="adapter.comments.collect",
-                    required_payload_keys=("platform", "source_id", "source_url"),
-                    required_result_keys=("adapter_id", "capability", "item_count", "output_hash"),
-                ),
-                uses_external_io=True,
-            )
-        )
-        queued = scheduler.enqueue_job(
-            job_kind="adapter.comments.collect",
-            payload={"platform": "douyin", "source_id": "aweme-1", "source_url": "https://example.invalid/video/1"},
-            idempotency_key="phase4-comment-failure",
-            max_attempts=1,
-        )
-
-        step = host.run_once()
-
-        self.assertEqual(step.status, "failed")
-        self.assertEqual(step.reason, "handler_error")
-        self.assertEqual(scheduler.get_job(queued.job_id)["status"], "dead")
-        self.assertEqual(len(executor.commands), 1)
 
 
 if __name__ == "__main__":

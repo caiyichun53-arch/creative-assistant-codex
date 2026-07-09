@@ -16,12 +16,15 @@ storage:
     - scripts/core/persistence/goal01_schema.sqlite.sql
     - scripts/core/persistence/goal02_schema.sqlite.sql
     - scripts/core/persistence/goal03_schema.sqlite.sql
-    - scripts/core/runtime/goal_runtime_vertical_slice_schema.sqlite.sql
   postgres_schema_chain:
     - scripts/core/persistence/goal01_schema.postgres.sql
     - scripts/core/persistence/goal02_schema.postgres.sql
     - scripts/core/persistence/goal03_schema.postgres.sql
-    - scripts/core/runtime/goal_runtime_vertical_slice_schema.postgres.sql
+  # 2026-07-11: removed scripts/core/runtime/goal_runtime_vertical_slice_schema.
+  # {sqlite,postgres}.sql from both chains above -- scripts/core/runtime/ was
+  # confirmed DEAD_GOAL_CHAIN (zero real production entrypoint depends on it,
+  # see archive/dead_goal_chain_20260709/README.md) and archived; its schema
+  # only ever backed that dead module's own self-contained demo tables.
 
 legacy_runtime:
   enabled: false
