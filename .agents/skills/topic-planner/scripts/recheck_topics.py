@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Incrementally recheck topics from topic_state and research_patch."""
+"""Incrementally recheck topics from topic_state and research_patch.
+
+[LEGACY, not production] (2026-07-11): the score/ranking updates below are
+part of the old system's topic-scoring mechanism (see plan_topics.py). Not a
+production-loaded path; do not port into runtime_skills/source_to_topic.
+"""
 
 from __future__ import annotations
 

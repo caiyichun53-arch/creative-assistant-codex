@@ -3,6 +3,8 @@ name: topic-planner
 description: 通用选题规划技能。用于已有研究资料包后，结合领域知识包生成多个可做选题，并评估成立理由、资料支撑、风险和推荐路径。不负责搜集资料、不写详细大纲、不写正文。
 ---
 
+> **[LEGACY, 非生产]**(2026-07-11 标注):本文件下面描述的"对选题评分"(`score`: material_support/freshness/depth/risk_control/user_fit)是旧系统的评分/排序机制。`.agents/skills/` 整个目录已由 `.agents/skills/README.md` 标记为参考材料,不是生产加载路径。**这套评分机制不代表当前设计**——当前设计没有冻结"选题打分制",不得把这里的 `score`/`rank_topics`/`topic_state.score` 逻辑接入 `runtime_skills/source_to_topic` 或任何真实生产入口。当前真正的选题缺口是判断规则/领域约束/去重冷却/候选来源/人工确认门槛有没有落地,不是"要不要用这套评分"。
+
 # 通用选题规划
 
 ## 使用时机

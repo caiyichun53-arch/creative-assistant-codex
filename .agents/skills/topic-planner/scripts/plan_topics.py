@@ -3,6 +3,13 @@
 
 This script does not try to be an editor. It organizes evidence, marks gaps,
 and produces reviewable candidate axes that an agent or user can judge.
+
+[LEGACY, not production] (2026-07-11): score()/status_from_score()/
+rank_topics() below implement the old system's topic-scoring/ranking
+mechanism. .agents/skills/ is reference material only (see
+.agents/skills/README.md), not a production-loaded path. The current design
+does not freeze a "topic scoring system" -- do not port this scoring logic
+into runtime_skills/source_to_topic or any real production entrypoint.
 """
 
 from __future__ import annotations
