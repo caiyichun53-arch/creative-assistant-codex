@@ -6,6 +6,21 @@
 
 ## 进行中 / 下一项
 
+### 0. 生产激活:真实经验闭环 + Hermes 创作质量验证 —— **[阶段1已完成,阶段2-5待做]**
+
+> 执行计划见 `C:\Users\15891\.claude\plans\warm-orbiting-kahn.md`(用户已批准)。目标:把"真实数据→经验提炼→人工审核+改稿变证据→经验影响下一次生成→真实 Hermes 产出质量由人评判"这条闭环打通。每阶段做完停下汇报,等用户确认再进下一阶段,不自动连续执行。
+
+**阶段1(已完成,2026-07-11)—— 把 VersionRef 基础设施接回真实库**:
+- `git mv` 把 `production/goal08_production_chain.py`(`VersionRef`)、`experience/goal09_experiments.py`(`ExperienceEvidence`/`recompute_experience_state`/tactic 生命周期)从 `archive/dead_goal_chain_20260709/` 挪回 `scripts/core/`——这是一次明确的、计划批准过的复活,不是清场回归。
+- 新增 `scripts/core/persistence/install_versionref_schema_into_business_db.py`,把 `goal01/02/03_schema.sqlite.sql`(18张新表:`trace_root`/`trace_version`/`tactic_state`/`scheduler_job` 等)真实装进 `data/formal/production_activation.sqlite3`,装表前打了真实备份(`production_activation_pre_versionref_schema_20260709T184950Z.sqlite3`)。
+- 真实验证:装表前后 8 张既有真实业务表(`competitor_accounts`=28/`competitor_videos`=1516/`video_checks`=1666/`baselines`=560/`hits`=431/`hit_transcripts`=431/`hit_comments`=23893/`hit_deep_analysis`=2)逐表内容哈希完全一致,新表存在且为空。13个新测试(`tests/core/test_install_versionref_schema.py`),每个检查都配了反向测试(故意造一张列结构不对的同名表验证会被拒绝、故意在 schema 里插一条会改真实业务表的语句验证会被检测到)。
+- 顺手修了 `REQUIREMENT_CODE_TRACEABILITY.yaml` 里 `BR-EXPERIENCE-001` 的幽灵 `target_component: ExperienceEngine`,改成指向真实复活的 `goal09_experiments.py`。
+- **对齐检查**:这一步做的是"让一个真实 formal artifact 存在",对应 `BR-EXPERIENCE-001`"经验真相源应为 formal artifact"这句话——只搭地基,`tactic_state`/`trace_root`/`trace_version` 目前全部是空表,还没有任何真实经验数据写进去,不冒充已经完成。
+
+**已知发现,尚待你确认**(阻塞阶段3才需要答案,不阻塞已完成的阶段1):`hit_deep_analysis` 表里已有的 2 条记录(`model_name=xiaomi/mimo-v2.5-pro`,2026-07-08)看起来像是真实调用过 Hermes 的产物,但跟"还没花过一次钱"这句反复出现的表述矛盾——需要你确认这是①之前 `.env` 配置更全时的真实调用(说明这句表述本身错了,需要改),还是②别的方式回填的非真实数据(说明生产库里混进过来源不明的数据)。
+
+**阶段2-5(未开始,待你确认阶段1结果后再继续)**:登记真实证据进 VersionRef → 绑定 `tactic_extract` → 人工改稿变证据(升级 `review_queue.py`)→ 真实 Hermes 创作质量验证。完整验收标准见计划文件。
+
 ### 1. 接通"选题→大纲→成稿"技术链路 —— **[技术环节已打通,业务流程还不完整]**
 
 > **2026-07-10 用户纠偏**:2026-07-09 汇报"链路打通"时说法过头了——验证的只是"数据格式对得上、四个环节能串起来跑",不是"选题这件事做对了"。用户当场指出两个真实缺口:①三个环节之间完全没有人工审核,内容会自动一路流到成稿;②选题只用了"对标爆款"一种料源,当前设计要求的候选来源(对标爆款/评论区/研究缺口/当下热点)被跳过了大半。①已经在 2026-07-10 修复,②只补了四分之一(评论区),其余留在下面单独列出,不装作已经做完。

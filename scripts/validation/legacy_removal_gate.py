@@ -66,6 +66,7 @@ ALLOWED_GUARD_REFERENCE_FILES = {
     "scripts/core/business_data/run_competitor_registration_full.py",
     "scripts/core/business_data/run_reverse_prep.py",
     "scripts/core/experience/run_sample_deep_analyze.py",
+    "scripts/core/persistence/install_versionref_schema_into_business_db.py",
     "scripts/core/business_data/README.md",
     "tests/core/test_phase5_business_workflow.py",
     "tests/validation/test_clean_room_readiness.py",

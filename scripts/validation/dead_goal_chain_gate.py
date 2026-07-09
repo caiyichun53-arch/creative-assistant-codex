@@ -47,15 +47,23 @@ REAL_ENTRYPOINTS = (
 # entrypoint depends on them. If one of these needs to come back, that is a
 # new, explicit architectural decision (see archive/dead_goal_chain_20260709/
 # README.md) -- it must not silently re-enter the import graph.
+#
+# 2026-07-11: scripts.core.production and scripts.core.experience.
+# goal09_experiments were deliberately revived (see the approved
+# "生产激活：真实经验闭环" plan) as the real foundation for
+# BR-EXPERIENCE-001 -- VersionRef/PersistenceStore is connection-agnostic
+# and was verified to have zero table-name collisions with the real
+# production schema. This is an explicit, plan-approved revival, not a
+# silent regression. verify_goal_08.py stays archived: this pass revives
+# only the VersionRef/experience-state machinery, not its old self-cert
+# harness.
 DEAD_MODULE_DOTTED_PREFIXES = (
     "scripts.core.correction",
-    "scripts.core.production",
     "scripts.core.host",
     "scripts.core.hermes",
     "scripts.core.state",
     "scripts.core.runtime",
     "scripts.core.workflow.goal_phase5_business_workflow",
-    "scripts.core.experience.goal09_experiments",
     "scripts.monitor.queries",
 )
 

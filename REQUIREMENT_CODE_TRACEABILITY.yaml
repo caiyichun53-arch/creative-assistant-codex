@@ -629,15 +629,31 @@ traceability:
   legacy_functions: []
   observed_legacy_behavior: Experience lives in one shared Obsidian/example system
     with domain/account metadata, not scattered agent memories.
-  target_component: ExperienceEngine
-  current_implementation_status: legacy behavior observed; target formalization pending
-    unless noted exact_match
+  target_component: 'scripts/core/experience/goal09_experiments.py (ExperienceEvidence/
+    ExperienceStateInput/recompute_experience_state, real tactic-lifecycle state
+    machine) + scripts/core/production/goal08_production_chain.py (VersionRef) +
+    scripts/core/persistence/goal01_store.py (PersistenceStore). 2026-07-11: this
+    used to say target_component: ExperienceEngine, a class that never existed
+    anywhere in the codebase -- a ghost reference. As of this correction the real
+    formal-artifact machinery exists and its schema (goal01/02/03_schema.sqlite.sql)
+    is installed into the real production database (data/formal/
+    production_activation.sqlite3) via scripts/core/persistence/
+    install_versionref_schema_into_business_db.py, additively, with zero mutation
+    of existing business rows (verified in tests/core/test_install_versionref_schema.py).
+    Nothing yet WRITES real evidence/tactic rows through this machinery -- that is
+    the next phase (registering real hit_deep_analysis evidence and binding
+    tactic_extract), not done as of this entry.'
+  current_implementation_status: 'partial: the formal-artifact schema is real and
+    installed against real production data; no real evidence/tactic rows exist yet
+    (tactic_state/trace_root/trace_version are all empty in production_activation.sqlite3
+    as of this entry). Not to be read as "formalization complete".'
   alignment_status: naming_only
-  difference_type: []
+  difference_type:
+  - removed
   migration_action: Preserve business semantics while moving state/external side effects
     to formal Core/Adapter boundaries.
   test_ids:
-  - projection hash check
+  - tests/core/test_install_versionref_schema.py
   evidence:
     source_section: 经验共享库
     defaults:

@@ -5,13 +5,13 @@
 ## 基本信息
 
 - **分支**:`activation/goal-v0.6.2-production-activation-01`
-- **上次更新**:2026-07-11(第四轮,清场收尾+封 tag),Claude Code(2026-07-09 做了一轮外部工程审计+治理修复,2026-07-10 接通了"选题→大纲→成稿"创作链路的三个 Skill,2026-07-11 三轮"清场式保留重构"——归档 Goal01-12 死链/`scripts/core/runtime/`/`verify_goal_05.py`/`verify_goal_06.py`、统一模型路由为三个显性位点、修正 BR-TOPIC-001 口径与其他文档措辞,细节见下方;2026-07-11 第四轮:清场阶段正式结束,基线封存为 tag `v0.6.3-clean-activation-base`)
+- **上次更新**:2026-07-11(第五轮,生产激活阶段1),Claude Code(2026-07-09 做了一轮外部工程审计+治理修复,2026-07-10 接通了"选题→大纲→成稿"创作链路的三个 Skill,2026-07-11 三轮"清场式保留重构"——归档 Goal01-12 死链/`scripts/core/runtime/`/`verify_goal_05.py`/`verify_goal_06.py`、统一模型路由为三个显性位点、修正 BR-TOPIC-001 口径与其他文档措辞;2026-07-11 第四轮:清场阶段正式结束,基线封存为 tag `v0.6.3-clean-activation-base`;2026-07-11 第五轮:进入 production activation 阶段,按用户批准的计划完成"生产激活:真实经验闭环"阶段1,细节见下方 ROADMAP.md 第0项)
 
-## 阶段状态(2026-07-11 第四轮新增)
+## 阶段状态(2026-07-11 第四轮新增,第五轮更新)
 
 **清场阶段已结束**。基线已封存为 tag `v0.6.3-clean-activation-base`(commit `3232c4b5ae72b464b0836067ae3675e6f41fce70`)——如果需要回到清场刚完成、production activation 还没开始的干净状态,`git checkout v0.6.3-clean-activation-base`。
 
-**下一阶段:production activation**。当前首要任务是建立唯一最小生产入口,不是继续审计/清理旧代码——不要再凭"发现了另一处可疑代码"就主动开一轮新的全仓库扫描或扩大 `archive/` 范围,那是清场阶段的活,已经做完。
+**当前阶段:production activation,正在执行**。执行方案见 `C:\Users\15891\.claude\plans\warm-orbiting-kahn.md`(用户已批准),目标是"生产激活:真实经验闭环 + Hermes 创作质量验证",分5个阶段、每阶段做完停下等确认,不自动连续执行——详见 `ROADMAP.md` 第0项,阶段1(把 VersionRef 基础设施接回真实库)已完成。不要再凭"发现了另一处可疑代码"就主动开一轮新的全仓库扫描或扩大 `archive/` 范围,那是清场阶段的活,已经做完;当前阶段的范围以计划文件为准,不要中途改去做计划外的事。
 
 **后续清理收紧为例外触发,不再是常规工作**:只有下面四种情况出现时,才允许做局部清理,且清理范围只限于触及到的具体文件,不得借机扩大成新一轮审计:
 1. **阻塞真实运行**——某个真实生产入口(`business_data`/`experience` 下的 `run_*.py`/`review_queue.py`)跑不起来。

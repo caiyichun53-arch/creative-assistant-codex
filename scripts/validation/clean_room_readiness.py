@@ -268,11 +268,15 @@ def phase_two_findings(root: Path) -> list[Finding]:
     # _safe_db_path() creation.db guard, just deliberately kept out of business_data
     # itself (BR-COLLECT-007 requires business_data stay LLM-free; this module's whole
     # job is an LLM call, see tests/validation/test_business_data_no_llm.py).
+    # scripts/core/persistence carries the same exemption for the same reason (2026-07-11):
+    # install_versionref_schema_into_business_db.py's own _safe_db_path() guard message
+    # ("refusing to write old data/creation.db") trips this bare-string scan, see
+    # tests.core.test_install_versionref_schema.
     formal_refs = find_references(
         root,
         LEGACY_REFERENCE_PATTERNS,
         scan_roots=PRODUCTION_SCAN_ROOTS,
-        exclude_prefixes=("tests", "scripts/core/business_data", "scripts/core/experience"),
+        exclude_prefixes=("tests", "scripts/core/business_data", "scripts/core/experience", "scripts/core/persistence"),
     )
     findings.append(
         Finding(
