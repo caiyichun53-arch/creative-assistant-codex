@@ -21,6 +21,15 @@ anything gets called done/completed/ENGINEERING_READY:
      source presented as if it were reasoned, the exact failure mode
      TOP_COMMENTS_PER_HIT=3 reproduced on 2026-07-10 in the same session
      that was fixing this class of problem elsewhere
+  7. the 2026-07-11 clean-sweep (scripts/validation/dead_goal_chain_gate.py)
+     still holds: no archived Goal01-12 module has been re-imported by a real
+     entrypoint, no active code reaches back into archive/, the three model
+     positions (dialogue_model/business_model/writing_model) still exist and
+     are Mimo with fallback disabled, no engineering_execution route crept
+     back in, .env.example has no dead model config, CLAUDE.md/AGENTS.md
+     have not regressed to claiming creation runs on Claude/is complete, and
+     REQUIREMENT_CODE_TRACEABILITY.yaml has no ContentWorkflow/ContentGuard
+     ghost reference
 Until now these were separate manual steps someone had to remember to run,
 in order, every time -- exactly the kind of "remembering" this project's own
 incident history (see HANDOFF_STATE.md) shows doesn't hold up under
@@ -114,6 +123,17 @@ def check_unsourced_constants() -> dict[str, Any]:
     }
 
 
+def check_dead_goal_chain() -> dict[str, Any]:
+    from scripts.validation.dead_goal_chain_gate import run_checklist
+
+    result = run_checklist()
+    return {
+        "name": "dead_goal_chain_clean_sweep",
+        "passed": result["status"] == "PASS",
+        "detail": "clean" if result["status"] == "PASS" else [c for c in result["checks"] if not c["passed"]],
+    }
+
+
 def run_all_checks(*, skip_tests: bool) -> dict[str, Any]:
     checks = [
         check_git_clean(),
@@ -122,6 +142,7 @@ def run_all_checks(*, skip_tests: bool) -> dict[str, Any]:
         check_ops_infra(),
         check_production_data(),
         check_unsourced_constants(),
+        check_dead_goal_chain(),
     ]
     overall_passed = all(check["passed"] for check in checks)
     return {"status": "READY_TO_CHECKPOINT" if overall_passed else "NOT_READY", "checks": checks}

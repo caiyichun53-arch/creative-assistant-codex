@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from scripts.validation.preflight_checkpoint_check import (
+    check_dead_goal_chain,
     check_git_clean,
     check_ops_infra,
     check_production_data,
@@ -115,6 +116,24 @@ class CheckUnsourcedConstantsTests(unittest.TestCase):
         self.assertFalse(result["passed"])
 
 
+class CheckDeadGoalChainTests(unittest.TestCase):
+    def test_passes_when_gate_reports_pass(self) -> None:
+        with patch(
+            "scripts.validation.dead_goal_chain_gate.run_checklist",
+            return_value={"status": "PASS", "checks": []},
+        ):
+            result = check_dead_goal_chain()
+        self.assertTrue(result["passed"])
+
+    def test_fails_when_gate_reports_fail(self) -> None:
+        with patch(
+            "scripts.validation.dead_goal_chain_gate.run_checklist",
+            return_value={"status": "FAIL", "checks": [{"name": "fallback_disabled_on_every_route", "passed": False, "detail": ["x"]}]},
+        ):
+            result = check_dead_goal_chain()
+        self.assertFalse(result["passed"])
+
+
 class RunAllChecksTests(unittest.TestCase):
     def _patched(self, **overrides):
         defaults = {
@@ -124,6 +143,7 @@ class RunAllChecksTests(unittest.TestCase):
             "check_ops_infra": {"name": "ops", "passed": True},
             "check_production_data": {"name": "data", "passed": True},
             "check_unsourced_constants": {"name": "constants", "passed": True},
+            "check_dead_goal_chain": {"name": "dead_chain", "passed": True},
         }
         defaults.update(overrides)
         patches = [
