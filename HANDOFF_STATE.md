@@ -43,20 +43,20 @@
 ## 权威闸门真实输出(不是转述)
 
 ```
-$ python -m scripts.validation.preflight_checkpoint_check --skip-tests
-[PASS] git_working_tree_clean
+$ python -m scripts.validation.preflight_checkpoint_check
+[FAIL] git_working_tree_clean   (只有 Creation_assistant-codex.zip 一个未跟踪文件——会话开始前就在,不是本轮产生的,没动它)
 [PASS] test_suite_green
 [PASS] readiness_gate_engineering_ready
 [PASS] ops_infra_checklist_clean
 [PASS] production_data_sanity
 [PASS] no_unsourced_constants
 [PASS] dead_goal_chain_clean_sweep
-overall: READY_TO_CHECKPOINT
+overall: NOT_READY(仅因上面那个无关 zip 文件)
 
 $ python -m pytest tests/core tests/validation -q
-473 passed
+488 passed
 ```
-（收工前请重新跑一次这条命令确认仍然全绿,不要直接信这里贴的历史输出。上面这次是提交后跑的。)
+（收工前请重新跑一次这条命令确认仍然全绿,不要直接信这里贴的历史输出。）
 
 ## 本次会话(2026-07-09 至 2026-07-10)做了什么
 
