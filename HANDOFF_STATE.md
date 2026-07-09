@@ -76,7 +76,15 @@ $ python -m pytest tests/core tests/validation -q
 1. **`scripts/core/runtime/` 归档**:重新基于当轮代码(前一轮 4 个 commit 之后)跑真实闭包,12 个文件(`goal04_runtime_host.py`/`goal_runtime_vertical_slice.py` 等)确认零真实生产入口依赖,归档到 `archive/dead_goal_chain_20260709/scripts_core_runtime/`。归档暴露了两处上一轮没扫到的真实断链(都不是 Python import,闭包脚本本身扫不到):①`config/settings.yaml`/`config/settings.example.yaml` 的 `sqlite_schema_chain`/`postgres_schema_chain` 引用了 runtime 自带的 schema 文件,已从两处配置移除;②`tests/core/test_external_executor_adapters.py` 里 8 个测试有 2 个(`test_runtime_host_rejects_external_adapter_by_default_and_allows_phase4_opt_in`、`test_external_adapter_failure_does_not_fallback_or_complete_runtime_job`)依赖 `RuntimeHost`——这 2 个随 runtime 一起从活跃测试里移除,其余 6 个测真实 `external_adapters` 类的用例原地保留,没有像上一轮 `test_phase5_business_workflow.py` 那样整个文件一锅端。
 2. **补回 `Goal05WorkflowOrchestrator` 测试覆盖**:新增 `tests/core/test_goal05_workflow_orchestrator.py`,13 个测试全部用真实 `Goal03Scheduler.in_memory()`(不 mock 调度器/持久层),覆盖:初始化、合法多步 workflow 真实入队(读 `scheduler.get_job()` 验证 job_kind/status/priority/`_workflow`血缘元数据/correlation_id)、workflow_id 是确定性 content_hash(两个独立 scheduler 同输入得同 id)、同 idempotency_key 重放不重复入队、7 种非法输入(空 workflow_name/空 idempotency_key/零步骤/重复 step_key/空 step_key/空 job_kind/max_attempts≤0)各自显式抛 `WorkflowError`、非法输入不产生部分入队(`scheduler_job` 表行数验证为 0)、模块源码不引用任何已归档模块或 `fallback` 字样。
 3. **清场闸门新增 3 项检查**(`scripts/validation/dead_goal_chain_gate.py`,共 11 项):`scripts.core.runtime` 加入 `DEAD_MODULE_DOTTED_PREFIXES`;新增 `archive_unreachable_from_real_entrypoints`(路径而非清单判断,即使某天有人忘记维护前缀清单也能兜底);新增 `goal05_workflow_orchestrator_has_independent_test_coverage`(机械验证测试文件存在、真的 import 了 `Goal05WorkflowOrchestrator`、有 `test_*` 方法)。
-4. **仍未处理、本轮核实过确实是死代码但仍不在任何清单里的**:无——本轮结束后闭包计算未再发现新的孤立模块。
+4. **仍未处理、本轮核实过确实是死代码但仍不在任何清单里的**:`scripts/core/workflow/verify_goal_05.py`/`scripts/core/research/verify_goal_06.py` 仍 import 已归档的 `RuntimeHost`,手动运行会报错——本轮任务范围没要求处理,只记录,2026-07-11 第三轮已处理(见下)。
+
+## 本次会话(2026-07-11 第三轮,生产激活前基线封口)做了什么
+
+按用户指令处理两个封口问题,不开新一轮清理、不扩大 archive 范围:
+
+1. **BR-TOPIC-001 口径更正**:`BUSINESS_RULE_CATALOG.yaml`/`REQUIREMENT_CODE_TRACEABILITY.yaml` 里的 BR-TOPIC-001 原描述"每日选题排序"(`cluster_boost` 聚类加权、`top_new`/`top_candidates` 截断排序),已改写为当前设计口径:"每日候选选题筛选、去重、冷却、领域约束、来源追溯与人工确认",不再是打分/排序规则,`defaults`/`thresholds` 里的评分参数已清空,不新增替代参数。幽灵组件 `target_component: TopicPlanningService`(全仓库不存在)已替换为真实组件引用:候选生成+人工确认已实现(`scripts/core/experience/run_source_to_topic.py` + `review_queue.py`),去重/冷却/领域约束标注 `pending_implementation`,不冒充完成。旧口径原文以"原文档一节标题如此"的方式保留在 `source_section`/`observed_legacy_behavior` 里作历史引用,不当作当前设计。
+2. **`verify_goal_05.py`/`verify_goal_06.py` 归档**:重新核实两者确实零真实生产入口依赖(只被历史 GOAL 报告类 md/yaml 文档提及,不在任何 pytest/preflight 路径里),按用户给的"移入 archive 或标注 retired"二选一,移入 `archive/dead_goal_chain_20260709/scripts_core_workflow/`、`archive/dead_goal_chain_20260709/scripts_core_research/`。它们各自验证的真实模块(`goal05_workflow.py`/`goal06_formal_research.py`)本身未动,仍在原地。
+3. **清场闸门新增 1 项检查**(共 12 项):`check_active_verify_scripts_dont_import_dead_chain`——扫描 `scripts/core/**/verify_goal_*.py`,防止未来任何一个还留在活跃树里的自证脚本重新引用已归档模块或 `archive/` 本身;这类脚本不在 pytest 套件里,之前正是这样才漏检了 verify_goal_05/06。
 
 ## 需要用户决定的事项(未决,不是遗漏)
 

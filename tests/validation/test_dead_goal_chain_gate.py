@@ -11,6 +11,7 @@ from scripts.validation.dead_goal_chain_gate import (
     DEAD_MODULE_DOTTED_PREFIXES,
     REQUIRED_INDEPENDENT_TEST_COVERAGE,
     ROOT,
+    check_active_verify_scripts_dont_import_dead_chain,
     check_archive_not_reachable_from_real_entrypoints,
     check_claude_md_no_runtime_claude_claim,
     check_creation_status_disclaimer_present,
@@ -170,6 +171,36 @@ class NoActiveReferenceIntoArchiveTests(unittest.TestCase):
                 as_dir.exists() or as_file.exists(),
                 f"{prefix} still exists in the active tree -- it was supposed to be archived",
             )
+
+
+class ActiveVerifyScriptsDontImportDeadChainTests(unittest.TestCase):
+    def test_no_active_verify_goal_script_imports_the_dead_chain(self) -> None:
+        # 2026-07-11: verify_goal_05.py and verify_goal_06.py were found
+        # importing the already-archived RuntimeHost and had to be archived
+        # themselves in a follow-up pass -- they weren't caught by pytest
+        # since they're standalone scripts, not part of the suite. This check
+        # exists so the next archival can't silently repeat that.
+        result = check_active_verify_scripts_dont_import_dead_chain()
+        self.assertTrue(result["passed"], result["detail"])
+
+    def test_a_verify_script_importing_the_dead_chain_is_actually_detected(self) -> None:
+        scratch_dir = ROOT / "scripts" / "core" / "_scratch_verify_test_dir"
+        scratch_dir.mkdir(exist_ok=True)
+        scratch_file = scratch_dir / "verify_goal_99.py"
+        scratch_file.write_text(
+            "from scripts.core.correction.goal10_corrections import CorrectionRegistrationCommand\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(scratch_dir.rmdir)
+        self.addCleanup(scratch_file.unlink)
+
+        result = check_active_verify_scripts_dont_import_dead_chain()
+
+        self.assertFalse(result["passed"])
+        self.assertTrue(
+            any("verify_goal_99.py" in item for item in result["detail"]),
+            result["detail"],
+        )
 
 
 class ModelPositionsTests(unittest.TestCase):

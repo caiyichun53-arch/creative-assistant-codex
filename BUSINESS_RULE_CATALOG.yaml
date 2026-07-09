@@ -1664,20 +1664,29 @@ rules:
   - GATE-SEARCH-PROVIDER preflight
 - requirement_id: BR-TOPIC-001
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
-  source_section: 每日选题排序
+  source_section: 每日选题排序（原文档一节标题如此，2026-07-11 已更正口径，见 status；原文描述的
+    是打分/排序机制，不是现行设计目标）
   priority: P1
   domain_scope: domain layer
+  status: '2026-07-11 corrected: 当前设计没有冻结"选题打分制"，系统不采用 score/rank/weight/评分维度
+    作为生产逻辑选题的机制。原文档"每日选题排序"一节描述的 cluster_boost 聚类加权、top_new/top_candidates
+    截断排序等，均是旧系统的排序设计，不代表当前设计目标，已从 defaults/thresholds 移除，不新增替代评分参数。
+    当前设计口径：每日候选选题筛选、去重、冷却、领域约束、来源追溯与人工确认。真实实现现状（见
+    REQUIREMENT_CODE_TRACEABILITY.yaml 对应条目）：候选生成与人工确认已有真实组件
+    (scripts/core/experience/run_source_to_topic.py 生成候选写入 topic_candidates 表 +
+    scripts/core/experience/review_queue.py 人工审核闸门，human_review_status 字段)；去重、冷却、
+    领域约束尚未落地，标注 pending_implementation，不冒充已完成。'
   trigger: daily topic flow
   inputs:
   - new hits
   - candidate pool
-  expected_behavior: Daily recommendations group new hit-derived ideas and warmed
-    candidates; sources rank independently rather than one merged opaque rank.
-  defaults:
-    top_new: 10
-    top_candidates: 8
-  thresholds:
-    cluster_boost: 0.3
+  expected_behavior: Daily flow screens new hit-derived candidate topics against the
+    existing candidate pool for deduplication and cooldown, applies domain
+    constraints, keeps source traceability (which hit/evidence a candidate came
+    from), and requires human confirmation before a candidate proceeds to the next
+    stage. No scoring/ranking mechanism selects or orders candidates.
+  defaults: {}
+  thresholds: {}
   timing_semantics: Runs after collect and hit judgement.
   state_effects:
   - topics insert/update
@@ -1685,12 +1694,14 @@ rules:
   - outbox/view projection
   forbidden_behavior:
   - direct Feishu send from target planner
+  - score/rank/weight/rating-based candidate selection or ordering
   edge_cases:
   - no new hits
-  user_confirmation_required: false
+  user_confirmation_required: true
   supersedes: []
   validation_required:
-  - golden ranking fixture
+  - candidate dedup/cooldown/domain-constraint fixture (pending_implementation, not
+    yet written)
 - requirement_id: BR-TOPIC-002
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
   source_section: 候选池衰减回温

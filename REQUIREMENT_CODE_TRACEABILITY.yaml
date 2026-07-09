@@ -474,25 +474,38 @@ traceability:
       live_enabled: false
     thresholds: {}
 - requirement_id: BR-TOPIC-001
-  observed_legacy_behavior: Daily recommendations group new hit-derived ideas and
-    warmed candidates; sources rank independently rather than one merged opaque rank.
-  target_component: TopicPlanningService
-  current_implementation_status: legacy behavior observed; target formalization pending
-    unless noted exact_match
+  observed_legacy_behavior: 'SUPERSEDED 2026-07-11 (see BUSINESS_RULE_CATALOG.yaml
+    BR-TOPIC-001 status field): the old master document''s "每日选题排序" section
+    described a scoring/ranking mechanism (cluster_boost, top_new/top_candidates
+    truncation). Current design does not freeze a topic-scoring system and does
+    not use score/rank/weight as production logic; this row is kept as an audit
+    trail of what the old document said, not current behavior.'
+  target_component: 'scripts/core/experience/run_source_to_topic.py (candidate
+    generation from hit_deep_analysis/hit_comments into topic_candidates) +
+    scripts/core/experience/review_queue.py (human_review_status confirmation
+    gate) -- both real, implemented components. Deduplication, cooldown, and
+    domain-constraint checking have NO component yet: pending_implementation,
+    not TopicPlanningService (that class never existed in this codebase; the
+    name was a ghost reference removed in this correction).'
+  current_implementation_status: 'partial: candidate generation and human
+    confirmation are implemented and tested (see test_ids); deduplication,
+    cooldown, and domain constraints are pending_implementation -- not started,
+    not to be assumed done.'
   alignment_status: naming_only
   difference_type:
   - ownership_changed
-  migration_action: Preserve business semantics while moving state/external side effects
-    to formal Core/Adapter boundaries.
+  - removed
+  migration_action: Implement candidate deduplication, cooldown, and domain-constraint
+    checking as real code against topic_candidates; do not introduce a scoring/
+    ranking mechanism to do it.
   test_ids:
-  - golden ranking fixture
+  - tests/core/test_run_source_to_topic.py
+  - tests/core/test_review_queue.py
   evidence:
-    source_section: 每日选题排序
-    defaults:
-      top_new: 10
-      top_candidates: 8
-    thresholds:
-      cluster_boost: 0.3
+    source_section: 每日候选选题筛选、去重、冷却、领域约束、来源追溯与人工确认（2026-07-11 现行设计口径，
+      不是原文档小节标题；见 BUSINESS_RULE_CATALOG.yaml BR-TOPIC-001 status 字段）
+    defaults: {}
+    thresholds: {}
 - requirement_id: BR-TOPIC-002
   observed_legacy_behavior: Unselected topics become candidates, decay over time and
     can be reheated by related fresh hits.

@@ -225,6 +225,34 @@ def check_no_active_reference_into_archive() -> dict[str, Any]:
     }
 
 
+def check_active_verify_scripts_dont_import_dead_chain() -> dict[str, Any]:
+    """scripts/core/**/verify_goal_*.py are one-time, per-GOAL self-certification
+    scripts (see TECHNICAL_MANUAL.md section 15) -- not part of the pytest
+    suite, so a broken import in one of them won't show up as a test failure.
+    That is exactly how verify_goal_05.py/verify_goal_06.py went unnoticed
+    after scripts/core/runtime/ was archived, until a manual check found them.
+    This check scans every verify_goal_*.py still in the active tree and
+    fails if any of them imports a DEAD_MODULE_DOTTED_PREFIXES module or
+    reaches into archive/ -- so the next archival can't reintroduce the same
+    silent breakage."""
+    violations = []
+    for path in ROOT.joinpath("scripts", "core").rglob("verify_goal_*.py"):
+        if "__pycache__" in path.relative_to(ROOT).parts:
+            continue
+        for dotted in _imports_of(path):
+            if dotted == "archive" or dotted.startswith("archive."):
+                violations.append(f"{path.relative_to(ROOT).as_posix()} imports {dotted}")
+                continue
+            for prefix in DEAD_MODULE_DOTTED_PREFIXES:
+                if dotted == prefix or dotted.startswith(prefix + "."):
+                    violations.append(f"{path.relative_to(ROOT).as_posix()} imports {dotted} (archived: {prefix})")
+    return {
+        "name": "active_verify_goal_scripts_dont_import_dead_chain",
+        "passed": not violations,
+        "detail": violations or "clean",
+    }
+
+
 def check_model_positions() -> dict[str, Any]:
     config_path = ROOT / "config" / "model_routes.yaml"
     data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
@@ -336,6 +364,7 @@ def run_checklist() -> dict[str, Any]:
         check_dead_chain_not_reachable(),
         check_archive_not_reachable_from_real_entrypoints(),
         check_no_active_reference_into_archive(),
+        check_active_verify_scripts_dont_import_dead_chain(),
         check_goal05_workflow_orchestrator_has_independent_coverage(),
         check_model_positions(),
         check_fallback_disabled(),
