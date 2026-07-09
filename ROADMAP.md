@@ -45,4 +45,5 @@
 - `legacy_removal_gate.py` 补了反向测试(证明闸门真的会因为真实违规而报错,不只是"现状干净")。
 - `CLAUDE.md` 改为从 `AGENTS.md` 机械生成,不再人工逐字同步。
 - 真实生产 `config/settings.yaml`(不只是 example 文件)现在也接受 `BUSINESS_RULE_CATALOG.yaml` 阈值核对。
-- 新增 `scripts/validation/preflight_checkpoint_check.py`(收工/交接前一条命令跑完三项纪律检查)和 `scripts/validation/ops_infra_checklist.py`(硬编码路径/凭证管理/`.gitignore` 覆盖率检查)。
+- 新增 `scripts/validation/preflight_checkpoint_check.py`(收工/交接前一条命令跑完全部纪律检查)、`scripts/validation/ops_infra_checklist.py`(硬编码路径/凭证管理/`.gitignore` 覆盖率检查)、`scripts/validation/production_data_sanity_check.py`(真实生产库健全性抽查,复现2026-07-08"备料自动触发静默失效"那类坑)。
+- 新增可选安装的 git post-commit 自检钩子(`scripts/scheduled/post_commit_self_check.py` + `install_post_commit_hook.ps1`)——默认不装,装了之后每次提交自动跑一遍轻量检查,不用等下次对话才发现问题。

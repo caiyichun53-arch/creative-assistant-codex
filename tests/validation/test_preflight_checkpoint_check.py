@@ -7,6 +7,7 @@ from unittest.mock import patch
 from scripts.validation.preflight_checkpoint_check import (
     check_git_clean,
     check_ops_infra,
+    check_production_data,
     check_readiness_gate,
     check_tests,
     run_all_checks,
@@ -78,21 +79,73 @@ class CheckOpsInfraTests(unittest.TestCase):
         self.assertFalse(result["passed"])
 
 
+class CheckProductionDataTests(unittest.TestCase):
+    def test_passes_when_sanity_check_passes(self) -> None:
+        with patch("scripts.validation.production_data_sanity_check.run_checklist", return_value={"status": "PASS", "checks": []}):
+            result = check_production_data()
+        self.assertTrue(result["passed"])
+
+    def test_passes_when_no_local_database_to_check(self) -> None:
+        with patch("scripts.validation.production_data_sanity_check.run_checklist", return_value={"status": "SKIPPED", "checks": []}):
+            result = check_production_data()
+        self.assertTrue(result["passed"])
+
+    def test_fails_when_something_is_stuck(self) -> None:
+        with patch(
+            "scripts.validation.production_data_sanity_check.run_checklist",
+            return_value={"status": "FAIL", "checks": [{"name": "no_stuck_reverse_prep_hits", "passed": False, "detail": ["x"]}]},
+        ):
+            result = check_production_data()
+        self.assertFalse(result["passed"])
+
+
 class RunAllChecksTests(unittest.TestCase):
+    def _patched(self, **overrides):
+        defaults = {
+            "check_git_clean": {"name": "git", "passed": True},
+            "check_tests": {"name": "tests", "passed": True},
+            "check_readiness_gate": {"name": "gate", "passed": True},
+            "check_ops_infra": {"name": "ops", "passed": True},
+            "check_production_data": {"name": "data", "passed": True},
+        }
+        defaults.update(overrides)
+        patches = [
+            patch(f"scripts.validation.preflight_checkpoint_check.{name}", return_value=value)
+            for name, value in defaults.items()
+        ]
+        return patches
+
     def test_overall_ready_only_when_all_checks_pass(self) -> None:
-        with patch("scripts.validation.preflight_checkpoint_check.check_git_clean", return_value={"name": "git", "passed": True}), \
-             patch("scripts.validation.preflight_checkpoint_check.check_tests", return_value={"name": "tests", "passed": True}), \
-             patch("scripts.validation.preflight_checkpoint_check.check_readiness_gate", return_value={"name": "gate", "passed": True}), \
-             patch("scripts.validation.preflight_checkpoint_check.check_ops_infra", return_value={"name": "ops", "passed": True}):
+        patches = self._patched()
+        for p in patches:
+            p.start()
+        try:
             result = run_all_checks(skip_tests=False)
+        finally:
+            for p in patches:
+                p.stop()
         self.assertEqual(result["status"], "READY_TO_CHECKPOINT")
 
     def test_overall_not_ready_when_any_single_check_fails(self) -> None:
-        with patch("scripts.validation.preflight_checkpoint_check.check_git_clean", return_value={"name": "git", "passed": False, "detail": ["dirty"]}), \
-             patch("scripts.validation.preflight_checkpoint_check.check_tests", return_value={"name": "tests", "passed": True}), \
-             patch("scripts.validation.preflight_checkpoint_check.check_readiness_gate", return_value={"name": "gate", "passed": True}), \
-             patch("scripts.validation.preflight_checkpoint_check.check_ops_infra", return_value={"name": "ops", "passed": True}):
+        patches = self._patched(check_git_clean={"name": "git", "passed": False, "detail": ["dirty"]})
+        for p in patches:
+            p.start()
+        try:
             result = run_all_checks(skip_tests=False)
+        finally:
+            for p in patches:
+                p.stop()
+        self.assertEqual(result["status"], "NOT_READY")
+
+    def test_overall_not_ready_when_only_production_data_check_fails(self) -> None:
+        patches = self._patched(check_production_data={"name": "data", "passed": False, "detail": ["stuck"]})
+        for p in patches:
+            p.start()
+        try:
+            result = run_all_checks(skip_tests=False)
+        finally:
+            for p in patches:
+                p.stop()
         self.assertEqual(result["status"], "NOT_READY")
 
 

@@ -150,11 +150,12 @@
 python -m scripts.validation.preflight_checkpoint_check
 ```
 
-这一条命令把"执行纪律"要求的三件事一次性跑完，不用再分别记着做：
+这一条命令把"执行纪律"要求的几件事一次性跑完，不用再分别记着做：
 1. `git status` 是否干净（没有该提交但忘了提交的改动）
 2. 全部测试是否绿（`tests/core` + `tests/validation`）
 3. 权威闸门 `verify_goal_v062_phase8_readiness.py` 是否 `ENGINEERING_READY`
 4. 运维基础设施检查（见下一节）是否干净
+5. 真实生产数据库健全性抽查（见下下节）是否干净
 
 任何一项没过，命令会打印具体是哪一项、哪个文件/哪条测试没过，返回码非0。想跳过测试只看另外三项（比如中途快速自查）可以加 `--skip-tests`，但**收工前的最终检查不要跳**。
 
@@ -168,6 +169,24 @@ python -m scripts.validation.ops_infra_checklist
 1. 有没有新的硬编码绝对路径（`C:/`、`I:/`、`/Users/`、`/home/` 这类）混进了非测试的正式代码——真实值应该放进 `config/settings.yaml`，不是写死在代码里。
 2. `.gitignore` 是否仍然覆盖了敏感/机器本地文件（`.env`、真实的 `config/settings.yaml`、`*.sqlite3`、`vendor/`、`logs/`、`data/`）。
 3. 有没有真实的 `.env`/`.env.*` 文件被误提交（只允许 `.env.example` 这类模板）。
+
+### 真实生产数据库健全性抽查
+
+```
+python -m scripts.validation.production_data_sanity_check
+```
+
+跟 `tests/core`/`tests/validation` 不一样——那些测试用的是构造出来的假数据，这个脚本直接连真实的 `data/formal/production_activation.sqlite3`（本地文件不存在时会优雅跳过，不报错）。检查内容对应 2026-07-08 真实踩过的坑："自动触发备料"曾经因为表默认值漂移而静默失效，导致新爆款卡在 `reverse_status='pending'` 却没有任何东西真正处理它，好几天没人发现。现在脚本检查：必需的表都在、有没有 `hits` 行卡在 `pending`/`running` 状态超过3天、有没有 `hits` 引用了不存在的账号。
+
+### 非对话触发的定期自检（可选，需要你自己决定要不要装）
+
+前面这几个检查目前都是"想起来手动跑"或者"收工前跑一次"。如果想要**不用记得跑、每次提交代码后自动检一遍**，有一个现成但**默认没有安装**的选项：
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\scheduled\install_post_commit_hook.ps1
+```
+
+装上之后，每次 `git commit` 完成后会自动跑一遍权威闸门 + 运维基础设施检查 + 生产数据库健全性抽查（几秒钟，不跑全部测试，太慢会导致提交体验变差，反而没人愿意用），发现问题只在终端打印提醒，**不会阻止提交、不会改动任何东西**。要卸载就删掉 `.git\hooks\post-commit`。这一步是可选的，故意没有帮你自动装上——装不装是你的选择，不是脚本自己决定的。
 
 **这个脚本管不到、需要人工定期核对的运维项**（没有假装自动化，说清楚现在还得靠人）：
 - Windows 计划任务是否健康：`Get-ScheduledTask -TaskName CreationAssistant_Daily | Select TaskName,State`，`Get-ScheduledTaskInfo -TaskName CreationAssistant_Daily` 看 `LastTaskResult` 是不是 0（失败会是非0错误码）。

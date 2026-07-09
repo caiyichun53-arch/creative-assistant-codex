@@ -11,6 +11,10 @@ anything gets called done/completed/ENGINEERING_READY:
   4. the operational-infrastructure checklist (scripts/validation/
      ops_infra_checklist.py) is clean -- no hardcoded machine paths,
      .gitignore still covers secrets, no real .env file committed
+  5. the real production database (scripts/validation/
+     production_data_sanity_check.py) has nothing visibly stuck (e.g. a
+     hit stuck in reverse_status='pending' for days -- the exact 2026-07-08
+     bug this check exists to catch mechanically instead of by luck)
 Until now these were separate manual steps someone had to remember to run,
 in order, every time -- exactly the kind of "remembering" this project's own
 incident history (see HANDOFF_STATE.md) shows doesn't hold up under
@@ -82,8 +86,25 @@ def check_ops_infra() -> dict[str, Any]:
     }
 
 
+def check_production_data() -> dict[str, Any]:
+    from scripts.validation.production_data_sanity_check import run_checklist
+
+    result = run_checklist()
+    return {
+        "name": "production_data_sanity",
+        "passed": result["status"] in ("PASS", "SKIPPED"),
+        "detail": result["status"] if result["status"] != "FAIL" else [c for c in result["checks"] if not c["passed"]],
+    }
+
+
 def run_all_checks(*, skip_tests: bool) -> dict[str, Any]:
-    checks = [check_git_clean(), check_tests(skip=skip_tests), check_readiness_gate(), check_ops_infra()]
+    checks = [
+        check_git_clean(),
+        check_tests(skip=skip_tests),
+        check_readiness_gate(),
+        check_ops_infra(),
+        check_production_data(),
+    ]
     overall_passed = all(check["passed"] for check in checks)
     return {"status": "READY_TO_CHECKPOINT" if overall_passed else "NOT_READY", "checks": checks}
 
