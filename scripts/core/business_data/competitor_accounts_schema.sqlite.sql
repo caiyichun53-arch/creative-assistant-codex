@@ -302,3 +302,24 @@ CREATE TABLE IF NOT EXISTS topic_candidates (
 
 CREATE INDEX IF NOT EXISTS idx_topic_candidates_source_analysis
 ON topic_candidates(source_analysis_id, version);
+
+-- One row per content_plan run over a topic_candidates record. Append-only
+-- like topic_candidates. hooks/beats are JSON-encoded text (bounded arrays
+-- of short strings per the Skill's own schema).
+CREATE TABLE IF NOT EXISTS content_plans (
+    plan_id TEXT PRIMARY KEY,
+    source_topic_id TEXT NOT NULL REFERENCES topic_candidates(topic_id) ON DELETE RESTRICT,
+    version INTEGER NOT NULL,
+    request_id TEXT NOT NULL,
+    correlation_id TEXT NOT NULL,
+    hooks TEXT NOT NULL,
+    selected_hook TEXT NOT NULL,
+    beats TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_topic_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_content_plans_source_topic
+ON content_plans(source_topic_id, version);
