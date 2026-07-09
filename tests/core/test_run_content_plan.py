@@ -86,16 +86,16 @@ def _insert_analysis(conn: sqlite3.Connection, analysis_id: str, hit_id: str) ->
 
 def _insert_topic(
     conn: sqlite3.Connection, topic_id: str, analysis_id: str, *, version: int = 1, topic_status: str = "generated",
-    supporting_evidence: list[str] | None = None,
+    supporting_evidence: list[str] | None = None, human_review_status: str = "approved",
 ) -> None:
     conn.execute(
         """
         INSERT INTO topic_candidates(topic_id, source_analysis_id, version, request_id, correlation_id,
             topic_status, candidate_topic, topic_angle, supporting_evidence, source_constraints,
-            no_result_reason, confidence, model_name, run_id)
-        VALUES (?, ?, ?, 'req1', 'corr1', ?, '候选选题', '切入角度', ?, '[]', 'none', 'high', 'model', 'run1')
+            no_result_reason, confidence, model_name, run_id, human_review_status)
+        VALUES (?, ?, ?, 'req1', 'corr1', ?, '候选选题', '切入角度', ?, '[]', 'none', 'high', 'model', 'run1', ?)
         """,
-        (topic_id, analysis_id, version, topic_status, json.dumps(supporting_evidence or ["证据一"], ensure_ascii=False)),
+        (topic_id, analysis_id, version, topic_status, json.dumps(supporting_evidence or ["证据一"], ensure_ascii=False), human_review_status),
     )
 
 
@@ -138,6 +138,39 @@ class SelectTopicsPendingPlanTests(unittest.TestCase):
                 _full_chain(conn)
                 pending = select_topics_pending_plan(conn, limit=10)
                 self.assertEqual([row["topic_id"] for row in pending], ["t1"])
+            finally:
+                conn.close()
+
+    def test_pending_review_topic_is_excluded(self) -> None:
+        # 2026-07-10: the human review gate -- a generated topic must be
+        # explicitly approved (via review_queue.py) before content_plan will
+        # pick it up. Regression guard for the real gap found the same day
+        # the chain was first wired: nothing previously stopped an
+        # unreviewed topic from auto-flowing to a plan/draft.
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1")
+                _insert_transcript(conn, "h1")
+                _insert_analysis(conn, "a1", "h1")
+                _insert_topic(conn, "t1", "a1", human_review_status="pending_review")
+                pending = select_topics_pending_plan(conn, limit=10)
+                self.assertEqual(pending, [])
+            finally:
+                conn.close()
+
+    def test_rejected_topic_is_excluded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1")
+                _insert_transcript(conn, "h1")
+                _insert_analysis(conn, "a1", "h1")
+                _insert_topic(conn, "t1", "a1", human_review_status="rejected")
+                pending = select_topics_pending_plan(conn, limit=10)
+                self.assertEqual(pending, [])
             finally:
                 conn.close()
 

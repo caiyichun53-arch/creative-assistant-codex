@@ -281,6 +281,13 @@ ON hit_deep_analysis(hit_id, version);
 -- no_result_reason/confidence) into a business record. supporting_evidence
 -- and source_constraints are stored as JSON-encoded text (both are bounded
 -- arrays of short strings per the Skill's own schema, not queried by value).
+--
+-- 2026-07-10: human_review_status is the production human-review gate --
+-- every row starts 'pending_review'; content_plan's select query will not
+-- pick up a topic until it is 'approved' (see review_queue.py). This is a
+-- real gap found and fixed the same day the chain was first wired: nothing
+-- previously stopped a candidate topic from auto-flowing all the way to a
+-- script draft with no human ever looking at it.
 CREATE TABLE IF NOT EXISTS topic_candidates (
     topic_id TEXT PRIMARY KEY,
     source_analysis_id TEXT NOT NULL REFERENCES hit_deep_analysis(analysis_id) ON DELETE RESTRICT,
@@ -296,6 +303,10 @@ CREATE TABLE IF NOT EXISTS topic_candidates (
     confidence TEXT NOT NULL,
     model_name TEXT NOT NULL,
     run_id TEXT NOT NULL,
+    human_review_status TEXT NOT NULL DEFAULT 'pending_review'
+        CHECK (human_review_status IN ('pending_review', 'approved', 'rejected')),
+    reviewed_at TEXT,
+    reviewed_note TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(source_analysis_id, version)
 );
@@ -305,7 +316,9 @@ ON topic_candidates(source_analysis_id, version);
 
 -- One row per content_plan run over a topic_candidates record. Append-only
 -- like topic_candidates. hooks/beats are JSON-encoded text (bounded arrays
--- of short strings per the Skill's own schema).
+-- of short strings per the Skill's own schema). human_review_status: see
+-- topic_candidates above -- script_generate's select query requires
+-- 'approved' here too.
 CREATE TABLE IF NOT EXISTS content_plans (
     plan_id TEXT PRIMARY KEY,
     source_topic_id TEXT NOT NULL REFERENCES topic_candidates(topic_id) ON DELETE RESTRICT,
@@ -317,6 +330,10 @@ CREATE TABLE IF NOT EXISTS content_plans (
     beats TEXT NOT NULL,
     model_name TEXT NOT NULL,
     run_id TEXT NOT NULL,
+    human_review_status TEXT NOT NULL DEFAULT 'pending_review'
+        CHECK (human_review_status IN ('pending_review', 'approved', 'rejected')),
+    reviewed_at TEXT,
+    reviewed_note TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(source_topic_id, version)
 );
@@ -326,7 +343,9 @@ ON content_plans(source_topic_id, version);
 
 -- One row per script_generate run over a content_plans record. Append-only
 -- like content_plans. draft_text is the Skill's raw output_schema field
--- (50-6000 chars per script_generate's own schema).
+-- (50-6000 chars per script_generate's own schema). human_review_status:
+-- see topic_candidates above -- this is the final gate before a draft would
+-- be considered ready for any future publishing step (none exists yet).
 CREATE TABLE IF NOT EXISTS script_drafts (
     draft_id TEXT PRIMARY KEY,
     source_plan_id TEXT NOT NULL REFERENCES content_plans(plan_id) ON DELETE RESTRICT,
@@ -336,6 +355,10 @@ CREATE TABLE IF NOT EXISTS script_drafts (
     draft_text TEXT NOT NULL,
     model_name TEXT NOT NULL,
     run_id TEXT NOT NULL,
+    human_review_status TEXT NOT NULL DEFAULT 'pending_review'
+        CHECK (human_review_status IN ('pending_review', 'approved', 'rejected')),
+    reviewed_at TEXT,
+    reviewed_note TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(source_plan_id, version)
 );

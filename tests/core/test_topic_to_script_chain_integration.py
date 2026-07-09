@@ -1,13 +1,15 @@
 """End-to-end integration test for the full "选题 -> 大纲 -> 成稿" chain:
-hit_deep_analysis -> source_to_topic -> content_plan -> script_generate.
+hit_deep_analysis -> source_to_topic -> content_plan (behind human review) ->
+script_generate (behind human review).
 
-The three per-Skill test files (test_run_source_to_topic.py, test_run_
-content_plan.py, test_run_script_generate.py) each verify their own binding
-in isolation, seeding the *next* stage's expected input by hand. This test
-instead runs all three real run_*() functions in sequence against one shared
-database, so it fails if any two stages' real assumptions about each other's
-output shape have quietly drifted apart -- something isolated per-stage
-tests cannot catch."""
+The per-Skill test files (test_run_source_to_topic.py, test_run_content_plan.py,
+test_run_script_generate.py, test_review_queue.py) each verify their own
+binding/the review gate in isolation, seeding the *next* stage's expected
+input by hand. This test instead runs the real run_*() functions and the
+real review_queue approve step in sequence against one shared database, so
+it fails if any two stages' real assumptions about each other's output shape
+-- or about the review gate actually blocking/unblocking flow -- have
+quietly drifted apart."""
 
 from __future__ import annotations
 
@@ -18,6 +20,7 @@ import unittest
 from pathlib import Path
 
 from scripts.core.business_data.register_competitor_accounts import install_schema
+from scripts.core.experience.review_queue import set_review_status
 from scripts.core.experience.run_content_plan import run_content_plan
 from scripts.core.experience.run_script_generate import run_script_generate
 from scripts.core.experience.run_source_to_topic import run_source_to_topic
@@ -91,6 +94,18 @@ class TopicToScriptChainIntegrationTests(unittest.TestCase):
                 if topic_row["topic_status"] != "generated":
                     self.skipTest(f"deterministic source_to_topic port returned topic_status={topic_row['topic_status']!r}, chain cannot continue")
 
+                # Human review gate #1: an unapproved topic must not flow to
+                # content_plan, even though it is otherwise eligible.
+                self.assertEqual(topic_row["human_review_status"], "pending_review")
+                plan_harness = make_content_plan_harness()
+                try:
+                    blocked_report = run_content_plan(conn, limit=10, harness=plan_harness, model_name="det-plan")
+                finally:
+                    plan_harness.close()
+                self.assertEqual(blocked_report["completed"], 0, "an unapproved topic must not be picked up")
+
+                set_review_status(conn, stage="topic", item_id=topic_row["topic_id"], status="approved", note="集成测试自动通过")
+
                 plan_harness = make_content_plan_harness()
                 try:
                     plan_report = run_content_plan(conn, limit=10, harness=plan_harness, model_name="det-plan")
@@ -103,6 +118,17 @@ class TopicToScriptChainIntegrationTests(unittest.TestCase):
                 self.assertTrue(plan_row["selected_hook"])
                 self.assertTrue(json.loads(plan_row["beats"]))
 
+                # Human review gate #2: same story, one stage further.
+                self.assertEqual(plan_row["human_review_status"], "pending_review")
+                draft_harness = make_script_generate_harness()
+                try:
+                    blocked_draft_report = run_script_generate(conn, limit=10, harness=draft_harness, model_name="det-draft")
+                finally:
+                    draft_harness.close()
+                self.assertEqual(blocked_draft_report["completed"], 0, "an unapproved plan must not be picked up")
+
+                set_review_status(conn, stage="plan", item_id=plan_row["plan_id"], status="approved", note="集成测试自动通过")
+
                 draft_harness = make_script_generate_harness()
                 try:
                     draft_report = run_script_generate(conn, limit=10, harness=draft_harness, model_name="det-draft")
@@ -113,6 +139,7 @@ class TopicToScriptChainIntegrationTests(unittest.TestCase):
                 draft_row = conn.execute("SELECT * FROM script_drafts WHERE source_plan_id=?", (plan_row["plan_id"],)).fetchone()
                 self.assertIsNotNone(draft_row)
                 self.assertGreaterEqual(len(draft_row["draft_text"]), 50)
+                self.assertEqual(draft_row["human_review_status"], "pending_review")
 
                 # The full lineage from the original hit all the way to the
                 # final draft must be traceable through foreign keys alone.

@@ -77,10 +77,14 @@ def validate_content_plan_execution_contract() -> dict[str, Any]:
 
 def select_topics_pending_plan(conn: sqlite3.Connection, *, limit: int) -> list[sqlite3.Row]:
     """Real topic_candidates rows with topic_status='generated' (skip
-    needs_review/no_result -- there is no usable topic to plan around) that
-    have never been through content_plan (no content_plans row yet). Joins
-    back through hit_deep_analysis -> hits -> hit_transcripts + account for
-    the tactic_candidates/style_examples stand-ins (see module docstring)."""
+    needs_review/no_result -- there is no usable topic to plan around),
+    human_review_status='approved' (2026-07-10: the human review gate -- a
+    generated topic sits at 'pending_review' until someone explicitly
+    approves it via review_queue.py; this query will not pick it up before
+    that, so nothing auto-flows to a plan/draft unreviewed), that have never
+    been through content_plan (no content_plans row yet). Joins back through
+    hit_deep_analysis -> hits -> hit_transcripts + account for the
+    tactic_candidates/style_examples stand-ins (see module docstring)."""
     return conn.execute(
         """
         SELECT topic_candidates.*, analysis.topic_pattern, analysis.hook_pattern, analysis.structure_pattern,
@@ -100,6 +104,7 @@ def select_topics_pending_plan(conn: sqlite3.Connection, *, limit: int) -> list[
                 WHERE t2.source_analysis_id = topic_candidates.source_analysis_id
            )
            AND topic_candidates.topic_status = 'generated'
+           AND topic_candidates.human_review_status = 'approved'
            AND NOT EXISTS (
                SELECT 1 FROM content_plans WHERE content_plans.source_topic_id = topic_candidates.topic_id
            )

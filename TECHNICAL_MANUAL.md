@@ -122,11 +122,20 @@
 3. `python -m scripts.core.experience.run_content_plan --limit N`——挑一条状态是"已生成"(`topic_status='generated'`)、但还没规划过的候选选题,喂给 `content_plan` 生成开头候选(1-5个)、选定开头、分段大纲。**两处明确的替代,不是真数据**:①理应由 `tactic_extract`(还没接)产出的"打法候选",现在复用同一条爆款自己的选题/开头/结构手法;②理应来自范例库(物理载体还没定)的"风格范例",现在复用同一条爆款自己的真实转写文字稿摘句。都是真实数据、老实标了替代关系,不是编造——而且已核实这两项目前不影响模型实际生成的内容(`_run_content_plan()` 两次真实模型调用只读了 `brief`/`style_examples`)。结果存进 `content_plans` 表,同样带版本号。
 4. `python -m scripts.core.experience.run_script_generate --limit N`——挑一条还没生成过草稿的规划,把选定的开头、分段大纲、支撑证据喂给 `script_generate`,产出一份成稿草稿(50-6000字)。**一处明确的替代**:理应由 `research_evidence_extract`/`production_research_plan`(都还没接)产出的"研究摘要",现在是一句老实标注"未经真实研究流程,仅汇总已有证据"的文字,不冒充真研究过。结果存进 `script_drafts` 表,同样带版本号。
 
+**人工审核闸门(2026-07-10 新增)**：`topic_candidates`/`content_plans`/`script_drafts` 三张表各有一个 `human_review_status` 字段,新产出的一行默认是 `pending_review`(待审核)。**没有人明确标记"通过",内容不会自动流到下一步**——第2步查询"还有哪些分析结果没生成选题"不受这个字段影响,但第3步只会挑 `human_review_status='approved'` 的候选选题,第4步同理只挑已通过的规划。这是补给之前一个真实缺口的:最早接这条链路的时候,三步命令挨个跑,中间完全没有人看一眼的环节。审核用这个命令:
+```
+python -m scripts.core.experience.review_queue --list          # 看现在有哪些在等审核(人能读的摘要,不用查数据库)
+python -m scripts.core.experience.review_queue --approve topic t1_topic_v1   # 通过
+python -m scripts.core.experience.review_queue --reject plan p1_plan_v1 --note "开头太标题党"  # 不通过,可以附一句理由
+```
+`--list` 后面可以跟 `topic`/`plan`/`draft` 只看某一段。**现在还没有任何界面**,只有这个命令行工具——先把"必须有人确认"这道硬闸门加上,界面好不好用是以后的事,不能因为没界面就放过审核这一步。
+
 **明确没做的**（不是遗漏,是天然排在后面,见 `ROADMAP.md`）：
 - "归纳共性"(`tactic_extract`,把好几条分析结果归并成一条通用打法)还没做——它至少需要2条同类的分析结果才能跑。真接上之后,`content_plan` 里"复用同一条爆款自己手法"这个替代方案就可以换成真实的 `tactic_extract` 输出。
+- **选题目前只用了"对标爆款"一种料源**——真正的选题方法(见 `.claude/skills/选题/SKILL.md`)要求从对标爆款/评论区/研究缺口/当下热点四种料源出候选,再用"选题判断维度"打分排序,选出3-5个最值得做的,最后还要有人拍板。现在的 `source_to_topic` 绑定只做了"从一条爆款分析结果直接生成一个选题",评论区/研究/热点三种料源、打分排序、都还没做——这是 2026-07-09 用户直接指出的真实缺口,不是这几天才发现的边角问题,详见 `ROADMAP.md`。
 - **还没真的花钱调用过一次真实大模型**——现在测试用的是各 Skill 自带的"假模型"(输出固定但看起来合理的结果,不用联网、不花钱),真正调真实模型需要的密钥目前只放在一个专门给"一次性验证"用的配置文件里,还没搬到日常真实运行用的配置里,这是一个已知但还没处理的缺口,真要花钱跑之前需要用户确认。
 
-**怎么跑**：见上面四条命令,依次执行,`N` 是这次要处理几条,默认1条。也可以直接跑 `python -m pytest tests/core/test_topic_to_script_chain_integration.py` 看一次完整的假数据端到端演练(不花钱、不联网)。
+**怎么跑**：见上面四条命令依次执行,每次生成完记得跑一下 `review_queue.py --list` 看有没有要审核的,通过了才会继续流到下一步。`N` 是这次要处理几条,默认1条。也可以直接跑 `python -m pytest tests/core/test_topic_to_script_chain_integration.py` 看一次完整的假数据端到端演练(含审核通过的环节,不花钱、不联网)。
 
 ## 11. 外部适配器（external_adapters / hermes）
 

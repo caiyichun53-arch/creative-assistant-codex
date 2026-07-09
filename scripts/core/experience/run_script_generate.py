@@ -60,9 +60,13 @@ def validate_script_generate_execution_contract() -> dict[str, Any]:
 
 
 def select_plans_pending_script(conn: sqlite3.Connection, *, limit: int) -> list[sqlite3.Row]:
-    """Real content_plans rows that have never been through script_generate
-    (no script_drafts row yet). Joins back through topic_candidates ->
-    hit_deep_analysis -> hits -> account for domain_label/evidence."""
+    """Real content_plans rows with human_review_status='approved' (2026-07-10:
+    the human review gate, same mechanism as select_topics_pending_plan() in
+    run_content_plan.py -- a plan sits at 'pending_review' until someone
+    explicitly approves it via review_queue.py) that have never been through
+    script_generate (no script_drafts row yet). Joins back through
+    topic_candidates -> hit_deep_analysis -> hits -> account for
+    domain_label/evidence."""
     return conn.execute(
         """
         SELECT content_plans.*, topic.candidate_topic, topic.topic_angle,
@@ -77,6 +81,7 @@ def select_plans_pending_script(conn: sqlite3.Connection, *, limit: int) -> list
                SELECT MAX(version) FROM content_plans AS c2
                 WHERE c2.source_topic_id = content_plans.source_topic_id
            )
+           AND content_plans.human_review_status = 'approved'
            AND NOT EXISTS (
                SELECT 1 FROM script_drafts WHERE script_drafts.source_plan_id = content_plans.plan_id
            )

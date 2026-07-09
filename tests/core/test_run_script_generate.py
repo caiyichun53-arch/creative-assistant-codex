@@ -83,14 +83,17 @@ def _insert_topic(conn: sqlite3.Connection, topic_id: str, analysis_id: str, *, 
     )
 
 
-def _insert_plan(conn: sqlite3.Connection, plan_id: str, topic_id: str, *, version: int = 1, beats: list[str] | None = None) -> None:
+def _insert_plan(
+    conn: sqlite3.Connection, plan_id: str, topic_id: str, *, version: int = 1, beats: list[str] | None = None,
+    human_review_status: str = "approved",
+) -> None:
     conn.execute(
         """
         INSERT INTO content_plans(plan_id, source_topic_id, version, request_id, correlation_id,
-            hooks, selected_hook, beats, model_name, run_id)
-        VALUES (?, ?, ?, 'req1', 'corr1', ?, '选中的开头', ?, 'model', 'run1')
+            hooks, selected_hook, beats, model_name, run_id, human_review_status)
+        VALUES (?, ?, ?, 'req1', 'corr1', ?, '选中的开头', ?, 'model', 'run1', ?)
         """,
-        (plan_id, topic_id, version, json.dumps(["开头一"], ensure_ascii=False), json.dumps(beats or ["第一拍", "第二拍"], ensure_ascii=False)),
+        (plan_id, topic_id, version, json.dumps(["开头一"], ensure_ascii=False), json.dumps(beats or ["第一拍", "第二拍"], ensure_ascii=False), human_review_status),
     )
 
 
@@ -131,6 +134,38 @@ class SelectPlansPendingScriptTests(unittest.TestCase):
                     VALUES ('d1', 'p1', 1, 'req1', 'corr1', '正文正文正文正文正文正文正文正文正文正文正文正文正文正文正文正文正文正文正文正文正文正文正文正文正文正文正文正文正文正文', 'model', 'run1')
                     """
                 )
+                pending = select_plans_pending_script(conn, limit=10)
+                self.assertEqual(pending, [])
+            finally:
+                conn.close()
+
+    def test_pending_review_plan_is_excluded(self) -> None:
+        # 2026-07-10: the human review gate -- a plan must be explicitly
+        # approved (via review_queue.py) before script_generate will pick it
+        # up. Same mechanism/regression rationale as content_plan's own gate
+        # test (see test_run_content_plan.py).
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1")
+                _insert_analysis(conn, "a1", "h1")
+                _insert_topic(conn, "t1", "a1")
+                _insert_plan(conn, "p1", "t1", human_review_status="pending_review")
+                pending = select_plans_pending_script(conn, limit=10)
+                self.assertEqual(pending, [])
+            finally:
+                conn.close()
+
+    def test_rejected_plan_is_excluded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1")
+                _insert_analysis(conn, "a1", "h1")
+                _insert_topic(conn, "t1", "a1")
+                _insert_plan(conn, "p1", "t1", human_review_status="rejected")
                 pending = select_plans_pending_script(conn, limit=10)
                 self.assertEqual(pending, [])
             finally:
