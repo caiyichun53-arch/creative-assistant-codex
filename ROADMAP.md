@@ -6,7 +6,7 @@
 
 ## 进行中 / 下一项
 
-### 0. 生产激活:真实经验闭环 + Hermes 创作质量验证 —— **[阶段1-2已完成,阶段3-5待做]**
+### 0. 生产激活:真实经验闭环 + Hermes 创作质量验证 —— **[阶段1-3已完成,阶段4-5待做]**
 
 > 执行计划见 `C:\Users\15891\.claude\plans\warm-orbiting-kahn.md`(用户已批准)。目标:把"真实数据→经验提炼→人工审核+改稿变证据→经验影响下一次生成→真实 Hermes 产出质量由人评判"这条闭环打通。每阶段做完停下汇报,等用户确认再进下一阶段,不自动连续执行。
 
@@ -29,7 +29,9 @@
 
 真实执行:补全 `.env` 里 `HERMES_BUSINESS_MODEL_TOKEN/BASE_URL/NAME/CLASS`(用户确认 `.env.live-gates` 里的凭证就是真实凭证,非测试专用)。对偏离值最高的20个真实hit(样例:`hit_d4360a5e74cf44ecd6ba` 偏离9441倍、`hit_498df4588ad2b75efe97` 偏离3068倍等,内容涵盖科普/健康/社会话题)真实调用 Hermes(`xiaomi/mimo-v2.5-pro`)跑 `sample_deep_analyze`——20次真实调用中5次首次失败(`FormalSkillValidationError: model output is not JSON`,job/scheduler bookkeeping本身是每次harness独立的内存态,不落盘,重跑时才捕获到真实报错原因),重试后全部20条成功,确认是模型偶发输出格式问题,非凭证/配置问题。库里 `hit_deep_analysis` 从2行增至22行(21个不同hit,含最初那条重复分析的hit)。全部22条(含此前2条)已用 `evidence_registry.py` 登记进 VersionRef(21条新登记+1条此前已登记的原样跳过,`trace_root`/`trace_version`/`object_reference` 现在各22行)。
 
-**阶段3 剩余工作进展(2026-07-11)**:`dna_note_refs_max` 用户拍板从12上调到20,不用分批。新增地基三件套:`goal02_store.py`(通用 create_state/transition_state,这次只给tactic接真实调用)、`tactic_registry.py`(把归纳结果登记成真实 `trace_root`+`trace_version`+`tactic_state` 行)、`run_tactic_extract.py`(绑定层)。**真实调用4次,全部失败**:第1次超出当时的12条上限;诊断后发现真实模型对20条材料归纳出60条低质量结果(基本是逐词罗列,不是真找共性)且范例候选0条。根因排查发现全部12个业务Skill的真实运行时提示词系统性写得很糙(`script_review`三个子节点完全没传任务内容,`content_plan`/`script_generate`丢了几个必传字段,`sample_deep_analyze`/`tactic_extract`没有语言/质量指导)——已按优先级全部修过一轮(见 `HANDOFF_STATE.md`/`TECHNICAL_MANUAL.md` 第10节)。**下一步(第5次真实调用)**:用修好的提示词重新跑一次 `tactic_extract`,看能归纳出多少条、质量如何,再由用户定"共同规律"数量的最终上限(当前200是诊断性数值)——需要用户重新授权。
+**阶段3 完成(2026-07-11)——`tactic_extract` 第一次真实成功**:`dna_note_refs_max` 用户拍板从12上调到20,不用分批。新增地基三件套:`goal02_store.py`(通用 create_state/transition_state,这次只给tactic接真实调用)、`tactic_registry.py`(把归纳结果登记成真实 `trace_root`+`trace_version`+`tactic_state` 行)、`run_tactic_extract.py`(绑定层)。真实调用共7次,前6次失败(依次:超出当时12条上限→归纳出60条词汇堆砌+0范例,查出全部12个业务Skill里5个提示词系统性写得很糙,按优先级全部修过一轮→`schema_version`被埋在提示词中间导致AI遗漏→证据选择没过滤"只取最新版本",优先选到旧版低质量证据→`example_candidates`格式AI给了JSON对象不是纯字符串)。**用户要求先把全部21个真实hit重新拆解一遍**(用修好的`sample_deep_analyze`提示词,21/21全部成功,人工逐条对比质量,语言问题清零、"选题手法"从复述具体事实变成真正可复用手法),重新登记进VersionRef证据库后,第7次调用**成功**:真实产出6条互不相同、各引用2个真实视频为证的"共同规律"和6条范例候选,存进`tactic_state`(`state='candidate'`)。
+
+**下一步(需要用户决定,不在本轮范围)**:`candidate`状态之后怎么变成`active`(`transition_state()`已就绪但没有调用方);`content_plan`/`script_generate`/`script_review`的提示词已修但从没真实调用验证过。
 
 **阶段4-5(未开始)**:人工改稿变证据(升级 `review_queue.py`)→ 真实 Hermes 创作质量验证。完整验收标准见计划文件。
 
