@@ -204,6 +204,10 @@ model_binding:
     candidate_topic={candidate_topic}; transcript_excerpt={transcript_excerpt};
     metrics={metrics}
 
+    Before answering, double check your JSON includes all four keys --
+    topic_pattern, hook_pattern, structure_pattern, and schema_version set
+    exactly to sample_deep_analyze.output.v1. Do not omit schema_version.
+
     Do not run ASR, collect comments, reduce multiple samples, write
     examples, fetch facts, or call other Skills.
   model_output_schema:

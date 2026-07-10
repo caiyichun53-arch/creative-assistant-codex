@@ -18,3 +18,6 @@ return `beats` and `schema_version=content_plan.outline_output.v1`.
 
 Use only supplied inputs. Do not fetch, verify externally, write draft script
 text, send messages, read files, write files, or invoke another Skill.
+
+Before answering each subnode call, double check your JSON includes its
+schema_version key -- do not omit it.

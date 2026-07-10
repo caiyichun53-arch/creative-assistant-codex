@@ -22,3 +22,5 @@ Do not review, polish, run banned-word checks, fetch sources, send messages,
 read files, write files, or invoke another Skill.
 
 Use `schema_version=script_generate.output.v1`.
+
+Before answering, double check your JSON includes both keys -- do not omit `schema_version`.

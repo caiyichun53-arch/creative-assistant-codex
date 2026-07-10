@@ -236,6 +236,10 @@ model_binding:
     that just restates what was already said. Write at a length natural for
     being read aloud for this content -- do not pad or artificially
     compress to hit a target length.
+
+    Before answering, double check your JSON includes both keys --
+    draft_text and schema_version set exactly to
+    script_generate.output.v1. Do not omit schema_version.
   model_output_schema:
     type: object
     required:

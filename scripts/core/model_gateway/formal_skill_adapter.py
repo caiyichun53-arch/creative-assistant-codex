@@ -705,6 +705,9 @@ class FormalBusinessSkillAdapter:
                     "Avoid generic AI-writing tells: no formulaic '你有没有"
                     "想过' openers unless genuinely fitting, no hedging, no "
                     "hook that could apply to any topic interchangeably."
+                    "\n\nBefore answering, double check your JSON includes "
+                    "both keys -- hooks and schema_version set exactly to "
+                    "content_plan.hook_output.v1. Do not omit schema_version."
                 ),
                 input_payload=hook_input,
                 correlation_id=input_payload["correlation_id"],
@@ -750,6 +753,9 @@ class FormalBusinessSkillAdapter:
                     "patterns from prior real hits, adapted to this specific "
                     f"topic rather than copied verbatim: tactic_candidates="
                     f"{outline_input['tactic_candidates']}."
+                    "\n\nBefore answering, double check your JSON includes "
+                    "both keys -- beats and schema_version set exactly to "
+                    "content_plan.outline_output.v1. Do not omit schema_version."
                 ),
                 input_payload=outline_input,
                 correlation_id=input_payload["correlation_id"],
@@ -822,6 +828,10 @@ class FormalBusinessSkillAdapter:
                     "Each item in issues must name a specific, concrete "
                     "problem tied to a specific part of the draft -- not a "
                     "vague general comment."
+                    "\n\nBefore answering, double check your JSON includes "
+                    "all three keys -- verdict, issues, and schema_version "
+                    "set exactly to script_review.review_output.v1. Do not "
+                    "omit schema_version."
                 ),
                 input_payload=review_input,
                 correlation_id=input_payload["correlation_id"],
@@ -857,6 +867,10 @@ class FormalBusinessSkillAdapter:
                     "polished_text must be the complete replacement script, "
                     "not a diff or a description of what changed, and must "
                     "still read as natural spoken Chinese."
+                    "\n\nBefore answering, double check your JSON includes "
+                    "both keys -- polished_text and schema_version set "
+                    "exactly to script_review.polish_output.v1. Do not omit "
+                    "schema_version."
                 ),
                 input_payload=polish_input,
                 correlation_id=input_payload["correlation_id"],
@@ -907,6 +921,11 @@ class FormalBusinessSkillAdapter:
                     "item must name a specific instance of one of these "
                     "patterns actually present in draft_text, not a generic "
                     "warning."
+                    "\n\nBefore answering, double check your JSON includes "
+                    "all three keys -- ai_flavor_risk, revision_targets, and "
+                    "schema_version set exactly to "
+                    "script_review.ai_flavor_output.v1. Do not omit "
+                    "schema_version."
                 ),
                 input_payload=ai_input,
                 correlation_id=input_payload["correlation_id"],

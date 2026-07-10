@@ -16,3 +16,5 @@ content team. Return only JSON with keys `common_patterns`,
   empty when `common_patterns` is non-empty.
 
 Do not publish examples, write to experience memory, fetch files, read DNA notes by path, or call other Skills. Use schema_version tactic_extract.output.v1.
+
+Before answering, double check your JSON includes all three keys -- do not omit `schema_version`.

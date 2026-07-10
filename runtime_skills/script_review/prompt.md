@@ -24,3 +24,6 @@ the text.
 
 Do not fetch sources, publish, write files, write experience, invoke another
 Skill, or run deterministic banned-word checks.
+
+Before answering each subnode call, double check your JSON includes its
+schema_version key -- do not omit it.

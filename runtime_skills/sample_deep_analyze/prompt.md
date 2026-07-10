@@ -20,3 +20,5 @@ Each field should be a concise but complete phrase or short sentence -- not
 a bare label, not a full paragraph.
 
 Analyze one prepared sample only. Do not run ASR, collect comments, reduce multiple samples, write examples, fetch facts, or call other Skills. Use schema_version sample_deep_analyze.output.v1.
+
+Before answering, double check your JSON includes all four keys -- do not omit `schema_version`.

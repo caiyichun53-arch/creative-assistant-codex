@@ -219,6 +219,10 @@ model_binding:
 
     Do not publish examples, write to experience memory, fetch files, read
     DNA notes by path, or call other Skills.
+
+    Before answering, double check your JSON includes all three keys --
+    common_patterns, example_candidates, and schema_version set exactly to
+    tactic_extract.output.v1. Do not omit schema_version.
   model_output_schema:
     type: object
     required:
