@@ -9,9 +9,9 @@ from scripts.core.business_data.register_competitor_accounts import install_sche
 from scripts.core.experience.evidence_registry import register_hit_deep_analysis_evidence
 from scripts.core.experience.run_tactic_extract import (
     NOTE_MAX_CHARS,
+    NoteExceedsSchemaCeilingError,
     assemble_dna_note_refs,
     assemble_tactic_extract_input,
-    count_truncated_notes,
     generate_one_tactic_candidate,
     run_tactic_extract,
     select_evidence_for_tactic_batch,
@@ -158,17 +158,25 @@ class AssembleDnaNoteRefsTests(unittest.TestCase):
             finally:
                 conn.close()
 
-    def test_notes_respect_the_schema_char_limit_when_content_is_extreme(self) -> None:
+    def test_no_truncation_even_for_unusually_long_real_field_content(self) -> None:
+        # 2026-07-11 (third pass): per explicit user instruction, all
+        # character caps on note packing were removed. 500 chars/field (well
+        # above anything observed in real production data, but still under
+        # sample_deep_analyze's own 800-char/field schema ceiling) must
+        # survive completely intact, not get cut.
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
                 _insert_account(conn)
                 _insert_hit(conn, "h0")
-                _insert_analysis(conn, "a0", "h0", topic_pattern="字" * 500, hook_pattern="字" * 500, structure_pattern="字" * 500)
+                topic, hook, structure = "选" * 500, "钩" * 500, "构" * 500
+                _insert_analysis(conn, "a0", "h0", topic_pattern=topic, hook_pattern=hook, structure_pattern=structure)
                 register_hit_deep_analysis_evidence(conn, "a0")
                 rows = select_evidence_for_tactic_batch(conn, domain_label="fan_kepu_social_life", limit=10)
                 notes = assemble_dna_note_refs(rows)
-                self.assertLessEqual(len(notes[0]), NOTE_MAX_CHARS)
+                self.assertIn(topic, notes[0])
+                self.assertIn(hook, notes[0])
+                self.assertIn(structure, notes[0])
             finally:
                 conn.close()
 
@@ -176,9 +184,8 @@ class AssembleDnaNoteRefsTests(unittest.TestCase):
         # Regression for the real bug found 2026-07-11: the first version of
         # this packing capped each field at a fixed 90 chars, which cut real
         # structure_pattern content (naturally the longest field) on 2 of 22
-        # real production rows. A 200-char structure_pattern -- well within
-        # NOTE_MAX_CHARS's real headroom -- must survive whole, not get cut
-        # to 90.
+        # real production rows. A 200-char structure_pattern must survive
+        # whole, not get cut to 90.
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
@@ -193,31 +200,37 @@ class AssembleDnaNoteRefsTests(unittest.TestCase):
             finally:
                 conn.close()
 
-
-class CountTruncatedNotesTests(unittest.TestCase):
-    def test_zero_when_all_notes_fit(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            conn = _connect(tmp)
-            try:
-                _seed_registered_evidence(conn, 3)
-                rows = select_evidence_for_tactic_batch(conn, domain_label="fan_kepu_social_life", limit=10)
-                self.assertEqual(count_truncated_notes(rows), 0)
-            finally:
-                conn.close()
-
-    def test_counts_notes_that_actually_exceed_the_limit(self) -> None:
+    def test_a_note_within_the_true_schema_ceiling_does_not_raise(self) -> None:
+        # 3 fields at sample_deep_analyze's own real max (800 chars each) is
+        # the worst case real upstream data could ever produce -- must not
+        # raise NoteExceedsSchemaCeilingError.
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
                 _insert_account(conn)
                 _insert_hit(conn, "h0")
-                _insert_hit(conn, "h1")
-                _insert_analysis(conn, "a0", "h0", topic_pattern="字" * 500, hook_pattern="字" * 500, structure_pattern="字" * 500)
-                _insert_analysis(conn, "a1", "h1", topic_pattern="短", hook_pattern="短", structure_pattern="短")
+                _insert_analysis(conn, "a0", "h0", topic_pattern="选" * 800, hook_pattern="钩" * 800, structure_pattern="构" * 800)
                 register_hit_deep_analysis_evidence(conn, "a0")
-                register_hit_deep_analysis_evidence(conn, "a1")
                 rows = select_evidence_for_tactic_batch(conn, domain_label="fan_kepu_social_life", limit=10)
-                self.assertEqual(count_truncated_notes(rows), 1)
+                notes = assemble_dna_note_refs(rows)
+                self.assertLessEqual(len(notes[0]), NOTE_MAX_CHARS)
+            finally:
+                conn.close()
+
+    def test_a_note_exceeding_the_true_schema_ceiling_raises_instead_of_silently_truncating(self) -> None:
+        # Simulates data sample_deep_analyze's own schema should never
+        # actually produce (900 chars/field, past its 800 cap) -- proves the
+        # fail-loud safety net actually fires rather than silently cutting.
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h0")
+                _insert_analysis(conn, "a0", "h0", topic_pattern="选" * 900, hook_pattern="钩" * 900, structure_pattern="构" * 900)
+                register_hit_deep_analysis_evidence(conn, "a0")
+                rows = select_evidence_for_tactic_batch(conn, domain_label="fan_kepu_social_life", limit=10)
+                with self.assertRaises(NoteExceedsSchemaCeilingError):
+                    assemble_dna_note_refs(rows)
             finally:
                 conn.close()
 

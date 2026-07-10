@@ -14,19 +14,33 @@ run_source_to_topic.py's module docstrings (not repeated here):
     then hands that plain dict to tactic_registry.register_tactic_candidate()
     for real persistence.
 
-What counts as one "dna_note_ref" here: each ref packs a labeled, full-length
-(not per-field-truncated) copy of all three real sample_deep_analyze pattern
-fields (topic_pattern/hook_pattern/structure_pattern) for one piece of
-evidence, not just one field, and not a fixed slice of each -- 2026-07-11 the
-Skill's own dna_note_ref_max was raised 160->320->450 in two passes, the
-second one after checking real data proved a fixed 90-char-per-field split
-was silently cutting real content (structure_pattern in particular is
-naturally the longest field, a multi-step narrative breakdown). See
-NOTE_MAX_CHARS's comment for the real numbers. Picking only one field per
-note, or cutting each field to the same fixed size regardless of its real
-content, would both silently hide real signal from the model doing the
-reduction -- count_truncated_notes() makes any remaining truncation visible
-in run_tactic_extract()'s report instead of leaving it silent.
+What counts as one "dna_note_ref" here: each ref packs a labeled, complete
+copy of all three real sample_deep_analyze pattern fields (topic_pattern/
+hook_pattern/structure_pattern) for one piece of evidence. 2026-07-11, in two
+passes: first the Skill's own dna_note_ref_max was raised 160->320 (a single
+note could not carry all three fields at all at 160); then, after the user
+explicitly asked for all character-length caps on this note-packing to be
+removed (following a real bug where a fixed 90-char-per-field split silently
+cut real content -- structure_pattern's real max observed was 233 chars, a
+multi-step narrative breakdown, cut to 90 lost the back half), the binding
+code no longer truncates notes at all -- _note_for_evidence_row() returns the
+full, untruncated string, unconditionally. dna_note_ref_max was raised again,
+320->2500, derived from sample_deep_analyze's own output_schema.yaml ceiling
+(3 fields x 800 chars max + ~100 chars overhead for the analysis_id/labels)
+so that no real note this pipeline can ever produce is capable of exceeding
+it -- this is a provable ceiling, not an empirical one. If a future note
+somehow still exceeded 2500 chars, runtime_skills/tactic_extract's own input
+validation would reject the job with a clear schema error rather than the
+content being silently cut, which is the correct failure mode here.
+
+Residual, accepted risk (not solved by this pass, called out rather than
+hidden): context_budget.max_input_tokens is 14000, and 20 notes at the true
+2500-char ceiling would be ~33000 estimated tokens -- if every note in a
+batch happened to be near that ceiling simultaneously, the real call could
+exceed the model's actual context window. Real observed data is nowhere
+near this (20 real notes total ~3000 chars, ~2000 tokens) -- this is
+flagged as a known, currently-inert edge case, not dynamically guarded
+against by shrinking batch size, since that was not asked for here.
 
 A single tactic_extract call can only reduce 2-20 pieces of evidence
 (dna_note_refs_min/max) and only one domain_label at a time (no mixing) --
@@ -67,22 +81,15 @@ ALLOWED_DOMAIN_LABELS = {"fan_kepu_social_life", "music_entertainment", "third_d
 # TACTIC_EXTRACT_BUSINESS_CONTRACT.yaml's evidence_requirements/input_length_limits.
 BATCH_MIN = 2
 BATCH_MAX = 20
-# 2026-07-11 (second pass): raised 320->450 after checking real data, not
-# just token math. The first version of this note-packing split a fixed
-# 90-char budget per field (topic/hook/structure) -- checked against all 22
-# real hit_deep_analysis rows in production_activation.sqlite3 at the time,
-# that silently cut real content on 2 of them (structure_pattern's real max
-# was 233 chars -- a 10-step structure breakdown -- getting cut to 90 loses
-# steps 5-10 entirely). Fixed by no longer capping each field independently:
-# the note is now built from the full, untruncated fields and only the
-# WHOLE string is truncated, only if it exceeds NOTE_MAX_CHARS. Real max
-# combined (analysis_id + all three fields, no per-field cut) across those
-# same 22 rows was 404 chars; 450 covers that with headroom. sample_deep_
-# analyze's own output_schema.yaml allows up to 800 chars per field (2400+
-# for one row in the theoretical worst case), so truncation is still
-# possible for an unusually verbose future row -- assemble_dna_note_refs()
-# reports how many notes actually got cut so that is never silent.
-NOTE_MAX_CHARS = 450
+# 2026-07-11 (third pass): per explicit user instruction, all character
+# caps on note packing are removed -- _note_for_evidence_row() no longer
+# truncates. This constant now exists only to declare the schema's ceiling
+# (dna_note_ref_max in TACTIC_EXTRACT_BUSINESS_CONTRACT.yaml/input_schema.yaml),
+# derived from sample_deep_analyze's own output_schema.yaml guarantee (3
+# fields x 800 chars max + ~100 chars overhead) so it can never actually bind
+# against real content this pipeline produces -- see module docstring for
+# the full derivation and the accepted residual risk.
+NOTE_MAX_CHARS = 2500
 
 
 def validate_run_tactic_extract_execution_contract() -> dict[str, Any]:
@@ -121,35 +128,36 @@ def select_evidence_for_tactic_batch(conn: sqlite3.Connection, *, domain_label: 
     ).fetchall()
 
 
+class NoteExceedsSchemaCeilingError(ValueError):
+    """Raised when a real note would violate dna_note_ref_max
+    (NOTE_MAX_CHARS) -- per this constant's derivation, real upstream
+    content can never actually reach this, so hitting this error means
+    sample_deep_analyze's own output_schema.yaml field caps changed without
+    this module being updated to match. Failing loudly here, before a real
+    paid API call, is deliberate -- the alternative (silently truncating)
+    is exactly what this module stopped doing per user instruction."""
+
+
 def _note_for_evidence_row(row: sqlite3.Row) -> str:
-    """Builds the full, untruncated note (all three real pattern fields, no
-    per-field cut) and only truncates the WHOLE string if it exceeds
-    NOTE_MAX_CHARS -- see that constant's comment for why a per-field split
-    was tried first and abandoned (it silently lost real content)."""
+    """Builds the note from the full, untruncated real pattern fields --
+    no character cap is applied here (2026-07-11, per explicit user
+    instruction; see module docstring)."""
     topic = row["topic_pattern"] or ""
     hook = row["hook_pattern"] or ""
     structure = row["structure_pattern"] or ""
-    note = f"{row['analysis_id']}:选题={topic};钩子={hook};结构={structure}"
-    return note[:NOTE_MAX_CHARS]
+    return f"{row['analysis_id']}:选题={topic};钩子={hook};结构={structure}"
 
 
 def assemble_dna_note_refs(evidence_rows: list[sqlite3.Row]) -> list[str]:
-    return [_note_for_evidence_row(row) for row in evidence_rows]
-
-
-def count_truncated_notes(evidence_rows: list[sqlite3.Row]) -> int:
-    """How many notes in this batch actually got cut by NOTE_MAX_CHARS --
-    surfaced in run_tactic_extract()'s report so truncation is never silent,
-    even though it is now rare (see NOTE_MAX_CHARS's derivation)."""
-    count = 0
-    for row in evidence_rows:
-        topic = row["topic_pattern"] or ""
-        hook = row["hook_pattern"] or ""
-        structure = row["structure_pattern"] or ""
-        full_length = len(f"{row['analysis_id']}:选题={topic};钩子={hook};结构={structure}")
-        if full_length > NOTE_MAX_CHARS:
-            count += 1
-    return count
+    notes = [_note_for_evidence_row(row) for row in evidence_rows]
+    for row, note in zip(evidence_rows, notes):
+        if len(note) > NOTE_MAX_CHARS:
+            raise NoteExceedsSchemaCeilingError(
+                f"note for analysis_id={row['analysis_id']!r} is {len(note)} chars, "
+                f"exceeding the schema ceiling of {NOTE_MAX_CHARS} -- see NOTE_MAX_CHARS's "
+                "derivation comment; this should be mathematically impossible with real data"
+            )
+    return notes
 
 
 def assemble_tactic_extract_input(
@@ -234,7 +242,6 @@ def run_tactic_extract(
             "note": f"only {len(evidence_rows)} eligible evidence rows for domain_label={domain_label!r}, need at least {BATCH_MIN}",
         }
     batch = evidence_rows[:BATCH_MAX]
-    truncated_notes = count_truncated_notes(batch)
     request_id = f"tactic_extract_{run_id}"
     result = generate_one_tactic_candidate(
         conn, harness, batch, request_id=request_id, analysis_batch_id=run_id, domain_label=domain_label, run_id=run_id, actor=actor
@@ -247,7 +254,6 @@ def run_tactic_extract(
         "completed": completed,
         "failed": 1 - completed,
         "batch_size": len(batch),
-        "truncated_notes": truncated_notes,
         "results": [result],
     }
 

@@ -55,36 +55,31 @@ reduction_policy:
 # single real batch of 20 sample_deep_analyze results (see
 # production_activation_deviation_top20 in HANDOFF_STATE.md) can be reduced in
 # one tactic_extract call instead of being arbitrarily split. dna_note_ref_max
-# raised in two passes the same day, both checked against real data, not
-# guessed: first 160->320 (a single note could not carry a labeled summary of
-# all three real pattern fields -- topic/hook/structure -- at 160 chars at
-# all); then 320->450 after run_tactic_extract.py's first implementation
-# (which capped each of the 3 fields at a fixed 90 chars to fit under 320)
-# was checked against all 22 real hit_deep_analysis rows in
-# production_activation.sqlite3 and found to silently truncate real content
-# on 2 of them -- structure_pattern in particular is naturally the longest
-# field (a multi-step narrative breakdown; real max observed 233 chars) and
-# a fixed 90-char cut was losing the back half of it. The real max combined
-# note length (analysis_id + all three untruncated fields) across those same
-# 22 rows was 404 chars; 450 covers that with headroom, while
-# scripts/core/experience/run_tactic_extract.py no longer splits a fixed
-# budget per field at all (see its NOTE_MAX_CHARS comment) -- it builds the
-# full note and only truncates the whole string, and reports how many notes
-# actually got cut so this is never silent again. context_budget.
-# max_input_tokens was deliberately left unchanged at 14000 rather than
-# scaled up "to match" -- the two numbers were never actually coupled: 20
-# items x dna_note_ref_max(450 chars) = 9000 chars, which at this codebase's
-# own ~1.5 chars/token estimate for Chinese text (see run_sample_deep_
-# analyze.py's TRANSCRIPT_EXCERPT_MAX_CHARS derivation) is ~6000 tokens, well
-# under 14000 even before the prompt template. Raising the token budget "to
-# be safe" with no arithmetic behind it would just be a second unsourced
-# number. sample_deep_analyze's own output_schema.yaml still allows up to 800
-# chars per field (2400+ for one row in the theoretical worst case), so an
-# unusually verbose future row could still get its note truncated -- that
-# residual risk is accepted and made visible (see above), not eliminated,
-# since eliminating it entirely would require either raising dna_note_ref_max
-# past what 20 notes can fit in the token budget, or capping batch size
-# dynamically by content size, neither of which this pass does.
+# raised in three passes the same day: 160->320 (a single note could not carry
+# a labeled summary of all three real pattern fields -- topic/hook/structure
+# -- at 160 chars at all); 320->450 after checking real data showed a fixed
+# 90-char-per-field split (run_tactic_extract.py's first implementation) was
+# silently truncating real content on 2 of 22 real hit_deep_analysis rows
+# (structure_pattern is naturally the longest field, a multi-step narrative
+# breakdown; real max observed 233 chars, cut to 90 lost the back half);
+# then 450->2500 per explicit user instruction to remove all character-length
+# caps on this note-packing entirely -- run_tactic_extract.py's
+# _note_for_evidence_row() no longer truncates at all. 2500 is not an
+# empirical "covers what we've seen so far" number, it is the true provable
+# ceiling: sample_deep_analyze's own output_schema.yaml caps each of the 3
+# fields at 800 chars, so 3*800=2400 plus ~100 chars of overhead for the
+# analysis_id and field labels is the maximum any real note this pipeline can
+# ever produce -- 2500 covers that with margin, meaning this maxLength can
+# mathematically never bind against real content (see run_tactic_extract.py's
+# NoteExceedsSchemaCeilingError, which would only fire if sample_deep_
+# analyze's own schema changed without this file being updated to match).
+# context_budget.max_input_tokens (14000) was left unchanged -- accepted,
+# documented residual risk: 20 notes simultaneously at the true 2500-char
+# ceiling would be ~33000 estimated tokens (at this codebase's own ~1.5
+# chars/token estimate for Chinese text), which would exceed it. Real
+# observed data is nowhere near this (20 real notes total ~3000 chars, ~2000
+# tokens) -- this edge case is flagged, not dynamically guarded against by
+# shrinking batch size, since that was not asked for.
 evidence_requirements:
   dna_note_refs_min: 2
   dna_note_refs_max: 20
@@ -94,7 +89,7 @@ input_length_limits:
   request_id_max: 80
   correlation_id_max: 80
   analysis_batch_id_max: 80
-  dna_note_ref_max: 450
+  dna_note_ref_max: 2500
 context_budget:
   max_input_tokens: 14000
 token_budget:
@@ -243,7 +238,7 @@ input_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 450
+        maxLength: 2500
     domain_label:
       type: string
       enum:
