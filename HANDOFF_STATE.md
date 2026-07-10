@@ -17,7 +17,12 @@
 
 **阶段3 数据缺口(2026-07-11 用户指令)已解决**:用户要求"爆款库里偏离值最高的前20篇做拆解"。库里没有现成"偏离值"字段,用户确认口径 = `hit_channel` 里记录的最高基线倍数(如 `share_anomaly:422.75x`)。新增 `deviation_value_from_hit_channel()`/`select_hits_pending_analysis_by_deviation()`(11个新测试)。用户确认 `.env.live-gates` 里的 Hermes 凭证是真实凭证(不是测试专用),已补全进真实 `.env`(`HERMES_BUSINESS_MODEL_TOKEN/BASE_URL/NAME/CLASS`;`.gitignore` 已覆盖,未入库)。真实对偏离值最高的20个hit跑了 `sample_deep_analyze`(真实调用 `xiaomi/mimo-v2.5-pro`):20次里5次首次失败(`FormalSkillValidationError: model output is not JSON`——job/scheduler 记账本身是每次 harness 独立的内存态,不落盘,第二次跑才捕获到具体报错原因),重试后全部20条成功,确认是模型偶发输出格式问题,不是凭证/配置问题。`hit_deep_analysis` 从2行增至22行(21个不同hit)。全部22条(含此前2条)已用 `evidence_registry.py` 登记进 VersionRef(21条新登记+1条原样跳过重复登记),`trace_root`/`trace_version`/`object_reference` 现在各22行。
 
-**下一步、需要你决定**:`tactic_extract` 的 Skill 契约(`TACTIC_EXTRACT_BUSINESS_CONTRACT.yaml`)规定单次调用最多只能喂 2-12 条证据(`dna_note_refs`),**不能一次性把20条都喂给一次"共性归纳"调用**。需要你决定:分几批、每批几条、要不要多批结果之间再做一次人工比对(不存在自动"多批再汇总"的二次归纳步骤,如果要那也是新决策)。定下来之后我再写 `run_tactic_extract.py`(目前还不存在,是这一步唯一要新写的绑定代码)并真实调用(又是一次真实花费)。
+**阶段3 进展(2026-07-11)**:`dna_note_refs_max` 用户拍板从12上调到20(一批就能装下全部20条证据,不用分批)。新增三个模块把"归纳完的结果怎么正式存下来"这层此前完全空白的地基搭起来:`scripts/core/persistence/goal02_store.py`(通用 `create_state`/`transition_state`,这次只给 tactic 一种对象类型接了真实调用)、`scripts/core/experience/tactic_registry.py`(把 tactic_extract 结果登记成真实 `trace_root`+`trace_version`+`tactic_state` 行)、`scripts/core/experience/run_tactic_extract.py`(绑定层)。**真实调用 tactic_extract 目前还没有一次成功过**:第1次调用失败(`common_patterns has too many items`,当时上限是12);诊断后发现真实模型返回了60条——几乎是把20条材料里出现过的词汇挨个罗列了一遍,不是真的"跨材料找共性",而且 `example_candidates` 返回了0条。**根因排查揪出一个更大的问题**:系统性检查了全部12个业务Skill的真实运行时提示词(不是 `prompt.md`,是 `model_binding.prompt_template`/`_run_content_plan()`/`_run_script_review()` 里真正发给模型的那句话),发现:
+1. `script_review` 三个子节点(审稿/润色/判AI味)的提示词**完全没有把任务内容传给AI**——审稿提示词原文就是"Return only JSON with verdict, issues, schema_version.",连要审的稿子本身都没发过去,三个子节点都这样,处于完全不能用的状态。
+2. `content_plan`/`script_generate` 有几个契约里要求必传的字段(`tactic_candidates`/`evidence_items`/`selected_hook`/`research_summary`)一直没真正发给模型。
+3. `sample_deep_analyze`/`tactic_extract` 的提示词从没规定过输出语言/字数/什么叫"共性",导致真实数据里22条分析有2条随机输出成英文,tactic_extract 归纳质量差。
+
+已按优先级(`script_generate`→`content_plan`→`script_review`→`sample_deep_analyze`→`tactic_extract`)逐个修复:补上所有缺失字段的真实传递、重写全部提示词(明确中文/口语化/具体质量标准,`script_review` 的判AI味标准取材于 `.claude/skills/humanizer-zh/SKILL.md`)。6个新测试直接抓取"真实发给模型的完整提示词字符串"断言之前缺失的字段确实出现了,不是只查schema声明。`tactic_extract` 的 `common_patterns`/`example_candidates` 数量上限暂时放宽到200(诊断性数值,不是最终值)——**下一步需要真实重跑一次 `tactic_extract`(第4次真实调用)看用修好的提示词能归纳出多少条、质量如何,再由用户定最终上限**,这一步需要用户重新授权(真花钱)。
 
 **后续清理收紧为例外触发,不再是常规工作**:只有下面四种情况出现时,才允许做局部清理,且清理范围只限于触及到的具体文件,不得借机扩大成新一轮审计:
 1. **阻塞真实运行**——某个真实生产入口(`business_data`/`experience` 下的 `run_*.py`/`review_queue.py`)跑不起来。
@@ -33,9 +38,9 @@
 |---|---|---|---|
 | 竞品数据采集/判定(`business_data`) | 生产可用,`CreationAssistant_Daily` 每天08:00自动跑 | 无 | - |
 | 备料流水线(转写+评论,`run_reverse_prep.py`) | 生产可用,历史积压已清空,自动触发已验证生效 | 无 | - |
-| "选题→大纲→成稿"链路(`sample_deep_analyze`/`source_to_topic`/`content_plan`/`script_generate`) | 技术链路已打通(端到端集成测试通过),中途卡人工审核闸门 | **选题环节只是简化版**(只用对标爆款+评论区两种料源,评分排序/热点/研究缺口都没做,见 `ROADMAP.md`);还没花钱调用过真实大模型 | 用户 |
+| "选题→大纲→成稿"链路(`sample_deep_analyze`/`source_to_topic`/`content_plan`/`script_generate`) | 技术链路已打通(端到端集成测试通过),中途卡人工审核闸门 | **选题环节只是简化版**(只用对标爆款+评论区两种料源,评分排序/热点/研究缺口都没做,见 `ROADMAP.md`)。**2026-07-11 更正**:`sample_deep_analyze` 已真实花钱调用过22次(21次成功);`source_to_topic`/`content_plan`/`script_generate`/`script_review` 仍然一次都没真实调用过——但这四个的提示词/缺失字段问题这次已经系统性修过一轮(见上"阶段3进展"),下次真调用前不会再是带着已知bug上场 | 用户 |
 | 人工审核闸门(`review_queue.py`) | 能用,但只有"通过/不通过"二选一 | 是否要接入已存在但未连接的 `goal10_corrections`(修正+留痕框架),涉及架构级决策 | 用户 |
-| `runtime_skills/` 绑定(12个业务Skill) | 4个已接通真实数据,8个仍只能吃假样例 | 8个待接的具体绑定工程还没排期 | 用户 |
+| `runtime_skills/` 绑定(12个业务Skill) | 5个已接通真实数据(`sample_deep_analyze`/`source_to_topic`/`content_plan`/`script_generate`/`tactic_extract`,阶段3新增),7个仍只能吃假样例 | 7个待接的具体绑定工程还没排期;已接的5个里只有`sample_deep_analyze`真被真实模型调用验证过内容质量,`tactic_extract`调用过但目前都失败(见上) | 用户 |
 | 两套 Skill 实现取舍(`.claude/skills/` vs `runtime_skills/`) | 方向已定:`runtime_skills/` 为唯一权威 | 迁移/淘汰尚未执行,`.claude/skills/` 仍在正常使用 | 用户已定方向,执行节奏待定 |
 | 两套平行架构(Goal01-12 正式链路 vs `business_data`/`experience` 轻量层) | **2026-07-11 清场完成(两轮)**:`correction`/`production`/`host`/`hermes`/`state`/`runtime` 整个目录 + `workflow/goal_phase5_business_workflow.py`,经全仓库传递闭包核实零真实生产入口依赖后,归档到 `archive/dead_goal_chain_20260709/`。`persistence`/`scheduler`/`workflow/goal05_workflow.py`/`research/goal06_formal_research.py`/`external_adapters/goal_phase4_external_adapters.py` 意外保留(被 `model_gateway`/`external_adapters` 真实传递依赖)。归档 `runtime/` 时连带修了两处真实断链:`config/settings.{yaml,example.yaml}` 的 schema chain 曾引用已归档的 `goal_runtime_vertical_slice_schema.*.sql`(已移除);`test_external_executor_adapters.py` 里两个测 `RuntimeHost` 的用例已随 runtime 一起移除,其余 6 个测真实 `external_adapters` 类的用例保留在原文件 | `goal10_corrections.py` 的"修正+留痕"能力已随 correction/ 一起归档,若未来需要该能力,是一次新的架构决策,不是"接入" | 用户 |
 | `Goal05WorkflowOrchestrator` 测试覆盖 | **2026-07-11 补回**:第一轮归档 `test_phase5_business_workflow.py` 时连带丢了唯一覆盖它的测试,新增 `tests/core/test_goal05_workflow_orchestrator.py`(13个测试,真实 `Goal03Scheduler.in_memory()`,无 mock 核心逻辑) | 无 | - |
@@ -44,7 +49,7 @@
 | 模型路由(`config/model_routes.yaml`) | **2026-07-11 重构**:唯一显性入口,三个具名位点 `dialogue_model`/`business_model`/`writing_model`,当前全部 = Mimo(经 Hermes),移除了此前混进来的 `engineering_execution` 路由(那本质是 Codex/Claude Code 的开发工具活动,不该被建模成运行期业务路由) | 无 | - |
 | 飞书实时集成 | 未重建 | 需要确认是否现在需要 | 用户 |
 | GPT 供应商切换 | 未开始 | 非当前阻塞项 | 用户主动触发 |
-| 真实付费模型端到端验证 | **2026-07-11 更正**:`sample_deep_analyze` 曾在 2026-07-08 真实调用过一次 Hermes(`hit_deep_analysis` 表里那 2 条记录,用户已确认是真调用、不是回填数据)——"从没花过一次钱"这句话之前是错的。但**产出结果从没被人看过、没判断过好不好用**,`source_to_topic`/`content_plan`/`script_generate` 这三步则真的一次都没被真实调用过(对应的表在真实库里目前都不存在)。全部 Skill 的**测试套件**仍然只用确定性假 Provider,这句话没变——**创作链路当前只到"状态机已验证",不得宣称"创作功能已完成"或"内容质量已验证"** | `HERMES_BUSINESS_BASE_URL`/`HERMES_BUSINESS_MODEL_NAME` 当前不在真实 `.env` 里(只有 `HERMES_BUSINESS_API_KEY`) | 用户 |
+| 真实付费模型端到端验证 | **2026-07-11 大幅更新**:`HERMES_BUSINESS_MODEL_TOKEN/BASE_URL/NAME/CLASS` 已确认真实、已补进真实 `.env`(不再是缺口)。`sample_deep_analyze` 已真实调用22次(21次成功,内容人工抽查过、质量基本可用,但发现过语言不一致的真实bug已修)。`tactic_extract` 已真实调用4次,**全部失败**(1次因参数超限、1次诊断调用、1次内容质量太差无法用、1次因用户临时决定取消数量限制后暴露出提示词质量问题)——过程中系统性查出并修复了全部12个业务Skill里5个的真实运行时提示词缺陷(`script_review`三个子节点完全没传任务内容、`content_plan`/`script_generate`丢失必传字段、`sample_deep_analyze`/`tactic_extract`缺质量指导),详见上"阶段3进展"。`source_to_topic`/`content_plan`/`script_generate`/`script_review` 仍然一次都没被真实调用过。**创作链路当前状态**:提示词层面的已知缺陷这次修过一轮,但没有一次成功产出过可用的`tactic_extract`结果,`content_plan`/`script_generate`/`script_review`修完的提示词也还没有真实调用验证过——不得宣称"创作功能已完成"或"内容质量已验证" | 下一步真实调用需要用户重新授权(真花钱) | 用户 |
 
 ## 权威闸门真实输出(不是转述)
 

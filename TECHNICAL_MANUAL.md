@@ -132,7 +132,7 @@
 **怎么把一条真实爆款变成一份成稿草稿**：
 1. `python -m scripts.core.experience.run_sample_deep_analyze --limit N`——挑一条已经完成备料(转写完成)、但还没做过分析的爆款,只把大模型"分析"这一步真正需要的东西喂给它:文字稿(超过7000字才会截断)、点赞/评论/收藏/转发数、领域标签——**不会把数据库内部的字段名、内部编号这些东西传进去**。拿到结果(选题手法/开头手法/结构手法三段话)后存进 `hit_deep_analysis` 表,带版本号,不覆盖旧分析。
 2. `python -m scripts.core.experience.run_source_to_topic --limit N`——挑一条已经分析过、但还没生成过候选选题的分析结果,把"选题手法/开头手法/结构手法"三段话当证据喂给 `source_to_topic`,生成一条候选选题(标题+切入角度+支撑证据)。**关联判断(这条选题是否和已有内容重复/冲突)目前是老实的占位文字**,不是真判断过——那是另一个还没接的独立能力(`content_relation_judge`)的活,没有冒充。结果存进 `topic_candidates` 表,同样带版本号。
-3. `python -m scripts.core.experience.run_content_plan --limit N`——挑一条状态是"已生成"(`topic_status='generated'`)、但还没规划过的候选选题,喂给 `content_plan` 生成开头候选(1-5个)、选定开头、分段大纲。**两处明确的替代,不是真数据**:①理应由 `tactic_extract`(还没接)产出的"打法候选",现在复用同一条爆款自己的选题/开头/结构手法;②理应来自范例库(物理载体还没定)的"风格范例",现在复用同一条爆款自己的真实转写文字稿摘句。都是真实数据、老实标了替代关系,不是编造——而且已核实这两项目前不影响模型实际生成的内容(`_run_content_plan()` 两次真实模型调用只读了 `brief`/`style_examples`)。结果存进 `content_plans` 表,同样带版本号。
+3. `python -m scripts.core.experience.run_content_plan --limit N`——挑一条状态是"已生成"(`topic_status='generated'`)、但还没规划过的候选选题,喂给 `content_plan` 生成开头候选(1-5个)、选定开头、分段大纲。**两处明确的替代,不是真数据**:①理应由 `tactic_extract`(还没接)产出的"打法候选",现在复用同一条爆款自己的选题/开头/结构手法;②理应来自范例库(物理载体还没定)的"风格范例",现在复用同一条爆款自己的真实转写文字稿摘句。都是真实数据、老实标了替代关系,不是编造。**2026-07-11 更正**:这句话曾经写着"已核实这两项不影响模型实际生成的内容(只读了brief/style_examples)"——那是当时的真实情况,但也是一个真实bug(`tactic_candidates`/`evidence_items` 两个契约要求必传的字段压根没发给模型),这次已经修复,现在这两项**会**真实影响模型输出,不再是"不影响"。结果存进 `content_plans` 表,同样带版本号。
 4. `python -m scripts.core.experience.run_script_generate --limit N`——挑一条还没生成过草稿的规划,把选定的开头、分段大纲、支撑证据喂给 `script_generate`,产出一份成稿草稿(50-6000字)。**一处明确的替代**:理应由 `research_evidence_extract`/`production_research_plan`(都还没接)产出的"研究摘要",现在是一句老实标注"未经真实研究流程,仅汇总已有证据"的文字,不冒充真研究过。结果存进 `script_drafts` 表,同样带版本号。
 
 **人工审核闸门(2026-07-10 新增)**：`topic_candidates`/`content_plans`/`script_drafts` 三张表各有一个 `human_review_status` 字段,新产出的一行默认是 `pending_review`(待审核)。**没有人明确标记"通过",内容不会自动流到下一步**——第2步查询"还有哪些分析结果没生成选题"不受这个字段影响,但第3步只会挑 `human_review_status='approved'` 的候选选题,第4步同理只挑已通过的规划。这是补给之前一个真实缺口的:最早接这条链路的时候,三步命令挨个跑,中间完全没有人看一眼的环节。审核用这个命令:
@@ -152,14 +152,16 @@ python -m scripts.core.experience.review_queue --reject plan p1_plan_v1 --note "
 ```
 python -m scripts.core.experience.run_tactic_extract --domain-label fan_kepu_social_life --limit 20
 ```
-一次调用最多归纳 2-20 条同领域的证据(`tactic_extract` 自己的契约规定,2026-07-11 从 12 条上调到 20 条,以及每条证据摘要的长度上限从 160 字符上调到 320 字符,好让"选题手法/开头手法/结构手法"三段真实内容都能各留一小段摘要,不是只塞得下一段——调整前后都用真实 token 预算算过账,不是拍脑袋改数字,细节见 `TACTIC_EXTRACT_BUSINESS_CONTRACT.yaml` 里的注释)。**不同领域不能混在一次调用里**,这一点没变。
+一次调用最多归纳 2-20 条同领域的证据(`tactic_extract` 自己的契约规定,2026-07-11 从 12 条上调到 20 条)。每条证据摘要的字符上限先从160调到320、再到450,**最后按用户明确指示彻底取消了逐字段截断**——现在每条证据的选题/开头/结构手法三段真实内容原样完整传给模型,不再按固定字数硬切;`dna_note_ref_max` 留了一个2500字符的schema声明式上限(数学上算出来的真实天花板,不是拍脑袋的数字,正常情况永远碰不到,细节见 `TACTIC_EXTRACT_BUSINESS_CONTRACT.yaml` 注释)。**不同领域不能混在一次调用里**,这一点没变。
+
+**`tactic_extract` 真实调用现状(2026-07-11,4次,全部失败)**:第1次因为当时"共同规律"数量上限是12,真实模型对20条丰富材料归纳出60条,被拦下;诊断后发现真实返回的60条**质量也不合格**——基本是把20条材料里出现过的词汇挨个罗列了一遍,不是真的"跨材料找共性",而且"范例候选"返回了0条。往上查根因,发现全部12个业务Skill的真实运行时提示词(不是 `prompt.md`,是真正发给模型的那句话)系统性写得很糙,`script_review` 三个子节点(审稿/润色/判AI味)甚至完全没把任务内容传给AI。已按`script_generate`→`content_plan`→`script_review`→`sample_deep_analyze`→`tactic_extract`的顺序全部修过一轮(补全缺失字段的真实传递+重写提示词给出具体质量标准),但**修完之后还没有再真实调用验证过效果**——下一次真实调用(第5次,需要用户重新授权花钱)才能看到修完提示词之后 `tactic_extract` 到底能归纳出多少条、质量怎么样,到时候再由用户定"共同规律"数量的最终上限(目前的200是诊断性数值)。
 
 **明确没做的**（不是遗漏,是天然排在后面,见 `ROADMAP.md`）：
 - **候选(candidate)之后怎么变成正式生效(active)——这一步完全没做**。`goal02_store.py` 的 `transition_state()` 已经写好并测试过,但现在没有任何真实调用方去调它,一条 `tactic_state` 创建出来之后永远停在 `candidate`,不会自动、也没有人工入口让它变成 `active`。
 - `recompute_experience_state()`(算一个打法现在成不成熟)算出来的状态词(`active`/`watch`/`paused`/`deprecated`)和 `tactic_state.state` 实际能存的词(`candidate`/`active`/`paused`/`deprecated`)对不上——没有 "watch" 这个槽位,这次没解决。
 - `content_plan` 里"打法候选"字段现在还是复用同一条爆款自己的选题/开头/结构手法,这次没有把它接到真正 `active` 状态的 tactic 上——因为目前没有任何 tactic 会变成 active(见上一条)。
 - **选题目前只用了"对标爆款+评论区"两种候选来源**——研究缺口/当下热点两种候选来源还没接。**2026-07-11 澄清:当前设计没有冻结"选题打分制"**,`.claude/skills/选题/SKILL.md` 里描述的"选题判断维度"评分排序是该交互式技能自己的旧方法,不代表 `runtime_skills/source_to_topic` 当前设计要对齐的目标,不得当作缺口去补。真正的缺口是:当前设计里的选题判断规则、领域约束、去重/冷却、候选来源、人工确认门槛,有没有被真实代码落地并验证——这是 2026-07-09/11 用户直接指出并两次纠偏过的真实缺口,详见 `ROADMAP.md`。
-- **`sample_deep_analyze`/`tactic_extract` 已经真花过钱**(2026-07-11,20+条真实数据,细节见 `HANDOFF_STATE.md`),但 `source_to_topic`/`content_plan`/`script_generate` 这三步仍然一次都没真调用过真实大模型,测试用的还是各 Skill 自带的"假模型"。
+- **`sample_deep_analyze`已经真花过钱且大部分成功**(2026-07-11,22条真实数据,21条成功),`tactic_extract`真花过钱但4次全部失败(见上)。`source_to_topic`/`content_plan`/`script_generate`/`script_review` 这四步仍然一次都没真调用过真实大模型,测试用的还是各 Skill 自带的"假模型"——但这四个的提示词这次已经系统性修过一轮已知缺陷,不是带着确认过的bug等下次调用。
 
 **怎么跑**：见上面四条命令依次执行,每次生成完记得跑一下 `review_queue.py --list` 看有没有要审核的,通过了才会继续流到下一步。`N` 是这次要处理几条,默认1条。也可以直接跑 `python -m pytest tests/core/test_topic_to_script_chain_integration.py` 看一次完整的假数据端到端演练(含审核通过的环节,不花钱、不联网)。
 
