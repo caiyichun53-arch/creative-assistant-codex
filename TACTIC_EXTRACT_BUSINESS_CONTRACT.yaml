@@ -212,10 +212,12 @@ model_binding:
     apply -- quality and genuine cross-note recurrence over exhaustive
     coverage of everything mentioned.
 
-    example_candidates: for each common pattern you identify, cite the
-    specific note(s) (by the id prefix at the start of that note) that best
-    exemplify it, and briefly say what makes it a good example. This field
-    must not be empty when common_patterns is non-empty.
+    example_candidates: for each common pattern you identify, write ONE
+    PLAIN STRING (not a JSON object -- a single sentence of text) that names
+    the pattern, cites the specific note(s) by id prefix that best exemplify
+    it, and briefly says what makes it a good example, all in that one
+    sentence. This field must not be empty when common_patterns is
+    non-empty.
 
     Do not publish examples, write to experience memory, fetch files, read
     DNA notes by path, or call other Skills.

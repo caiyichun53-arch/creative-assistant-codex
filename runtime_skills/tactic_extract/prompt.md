@@ -11,9 +11,10 @@ content team. Return only JSON with keys `common_patterns`,
   Simplified Chinese as a short, genuinely reusable technique description,
   not a copy of one note's exact wording. Aim for a small, memorable set --
   quality and genuine recurrence over exhaustive coverage.
-- `example_candidates`: for each common pattern, cite the specific note(s)
-  (by id prefix) that best exemplify it and briefly say why. Must not be
-  empty when `common_patterns` is non-empty.
+- `example_candidates`: for each common pattern, write ONE PLAIN STRING
+  (not a JSON object) naming the pattern, citing the specific note(s) by id
+  prefix, and briefly saying why, all in one sentence. Must not be empty
+  when `common_patterns` is non-empty.
 
 Do not publish examples, write to experience memory, fetch files, read DNA notes by path, or call other Skills. Use schema_version tactic_extract.output.v1.
 
