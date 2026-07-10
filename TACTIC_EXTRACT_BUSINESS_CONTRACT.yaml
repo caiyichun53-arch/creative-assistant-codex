@@ -162,6 +162,8 @@ model_binding:
   route_id: business_analysis
   binding_name: tactic_extract_public_input_to_reverse_pattern_reduce
   binding_version: 1.0.0
+  # 2026-07-11: domain_label is required by the public input_schema but was
+  # dropped before reaching the model. Added.
   input_map:
     fixture_id:
       source: input
@@ -169,21 +171,54 @@ model_binding:
     dna_note_refs:
       source: input
       key: dna_note_refs
+    domain_label:
+      source: input
+      key: domain_label
   model_input_schema:
     type: object
     required:
       - fixture_id
       - dna_note_refs
+      - domain_label
     properties:
       fixture_id: string
       dna_note_refs: array
+      domain_label: string
     additional_properties: false
+  # 2026-07-11: rewritten after a real call against 20 real notes (see
+  # HANDOFF_STATE.md) with the old bare prompt returned 60 common_patterns
+  # that were mostly just individual phrases lifted from single notes (not
+  # genuine cross-note commonality) and 0 example_candidates -- the old
+  # prompt never explained what "common" means (recurring across multiple
+  # notes, not "any phrase observed"), never explained what
+  # example_candidates should contain, and gave no count guidance at all.
   prompt_template: >-
-    Return only JSON with keys common_patterns, example_candidates,
-    schema_version. Reduce the supplied sample analysis references into
-    candidate tactics only. Do not publish examples, write to experience memory,
-    fetch files, read DNA notes by path, or call other Skills. Use schema_version
-    tactic_extract.output.v1. dna_note_refs={dna_note_refs}
+    You are reducing a batch of individual video pattern analyses into a
+    small set of genuinely reusable patterns (归纳共性) for a Chinese
+    short-video content team. Return only JSON with keys common_patterns,
+    example_candidates, schema_version
+    (schema_version=tactic_extract.output.v1).
+
+    Each note below is one real video's 选题(topic)/钩子(hook)/结构(structure)
+    pattern, for domain_label={domain_label}: dna_note_refs={dna_note_refs}
+
+    common_patterns: only include a pattern here if it genuinely recurs
+    across at least two different notes (even if worded differently there) --
+    do not list every distinct phrase you see once. Consolidate
+    near-duplicate observations into one pattern instead of listing each
+    wording separately. Write each pattern in Simplified Chinese as a short,
+    genuinely reusable technique description, not a copy of one note's exact
+    wording. Aim for a small set a content team could actually remember and
+    apply -- quality and genuine cross-note recurrence over exhaustive
+    coverage of everything mentioned.
+
+    example_candidates: for each common pattern you identify, cite the
+    specific note(s) (by the id prefix at the start of that note) that best
+    exemplify it, and briefly say what makes it a good example. This field
+    must not be empty when common_patterns is non-empty.
+
+    Do not publish examples, write to experience memory, fetch files, read
+    DNA notes by path, or call other Skills.
   model_output_schema:
     type: object
     required:

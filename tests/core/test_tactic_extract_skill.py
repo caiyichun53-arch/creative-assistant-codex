@@ -7,9 +7,11 @@ from scripts.core.model_gateway.formal_skill_adapter import (
     DeterministicTacticExtractModelPort,
     FormalSkillContract,
     FormalSkillValidationError,
+    apply_binding,
     load_tactic_extract_business_contract,
     load_tactic_extract_fixtures,
     make_tactic_extract_harness,
+    preprocess_formal_skill_input,
     sample_tactic_extract_input,
     validate_payload,
     validate_tactic_extract_business_contract,
@@ -22,6 +24,28 @@ class TacticExtractHarnessMixin:
         harness = make_tactic_extract_harness(**kwargs)
         self.addCleanup(harness.close)
         return harness
+
+
+class RenderedPromptReachesModelTests(unittest.TestCase):
+    """Regression for the real 2026-07-11 bug: a real call against 20 real
+    notes returned 60 common_patterns (mostly single-note phrases, not
+    genuine cross-note commonality) and 0 example_candidates -- the old
+    prompt never explained what "common" means or what example_candidates
+    should contain, and domain_label was dropped before reaching the model.
+    Proves domain_label now reaches the prompt and the cross-note-recurrence
+    guidance is present."""
+
+    def test_domain_label_reaches_prompt_and_recurrence_guidance_present(self) -> None:
+        contract = FormalSkillContract.from_yaml(TACTIC_EXTRACT_CONTRACT_PATH)
+        input_payload = sample_tactic_extract_input()
+        preprocessed = preprocess_formal_skill_input(contract.formal_skill_id, input_payload)
+        model_input = apply_binding(contract.input_map, input_payload, {}, preprocessed)
+        validate_payload(model_input, contract.model_input_schema)
+        prompt = contract.portable_skill().render_prompt(model_input)
+
+        self.assertIn(input_payload["domain_label"], prompt)
+        self.assertIn("recurs across at least two different notes", prompt)
+        self.assertIn("must not be empty", prompt)
 
 
 class TacticExtractBusinessContractTests(unittest.TestCase):

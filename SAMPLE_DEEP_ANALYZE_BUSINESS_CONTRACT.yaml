@@ -130,10 +130,17 @@ model_binding:
   route_id: business_analysis
   binding_name: sample_deep_analyze_public_input_to_reverse_dna_analysis
   binding_version: 1.0.0
+  # 2026-07-11: candidate_topic (the real video title) is required by the
+  # public input_schema but was never forwarded to the model. Added so the
+  # model has a real topic anchor, not just a transcript excerpt that may be
+  # truncated for a long video.
   input_map:
     fixture_id:
       source: input
       key: request_id
+    candidate_topic:
+      source: input
+      key: candidate_topic
     transcript_excerpt:
       source: preprocessed
       key: transcript_text
@@ -144,19 +151,61 @@ model_binding:
     type: object
     required:
       - fixture_id
+      - candidate_topic
       - transcript_excerpt
       - metrics
     properties:
       fixture_id: string
+      candidate_topic:
+        type: string
+        minLength: 1
+        maxLength: 120
       transcript_excerpt: string
       metrics: object
     additional_properties: false
+  # 2026-07-11: rewritten. Real production data review (2026-07-11, see
+  # HANDOFF_STATE.md) found that with the old bare "return this JSON shape"
+  # prompt, 2 of 22 real analyses came back with English snake_case labels
+  # instead of Chinese (e.g. "redefining_common_pest_as_beneficial_predator")
+  # while the other 20 were Chinese -- the prompt never specified an output
+  # language, so the model picked inconsistently per call. This mixing
+  # directly degrades tactic_extract downstream (it cannot find real
+  # commonality across notes that are not even in the same language). The
+  # prompt now requires Simplified Chinese explicitly, clarifies what each
+  # of the three pattern fields actually means (a reusable pattern
+  # description, not a summary of this one video's specific facts), and asks
+  # for a concise but complete description rather than either a bare label
+  # or a full paragraph.
   prompt_template: >-
-    Return only JSON with keys topic_pattern, hook_pattern, structure_pattern,
-    schema_version. Analyze one prepared sample only. Do not run ASR, collect
-    comments, reduce multiple samples, write examples, fetch facts, or call other
-    Skills. Use schema_version sample_deep_analyze.output.v1.
-    transcript_excerpt={transcript_excerpt}; metrics={metrics}
+    You are extracting reusable content patterns from one already-successful
+    Chinese short-video (抖音) script. Return only JSON with keys
+    topic_pattern, hook_pattern, structure_pattern, schema_version
+    (schema_version=sample_deep_analyze.output.v1).
+
+    Write all three fields in Simplified Chinese, regardless of what
+    language the transcript itself is in.
+
+    topic_pattern: the reusable TYPE or ANGLE of topic this video takes, not
+    a restatement of its specific facts -- phrase it so it could describe
+    other videos taking a similar angle on a different subject.
+
+    hook_pattern: the reusable OPENING TECHNIQUE used to capture attention,
+    not a quote of the actual opening line -- describe the strategy (e.g.
+    what kind of contrast, question, or tension it opens with).
+
+    structure_pattern: the reusable NARRATIVE STRUCTURE as an ordered
+    sequence of stages (use → between stages) -- describe the shape of the
+    argument/story, not this video's specific content at each stage.
+
+    Each field should be a concise but complete phrase or short sentence
+    (not a bare one-word label, not a full paragraph) -- write however much
+    is actually needed to describe the real pattern, no more.
+
+    candidate_topic={candidate_topic}; transcript_excerpt={transcript_excerpt};
+    metrics={metrics}
+
+    Do not run ASR, collect comments, reduce multiple samples, write
+    examples, fetch facts, or call other Skills.
   model_output_schema:
     type: object
     required:

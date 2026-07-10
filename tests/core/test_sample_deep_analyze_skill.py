@@ -7,9 +7,11 @@ from scripts.core.model_gateway.formal_skill_adapter import (
     DeterministicSampleDeepAnalyzeModelPort,
     FormalSkillContract,
     FormalSkillValidationError,
+    apply_binding,
     load_sample_deep_analyze_business_contract,
     load_sample_deep_analyze_fixtures,
     make_sample_deep_analyze_harness,
+    preprocess_formal_skill_input,
     sample_sample_deep_analyze_input,
     validate_payload,
     validate_sample_deep_analyze_business_contract,
@@ -22,6 +24,26 @@ class SampleDeepAnalyzeHarnessMixin:
         harness = make_sample_deep_analyze_harness(**kwargs)
         self.addCleanup(harness.close)
         return harness
+
+
+class RenderedPromptReachesModelTests(unittest.TestCase):
+    """Regression for the real 2026-07-11 bug: candidate_topic is required by
+    the public input_schema but was dropped before reaching the model, and
+    the prompt never specified an output language -- 2 of 22 real analyses
+    came back in English instead of Chinese as a result (see HANDOFF_STATE.md).
+    Proves candidate_topic now reaches the rendered prompt and the prompt
+    explicitly requires Chinese."""
+
+    def test_candidate_topic_reaches_prompt_and_chinese_is_required(self) -> None:
+        contract = FormalSkillContract.from_yaml(SAMPLE_DEEP_ANALYZE_CONTRACT_PATH)
+        input_payload = sample_sample_deep_analyze_input()
+        preprocessed = preprocess_formal_skill_input(contract.formal_skill_id, input_payload)
+        model_input = apply_binding(contract.input_map, input_payload, {}, preprocessed)
+        validate_payload(model_input, contract.model_input_schema)
+        prompt = contract.portable_skill().render_prompt(model_input)
+
+        self.assertIn(input_payload["candidate_topic"], prompt)
+        self.assertIn("Simplified Chinese", prompt)
 
 
 class SampleDeepAnalyzeBusinessContractTests(unittest.TestCase):
