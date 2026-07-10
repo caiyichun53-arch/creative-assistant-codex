@@ -11,6 +11,7 @@ from scripts.core.experience.run_tactic_extract import (
     NOTE_MAX_CHARS,
     assemble_dna_note_refs,
     assemble_tactic_extract_input,
+    count_truncated_notes,
     generate_one_tactic_candidate,
     run_tactic_extract,
     select_evidence_for_tactic_batch,
@@ -157,7 +158,7 @@ class AssembleDnaNoteRefsTests(unittest.TestCase):
             finally:
                 conn.close()
 
-    def test_notes_respect_the_320_char_schema_limit(self) -> None:
+    def test_notes_respect_the_schema_char_limit_when_content_is_extreme(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
@@ -168,6 +169,55 @@ class AssembleDnaNoteRefsTests(unittest.TestCase):
                 rows = select_evidence_for_tactic_batch(conn, domain_label="fan_kepu_social_life", limit=10)
                 notes = assemble_dna_note_refs(rows)
                 self.assertLessEqual(len(notes[0]), NOTE_MAX_CHARS)
+            finally:
+                conn.close()
+
+    def test_a_realistically_long_structure_field_is_not_cut_per_field(self) -> None:
+        # Regression for the real bug found 2026-07-11: the first version of
+        # this packing capped each field at a fixed 90 chars, which cut real
+        # structure_pattern content (naturally the longest field) on 2 of 22
+        # real production rows. A 200-char structure_pattern -- well within
+        # NOTE_MAX_CHARS's real headroom -- must survive whole, not get cut
+        # to 90.
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h0")
+                long_structure = "步骤" + "字" * 198
+                _insert_analysis(conn, "a0", "h0", topic_pattern="短选题", hook_pattern="短钩子", structure_pattern=long_structure)
+                register_hit_deep_analysis_evidence(conn, "a0")
+                rows = select_evidence_for_tactic_batch(conn, domain_label="fan_kepu_social_life", limit=10)
+                notes = assemble_dna_note_refs(rows)
+                self.assertIn(long_structure, notes[0])
+            finally:
+                conn.close()
+
+
+class CountTruncatedNotesTests(unittest.TestCase):
+    def test_zero_when_all_notes_fit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _seed_registered_evidence(conn, 3)
+                rows = select_evidence_for_tactic_batch(conn, domain_label="fan_kepu_social_life", limit=10)
+                self.assertEqual(count_truncated_notes(rows), 0)
+            finally:
+                conn.close()
+
+    def test_counts_notes_that_actually_exceed_the_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h0")
+                _insert_hit(conn, "h1")
+                _insert_analysis(conn, "a0", "h0", topic_pattern="字" * 500, hook_pattern="字" * 500, structure_pattern="字" * 500)
+                _insert_analysis(conn, "a1", "h1", topic_pattern="短", hook_pattern="短", structure_pattern="短")
+                register_hit_deep_analysis_evidence(conn, "a0")
+                register_hit_deep_analysis_evidence(conn, "a1")
+                rows = select_evidence_for_tactic_batch(conn, domain_label="fan_kepu_social_life", limit=10)
+                self.assertEqual(count_truncated_notes(rows), 1)
             finally:
                 conn.close()
 

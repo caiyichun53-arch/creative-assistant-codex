@@ -26,7 +26,7 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 320
+      maxLength: 450
   domain_label:
     type: string
     enum:
