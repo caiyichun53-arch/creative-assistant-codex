@@ -84,6 +84,13 @@ SOURCE_TO_TOPIC_GOAL_ID = "GOAL-V0.6.2-PRODUCTION-COMPLETION-01"
 SOURCE_TO_TOPIC_OUTPUT_SCHEMA_VERSION = "source_to_topic.output.v1"
 SAMPLE_DEEP_ANALYZE_OUTPUT_SCHEMA_VERSION = "sample_deep_analyze.output.v1"
 TACTIC_EXTRACT_OUTPUT_SCHEMA_VERSION = "tactic_extract.output.v1"
+# 2026-07-11: raised 12->200 (effectively uncapped for a diagnostic run) --
+# was a third, independent hardcoded copy of the same unsourced "12" also
+# present in TACTIC_EXTRACT_BUSINESS_CONTRACT.yaml's schema (all three
+# copies now updated together; see that file's evidence_requirements
+# comment for the real background). This constant exists so this file and
+# the schema file cannot silently drift apart again.
+TACTIC_EXTRACT_OUTPUT_ARRAY_MAX = 200
 RESEARCH_EVIDENCE_EXTRACT_OUTPUT_SCHEMA_VERSION = "research_evidence_extract.output.v1"
 PRODUCTION_RESEARCH_PLAN_OUTPUT_SCHEMA_VERSION = "production_research_plan.output.v1"
 CONTENT_PLAN_OUTPUT_SCHEMA_VERSION = "content_plan.output.v1"
@@ -1477,7 +1484,7 @@ def validate_tactic_extract_output_semantics(input_payload: dict[str, Any], outp
         raise FormalSkillValidationError("tactic_extract requires common_patterns")
     if not example_candidates:
         raise FormalSkillValidationError("tactic_extract requires example_candidates")
-    if len(common_patterns) > 12 or len(example_candidates) > 12:
+    if len(common_patterns) > TACTIC_EXTRACT_OUTPUT_ARRAY_MAX or len(example_candidates) > TACTIC_EXTRACT_OUTPUT_ARRAY_MAX:
         raise FormalSkillValidationError("tactic_extract output arrays exceed max size")
     for value in common_patterns + example_candidates:
         if not isinstance(value, str) or not value.strip():

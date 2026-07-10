@@ -1,3 +1,12 @@
+# 2026-07-11: common_patterns/example_candidates maxItems raised 12->200
+# (effectively uncapped for this diagnostic run). The prior 12 had no
+# BUSINESS_RULE_CATALOG.yaml backing at all (unsourced), and a real batch
+# of 20 sample_deep_analyze notes produced more than 12 real common_patterns,
+# which the old cap rejected outright, silently losing two real paid model
+# calls' output. 200 is a temporary, provisional ceiling to let a real call
+# run to completion so the actual count can be observed -- the real
+# permanent cap is a pending user decision once that number is known, not
+# settled by this change.
 type: object
 required:
   - common_patterns
@@ -7,7 +16,7 @@ properties:
   common_patterns:
     type: array
     minItems: 1
-    maxItems: 12
+    maxItems: 200
     items:
       type: string
       minLength: 1
@@ -15,7 +24,7 @@ properties:
   example_candidates:
     type: array
     minItems: 1
-    maxItems: 12
+    maxItems: 200
     items:
       type: string
       minLength: 1
