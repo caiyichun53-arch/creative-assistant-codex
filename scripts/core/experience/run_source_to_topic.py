@@ -74,16 +74,19 @@ NO_RELATION_JUDGEMENT_YET = (
 # before. \x1e (record separator) cannot appear in real crawled text, unlike
 # a delimiter like '||' a comment could plausibly contain.
 TOP_COMMENTS_DELIMITER = "\x1e"
-# UNSOURCED (2026-07-10): this "3" is not derived from BUSINESS_RULE_CATALOG.yaml
-# or any other design document -- it was picked by whoever wrote this binding
-# (no reasoning beyond "seemed reasonable"), the exact failure mode this
-# project has already been burned by once (see BR-BASELINE-003's history of
-# a fabricated "10" threshold). Flagged explicitly rather than presented as
-# if grounded. Needs a real decision: how many comments is actually useful
-# evidence for topic generation, and should it scale with how many comments
-# a hit has (a viral hit might have thousands; a borderline one, a handful).
-TOP_COMMENTS_PER_HIT = 3
-SOURCE_EVIDENCE_ITEMS_MAX = 8
+# 2026-07-11: the UNSOURCED "3" per-hit comment cap that used to live here is
+# gone -- explicit user decision. Re-imposing a second, arbitrary, smaller
+# cap on top of an already-real limit made no sense: reverse-prep's own
+# comment collection is already bounded by BR-COLLECT-005/006's real
+# top_comments=60 (see run_reverse_prep.py's install-time assertion), so
+# every real hit already has at most 60 comments to draw from -- no second
+# cutoff invented here. PATTERN_EVIDENCE_ITEM_COUNT (3: 选题/开头/结构 手法)
+# + 60 (the real upstream ceiling) = SOURCE_EVIDENCE_ITEMS_MAX below, a
+# derived number, not a guess -- see that constant and the schema files it
+# mirrors for the full accounting.
+PATTERN_EVIDENCE_ITEM_COUNT = 3
+REVERSE_PREP_MAX_COMMENTS_PER_HIT = 60  # BR-COLLECT-005/006, see run_reverse_prep.py
+SOURCE_EVIDENCE_ITEMS_MAX = PATTERN_EVIDENCE_ITEM_COUNT + REVERSE_PREP_MAX_COMMENTS_PER_HIT
 
 
 def validate_source_to_topic_execution_contract() -> dict[str, Any]:
@@ -96,13 +99,17 @@ def select_analyses_pending_topic(conn: sqlite3.Connection, *, limit: int) -> li
     yet). Oldest-created first, same ordering convention as
     select_hits_pending_analysis().
 
-    2026-07-10: also pulls this hit's top real comments (by the crawler's own
+    2026-07-10: also pulls this hit's real comments (by the crawler's own
     hotness ordering, hit_comments.sample_rank -- lower is hotter), joined as
     one delimited column rather than a second query, so
     assemble_source_to_topic_input() can stay a pure function that only reads
     the row it's given. TOP_COMMENTS_DELIMITER is a control character that
     cannot appear in real comment text, not '||' or similar (which a comment
-    could plausibly, if rarely, contain)."""
+    could plausibly, if rarely, contain). 2026-07-11: no LIMIT here anymore
+    (explicit user decision) -- reverse-prep already bounds real comment
+    count per hit to BR-COLLECT-005/006's real top_comments=60, so a second,
+    smaller, arbitrary cutoff here just duplicated an already-real limit for
+    no reason."""
     return conn.execute(
         """
         SELECT hit_deep_analysis.*, hits.title AS hit_title, account.domain_label AS account_domain_label,
@@ -111,7 +118,6 @@ def select_analyses_pending_topic(conn: sqlite3.Connection, *, limit: int) -> li
                     SELECT text FROM hit_comments
                      WHERE hit_comments.hit_id = hits.hit_id
                      ORDER BY sample_rank
-                     LIMIT ?
                 )) AS top_comments_text
           FROM hit_deep_analysis
           JOIN hits ON hits.hit_id = hit_deep_analysis.hit_id
@@ -125,7 +131,7 @@ def select_analyses_pending_topic(conn: sqlite3.Connection, *, limit: int) -> li
          ORDER BY hit_deep_analysis.created_at
          LIMIT ?
         """,
-        (TOP_COMMENTS_DELIMITER, TOP_COMMENTS_PER_HIT, limit),
+        (TOP_COMMENTS_DELIMITER, limit),
     ).fetchall()
 
 
@@ -167,7 +173,19 @@ def assemble_source_to_topic_input(analysis_row: sqlite3.Row, *, run_id: str) ->
     except (IndexError, KeyError):
         top_comments_text = None
     evidence_items.extend(_comment_evidence_items(top_comments_text))
-    evidence_items = evidence_items[:SOURCE_EVIDENCE_ITEMS_MAX]
+    if len(evidence_items) > SOURCE_EVIDENCE_ITEMS_MAX:
+        # Should be mathematically impossible: reverse-prep already caps real
+        # comments per hit at REVERSE_PREP_MAX_COMMENTS_PER_HIT (BR-COLLECT-
+        # 005/006). Hitting this means that real upstream limit changed
+        # without this constant being updated to match -- fail loudly rather
+        # than silently truncating real evidence, which is exactly the
+        # failure mode this rewrite removed the old hardcoded "3" cap to fix.
+        raise ValueError(
+            f"analysis_id={analysis_row['analysis_id']!r} has {len(evidence_items)} evidence items, "
+            f"exceeding SOURCE_EVIDENCE_ITEMS_MAX={SOURCE_EVIDENCE_ITEMS_MAX} -- this should be "
+            "mathematically impossible given REVERSE_PREP_MAX_COMMENTS_PER_HIT; check whether "
+            "BR-COLLECT-005/006's real top_comments limit changed"
+        )
     return {
         "request_id": f"source_to_topic_{analysis_row['analysis_id']}",
         "correlation_id": run_id,

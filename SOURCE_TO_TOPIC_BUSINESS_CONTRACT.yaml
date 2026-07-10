@@ -63,9 +63,25 @@ topic_generation_policy:
   must_not_write_experience_memory: true
   no_result_when_source_missing_or_unusable: true
   needs_review_when_domain_or_relation_boundary_unclear: true
+# 2026-07-11: source_evidence_items_max/evidence_items_max/the matching
+# input_schema maxItems all raised 8->63, and context_budget.max_input_tokens
+# raised 5000->13000, together -- explicit user decision to drop the
+# UNSOURCED per-hit "top 3 comments" cap that used to live in
+# run_source_to_topic.py (a second, arbitrary, smaller limit stacked on top
+# of an already-real one: reverse-prep's own comment collection is already
+# bounded by BR-COLLECT-005/006's real top_comments=60). 63 is not a new
+# guess -- it is the real derived ceiling: 3 fixed pattern items (选题/开头/
+# 结构手法) + that same real 60-comment cap. Token math for the new ceiling:
+# source_content(1600 chars) + 63 evidence items x evidence_item_max(240
+# chars) = 15120 chars + relation_summary(600 chars) = ~17320 chars content,
+# which at this codebase's own ~1.5 chars/token estimate for Chinese text
+# (see run_sample_deep_analyze.py's TRANSCRIPT_EXCERPT_MAX_CHARS derivation)
+# is ~11547 tokens; 13000 covers that with headroom for the prompt template
+# itself, not a round number picked "to be safe" with no arithmetic behind
+# it.
 evidence_requirements:
   source_evidence_items_min: 1
-  source_evidence_items_max: 8
+  source_evidence_items_max: 63
   output_supporting_evidence_must_reference_input: true
   rationale_or_angle_must_not_add_unseen_facts: true
 confidence_policy:
@@ -96,10 +112,10 @@ input_length_limits:
   source_id_max: 80
   source_content_max: 1600
   evidence_item_max: 240
-  evidence_items_max: 8
+  evidence_items_max: 63
   relation_summary_max: 600
 context_budget:
-  max_input_tokens: 5000
+  max_input_tokens: 13000
 token_budget:
   max_output_tokens: 1200
 timeout:
@@ -353,7 +369,7 @@ input_schema:
     source_evidence_items:
       type: array
       minItems: 1
-      maxItems: 8
+      maxItems: 63
       items:
         type: string
         minLength: 1

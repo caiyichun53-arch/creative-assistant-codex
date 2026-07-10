@@ -9,6 +9,8 @@ from pathlib import Path
 from scripts.core.business_data.register_competitor_accounts import install_schema
 from scripts.core.experience.run_source_to_topic import (
     ALLOWED_DOMAIN_LABELS,
+    REVERSE_PREP_MAX_COMMENTS_PER_HIT,
+    SOURCE_EVIDENCE_ITEMS_MAX,
     _comment_evidence_items,
     assemble_source_to_topic_input,
     generate_one_topic,
@@ -141,20 +143,24 @@ class SelectAnalysesPendingTopicTests(unittest.TestCase):
             finally:
                 conn.close()
 
-    def test_pulls_top_3_comments_by_sample_rank(self) -> None:
+    def test_pulls_all_comments_ordered_by_sample_rank_no_cap(self) -> None:
+        # 2026-07-11: the old "3" per-hit cap was removed (explicit user
+        # decision) -- reverse-prep's own real BR-COLLECT-005/006 limit
+        # (top_comments=60) is the only real cap, so a 4th comment (and
+        # beyond) must come through here, not get silently dropped.
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
                 _insert_account(conn)
                 _insert_hit(conn, "h1")
                 _insert_analysis(conn, "a1", "h1")
-                _insert_comment(conn, "h1", "c3", text="第四热评论,不该出现", sample_rank=3)
+                _insert_comment(conn, "h1", "c3", text="第四热评论,现在应该出现", sample_rank=3)
                 _insert_comment(conn, "h1", "c1", text="最热评论", sample_rank=0)
                 _insert_comment(conn, "h1", "c2", text="第二热评论", sample_rank=1)
                 _insert_comment(conn, "h1", "c0", text="第三热评论", sample_rank=2)
                 row = select_analyses_pending_topic(conn, limit=1)[0]
                 comments = row["top_comments_text"].split("\x1e")
-                self.assertEqual(comments, ["最热评论", "第二热评论", "第三热评论"])
+                self.assertEqual(comments, ["最热评论", "第二热评论", "第三热评论", "第四热评论,现在应该出现"])
             finally:
                 conn.close()
 
@@ -272,6 +278,44 @@ class AssembleSourceToTopicInputTests(unittest.TestCase):
                 conn.close()
         for item in payload["source_evidence_items"]:
             self.assertLessEqual(len(item), 240)
+
+    def test_real_max_comment_count_fits_without_the_defensive_error(self) -> None:
+        # 2026-07-11 regression: SOURCE_EVIDENCE_ITEMS_MAX(63) must actually
+        # cover the real upstream ceiling (3 pattern items +
+        # REVERSE_PREP_MAX_COMMENTS_PER_HIT comments) -- proves the derived
+        # number is correct, not just that it compiles.
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1")
+                _insert_analysis(conn, "a1", "h1")
+                for i in range(REVERSE_PREP_MAX_COMMENTS_PER_HIT):
+                    _insert_comment(conn, "h1", f"c{i}", text=f"评论{i}", sample_rank=i)
+                row = select_analyses_pending_topic(conn, limit=1)[0]
+                payload = assemble_source_to_topic_input(row, run_id="run_test")
+            finally:
+                conn.close()
+        self.assertEqual(len(payload["source_evidence_items"]), 3 + REVERSE_PREP_MAX_COMMENTS_PER_HIT)
+        self.assertEqual(len(payload["source_evidence_items"]), SOURCE_EVIDENCE_ITEMS_MAX)
+
+    def test_exceeding_the_real_ceiling_raises_instead_of_silently_truncating(self) -> None:
+        # Simulates data that should be impossible given reverse-prep's real
+        # cap, proving the fail-loud safety net fires rather than silently
+        # cutting evidence the way the old hardcoded "3" cap did.
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1")
+                _insert_analysis(conn, "a1", "h1")
+                for i in range(REVERSE_PREP_MAX_COMMENTS_PER_HIT + 1):
+                    _insert_comment(conn, "h1", f"c{i}", text=f"评论{i}", sample_rank=i)
+                row = select_analyses_pending_topic(conn, limit=1)[0]
+                with self.assertRaises(ValueError):
+                    assemble_source_to_topic_input(row, run_id="run_test")
+            finally:
+                conn.close()
 
 
 class GenerateOneTopicAndRunTests(unittest.TestCase):
