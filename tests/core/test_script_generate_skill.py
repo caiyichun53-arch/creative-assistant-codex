@@ -7,14 +7,37 @@ from scripts.core.model_gateway.formal_skill_adapter import (
     DeterministicScriptGenerateModelPort,
     FormalSkillContract,
     FormalSkillValidationError,
+    apply_binding,
     load_script_generate_business_contract,
     load_script_generate_fixtures,
     make_script_generate_harness,
+    preprocess_formal_skill_input,
     sample_script_generate_input,
     validate_payload,
     validate_script_generate_business_contract,
     validate_script_generate_output_semantics,
 )
+
+
+class RenderedPromptReachesModelTests(unittest.TestCase):
+    """Regression for the real 2026-07-11 bug: selected_hook/evidence_items/
+    research_summary were required in the public input_schema (a real caller
+    must supply them) but silently dropped before ever reaching the model --
+    only outline/brief made it into model_input_schema/input_map. Proves the
+    actual rendered prompt text (what the real model receives) contains
+    these fields now, not just that the schema declares them."""
+
+    def test_selected_hook_evidence_and_research_summary_appear_in_rendered_prompt(self) -> None:
+        contract = FormalSkillContract.from_yaml(SCRIPT_GENERATE_CONTRACT_PATH)
+        input_payload = sample_script_generate_input()
+        preprocessed = preprocess_formal_skill_input(contract.formal_skill_id, input_payload)
+        model_input = apply_binding(contract.input_map, input_payload, {}, preprocessed)
+        validate_payload(model_input, contract.model_input_schema)
+        prompt = contract.portable_skill().render_prompt(model_input)
+
+        self.assertIn(input_payload["selected_hook"], prompt)
+        self.assertIn(input_payload["research_summary"], prompt)
+        self.assertIn(input_payload["evidence_items"][0]["claim"], prompt)
 
 
 class ScriptGenerateHarnessMixin:

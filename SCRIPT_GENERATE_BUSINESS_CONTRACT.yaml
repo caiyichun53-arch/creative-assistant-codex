@@ -126,6 +126,13 @@ model_binding:
   route_id: writing_generation
   binding_name: script_generate_public_input_to_creation_draft
   binding_version: 1.0.0
+  # 2026-07-11: input_map/model_input_schema previously only forwarded
+  # outline/brief to the model -- selected_hook, evidence_items, and
+  # research_summary were all required in the public input_schema (a real
+  # caller must supply them) but silently dropped before ever reaching the
+  # model. This broke generation_policy.draft_must_use_selected_hook (the
+  # model was never told what the hook was) and left the model with no real
+  # evidence to ground factual claims in. All three now flow through.
   input_map:
     fixture_id:
       source: input
@@ -136,12 +143,24 @@ model_binding:
     brief:
       source: input
       key: brief
+    selected_hook:
+      source: input
+      key: selected_hook
+    evidence_items:
+      source: input
+      key: evidence_items
+    research_summary:
+      source: input
+      key: research_summary
   model_input_schema:
     type: object
     required:
       - fixture_id
       - outline
       - brief
+      - selected_hook
+      - evidence_items
+      - research_summary
     properties:
       fixture_id: string
       outline:
@@ -156,13 +175,67 @@ model_binding:
         type: string
         minLength: 1
         maxLength: 3000
+      selected_hook:
+        type: string
+        minLength: 1
+        maxLength: 240
+      evidence_items:
+        type: array
+        minItems: 1
+        maxItems: 12
+        items:
+          type: object
+      research_summary:
+        type: string
+        minLength: 1
+        maxLength: 1000
     additional_properties: false
+  # 2026-07-11: rewritten from a one-line "return JSON, don't do X" template.
+  # Real production data review found the old prompt gave the model zero
+  # guidance on output language, register, or how to use the (previously
+  # missing) selected_hook/evidence_items -- see HANDOFF_STATE.md for the
+  # real-data findings that prompted this. This is a Douyin spoken-narration
+  # script generator; the prompt now says so explicitly, requires Simplified
+  # Chinese conversational register (not written/formal Chinese), requires
+  # the exact supplied hook as the opening beat, requires following the
+  # outline in order without skipping or adding beats, requires grounding
+  # claims in evidence_items rather than inventing facts, and names concrete
+  # AI-writing tells to avoid (formulaic 首先/其次/最后 transitions, hedging,
+  # repeated sentence structure, filler recaps) instead of leaving "sound
+  # natural" unstated.
   prompt_template: >-
-    Return only JSON with keys draft_text and schema_version. Generate one
-    draft script from the supplied brief and outline only. Do not review,
-    polish, run banned-word checks, fetch sources, send messages, write files,
-    or call another Skill. Use schema_version script_generate.output.v1.
-    brief={brief}; outline={outline}
+    You are writing a spoken-narration script (口播文案) for a Chinese
+    short-video platform (抖音). Return only JSON with keys draft_text and
+    schema_version, schema_version must be script_generate.output.v1.
+
+    Write draft_text entirely in natural, spoken Simplified Chinese -- the
+    way a real person would say it out loud, not written or formal register.
+    Do not use bullet points, numbered lists, or headers inside draft_text;
+    it must read as one continuous spoken narration.
+
+    The script must open with, or naturally build from, this exact hook as
+    its opening beat -- do not invent a different opening:
+    selected_hook={selected_hook}
+
+    Follow this beat outline in order, one beat at a time; do not skip a
+    beat and do not add beats beyond what is listed: outline={outline}
+
+    Ground every factual claim in the supplied evidence; do not invent
+    statistics, quotes, or facts that are not present here:
+    evidence_items={evidence_items}
+
+    Research context (may be a placeholder noting no formal research pass
+    has run yet -- treat it as supplementary, not a license to fabricate
+    beyond evidence_items): research_summary={research_summary}
+
+    Overall creative direction: brief={brief}
+
+    Avoid generic AI-writing tells: no formulaic transitions like
+    首先/其次/最后 unless genuinely natural here, no hedging language, no
+    repeating the same sentence structure back to back, no filler sentence
+    that just restates what was already said. Write at a length natural for
+    being read aloud for this content -- do not pad or artificially
+    compress to hit a target length.
   model_output_schema:
     type: object
     required:

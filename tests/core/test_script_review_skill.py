@@ -24,6 +24,47 @@ class ScriptReviewHarnessMixin:
         return harness
 
 
+class _PromptRecordingScriptReviewPort(DeterministicScriptReviewModelPort):
+    """Wraps the real deterministic port to also capture each subnode's
+    actual rendered prompt string -- what a real model would receive."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.prompts_seen: list[str] = []
+
+    def complete(self, request, route):
+        self.prompts_seen.append(request.prompt)
+        return super().complete(request, route)
+
+
+class RenderedPromptsReachTheModelTests(ScriptReviewHarnessMixin, unittest.TestCase):
+    """Regression for the real 2026-07-11 bug: all three script_review
+    subnode prompts were a bare "Return only JSON with keys X, Y,
+    schema_version" string -- none of them contained draft_text, brief,
+    evidence_items, edit_notes, or human_reference_refs. A real model call
+    would have had no way to know what script it was even reviewing. Proves
+    the actual rendered prompts now carry the real content."""
+
+    def test_all_three_subnode_prompts_contain_the_real_required_fields(self) -> None:
+        provider = _PromptRecordingScriptReviewPort()
+        harness = self.make_review_harness(provider=provider)
+        input_payload = sample_script_review_input()
+        created = harness.api.create_formal_skill_job(input_payload)
+        harness.worker.run_once()
+
+        self.assertEqual(len(provider.prompts_seen), 3)
+        review_prompt, polish_prompt, ai_flavor_prompt = provider.prompts_seen
+
+        self.assertIn(input_payload["draft_text"], review_prompt)
+        self.assertIn(input_payload["brief"], review_prompt)
+        self.assertIn(input_payload["evidence_items"][0]["claim"], review_prompt)
+
+        self.assertIn(input_payload["draft_text"], polish_prompt)
+        self.assertIn("Tighten the opening scene", polish_prompt)  # the deterministic review issue
+
+        self.assertIn(input_payload["human_reference_refs"][0], ai_flavor_prompt)
+
+
 class ScriptReviewBusinessContractTests(unittest.TestCase):
     def test_business_contract_has_required_sections_and_no_missing_requirements(self) -> None:
         result = validate_script_review_business_contract(load_script_review_business_contract())

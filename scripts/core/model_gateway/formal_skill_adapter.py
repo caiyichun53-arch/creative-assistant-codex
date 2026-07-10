@@ -658,6 +658,14 @@ class FormalBusinessSkillAdapter:
         )
 
     def _run_content_plan(self, input_payload: dict[str, Any]) -> FormalSkillRunResult:
+        # 2026-07-11: both subnode prompts below were rewritten. The hook
+        # prompt used to omit candidate_topic/evidence_items/tactic_candidates
+        # entirely (all three are required by this Skill's own public
+        # input_schema, but never reached the model) -- the outline prompt
+        # had the same gap. Both now receive the full real context and real
+        # quality guidance (language, hook count, grounding in evidence,
+        # drawing on tactic_candidates without copying them verbatim) instead
+        # of a bare "return this JSON shape" instruction.
         for route_name in ("business.creation_hook", "business.creation_outline"):
             if route_name not in self.gateway.routes:
                 raise FormalSkillValidationError(f"missing approved model route: {route_name}")
@@ -665,13 +673,38 @@ class FormalBusinessSkillAdapter:
             "fixture_id": input_payload["request_id"],
             "brief": input_payload["brief"],
             "style_examples": input_payload["style_examples"],
+            "candidate_topic": input_payload["candidate_topic"],
+            "evidence_items": input_payload["evidence_items"],
+            "tactic_candidates": input_payload["tactic_candidates"],
         }
         hook_run = self.gateway.complete(
             ModelRequest(
                 route_name="business.creation_hook",
                 prompt=(
-                    "Return only JSON with keys hooks, schema_version. "
-                    f"brief={hook_input['brief']}; style_examples={hook_input['style_examples']}"
+                    "You are writing opening hooks (开头钩子) for a Chinese "
+                    "short-video (抖音) spoken script. Return only JSON with "
+                    "keys hooks, schema_version "
+                    "(schema_version=content_plan.hook_output.v1).\n\n"
+                    "Write every hook in natural, spoken Simplified Chinese, "
+                    "not written or formal register. Return 1 to 5 distinct "
+                    "hooks, each a real candidate opening line for this "
+                    f"exact topic, not a generic template: candidate_topic="
+                    f"{hook_input['candidate_topic']}; brief="
+                    f"{hook_input['brief']}.\n\n"
+                    "Ground each hook in the supplied evidence -- do not "
+                    f"invent facts not present here: evidence_items="
+                    f"{hook_input['evidence_items']}.\n\n"
+                    "You may draw on these known-effective opening "
+                    "techniques from prior real hits, but adapt them to this "
+                    "specific topic rather than copying their wording "
+                    f"verbatim: tactic_candidates={hook_input['tactic_candidates']}."
+                    "\n\n"
+                    "Match the voice and register of these real style "
+                    f"examples: style_examples={hook_input['style_examples']}."
+                    "\n\n"
+                    "Avoid generic AI-writing tells: no formulaic '你有没有"
+                    "想过' openers unless genuinely fitting, no hedging, no "
+                    "hook that could apply to any topic interchangeably."
                 ),
                 input_payload=hook_input,
                 correlation_id=input_payload["correlation_id"],
@@ -692,13 +725,31 @@ class FormalBusinessSkillAdapter:
             "fixture_id": input_payload["request_id"],
             "selected_hook": selected_hook,
             "brief": input_payload["brief"],
+            "evidence_items": input_payload["evidence_items"],
+            "tactic_candidates": input_payload["tactic_candidates"],
         }
         outline_run = self.gateway.complete(
             ModelRequest(
                 route_name="business.creation_outline",
                 prompt=(
-                    "Return only JSON with keys beats, schema_version. "
-                    f"selected_hook={selected_hook}; brief={outline_input['brief']}"
+                    "You are structuring the beat outline (节奏骨架) for a "
+                    "Chinese short-video (抖音) spoken script. Return only "
+                    "JSON with keys beats, schema_version "
+                    "(schema_version=content_plan.outline_output.v1).\n\n"
+                    "The outline must open from this exact selected hook, "
+                    f"not a different opening: selected_hook={selected_hook}."
+                    f" Overall direction: brief={outline_input['brief']}.\n\n"
+                    "Produce 3 to 8 beats, one short sentence per beat "
+                    "describing what that beat covers. Every beat must add "
+                    "real new information -- no beat may just restate the "
+                    "previous beat in different words. Build the sequence so "
+                    "later beats can be grounded in this evidence when the "
+                    f"full script is written: evidence_items="
+                    f"{outline_input['evidence_items']}.\n\n"
+                    "You may draw on these known-effective structure "
+                    "patterns from prior real hits, adapted to this specific "
+                    f"topic rather than copied verbatim: tactic_candidates="
+                    f"{outline_input['tactic_candidates']}."
                 ),
                 input_payload=outline_input,
                 correlation_id=input_payload["correlation_id"],
@@ -732,6 +783,12 @@ class FormalBusinessSkillAdapter:
         )
 
     def _run_script_review(self, input_payload: dict[str, Any]) -> FormalSkillRunResult:
+        # 2026-07-11: all three subnode prompts below used to be a bare
+        # "Return only JSON with keys X, Y, schema_version" string -- none of
+        # them contained ANY real task content (not draft_text, not brief,
+        # not evidence_items, not human_reference_refs). A real model call
+        # would have had no way to know what script it was even reviewing.
+        # All three now carry the real content plus real quality criteria.
         for route_name in ("business.creation_review", "business.creation_polish", "business.ai_flavor_judge"):
             if route_name not in self.gateway.routes:
                 raise FormalSkillValidationError(f"missing approved model route: {route_name}")
@@ -740,11 +797,32 @@ class FormalBusinessSkillAdapter:
             "fixture_id": input_payload["request_id"],
             "draft_text": input_payload["draft_text"],
             "brief": input_payload["brief"],
+            "evidence_items": input_payload["evidence_items"],
         }
         review_run = self.gateway.complete(
             ModelRequest(
                 route_name="business.creation_review",
-                prompt="Return only JSON with verdict, issues, schema_version.",
+                prompt=(
+                    "You are reviewing a Chinese spoken-narration short-video "
+                    "(抖音口播) script draft before it is polished. Return "
+                    "only JSON with keys verdict, issues, schema_version "
+                    "(schema_version=script_review.review_output.v1).\n\n"
+                    f"draft_text={review_input['draft_text']}\n\n"
+                    f"It was meant to follow this brief: brief="
+                    f"{review_input['brief']}\n\n"
+                    "Check specifically: does the draft stay on topic and "
+                    "match the brief; is it coherent and logically ordered; "
+                    "does every factual claim trace back to this evidence "
+                    "(flag any claim that does not) evidence_items="
+                    f"{review_input['evidence_items']}; does it read as "
+                    "natural spoken Chinese rather than written/formal "
+                    "register.\n\n"
+                    "verdict must be pass (no real problems), revise (fixable "
+                    "problems exist), or fail (would need a full rewrite). "
+                    "Each item in issues must name a specific, concrete "
+                    "problem tied to a specific part of the draft -- not a "
+                    "vague general comment."
+                ),
                 input_payload=review_input,
                 correlation_id=input_payload["correlation_id"],
                 skill_name=self.contract.formal_skill_id,
@@ -766,7 +844,20 @@ class FormalBusinessSkillAdapter:
         polish_run = self.gateway.complete(
             ModelRequest(
                 route_name="business.creation_polish",
-                prompt="Return only JSON with polished_text, schema_version.",
+                prompt=(
+                    "You are polishing a Chinese spoken-narration short-video "
+                    "(抖音口播) script draft. Return only JSON with keys "
+                    "polished_text, schema_version "
+                    "(schema_version=script_review.polish_output.v1).\n\n"
+                    f"draft_text={polish_input['draft_text']}\n\n"
+                    "Fix only these specific issues found by review -- do "
+                    "not rewrite parts that were not flagged, do not change "
+                    f"the overall structure or voice: edit_notes="
+                    f"{polish_input['edit_notes']}\n\n"
+                    "polished_text must be the complete replacement script, "
+                    "not a diff or a description of what changed, and must "
+                    "still read as natural spoken Chinese."
+                ),
                 input_payload=polish_input,
                 correlation_id=input_payload["correlation_id"],
                 skill_name=self.contract.formal_skill_id,
@@ -788,7 +879,35 @@ class FormalBusinessSkillAdapter:
         ai_run = self.gateway.complete(
             ModelRequest(
                 route_name="business.ai_flavor_judge",
-                prompt="Return only JSON with ai_flavor_risk, revision_targets, schema_version.",
+                prompt=(
+                    "You are judging whether a Chinese spoken-narration "
+                    "short-video (抖音口播) script sounds AI-written. Return "
+                    "only JSON with keys ai_flavor_risk, revision_targets, "
+                    "schema_version (schema_version="
+                    "script_review.ai_flavor_output.v1).\n\n"
+                    f"draft_text={ai_input['draft_text']}\n\n"
+                    "Compare it against how real people actually write/speak "
+                    "in these real reference examples: human_reference_refs="
+                    f"{ai_input['human_reference_refs']}\n\n"
+                    "Concrete AI-writing tells to check for (each one is a "
+                    "real, observed pattern, not a vague notion of "
+                    "'unnatural'): AI buzzwords (此外/与...保持一致/至关重要/"
+                    "深入探讨/强调/持久的/增强/培养/关键/格局/展示/证明/充满活力"
+                    "的); inflated-significance phrasing (标志着...的关键时刻/"
+                    "体现了.../彰显了...重要性); forcing ideas into groups of "
+                    "exactly three; negative parallelism (不仅...而且.../这不"
+                    "仅仅是...而是...); avoiding a plain '是' in favor of "
+                    "作为/代表/充当; vague attribution (专家认为/研究显示 with "
+                    "no real source); generic upbeat closings (未来可期/值得"
+                    "期待/这是重要的一步); overuse of the dash (——) as a "
+                    "dramatic pause; every sentence the same length and "
+                    "rhythm; over-explaining points a listener would already "
+                    "get.\n\n"
+                    "ai_flavor_risk is low/medium/high. Each revision_targets "
+                    "item must name a specific instance of one of these "
+                    "patterns actually present in draft_text, not a generic "
+                    "warning."
+                ),
                 input_payload=ai_input,
                 correlation_id=input_payload["correlation_id"],
                 skill_name=self.contract.formal_skill_id,

@@ -24,6 +24,19 @@ class ContentPlanHarnessMixin:
         return harness
 
 
+class _PromptRecordingContentPlanPort(DeterministicContentPlanModelPort):
+    """Wraps the real deterministic port to also capture each subnode's
+    actual rendered prompt string -- what a real model would receive."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.prompts_seen: list[str] = []
+
+    def complete(self, request, route):
+        self.prompts_seen.append(request.prompt)
+        return super().complete(request, route)
+
+
 class ContentPlanBusinessContractTests(unittest.TestCase):
     def test_business_contract_has_required_sections_and_no_missing_requirements(self) -> None:
         result = validate_content_plan_business_contract(load_content_plan_business_contract())
@@ -94,6 +107,34 @@ class ContentPlanFixtureTests(ContentPlanHarnessMixin, unittest.TestCase):
                 harness = self.make_plan_harness(provider=DeterministicContentPlanModelPort(behavior=behavior))
                 with self.assertRaises(FormalSkillValidationError):
                     harness.adapter.run(sample_content_plan_input(request_id=f"content-plan-case-{behavior}"))
+
+
+class RenderedPromptsReachTheModelTests(ContentPlanHarnessMixin, unittest.TestCase):
+    """Regression for the real 2026-07-11 bug: candidate_topic/evidence_items/
+    tactic_candidates were required in the public input_schema (a real
+    caller must supply them) but silently dropped before ever reaching
+    either subnode's prompt -- content_plan bypasses the generic
+    prompt_template/model_input_schema machinery entirely (see
+    _run_content_plan()), so this can only be proven by capturing the
+    actual rendered prompt strings sent to the model, not by inspecting the
+    YAML contract."""
+
+    def test_hook_and_outline_prompts_contain_the_real_required_fields(self) -> None:
+        provider = _PromptRecordingContentPlanPort()
+        harness = self.make_plan_harness(provider=provider)
+        input_payload = sample_content_plan_input()
+        created = harness.api.create_formal_skill_job(input_payload)
+        harness.worker.run_once()
+
+        self.assertEqual(len(provider.prompts_seen), 2)
+        hook_prompt, outline_prompt = provider.prompts_seen
+
+        self.assertIn(input_payload["candidate_topic"], hook_prompt)
+        self.assertIn(input_payload["evidence_items"][0]["claim"], hook_prompt)
+        self.assertIn(input_payload["tactic_candidates"][0], hook_prompt)
+
+        self.assertIn(input_payload["evidence_items"][0]["claim"], outline_prompt)
+        self.assertIn(input_payload["tactic_candidates"][0], outline_prompt)
 
 
 class ContentPlanRuntimeTests(ContentPlanHarnessMixin, unittest.TestCase):
