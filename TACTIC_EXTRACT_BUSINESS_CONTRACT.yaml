@@ -51,9 +51,20 @@ reduction_policy:
   must_not_fetch_or_read_source_files: true
   must_not_call_sample_deep_analyze: true
   must_preserve_domain_boundary: true
+# 2026-07-11: dna_note_refs_max raised 12->20 by explicit user decision, so a
+# single real batch of 20 sample_deep_analyze results (see
+# production_activation_deviation_top20 in HANDOFF_STATE.md) can be reduced in
+# one tactic_extract call instead of being arbitrarily split. context_budget.
+# max_input_tokens was deliberately left unchanged at 14000 rather than scaled
+# up "to match" -- the two numbers were never actually coupled: 20 items x
+# dna_note_ref_max(160 chars) = 3200 chars, which at this codebase's own
+# ~1.5 chars/token estimate for Chinese text (see run_sample_deep_analyze.py's
+# TRANSCRIPT_EXCERPT_MAX_CHARS derivation) is ~2133 tokens, well under 14000
+# even before the prompt template. Raising the token budget "to be safe"
+# with no arithmetic behind it would just be a second unsourced number.
 evidence_requirements:
   dna_note_refs_min: 2
-  dna_note_refs_max: 12
+  dna_note_refs_max: 20
   output_arrays_min: 1
   output_arrays_max: 12
 input_length_limits:
@@ -205,7 +216,7 @@ input_schema:
     dna_note_refs:
       type: array
       minItems: 2
-      maxItems: 12
+      maxItems: 20
       items:
         type: string
         minLength: 1

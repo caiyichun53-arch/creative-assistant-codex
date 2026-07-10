@@ -59,6 +59,15 @@ class TacticExtractBusinessContractTests(unittest.TestCase):
         with self.assertRaises(FormalSkillValidationError):
             validate_payload(sample_tactic_extract_input(dna_note_refs=["only-one"]), contract.input_schema)
 
+    def test_dna_note_refs_max_is_20_not_12(self) -> None:
+        # 2026-07-11: raised 12->20 by explicit user decision (see
+        # HANDOFF_STATE.md) so a real 20-hit deviation-ranked batch can be
+        # reduced in one call. Locks in both edges of the new boundary.
+        contract = FormalSkillContract.from_yaml(TACTIC_EXTRACT_CONTRACT_PATH)
+        validate_payload(sample_tactic_extract_input(dna_note_refs=[f"note-{i}" for i in range(20)]), contract.input_schema)
+        with self.assertRaises(FormalSkillValidationError):
+            validate_payload(sample_tactic_extract_input(dna_note_refs=[f"note-{i}" for i in range(21)]), contract.input_schema)
+
 
 class TacticExtractFixtureTests(TacticExtractHarnessMixin, unittest.TestCase):
     def test_required_fixture_matrix_runs_through_adapter(self) -> None:
