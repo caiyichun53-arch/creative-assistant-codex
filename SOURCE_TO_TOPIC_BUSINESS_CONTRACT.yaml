@@ -191,16 +191,37 @@ model_binding:
       domain_label: string
       relation_summary: string
     additional_properties: false
+  # 2026-07-11: rewritten before this Skill's first real call, applying the
+  # same two fixes real data proved necessary for the other 5 rewritten
+  # Skills (see HANDOFF_STATE.md) rather than waiting to rediscover them:
+  # explicit output-language guidance (sample_deep_analyze's real data
+  # showed the model silently switches to English when never told), and an
+  # explicit trailing reminder to include every required key including
+  # schema_version (real calls showed the model drops schema_version when
+  # it is only mentioned once, early, in a long prompt -- this Skill's
+  # output has 8 required keys, more than any of the others fixed so far,
+  # so the same risk applies at least as much here).
   prompt_template: >-
     Return only JSON with keys topic_status, candidate_topic, topic_angle,
     supporting_evidence, source_constraints, no_result_reason, confidence,
     schema_version. Transform the supplied source evidence into one candidate
-    topic. Do not classify the domain, judge relations, fetch more context,
-    research facts, write scripts, or call other Skills. supporting_evidence
-    must contain only items from source_evidence_refs. Use schema_version
+    topic for a Chinese short-video (抖音) content team. Do not classify the
+    domain, judge relations, fetch more context, research facts, write
+    scripts, or call other Skills. supporting_evidence must contain only
+    items from source_evidence_refs. Use schema_version
     source_to_topic.output.v1. source_content={source_content};
     source_evidence_refs={source_evidence_refs}; domain_label={domain_label};
     relation_summary={relation_summary}
+
+    Write candidate_topic, topic_angle, supporting_evidence, and
+    source_constraints in Simplified Chinese. topic_angle must be a genuinely
+    distinct angle or lens on the topic, not a restatement of candidate_topic
+    in different words.
+
+    Before answering, double check your JSON includes all eight required
+    keys -- topic_status, candidate_topic, topic_angle, supporting_evidence,
+    source_constraints, no_result_reason, confidence, and schema_version set
+    exactly to source_to_topic.output.v1. Do not omit schema_version.
   model_output_schema:
     type: object
     required:

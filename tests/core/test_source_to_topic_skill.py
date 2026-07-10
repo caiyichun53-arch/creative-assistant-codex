@@ -7,9 +7,11 @@ from scripts.core.model_gateway.formal_skill_adapter import (
     DeterministicSourceToTopicModelPort,
     FormalSkillContract,
     FormalSkillValidationError,
+    apply_binding,
     load_source_to_topic_business_contract,
     load_source_to_topic_fixtures,
     make_source_to_topic_harness,
+    preprocess_formal_skill_input,
     sample_source_to_topic_input,
     validate_payload,
     validate_source_to_topic_business_contract,
@@ -22,6 +24,25 @@ class SourceToTopicHarnessMixin:
         harness = make_source_to_topic_harness(**kwargs)
         self.addCleanup(harness.close)
         return harness
+
+
+class RenderedPromptReachesModelTests(unittest.TestCase):
+    """Regression: applies the same preventive fix real data proved
+    necessary for the other 5 rewritten Skills, before this Skill's first
+    real call rather than after a real failure -- Simplified Chinese output
+    guidance and an explicit schema_version reminder (this Skill's output
+    has 8 required keys, the most of any Skill fixed so far)."""
+
+    def test_prompt_requires_chinese_and_reminds_schema_version(self) -> None:
+        contract = FormalSkillContract.from_yaml(SOURCE_TO_TOPIC_CONTRACT_PATH)
+        input_payload = sample_source_to_topic_input()
+        preprocessed = preprocess_formal_skill_input(contract.formal_skill_id, input_payload)
+        model_input = apply_binding(contract.input_map, input_payload, {}, preprocessed)
+        validate_payload(model_input, contract.model_input_schema)
+        prompt = contract.portable_skill().render_prompt(model_input)
+
+        self.assertIn("Simplified Chinese", prompt)
+        self.assertIn("Do not omit schema_version", prompt)
 
 
 class SourceToTopicBusinessContractTests(unittest.TestCase):
