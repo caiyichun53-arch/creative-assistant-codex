@@ -70,16 +70,16 @@ def _insert_hit(conn: sqlite3.Connection, hit_id: str, *, account_id: str = "acc
 
 
 def _insert_analysis(
-    conn: sqlite3.Connection, analysis_id: str, hit_id: str, *,
+    conn: sqlite3.Connection, analysis_id: str, hit_id: str, *, version: int = 1,
     topic_pattern: str = "选题手法", hook_pattern: str = "开头手法", structure_pattern: str = "结构手法",
 ) -> None:
     conn.execute(
         """
         INSERT INTO hit_deep_analysis(analysis_id, hit_id, version, request_id, correlation_id,
             topic_pattern, hook_pattern, structure_pattern, model_name, run_id)
-        VALUES (?, ?, 1, 'req1', 'corr1', ?, ?, ?, 'model', 'run1')
+        VALUES (?, ?, ?, 'req1', 'corr1', ?, ?, ?, 'model', 'run1')
         """,
-        (analysis_id, hit_id, topic_pattern, hook_pattern, structure_pattern),
+        (analysis_id, hit_id, version, topic_pattern, hook_pattern, structure_pattern),
     )
 
 
@@ -120,6 +120,28 @@ class SelectEvidenceForTacticBatchTests(unittest.TestCase):
                 _seed_registered_evidence(conn, 2, domain_label="fan_kepu_social_life")
                 rows = select_evidence_for_tactic_batch(conn, domain_label="music_entertainment", limit=10)
                 self.assertEqual(rows, [])
+            finally:
+                conn.close()
+
+    def test_only_the_latest_analysis_version_per_hit_is_eligible(self) -> None:
+        # 2026-07-11 regression: a hit re-analyzed after a prompt fix ends up
+        # with two registered evidence versions (v1, v2) for the same
+        # hit_id -- the stale v1 must not be selected just because it was
+        # registered first.
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h0")
+                _insert_analysis(conn, "h0_v1", "h0", version=1, topic_pattern="旧版选题手法")
+                register_hit_deep_analysis_evidence(conn, "h0_v1")
+                _insert_analysis(conn, "h0_v2", "h0", version=2, topic_pattern="新版选题手法")
+                register_hit_deep_analysis_evidence(conn, "h0_v2")
+
+                rows = select_evidence_for_tactic_batch(conn, domain_label="fan_kepu_social_life", limit=10)
+
+                self.assertEqual([row["analysis_id"] for row in rows], ["h0_v2"])
+                self.assertEqual(rows[0]["topic_pattern"], "新版选题手法")
             finally:
                 conn.close()
 

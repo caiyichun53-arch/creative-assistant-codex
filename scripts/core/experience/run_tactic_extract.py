@@ -99,7 +99,13 @@ def validate_run_tactic_extract_execution_contract() -> dict[str, Any]:
 def select_evidence_for_tactic_batch(conn: sqlite3.Connection, *, domain_label: str, limit: int) -> list[sqlite3.Row]:
     """Real, already-registered hit_deep_analysis_evidence trace_versions
     (evidence_registry.py's output) for one domain, that no existing tactic
-    candidate has referenced yet. Oldest-registered first."""
+    candidate has referenced yet. Oldest-registered first.
+
+    2026-07-11: only the LATEST hit_deep_analysis version per hit_id is
+    eligible (matches select_hits_pending_analysis()'s same convention) --
+    a hit can have multiple registered evidence versions (e.g. re-analyzed
+    after a prompt fix) and a stale earlier version must not be selected
+    over a newer one just because it happened to be registered first."""
     return conn.execute(
         """
         SELECT hit_deep_analysis.analysis_id AS analysis_id,
@@ -116,6 +122,9 @@ def select_evidence_for_tactic_batch(conn: sqlite3.Connection, *, domain_label: 
           JOIN competitor_accounts AS account ON account.account_id = hits.account_id
          WHERE object_reference.target_object_kind = 'hit_deep_analysis'
            AND account.domain_label = ?
+           AND hit_deep_analysis.version = (
+               SELECT MAX(version) FROM hit_deep_analysis AS d2 WHERE d2.hit_id = hit_deep_analysis.hit_id
+           )
            AND NOT EXISTS (
                SELECT 1 FROM object_reference AS tactic_ref
                 WHERE tactic_ref.target_object_kind = 'hit_deep_analysis_evidence'
