@@ -403,16 +403,31 @@ traceability:
 - requirement_id: BR-DNA-004
   observed_legacy_behavior: Reduce produces domain-level examples and method route
     tables; it must not become global prompt rules.
-  target_component: ReverseAnalysisSkill + ModelGateway
-  current_implementation_status: legacy behavior observed; target formalization pending
-    unless noted exact_match
+  target_component: 'scripts/core/experience/run_tactic_extract.py (binding layer,
+    calls runtime_skills/tactic_extract) + scripts/core/experience/tactic_registry.py
+    (real persistence: registers the reduction as a trace_root/trace_version +
+    a tactic_state row via the new scripts/core/persistence/goal02_store.py).
+    2026-07-11: this used to say target_component: ReverseAnalysisSkill, a class
+    that never existed anywhere in the codebase -- a ghost reference (same class
+    of issue BR-EXPERIENCE-001 had before its own 2026-07-11 correction). As of
+    this correction the real machinery exists, is tested (tests/core/
+    test_goal02_store.py, test_tactic_registry.py, test_run_tactic_extract.py),
+    and has been exercised against real production_activation.sqlite3 data.'
+  current_implementation_status: 'partial: create_state (a tactic candidate gets
+    persisted, state=candidate) is implemented and real-data-verified. transition_state
+    (candidate -> active/paused/deprecated) has no real caller yet -- a persisted
+    tactic never advances past candidate. "domain-level examples and method route
+    tables" -- Obsidian-style human-readable projection of a tactic -- is not built;
+    the tactic lives only as a real database row today.'
   alignment_status: naming_only
   difference_type:
   - ownership_changed
   migration_action: Preserve business semantics while moving state/external side effects
     to formal Core/Adapter boundaries.
   test_ids:
-  - reduce artifact hash fixture
+  - tests/core/test_goal02_store.py
+  - tests/core/test_tactic_registry.py
+  - tests/core/test_run_tactic_extract.py
   evidence:
     source_section: Reduce经验提取
     defaults:

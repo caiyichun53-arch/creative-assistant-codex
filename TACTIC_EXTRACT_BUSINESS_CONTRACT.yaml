@@ -54,14 +54,18 @@ reduction_policy:
 # 2026-07-11: dna_note_refs_max raised 12->20 by explicit user decision, so a
 # single real batch of 20 sample_deep_analyze results (see
 # production_activation_deviation_top20 in HANDOFF_STATE.md) can be reduced in
-# one tactic_extract call instead of being arbitrarily split. context_budget.
-# max_input_tokens was deliberately left unchanged at 14000 rather than scaled
-# up "to match" -- the two numbers were never actually coupled: 20 items x
-# dna_note_ref_max(160 chars) = 3200 chars, which at this codebase's own
-# ~1.5 chars/token estimate for Chinese text (see run_sample_deep_analyze.py's
-# TRANSCRIPT_EXCERPT_MAX_CHARS derivation) is ~2133 tokens, well under 14000
-# even before the prompt template. Raising the token budget "to be safe"
-# with no arithmetic behind it would just be a second unsourced number.
+# one tactic_extract call instead of being arbitrarily split. dna_note_ref_max
+# also raised 160->320: at 160 chars a single note could not carry a labeled
+# summary of all three real pattern fields (topic/hook/structure) the way
+# source_to_topic's evidence items do -- 320 leaves room for a short labeled
+# excerpt of each. context_budget.max_input_tokens was deliberately left
+# unchanged at 14000 rather than scaled up "to match" -- the two numbers were
+# never actually coupled: 20 items x dna_note_ref_max(320 chars) = 6400
+# chars, which at this codebase's own ~1.5 chars/token estimate for Chinese
+# text (see run_sample_deep_analyze.py's TRANSCRIPT_EXCERPT_MAX_CHARS
+# derivation) is ~4267 tokens, well under 14000 even before the prompt
+# template. Raising the token budget "to be safe" with no arithmetic behind
+# it would just be a second unsourced number.
 evidence_requirements:
   dna_note_refs_min: 2
   dna_note_refs_max: 20
@@ -71,7 +75,7 @@ input_length_limits:
   request_id_max: 80
   correlation_id_max: 80
   analysis_batch_id_max: 80
-  dna_note_ref_max: 160
+  dna_note_ref_max: 320
 context_budget:
   max_input_tokens: 14000
 token_budget:
@@ -220,7 +224,7 @@ input_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 160
+        maxLength: 320
     domain_label:
       type: string
       enum:

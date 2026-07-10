@@ -123,7 +123,7 @@
 
 ## 10. 经验库（experience）
 
-[已完成](部分) "选题→大纲→成稿"这条创作主链路四步全部接上真实数据(2026-07-08 首步,2026-07-09 剩余三步一次性接完,并有端到端集成测试验证全链路真的能跑通)。"归纳共性"(`tactic_extract`)和"自营P基线怎么用"这两块还没做。
+[已完成](部分) "选题→大纲→成稿"这条创作主链路四步全部接上真实数据(2026-07-08 首步,2026-07-09 剩余三步一次性接完,并有端到端集成测试验证全链路真的能跑通)。"归纳共性"(`tactic_extract`)2026-07-11 也接上了真实数据(见下方新增段落)。"自营P基线怎么用"这一块还没做。
 
 **这一层干什么**：把已经备好料(有转写文字稿+评论)的爆款,喂给大模型做"深度分析",提炼出可复用的选题手法/开头手法/结构手法——旧系统管这叫"DNA拆解",现在不这么叫了,对应的是 `runtime_skills/sample_deep_analyze` 这个独立的原子能力。分析结果再喂给 `runtime_skills/source_to_topic` 生成候选选题,候选选题再喂给 `runtime_skills/content_plan` 规划钩子(开头)和大纲,大纲再喂给 `runtime_skills/script_generate` 写出成稿草稿——这是"选题→大纲→成稿"这条创作主链路的全部四环,`tests/core/test_topic_to_script_chain_integration.py` 会真的把一条测试爆款从头跑到尾,验证 `hit_deep_analysis → topic_candidates → content_plans → script_drafts` 这条外键链路真的能走通,不是四段各自独立能跑但拼不起来。
 
@@ -143,10 +143,23 @@ python -m scripts.core.experience.review_queue --reject plan p1_plan_v1 --note "
 ```
 `--list` 后面可以跟 `topic`/`plan`/`draft` 只看某一段。**现在还没有任何界面**,只有这个命令行工具——先把"必须有人确认"这道硬闸门加上,界面好不好用是以后的事,不能因为没界面就放过审核这一步。
 
+**归纳共性——`tactic_extract`,以及"归纳出来的东西存哪儿"这层地基(2026-07-11 新增)**：这一块之前一直没做,不只是因为 Skill 没接,还因为深挖之后发现"归纳完的结果压根没地方正式存"——负责这件事的底层机制(`core_command_envelope` + `tactic_state`/`topic_state`/`claim_state`/`experiment_state`/`production_task_state` 五张并列的表,`goal02_schema.sqlite.sql` 里写好了但全仓库从没一行 Python 代码用过)必须先补上,才谈得上真的"归纳"。分两层:
+- `scripts/core/persistence/goal02_store.py`(新增)——通用的"创建一条状态记录/往前流转状态"机制,横跨五种对象类型(仿照 `PersistenceStore` 本身通用横跨 goal01 的做法)。**这次只给"打法/方法"(tactic)这一种类型接了真实调用**,另外四种(选题/待核实说法/实验/生产任务)的表结构已经通用支持,但具体每种状态该怎么排序还没设计,调用会明确报错而不是瞎猜。
+- `scripts/core/experience/tactic_registry.py` + `scripts/core/experience/run_tactic_extract.py`(新增)——把 `evidence_registry.py`(下一段说)登记好的一批真实证据,喂给 `runtime_skills/tactic_extract`,归纳出来的"共同规律"(`common_patterns`)和"范例候选"(`example_candidates`)正式存成一条 `tactic_state` 行(初始状态 `candidate`,候选状态),并且记下这条结论是从哪几条真实证据归纳出来的,查得回去。
+
+**证据怎么变得"可以被引用"——`evidence_registry.py`(2026-07-11 补写文档,代码本身在这之前已经做好并跑过真实数据)**：`sample_deep_analyze` 分析出的每一条真实结果(`hit_deep_analysis` 表里的一行),要先经 `scripts/core/experience/evidence_registry.py` 的 `register_hit_deep_analysis_evidence()` 登记成一份正式、带内容哈希、可追溯的"证据"(`trace_version`),`tactic_extract` 才能引用它——这是一次性的"确权"动作,幂等(重复登记同一条不会变成两条)。
+
+```
+python -m scripts.core.experience.run_tactic_extract --domain-label fan_kepu_social_life --limit 20
+```
+一次调用最多归纳 2-20 条同领域的证据(`tactic_extract` 自己的契约规定,2026-07-11 从 12 条上调到 20 条,以及每条证据摘要的长度上限从 160 字符上调到 320 字符,好让"选题手法/开头手法/结构手法"三段真实内容都能各留一小段摘要,不是只塞得下一段——调整前后都用真实 token 预算算过账,不是拍脑袋改数字,细节见 `TACTIC_EXTRACT_BUSINESS_CONTRACT.yaml` 里的注释)。**不同领域不能混在一次调用里**,这一点没变。
+
 **明确没做的**（不是遗漏,是天然排在后面,见 `ROADMAP.md`）：
-- "归纳共性"(`tactic_extract`,把好几条分析结果归并成一条通用打法)还没做——它至少需要2条同类的分析结果才能跑。真接上之后,`content_plan` 里"复用同一条爆款自己手法"这个替代方案就可以换成真实的 `tactic_extract` 输出。
+- **候选(candidate)之后怎么变成正式生效(active)——这一步完全没做**。`goal02_store.py` 的 `transition_state()` 已经写好并测试过,但现在没有任何真实调用方去调它,一条 `tactic_state` 创建出来之后永远停在 `candidate`,不会自动、也没有人工入口让它变成 `active`。
+- `recompute_experience_state()`(算一个打法现在成不成熟)算出来的状态词(`active`/`watch`/`paused`/`deprecated`)和 `tactic_state.state` 实际能存的词(`candidate`/`active`/`paused`/`deprecated`)对不上——没有 "watch" 这个槽位,这次没解决。
+- `content_plan` 里"打法候选"字段现在还是复用同一条爆款自己的选题/开头/结构手法,这次没有把它接到真正 `active` 状态的 tactic 上——因为目前没有任何 tactic 会变成 active(见上一条)。
 - **选题目前只用了"对标爆款+评论区"两种候选来源**——研究缺口/当下热点两种候选来源还没接。**2026-07-11 澄清:当前设计没有冻结"选题打分制"**,`.claude/skills/选题/SKILL.md` 里描述的"选题判断维度"评分排序是该交互式技能自己的旧方法,不代表 `runtime_skills/source_to_topic` 当前设计要对齐的目标,不得当作缺口去补。真正的缺口是:当前设计里的选题判断规则、领域约束、去重/冷却、候选来源、人工确认门槛,有没有被真实代码落地并验证——这是 2026-07-09/11 用户直接指出并两次纠偏过的真实缺口,详见 `ROADMAP.md`。
-- **还没真的花钱调用过一次真实大模型**——现在测试用的是各 Skill 自带的"假模型"(输出固定但看起来合理的结果,不用联网、不花钱),真正调真实模型需要的密钥目前只放在一个专门给"一次性验证"用的配置文件里,还没搬到日常真实运行用的配置里,这是一个已知但还没处理的缺口,真要花钱跑之前需要用户确认。
+- **`sample_deep_analyze`/`tactic_extract` 已经真花过钱**(2026-07-11,20+条真实数据,细节见 `HANDOFF_STATE.md`),但 `source_to_topic`/`content_plan`/`script_generate` 这三步仍然一次都没真调用过真实大模型,测试用的还是各 Skill 自带的"假模型"。
 
 **怎么跑**：见上面四条命令依次执行,每次生成完记得跑一下 `review_queue.py --list` 看有没有要审核的,通过了才会继续流到下一步。`N` 是这次要处理几条,默认1条。也可以直接跑 `python -m pytest tests/core/test_topic_to_script_chain_integration.py` 看一次完整的假数据端到端演练(含审核通过的环节,不花钱、不联网)。
 

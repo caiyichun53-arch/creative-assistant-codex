@@ -68,6 +68,15 @@ class TacticExtractBusinessContractTests(unittest.TestCase):
         with self.assertRaises(FormalSkillValidationError):
             validate_payload(sample_tactic_extract_input(dna_note_refs=[f"note-{i}" for i in range(21)]), contract.input_schema)
 
+    def test_dna_note_ref_max_length_is_320_not_160(self) -> None:
+        # 2026-07-11: raised 160->320 alongside the count cap, so one note can
+        # carry a labeled excerpt of all three real pattern fields (topic/
+        # hook/structure), not just one. Locks in both edges.
+        contract = FormalSkillContract.from_yaml(TACTIC_EXTRACT_CONTRACT_PATH)
+        validate_payload(sample_tactic_extract_input(dna_note_refs=["字" * 320, "字" * 320]), contract.input_schema)
+        with self.assertRaises(FormalSkillValidationError):
+            validate_payload(sample_tactic_extract_input(dna_note_refs=["字" * 321, "字" * 2]), contract.input_schema)
+
 
 class TacticExtractFixtureTests(TacticExtractHarnessMixin, unittest.TestCase):
     def test_required_fixture_matrix_runs_through_adapter(self) -> None:
