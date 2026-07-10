@@ -10,8 +10,10 @@ from scripts.core.experience.run_sample_deep_analyze import (
     ALLOWED_DOMAIN_LABELS,
     analyze_one_hit,
     assemble_sample_deep_analyze_input,
+    deviation_value_from_hit_channel,
     run_sample_deep_analyze,
     select_hits_pending_analysis,
+    select_hits_pending_analysis_by_deviation,
     validate_sample_deep_analyze_execution_contract,
 )
 from scripts.core.model_gateway.formal_skill_adapter import make_sample_deep_analyze_harness
@@ -51,7 +53,7 @@ def _insert_video(conn: sqlite3.Connection, video_id: str, account_id: str) -> N
 def _insert_hit(
     conn: sqlite3.Connection, hit_id: str, *, account_id: str = "acc1", title: str = "为什么电梯早高峰总堵",
     like_count: int = 1000, comment_count: int = 200, share_count: int = 10, collect_count: int = 5,
-    reverse_status: str = "completed",
+    reverse_status: str = "completed", hit_channel: str = "like_anomaly",
 ) -> None:
     video_id = hit_id + "_vid"
     _insert_video(conn, video_id, account_id)
@@ -61,9 +63,9 @@ def _insert_hit(
             hit_id, video_id, account_id, platform, platform_item_id, title, url,
             like_count, comment_count, share_count, collect_count,
             hit_channel, judgment_confidence, run_id, reverse_status
-        ) VALUES (?, ?, ?, 'douyin', ?, ?, 'https://x', ?, ?, ?, ?, 'like_anomaly', 'formal', 'run1', ?)
+        ) VALUES (?, ?, ?, 'douyin', ?, ?, 'https://x', ?, ?, ?, ?, ?, 'formal', 'run1', ?)
         """,
-        (hit_id, video_id, account_id, hit_id + "_item", title, like_count, comment_count, share_count, collect_count, reverse_status),
+        (hit_id, video_id, account_id, hit_id + "_item", title, like_count, comment_count, share_count, collect_count, hit_channel, reverse_status),
     )
 
 
@@ -131,6 +133,114 @@ class SelectHitsPendingAnalysisTests(unittest.TestCase):
                 _insert_transcript(conn, "h1", text="第二版更长更完整", version=2)
                 pending = select_hits_pending_analysis(conn, limit=10)
                 self.assertEqual(pending[0]["transcript_text"], "第二版更长更完整")
+            finally:
+                conn.close()
+
+
+class DeviationValueFromHitChannelTests(unittest.TestCase):
+    def test_single_anomaly_multiplier(self) -> None:
+        self.assertEqual(deviation_value_from_hit_channel("comment_anomaly:4.09x"), 4.09)
+
+    def test_takes_the_highest_of_several_multipliers(self) -> None:
+        channel = (
+            "like_anomaly:3.86x,comment_anomaly:5.99x,collect_anomaly:6.76x,share_anomaly:10.04x,"
+            "multi_indicator:like_anomaly=3.86x;comment_anomaly=5.99x;collect_anomaly=6.76x;share_anomaly=10.04x"
+        )
+        self.assertEqual(deviation_value_from_hit_channel(channel), 10.04)
+
+    def test_comment_like_ratio_only_has_no_deviation_value(self) -> None:
+        self.assertIsNone(deviation_value_from_hit_channel("comment_like_ratio:0.446"))
+
+    def test_p90_small_account_only_has_no_deviation_value(self) -> None:
+        self.assertIsNone(deviation_value_from_hit_channel("p90_small_account:like=8836>=p90:3458,comment_like_ratio:0.256"))
+
+    def test_none_input_has_no_deviation_value(self) -> None:
+        self.assertIsNone(deviation_value_from_hit_channel(None))
+
+    def test_empty_string_has_no_deviation_value(self) -> None:
+        self.assertIsNone(deviation_value_from_hit_channel(""))
+
+
+class SelectHitsPendingAnalysisByDeviationTests(unittest.TestCase):
+    def test_orders_by_highest_deviation_value_first(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "low", hit_channel="comment_anomaly:2.10x")
+                _insert_transcript(conn, "low")
+                _insert_hit(conn, "high", hit_channel="share_anomaly:422.75x")
+                _insert_transcript(conn, "high")
+                _insert_hit(conn, "mid", hit_channel="like_anomaly:6.14x,comment_anomaly:4.72x")
+                _insert_transcript(conn, "mid")
+
+                selected = select_hits_pending_analysis_by_deviation(conn, limit=10)
+
+                self.assertEqual([row["hit_id"] for row in selected], ["high", "mid", "low"])
+            finally:
+                conn.close()
+
+    def test_limit_takes_only_the_top_n(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "a", hit_channel="like_anomaly:2.0x")
+                _insert_transcript(conn, "a")
+                _insert_hit(conn, "b", hit_channel="like_anomaly:9.0x")
+                _insert_transcript(conn, "b")
+                _insert_hit(conn, "c", hit_channel="like_anomaly:5.0x")
+                _insert_transcript(conn, "c")
+
+                selected = select_hits_pending_analysis_by_deviation(conn, limit=2)
+
+                self.assertEqual([row["hit_id"] for row in selected], ["b", "c"])
+            finally:
+                conn.close()
+
+    def test_hits_with_no_deviation_value_are_excluded_not_ranked_last(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "ratio_only", hit_channel="comment_like_ratio:0.446")
+                _insert_transcript(conn, "ratio_only")
+                _insert_hit(conn, "has_multiplier", hit_channel="like_anomaly:2.0x")
+                _insert_transcript(conn, "has_multiplier")
+
+                selected = select_hits_pending_analysis_by_deviation(conn, limit=10)
+
+                self.assertEqual([row["hit_id"] for row in selected], ["has_multiplier"])
+            finally:
+                conn.close()
+
+    def test_already_analyzed_hit_is_excluded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1", hit_channel="like_anomaly:9.0x")
+                _insert_transcript(conn, "h1")
+                conn.execute(
+                    """
+                    INSERT INTO hit_deep_analysis(analysis_id, hit_id, version, request_id, correlation_id,
+                        topic_pattern, hook_pattern, structure_pattern, model_name, run_id)
+                    VALUES ('a1', 'h1', 1, 'req1', 'corr1', 'topic', 'hook', 'structure', 'model', 'run1')
+                    """
+                )
+                selected = select_hits_pending_analysis_by_deviation(conn, limit=10)
+                self.assertEqual(selected, [])
+            finally:
+                conn.close()
+
+    def test_no_transcript_is_excluded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1", hit_channel="like_anomaly:9.0x", reverse_status="pending")
+                selected = select_hits_pending_analysis_by_deviation(conn, limit=10)
+                self.assertEqual(selected, [])
             finally:
                 conn.close()
 

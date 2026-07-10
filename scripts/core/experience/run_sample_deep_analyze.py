@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -126,6 +127,62 @@ def select_hits_pending_analysis(conn: sqlite3.Connection, *, limit: int) -> lis
         """,
         (limit,),
     ).fetchall()
+
+
+# 2026-07-11: hits.hit_channel carries free-text labels like
+# "like_anomaly:3.86x,comment_anomaly:5.99x,...,multi_indicator:like_anomaly=3.86x;..."
+# (see BR-HIT-001 section D) -- there is no separate numeric "deviation value"
+# column anywhere in the schema. Per explicit user decision, "偏离值" (deviation
+# value) for ranking purposes means the single highest baseline-multiplier
+# ("Nx") number recorded anywhere in that hit's hit_channel string -- the one
+# number in the real data that literally means "how many times this cleared
+# the account's baseline median." comment_like_ratio (a plain ratio, not a
+# baseline multiple) and p90_small_account (a different, non-baseline
+# reference) do not carry this kind of number at all -- a hit whose
+# hit_channel contains only those has no defined deviation value under this
+# definition and is excluded from ranking, not assigned a fabricated 0.
+_ANOMALY_MULTIPLIER_PATTERN = re.compile(r"(\d+(?:\.\d+)?)x")
+
+
+def deviation_value_from_hit_channel(hit_channel: str | None) -> float | None:
+    """Highest "Nx" baseline-multiplier found in a real hit_channel string, or
+    None if it contains no such multiplier (comment_like_ratio-only or
+    p90_small_account-only hits)."""
+    if not hit_channel:
+        return None
+    matches = _ANOMALY_MULTIPLIER_PATTERN.findall(hit_channel)
+    if not matches:
+        return None
+    return max(float(m) for m in matches)
+
+
+def select_hits_pending_analysis_by_deviation(conn: sqlite3.Connection, *, limit: int) -> list[sqlite3.Row]:
+    """Same eligibility filter as select_hits_pending_analysis() (transcript
+    ready, never analyzed) but ordered by deviation_value_from_hit_channel()
+    descending instead of promoted_at -- used when a caller explicitly wants
+    the most-deviated-from-baseline real hits first (e.g. building a
+    tactic_extract evidence batch), not simply the oldest backlog. Hits with
+    no defined deviation value (see deviation_value_from_hit_channel) are
+    excluded entirely, not sorted to the bottom with a fake low value."""
+    rows = conn.execute(
+        """
+        SELECT hits.*, account.domain_label AS account_domain_label, t.cleaned_transcript_text AS transcript_text
+          FROM hits
+          JOIN competitor_accounts AS account ON account.account_id = hits.account_id
+          JOIN hit_transcripts AS t ON t.hit_id = hits.hit_id
+         WHERE hits.reverse_status = 'completed'
+           AND t.processing_status = 'completed'
+           AND t.version = (
+               SELECT MAX(version) FROM hit_transcripts
+                WHERE hit_transcripts.hit_id = hits.hit_id AND hit_transcripts.processing_status = 'completed'
+           )
+           AND NOT EXISTS (SELECT 1 FROM hit_deep_analysis WHERE hit_deep_analysis.hit_id = hits.hit_id)
+        """
+    ).fetchall()
+    scored = [(deviation_value_from_hit_channel(row["hit_channel"]), row) for row in rows]
+    scored = [(value, row) for value, row in scored if value is not None]
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return [row for _value, row in scored[:limit]]
 
 
 def assemble_sample_deep_analyze_input(hit_row: sqlite3.Row, *, run_id: str) -> dict[str, Any]:
