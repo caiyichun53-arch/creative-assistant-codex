@@ -201,6 +201,16 @@ model_binding:
   # it is only mentioned once, early, in a long prompt -- this Skill's
   # output has 8 required keys, more than any of the others fixed so far,
   # so the same risk applies at least as much here).
+  # 2026-07-11 (second pass, real call): the first rewrite fixed language/
+  # schema_version but a real call still failed -- the model returned
+  # topic_status="success" (not one of the 3 allowed enum values),
+  # confidence as a number (0.95, not one of the 4 allowed enum strings),
+  # and source_constraints as a single paragraph string (not an array of
+  # strings like supporting_evidence). The prompt never spelled out the
+  # exact allowed values/shape for any of these -- it just named the key.
+  # Content quality itself was already good (real candidate_topic/
+  # topic_angle grounded in real evidence including real comments); this
+  # pass only tightens format compliance.
   prompt_template: >-
     Return only JSON with keys topic_status, candidate_topic, topic_angle,
     supporting_evidence, source_constraints, no_result_reason, confidence,
@@ -213,15 +223,27 @@ model_binding:
     source_evidence_refs={source_evidence_refs}; domain_label={domain_label};
     relation_summary={relation_summary}
 
-    Write candidate_topic, topic_angle, supporting_evidence, and
-    source_constraints in Simplified Chinese. topic_angle must be a genuinely
-    distinct angle or lens on the topic, not a restatement of candidate_topic
-    in different words.
+    Write candidate_topic, topic_angle, and every item in supporting_evidence
+    and source_constraints in Simplified Chinese. topic_angle must be a
+    genuinely distinct angle or lens on the topic, not a restatement of
+    candidate_topic in different words.
+
+    Field formats -- follow these exactly, do not substitute a different
+    value or type: topic_status must be EXACTLY one of the strings
+    "generated", "needs_review", or "no_result" (never any other word).
+    confidence must be EXACTLY one of the strings "high", "medium", "low",
+    or "none" -- a string from this list, never a number. no_result_reason
+    must be EXACTLY one of the strings "none", "empty_source",
+    "insufficient_source_evidence", or "unsupported_source" -- use "none"
+    when there is a real result, never an empty string. source_constraints
+    must be a JSON array of short strings (like supporting_evidence), never
+    one paragraph.
 
     Before answering, double check your JSON includes all eight required
     keys -- topic_status, candidate_topic, topic_angle, supporting_evidence,
     source_constraints, no_result_reason, confidence, and schema_version set
-    exactly to source_to_topic.output.v1. Do not omit schema_version.
+    exactly to source_to_topic.output.v1 -- and that every enum field above
+    uses one of its exact allowed values. Do not omit schema_version.
   model_output_schema:
     type: object
     required:
