@@ -25,7 +25,13 @@
 - 5个新测试(`tests/core/test_evidence_registry.py`):正向(真实哈希核对、root/version/reference 字段核对、两条不同 analysis 各自独立建 root)+ 反向(不存在的 analysis_id 显式抛 `EvidenceRegistrationError` 且不留任何孤儿 trace_root/trace_version/object_reference 行、空库同样拒绝)。
 - **对齐检查**:这一步让这条真实分析结果第一次"有资格"被 `tactic_state.basis_version_id` 引用,还没有真的被引用——阶段3 才会真的产生引用它的 `tactic_state` 行。
 
-**阶段3-5(未开始,待你确认阶段2结果后再继续)**:绑定 `tactic_extract`(需要先解决"只有1个真实hit"的数据缺口)→ 人工改稿变证据(升级 `review_queue.py`)→ 真实 Hermes 创作质量验证。完整验收标准见计划文件。
+**阶段3 数据缺口已解决(2026-07-11)——真实分析了20条新hit**:用户指定"爆款库里偏离值最高的前20篇"。库里没有现成的"偏离值"字段,经用户确认,口径定为"hit_channel 里记录的最高基线倍数"(如 `share_anomaly:422.75x` 取422.75)——新增 `deviation_value_from_hit_channel()`/`select_hits_pending_analysis_by_deviation()`(`run_sample_deep_analyze.py`,11个新测试,正向排序+反向排除comment_like_ratio/p90类无倍数hit)。
+
+真实执行:补全 `.env` 里 `HERMES_BUSINESS_MODEL_TOKEN/BASE_URL/NAME/CLASS`(用户确认 `.env.live-gates` 里的凭证就是真实凭证,非测试专用)。对偏离值最高的20个真实hit(样例:`hit_d4360a5e74cf44ecd6ba` 偏离9441倍、`hit_498df4588ad2b75efe97` 偏离3068倍等,内容涵盖科普/健康/社会话题)真实调用 Hermes(`xiaomi/mimo-v2.5-pro`)跑 `sample_deep_analyze`——20次真实调用中5次首次失败(`FormalSkillValidationError: model output is not JSON`,job/scheduler bookkeeping本身是每次harness独立的内存态,不落盘,重跑时才捕获到真实报错原因),重试后全部20条成功,确认是模型偶发输出格式问题,非凭证/配置问题。库里 `hit_deep_analysis` 从2行增至22行(21个不同hit,含最初那条重复分析的hit)。全部22条(含此前2条)已用 `evidence_registry.py` 登记进 VersionRef(21条新登记+1条此前已登记的原样跳过,`trace_root`/`trace_version`/`object_reference` 现在各22行)。
+
+**阶段3 剩余工作(绑定 `run_tactic_extract.py`,尚未开始,需要你决定批次怎么分)**:`tactic_extract` 的 `input_schema.yaml` 规定 `dna_note_refs` 数组长度 2-12 条——**不能一次性把20条证据都喂给一次归纳调用**,需要你决定分批方式(比如分成2批各10条各出一份"共性"结果、还是只取最强的12条做一次、或者别的分法),这是下一步要确认的事,详见 HANDOFF_STATE.md。
+
+**阶段4-5(未开始)**:人工改稿变证据(升级 `review_queue.py`)→ 真实 Hermes 创作质量验证。完整验收标准见计划文件。
 
 ### 1. 接通"选题→大纲→成稿"技术链路 —— **[技术环节已打通,业务流程还不完整]**
 
