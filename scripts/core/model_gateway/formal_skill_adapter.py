@@ -795,13 +795,74 @@ class FormalBusinessSkillAdapter:
         # not evidence_items, not human_reference_refs). A real model call
         # would have had no way to know what script it was even reviewing.
         # All three now carry the real content plus real quality criteria.
+        #
+        # 2026-07-13 (置顶规则总表 V0.6.3 卷首核对后, 条目3/30/53/54): the pinned
+        # rules doc requires 文案优化 (polish) to happen BEFORE 审核 (the review
+        # gate) -- polish is now first here, run directly on the raw draft with
+        # its own standalone quality criteria (去工程腔/人感/节奏/表达/情绪/留存/
+        # 口播自然度), not "fix what review found" (that dependency is exactly
+        # what put it in the wrong order). creation_review now runs on the
+        # POLISHED text and, per §54's real scope ("同时检查事实...表达质量...
+        # AI腔..."), is the final gate together with ai_flavor_judge -- both
+        # inspect the polished output, review handles facts/coherence/register,
+        # ai_flavor_judge handles the detailed AI-tell checklist.
         for route_name in ("business.creation_review", "business.creation_polish", "business.ai_flavor_judge"):
             if route_name not in self.gateway.routes:
                 raise FormalSkillValidationError(f"missing approved model route: {route_name}")
         contract_data = load_script_review_business_contract()
-        review_input = {
+        polish_input = {
             "fixture_id": input_payload["request_id"],
             "draft_text": input_payload["draft_text"],
+        }
+        polish_run = self.gateway.complete(
+            ModelRequest(
+                route_name="business.creation_polish",
+                prompt=(
+                    "You are polishing a Chinese spoken-narration short-video "
+                    "(抖音口播) script draft -- this happens BEFORE the review "
+                    "gate, on the raw draft directly, not as a fix-up for "
+                    "issues someone else already found. Return only JSON with "
+                    "keys polished_text, revision_focus, schema_version "
+                    "(schema_version=script_review.polish_output.v1).\n\n"
+                    f"draft_text={polish_input['draft_text']}\n\n"
+                    "Improve, in this order of priority: reduce 工程腔/模板腔/"
+                    "AI腔 (mechanical, corporate-report, or template phrasing); "
+                    "strengthen the human feel (人感) and natural speaking "
+                    "rhythm (节奏); sharpen the expression so it sounds like "
+                    "someone actually talking, not reading a script; improve "
+                    "hook/opening retention and information density; keep the "
+                    "emotional throughline (情绪) coherent end to end.\n\n"
+                    "Do NOT just swap in synonyms, do NOT force the text into "
+                    "a generic template, and do NOT mechanically bolt in "
+                    "phrases from experience/reference material that don't "
+                    "actually fit this specific draft. revision_focus must "
+                    "name the 1-3 main directions you actually changed (e.g. "
+                    "\"开头留存\" / \"去工程腔\" / \"节奏\"), not a vague "
+                    "summary. polished_text must be the complete replacement "
+                    "script, not a diff, and must still read as natural "
+                    "spoken Chinese."
+                    "\n\nBefore answering, double check your JSON includes "
+                    "all three keys -- polished_text, revision_focus, and "
+                    "schema_version set exactly to "
+                    "script_review.polish_output.v1. Do not omit "
+                    "schema_version."
+                ),
+                input_payload=polish_input,
+                correlation_id=input_payload["correlation_id"],
+                skill_name=self.contract.formal_skill_id,
+                skill_version=self.contract.version,
+                skill_hash=self.contract.skill_hash,
+                binding_name="script_review_polish_subnode",
+                binding_version=self.contract.binding_version,
+                binding_hash=self.contract.binding_hash,
+                metadata={"formal_skill_id": self.contract.formal_skill_id, "subnode": "polish"},
+            )
+        )
+        polish_output = parse_model_json(polish_run.output_text)
+        validate_payload(polish_output, contract_data["polish_model_output_schema"])
+        review_input = {
+            "fixture_id": input_payload["request_id"],
+            "draft_text": polish_output["polished_text"],
             "brief": input_payload["brief"],
             "evidence_items": input_payload["evidence_items"],
         }
@@ -809,9 +870,11 @@ class FormalBusinessSkillAdapter:
             ModelRequest(
                 route_name="business.creation_review",
                 prompt=(
-                    "You are reviewing a Chinese spoken-narration short-video "
-                    "(抖音口播) script draft before it is polished. Return "
-                    "only JSON with keys verdict, issues, schema_version "
+                    "You are the final review gate for a Chinese "
+                    "spoken-narration short-video (抖音口播) script -- this "
+                    "runs AFTER polishing, on the polished text, as the last "
+                    "check before the draft can be used. Return only JSON "
+                    "with keys verdict, issues, schema_version "
                     "(schema_version=script_review.review_output.v1).\n\n"
                     f"draft_text={review_input['draft_text']}\n\n"
                     f"It was meant to follow this brief: brief="
@@ -822,12 +885,14 @@ class FormalBusinessSkillAdapter:
                     "(flag any claim that does not) evidence_items="
                     f"{review_input['evidence_items']}; does it read as "
                     "natural spoken Chinese rather than written/formal "
-                    "register.\n\n"
+                    "register; did polishing actually improve expression "
+                    "quality or leave it flat.\n\n"
                     "verdict must be pass (no real problems), revise (fixable "
-                    "problems exist), or fail (would need a full rewrite). "
-                    "Each item in issues must name a specific, concrete "
-                    "problem tied to a specific part of the draft -- not a "
-                    "vague general comment."
+                    "problems exist -- polishing did not fully address them), "
+                    "or fail (would need a full rewrite). Each item in issues "
+                    "must name a specific, concrete problem tied to a "
+                    "specific part of the draft -- not a vague general "
+                    "comment."
                     "\n\nBefore answering, double check your JSON includes "
                     "all three keys -- verdict, issues, and schema_version "
                     "set exactly to script_review.review_output.v1. Do not "
@@ -846,45 +911,6 @@ class FormalBusinessSkillAdapter:
         )
         review_output = parse_model_json(review_run.output_text)
         validate_payload(review_output, contract_data["review_model_output_schema"])
-        polish_input = {
-            "fixture_id": input_payload["request_id"],
-            "draft_text": input_payload["draft_text"],
-            "edit_notes": review_output["issues"],
-        }
-        polish_run = self.gateway.complete(
-            ModelRequest(
-                route_name="business.creation_polish",
-                prompt=(
-                    "You are polishing a Chinese spoken-narration short-video "
-                    "(抖音口播) script draft. Return only JSON with keys "
-                    "polished_text, schema_version "
-                    "(schema_version=script_review.polish_output.v1).\n\n"
-                    f"draft_text={polish_input['draft_text']}\n\n"
-                    "Fix only these specific issues found by review -- do "
-                    "not rewrite parts that were not flagged, do not change "
-                    f"the overall structure or voice: edit_notes="
-                    f"{polish_input['edit_notes']}\n\n"
-                    "polished_text must be the complete replacement script, "
-                    "not a diff or a description of what changed, and must "
-                    "still read as natural spoken Chinese."
-                    "\n\nBefore answering, double check your JSON includes "
-                    "both keys -- polished_text and schema_version set "
-                    "exactly to script_review.polish_output.v1. Do not omit "
-                    "schema_version."
-                ),
-                input_payload=polish_input,
-                correlation_id=input_payload["correlation_id"],
-                skill_name=self.contract.formal_skill_id,
-                skill_version=self.contract.version,
-                skill_hash=self.contract.skill_hash,
-                binding_name="script_review_polish_subnode",
-                binding_version=self.contract.binding_version,
-                binding_hash=self.contract.binding_hash,
-                metadata={"formal_skill_id": self.contract.formal_skill_id, "subnode": "polish"},
-            )
-        )
-        polish_output = parse_model_json(polish_run.output_text)
-        validate_payload(polish_output, contract_data["polish_model_output_schema"])
         ai_input = {
             "fixture_id": input_payload["request_id"],
             "draft_text": polish_output["polished_text"],
@@ -944,6 +970,7 @@ class FormalBusinessSkillAdapter:
             "verdict": review_output["verdict"],
             "issues": review_output["issues"],
             "polished_text": polish_output["polished_text"],
+            "revision_focus": polish_output["revision_focus"],
             "ai_flavor_risk": ai_output["ai_flavor_risk"],
             "revision_targets": ai_output["revision_targets"],
             "schema_version": SCRIPT_REVIEW_OUTPUT_SCHEMA_VERSION,
@@ -1748,6 +1775,11 @@ def validate_script_review_output_semantics(input_payload: dict[str, Any], outpu
         raise FormalSkillValidationError("script_review polished_text is too short")
     if len(polished_text) > 6000:
         raise FormalSkillValidationError("script_review polished_text exceeds max length")
+    if not output_payload["revision_focus"]:
+        raise FormalSkillValidationError("script_review requires revision_focus (优化稿必须说明主要优化方向)")
+    for focus in output_payload["revision_focus"]:
+        if not isinstance(focus, str) or not focus.strip():
+            raise FormalSkillValidationError("script_review revision_focus must be non-empty strings")
     if output_payload["ai_flavor_risk"] not in {"low", "medium", "high"}:
         raise FormalSkillValidationError("script_review ai_flavor_risk is unsupported")
     if not output_payload["revision_targets"]:
@@ -2956,7 +2988,14 @@ class DeterministicScriptReviewModelPort:
                 polished = ""
             else:
                 polished = f"{text} Polished pass: the scene is clearer, the claim stays bounded, and no publishing action is taken."
-            payload = {"polished_text": polished, "schema_version": "script_review.polish_output.v1"}
+            revision_focus = ["开头留存", "去工程腔"]
+            if behavior == "empty_revision_focus":
+                revision_focus = []
+            payload = {
+                "polished_text": polished,
+                "revision_focus": revision_focus,
+                "schema_version": "script_review.polish_output.v1",
+            }
             return self._result(json.dumps(payload, ensure_ascii=False, sort_keys=True), request)
         if is_ai:
             targets = ["Keep scene-first wording and avoid generic uplift language."]
@@ -3992,23 +4031,31 @@ def make_script_review_harness(
     now_ms: Callable[[], int] | None = None,
     monotonic_ms: Callable[[], int] | None = None,
     provider: ModelProvider | None = None,
+    routes: dict[str, ModelRoute] | None = None,
 ) -> FormalBusinessSkillHarness:
     contract = FormalSkillContract.from_yaml(SCRIPT_REVIEW_CONTRACT_PATH)
     store = PersistenceStore.in_memory(id_factory=id_factory)
     scheduler = Goal03Scheduler(store, id_factory=id_factory, now_ms=now_ms)
     materializer = FormalBusinessSkillMaterializer(store, id_factory=id_factory)
     provider = provider or DeterministicScriptReviewModelPort()
-    routes = {}
-    for route_name in ("business.creation_review", "business.creation_polish", "business.ai_flavor_judge"):
-        route = ModelRoute(
-            route_name=route_name,
-            provider_name=provider.provider_name,
-            model_name=f"deterministic-{route_name.replace('.', '-')}",
-            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
-            config_hash=content_hash({"route": route_name, "formal_skill_id": contract.formal_skill_id}),
-            timeout_ms=1000,
-        )
-        routes[route.route_name] = route
+    # 2026-07-13: real callers (run_script_review.py) need real routes bound
+    # to a real provider, not the deterministic test routes this always built
+    # before -- same override pattern as make_script_generate_harness's
+    # single `route` param, just for all three subnodes at once.
+    if routes is None:
+        routes = {}
+        for route_name in ("business.creation_review", "business.creation_polish", "business.ai_flavor_judge"):
+            routes[route_name] = ModelRoute(
+                route_name=route_name,
+                provider_name=provider.provider_name,
+                model_name=f"deterministic-{route_name.replace('.', '-')}",
+                config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+                config_hash=content_hash({"route": route_name, "formal_skill_id": contract.formal_skill_id}),
+                timeout_ms=1000,
+            )
+    provider_names = {route.provider_name for route in routes.values()}
+    if len(provider_names) != 1:
+        raise FormalSkillValidationError("script_review routes must all share the same provider_name")
     gateway = ModelGateway(
         routes=routes,
         providers={provider.provider_name: provider},

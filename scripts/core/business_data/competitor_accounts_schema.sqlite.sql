@@ -376,8 +376,9 @@ ON content_plans(source_topic_id, version);
 -- One row per script_generate run over a content_plans record. Append-only
 -- like content_plans. draft_text is the Skill's raw output_schema field
 -- (50-6000 chars per script_generate's own schema). human_review_status:
--- see topic_candidates above -- this is the final gate before a draft would
--- be considered ready for any future publishing step (none exists yet).
+-- see topic_candidates above -- an approved draft is what run_script_review.py
+-- (below) picks up next; it is not the end of the chain (2026-07-13: 置顶规则
+-- 总表 requires 文案优化/审核/最终稿 after 初稿, see script_reviews/final_drafts).
 CREATE TABLE IF NOT EXISTS script_drafts (
     draft_id TEXT PRIMARY KEY,
     source_plan_id TEXT NOT NULL REFERENCES content_plans(plan_id) ON DELETE RESTRICT,
@@ -397,3 +398,68 @@ CREATE TABLE IF NOT EXISTS script_drafts (
 
 CREATE INDEX IF NOT EXISTS idx_script_drafts_source_plan
 ON script_drafts(source_plan_id, version);
+
+-- One row per runtime_skills/script_review run over an approved script_drafts
+-- record (BR-CONTENT-004, 2026-07-13). This Skill's own three subnodes
+-- (business.creation_polish, then business.creation_review, then
+-- business.ai_flavor_judge -- see formal_skill_adapter.py's
+-- _run_script_review()) bundle 文案优化/审核/AI味判定 into one atomic call, so
+-- this is ONE new pipeline stage, not three -- the 置顶规则总表's "文案优化在
+-- 初稿之后、审核之前" ordering requirement is satisfied INSIDE this Skill call
+-- (polish runs first), not by splitting it into separate database rows that
+-- don't correspond to a real atomic Skill boundary. polished_text is the
+-- actual optimized script; issues/revision_focus/revision_targets are JSON
+-- arrays (Skill output, not further parsed here -- Core stores what the Skill
+-- returned). human_review_status: same pattern as script_drafts -- an
+-- approved review is what run_final_draft.py picks up next.
+CREATE TABLE IF NOT EXISTS script_reviews (
+    review_id TEXT PRIMARY KEY,
+    source_draft_id TEXT NOT NULL REFERENCES script_drafts(draft_id) ON DELETE RESTRICT,
+    version INTEGER NOT NULL,
+    request_id TEXT NOT NULL,
+    correlation_id TEXT NOT NULL,
+    verdict TEXT NOT NULL CHECK (verdict IN ('pass', 'revise', 'fail')),
+    issues TEXT NOT NULL,
+    polished_text TEXT NOT NULL,
+    revision_focus TEXT NOT NULL,
+    ai_flavor_risk TEXT NOT NULL CHECK (ai_flavor_risk IN ('low', 'medium', 'high')),
+    revision_targets TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    human_review_status TEXT NOT NULL DEFAULT 'pending_review'
+        CHECK (human_review_status IN ('pending_review', 'approved', 'rejected')),
+    reviewed_at TEXT,
+    reviewed_note TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_draft_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_script_reviews_source_draft
+ON script_reviews(source_draft_id, version);
+
+-- One row per "this reviewed draft is proposed as the final version" event
+-- (BR-CONTENT-005, 2026-07-13). Deliberately a SEPARATE confirmation from
+-- script_reviews.human_review_status='approved' -- 置顶规则总表条目5/56
+-- requires "最终稿必须由用户确认" as its own explicit step, not something a
+-- review approval implies for free. final_text is copied from the approved
+-- review's polished_text at creation time (content does not change here;
+-- this row's only real job is to carry a SEPARATE human_review_status so the
+-- "this is final" confirmation is independently auditable). No further stage
+-- exists after this one; publishing is manual and out of scope (see
+-- CLAUDE.md/置顶规则总表条目5: "发布由用户人工完成").
+CREATE TABLE IF NOT EXISTS final_drafts (
+    final_draft_id TEXT PRIMARY KEY,
+    source_review_id TEXT NOT NULL REFERENCES script_reviews(review_id) ON DELETE RESTRICT,
+    version INTEGER NOT NULL,
+    final_text TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    human_review_status TEXT NOT NULL DEFAULT 'pending_review'
+        CHECK (human_review_status IN ('pending_review', 'approved', 'rejected')),
+    reviewed_at TEXT,
+    reviewed_note TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_review_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_final_drafts_source_review
+ON final_drafts(source_review_id, version);

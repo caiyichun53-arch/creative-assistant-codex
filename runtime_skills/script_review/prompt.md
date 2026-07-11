@@ -1,15 +1,22 @@
 Use only the approved `script_review` subnodes on a Chinese spoken-narration
-short-video (抖音口播) script.
+short-video (抖音口播) script. Order matters: 文案优化 (polish) runs before
+审核 (review) -- polish is a standalone quality pass on the raw draft, not a
+fix-up for issues review already found.
 
-First call `business.creation_review` with `fixture_id`, `draft_text`,
-`brief`, and `evidence_items`. Check topic/brief match, coherence, whether
-every claim traces to `evidence_items`, and natural spoken register. `verdict`
-is pass/revise/fail; each `issues` item must be concrete, not vague.
+First call `business.creation_polish` with `fixture_id` and `draft_text`.
+Improve, in priority order: reduce 工程腔/模板腔/AI腔; strengthen human feel
+(人感) and natural speaking rhythm (节奏); sharpen expression toward how
+someone actually talks; improve hook/opening retention and information
+density; keep the emotional throughline (情绪) coherent. Do not just swap
+synonyms, force a template, or mechanically bolt in reference phrases.
+`polished_text` must be the full replacement script, not a diff.
+`revision_focus` must name the 1-3 main directions actually changed.
 
-Then call `business.creation_polish` with `fixture_id`, `draft_text`, and
-review issues as `edit_notes`. Fix only the flagged issues -- do not rewrite
-unflagged parts or change structure/voice. `polished_text` must be the full
-replacement script, not a diff.
+Then call `business.creation_review` with `fixture_id`, the POLISHED text (not
+the raw draft), `brief`, and `evidence_items`. Check topic/brief match,
+coherence, whether every claim traces to `evidence_items`, natural spoken
+register, and whether polishing actually improved expression quality.
+`verdict` is pass/revise/fail; each `issues` item must be concrete, not vague.
 
 Finally call `business.ai_flavor_judge` with `fixture_id`, the polished text,
 and `human_reference_refs`. Compare against the real reference examples and

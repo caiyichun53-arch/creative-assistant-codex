@@ -36,6 +36,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts.core.business_data.domain_labels import ALLOWED_DOMAIN_LABELS  # noqa: E402
 from scripts.core.business_data.register_competitor_accounts import DEFAULT_DB, install_schema  # noqa: E402
 from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
 from scripts.core.experience.run_sample_deep_analyze import _load_env_value, _safe_db_path  # noqa: E402
@@ -46,8 +47,6 @@ from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
 )
 from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig  # noqa: E402
 from scripts.core.persistence.goal01_store import content_hash  # noqa: E402
-
-ALLOWED_DOMAIN_LABELS = {"fan_kepu_social_life", "music_entertainment", "third_domain_neutral", "cross_domain", "unknown"}
 # SCRIPT_GENERATE_BUSINESS_CONTRACT.yaml input_length_limits.
 BRIEF_MAX_CHARS = 3000
 RESEARCH_SUMMARY_MAX_CHARS = 1000

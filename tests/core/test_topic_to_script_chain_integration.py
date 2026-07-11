@@ -1,15 +1,20 @@
-"""End-to-end integration test for the full "选题 -> 大纲 -> 成稿" chain:
-hit_deep_analysis -> source_to_topic -> content_plan (behind human review) ->
-script_generate (behind human review).
+"""End-to-end integration test for the full "选题 -> 大纲 -> 成稿 -> 文案优化/审核
+-> 最终稿" chain: hit_deep_analysis -> source_to_topic -> content_plan (behind
+human review) -> script_generate (behind human review) -> script_review
+(behind human review) -> final_draft (behind human review).
 
 The per-Skill test files (test_run_source_to_topic.py, test_run_content_plan.py,
-test_run_script_generate.py, test_review_queue.py) each verify their own
-binding/the review gate in isolation, seeding the *next* stage's expected
-input by hand. This test instead runs the real run_*() functions and the
-real review_queue approve step in sequence against one shared database, so
-it fails if any two stages' real assumptions about each other's output shape
--- or about the review gate actually blocking/unblocking flow -- have
-quietly drifted apart."""
+test_run_script_generate.py, test_run_script_review.py, test_run_final_draft.py,
+test_review_queue.py) each verify their own binding/the review gate in
+isolation, seeding the *next* stage's expected input by hand. This test
+instead runs the real run_*() functions and the real review_queue approve
+step in sequence against one shared database, so it fails if any two stages'
+real assumptions about each other's output shape -- or about the review gate
+actually blocking/unblocking flow -- have quietly drifted apart.
+
+2026-07-13 (置顶规则总表核对后): extended past script_drafts (the chain used to
+stop there) to cover the two new stages (script_reviews/final_drafts,
+BR-CONTENT-004/005) added the same day."""
 
 from __future__ import annotations
 
@@ -22,11 +27,14 @@ from pathlib import Path
 from scripts.core.business_data.register_competitor_accounts import install_schema
 from scripts.core.experience.review_queue import set_review_status
 from scripts.core.experience.run_content_plan import run_content_plan
+from scripts.core.experience.run_final_draft import run_final_draft
 from scripts.core.experience.run_script_generate import run_script_generate
+from scripts.core.experience.run_script_review import run_script_review
 from scripts.core.experience.run_source_to_topic import run_source_to_topic
 from scripts.core.model_gateway.formal_skill_adapter import (
     make_content_plan_harness,
     make_script_generate_harness,
+    make_script_review_harness,
     make_source_to_topic_harness,
 )
 
@@ -141,11 +149,60 @@ class TopicToScriptChainIntegrationTests(unittest.TestCase):
                 self.assertGreaterEqual(len(draft_row["draft_text"]), 50)
                 self.assertEqual(draft_row["human_review_status"], "pending_review")
 
+                # Human review gate #3: same story, one stage further --
+                # script_review must not pick up an unapproved draft.
+                review_harness = make_script_review_harness()
+                try:
+                    blocked_review_report = run_script_review(conn, limit=10, harness=review_harness, model_name="det-review")
+                finally:
+                    review_harness.close()
+                self.assertEqual(blocked_review_report["completed"], 0, "an unapproved draft must not be picked up")
+
+                set_review_status(conn, stage="draft", item_id=draft_row["draft_id"], status="approved", note="集成测试自动通过")
+
+                review_harness = make_script_review_harness()
+                try:
+                    review_report = run_script_review(conn, limit=10, harness=review_harness, model_name="det-review")
+                finally:
+                    review_harness.close()
+                self.assertEqual(review_report["completed"], 1, review_report)
+
+                review_row = conn.execute("SELECT * FROM script_reviews WHERE source_draft_id=?", (draft_row["draft_id"],)).fetchone()
+                self.assertIsNotNone(review_row)
+                self.assertIn(review_row["verdict"], ("pass", "revise", "fail"))
+                self.assertGreaterEqual(len(review_row["polished_text"]), 50)
+                self.assertEqual(review_row["human_review_status"], "pending_review")
+
+                # Human review gate #4: an unapproved review must not produce
+                # a final draft.
+                blocked_final_report = run_final_draft(conn, limit=10)
+                self.assertEqual(blocked_final_report["completed"], 0, "an unapproved review must not be picked up")
+
+                set_review_status(conn, stage="review", item_id=review_row["review_id"], status="approved", note="集成测试自动通过")
+
+                final_report = run_final_draft(conn, limit=10)
+                self.assertEqual(final_report["completed"], 1, final_report)
+
+                final_row = conn.execute("SELECT * FROM final_drafts WHERE source_review_id=?", (review_row["review_id"],)).fetchone()
+                self.assertIsNotNone(final_row)
+                self.assertEqual(final_row["final_text"], review_row["polished_text"])
+                self.assertEqual(final_row["human_review_status"], "pending_review")
+
+                # Approving the review must NOT have implicitly approved the
+                # final draft -- BR-CONTENT-005's whole point is that these
+                # are two separate confirmations.
+                self.assertEqual(final_row["human_review_status"], "pending_review")
+                set_review_status(conn, stage="final", item_id=final_row["final_draft_id"], status="approved", note="集成测试自动通过")
+                final_row_after = conn.execute("SELECT * FROM final_drafts WHERE final_draft_id=?", (final_row["final_draft_id"],)).fetchone()
+                self.assertEqual(final_row_after["human_review_status"], "approved")
+
                 # The full lineage from the original hit all the way to the
                 # final draft must be traceable through foreign keys alone.
                 self.assertEqual(topic_row["source_analysis_id"], "a1")
                 self.assertEqual(plan_row["source_topic_id"], topic_row["topic_id"])
                 self.assertEqual(draft_row["source_plan_id"], plan_row["plan_id"])
+                self.assertEqual(review_row["source_draft_id"], draft_row["draft_id"])
+                self.assertEqual(final_row["source_review_id"], review_row["review_id"])
             finally:
                 conn.close()
 

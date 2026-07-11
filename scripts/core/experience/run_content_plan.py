@@ -25,13 +25,16 @@ topic extraction):
   - style_examples: real excerpts from the same hit's cleaned transcript
     (real competitor writing, not a curated "what we consider good style"
     library).
-Verified this is a low-risk substitution, not just a convenient one:
-inspecting formal_skill_adapter.py's _run_content_plan(), evidence_items and
-tactic_candidates are validated for presence/shape by the input schema but
-are NOT actually read by either of the two model calls (business.creation_
-hook only reads brief/style_examples; business.creation_outline only reads
-selected_hook/brief) -- so their content does not currently steer the real
-model output at all, only style_examples does.
+2026-07-13 correction: the paragraph above used to say evidence_items and
+tactic_candidates were validated for shape but never actually read by either
+model call -- that was true when this binding was first written, but
+formal_skill_adapter.py's _run_content_plan() was fixed on 2026-07-11 (see
+its own comment) to pass candidate_topic/evidence_items/tactic_candidates
+into both the hook and outline prompts. Both real model calls now do read
+this binding's honest stand-in values, which raises the stakes of the
+substitution above slightly (it now visibly steers output, not just passes
+a shape check) without changing whether the substitution itself is
+appropriate.
 
 Usage:
     python -m scripts.core.experience.run_content_plan --limit 1
@@ -52,6 +55,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts.core.business_data.domain_labels import ALLOWED_DOMAIN_LABELS  # noqa: E402
 from scripts.core.business_data.register_competitor_accounts import DEFAULT_DB, install_schema  # noqa: E402
 from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
 from scripts.core.experience.run_sample_deep_analyze import _load_env_value, _safe_db_path  # noqa: E402
@@ -60,8 +64,6 @@ from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
     make_content_plan_harness,
 )
 from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig  # noqa: E402
-
-ALLOWED_DOMAIN_LABELS = {"fan_kepu_social_life", "music_entertainment", "third_domain_neutral", "cross_domain", "unknown"}
 # CONTENT_PLAN_BUSINESS_CONTRACT.yaml input_length_limits.
 BRIEF_MAX_CHARS = 3000
 EVIDENCE_ITEMS_MAX = 12

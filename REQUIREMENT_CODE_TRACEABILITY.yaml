@@ -665,6 +665,51 @@ traceability:
     defaults:
       single_diff_status: captured
     thresholds: {}
+- requirement_id: BR-CONTENT-004
+  observed_legacy_behavior: run_script_review.py picks up approved, not-yet-reviewed
+    script_drafts and calls runtime_skills/script_review, which internally runs
+    business.creation_polish before business.creation_review (before
+    business.ai_flavor_judge) -- 文案优化 before 审核, per the 2026-07-13 correction.
+  target_component: scripts/core/experience/run_script_review.py (binding) +
+    scripts/core/model_gateway/formal_skill_adapter.py's _run_script_review()
+    (subnode call order)
+  current_implementation_status: 'exact_match: real binding, real schema
+    (script_reviews table), real positive+reverse tests
+    (tests/core/test_run_script_review.py), and a real end-to-end integration
+    test (tests/core/test_topic_to_script_chain_integration.py) proving the
+    human review gate actually blocks/unblocks flow. Not yet exercised
+    against a real model call (same gap as source_to_topic/content_plan/
+    script_generate -- see TECHNICAL_MANUAL.md section 10).'
+  alignment_status: exact_match
+  difference_type: []
+  migration_action: none -- newly implemented, not migrated from legacy.
+  test_ids:
+  - script_review runs after script_generate approval fixture
+  - polish-before-review call order fixture
+  evidence:
+    source_section: 文案优化与审核
+    defaults: {}
+    thresholds: {}
+- requirement_id: BR-CONTENT-005
+  observed_legacy_behavior: run_final_draft.py copies an approved script_reviews
+    row's polished_text into a new final_drafts row requiring its own separate
+    human_review_status='approved' confirmation -- review approval does not
+    imply final-draft approval.
+  target_component: scripts/core/experience/run_final_draft.py
+  current_implementation_status: 'exact_match: real binding, real schema
+    (final_drafts table), real positive+reverse tests
+    (tests/core/test_run_final_draft.py, including a dedicated test proving
+    review approval does not auto-approve the final draft), and covered by
+    the same end-to-end integration test as BR-CONTENT-004.'
+  alignment_status: exact_match
+  difference_type: []
+  migration_action: none -- newly implemented, not migrated from legacy.
+  test_ids:
+  - final draft requires separate confirmation from review approval fixture
+  evidence:
+    source_section: 最终稿确认
+    defaults: {}
+    thresholds: {}
 - requirement_id: BR-EXPERIENCE-001
   legacy_files: []
   legacy_functions: []

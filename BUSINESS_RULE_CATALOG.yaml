@@ -1903,6 +1903,87 @@ rules:
   supersedes: []
   validation_required:
   - diff fixture
+- requirement_id: BR-CONTENT-004
+  source_document: 爆款口播内容经验库系统置顶规则总表.docx (V0.6.3 卷首, 条目3/30/53/54)
+  source_section: 文案优化与审核
+  priority: P1
+  domain_scope: all domains
+  status: '2026-07-13 new (置顶规则总表核对后): 文案优化 must run before 审核, not after
+    -- formal_skill_adapter.py''s _run_script_review() used to call
+    business.creation_review first and feed its issues into
+    business.creation_polish as edit_notes (polish-fixes-what-review-found),
+    the exact wrong order. Reordered so creation_polish runs first (standalone
+    quality pass on the raw draft) and creation_review runs second (final gate
+    on the polished text, together with business.ai_flavor_judge). This is
+    realized as ONE new pipeline stage (script_reviews table, one
+    run_script_review.py binding), not two separate database stages, because
+    script_review is a single atomic Skill call that already bundles
+    polish+review+ai_flavor together -- the document''s ordering requirement is
+    satisfied by the call order WITHIN that one Skill, not by inventing a
+    database-level split the real Skill boundary does not have.'
+  trigger: an approved script_drafts row exists (human_review_status=''approved'')
+  inputs:
+  - draft_text
+  - brief
+  - evidence_items
+  - human_reference_refs
+  expected_behavior: run_script_review.py picks up approved, not-yet-reviewed
+    drafts, calls runtime_skills/script_review (which internally runs polish
+    before review before ai_flavor_judge), and persists the result to
+    script_reviews with human_review_status=''pending_review''. A reviewed
+    draft must not silently become the final draft.
+  defaults: {}
+  thresholds: {}
+  timing_semantics: Runs after script_generate produces an approved draft, before
+    a final_drafts row can exist.
+  state_effects:
+  - script_reviews insert
+  allowed_side_effects: []
+  forbidden_behavior:
+  - review a draft before it is polished
+  - skip the human review gate on script_reviews
+  - auto-promote a script_reviews row to final_drafts
+  edge_cases:
+  - verdict=fail (script needs a full rewrite, not just polish)
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - script_review runs after script_generate approval fixture
+  - polish-before-review call order fixture
+- requirement_id: BR-CONTENT-005
+  source_document: 爆款口播内容经验库系统置顶规则总表.docx (V0.6.3 卷首, 条目5/56)
+  source_section: 最终稿确认
+  priority: P0
+  domain_scope: all domains
+  status: '2026-07-13 new (置顶规则总表核对后): "最终稿" did not exist as a concept
+    anywhere in the catalog -- the chain stopped at script_drafts, with no
+    distinction between "a draft that passed review" and "the confirmed final
+    version." The document requires final-draft confirmation to be its own
+    explicit user action, separate from review approval.'
+  trigger: an approved script_reviews row exists (human_review_status=''approved'')
+  inputs:
+  - polished_text (from the approved review)
+  expected_behavior: run_final_draft.py copies the approved review''s
+    polished_text into a new final_drafts row with human_review_status=
+    ''pending_review''; only after a human explicitly approves THIS row does the
+    content count as a confirmed final draft. No further automation follows --
+    publishing is manual (置顶规则总表条目5:"发布由用户人工完成").
+  defaults: {}
+  thresholds: {}
+  timing_semantics: Runs after script_reviews is approved; is the last stage in
+    the chain.
+  state_effects:
+  - final_drafts insert
+  allowed_side_effects: []
+  forbidden_behavior:
+  - treat script_reviews approval as final-draft confirmation
+  - auto-publish a final_drafts row
+  edge_cases:
+  - review approved but final draft rejected (human changed their mind)
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - final draft requires separate confirmation from review approval fixture
 - requirement_id: BR-EXPERIENCE-001
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
   source_section: 经验共享库

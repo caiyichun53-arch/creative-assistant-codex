@@ -123,9 +123,9 @@
 
 ## 10. 经验库（experience）
 
-[已完成](部分) "选题→大纲→成稿"这条创作主链路四步全部接上真实数据(2026-07-08 首步,2026-07-09 剩余三步一次性接完,并有端到端集成测试验证全链路真的能跑通)。"归纳共性"(`tactic_extract`)2026-07-11 也接上了真实数据(见下方新增段落)。"自营P基线怎么用"这一块还没做。
+[已完成](部分) "选题→大纲→成稿→文案优化/审核→最终稿"这条创作主链路六步全部接上真实数据(2026-07-08 首步,2026-07-09 三步接完到成稿,2026-07-13 置顶规则总表核对后再接文案优化/审核+最终稿两步,均有端到端集成测试验证全链路真的能跑通)。"归纳共性"(`tactic_extract`)2026-07-11 也接上了真实数据(见下方新增段落)。"自营P基线怎么用"这一块还没做。
 
-**这一层干什么**：把已经备好料(有转写文字稿+评论)的爆款,喂给大模型做"深度分析",提炼出可复用的选题手法/开头手法/结构手法——旧系统管这叫"DNA拆解",现在不这么叫了,对应的是 `runtime_skills/sample_deep_analyze` 这个独立的原子能力。分析结果再喂给 `runtime_skills/source_to_topic` 生成候选选题,候选选题再喂给 `runtime_skills/content_plan` 规划钩子(开头)和大纲,大纲再喂给 `runtime_skills/script_generate` 写出成稿草稿——这是"选题→大纲→成稿"这条创作主链路的全部四环,`tests/core/test_topic_to_script_chain_integration.py` 会真的把一条测试爆款从头跑到尾,验证 `hit_deep_analysis → topic_candidates → content_plans → script_drafts` 这条外键链路真的能走通,不是四段各自独立能跑但拼不起来。
+**这一层干什么**：把已经备好料(有转写文字稿+评论)的爆款,喂给大模型做"深度分析",提炼出可复用的选题手法/开头手法/结构手法——旧系统管这叫"DNA拆解",现在不这么叫了,对应的是 `runtime_skills/sample_deep_analyze` 这个独立的原子能力。分析结果再喂给 `runtime_skills/source_to_topic` 生成候选选题,候选选题再喂给 `runtime_skills/content_plan` 规划钩子(开头)和大纲,大纲再喂给 `runtime_skills/script_generate` 写出成稿草稿,草稿再喂给 `runtime_skills/script_review` 做文案优化+审核+AI味判定,审核通过的润色稿最后被复制成一条"最终稿"等待单独确认——这是"选题→大纲→成稿→文案优化/审核→最终稿"这条创作主链路的全部六环,`tests/core/test_topic_to_script_chain_integration.py` 会真的把一条测试爆款从头跑到尾,验证 `hit_deep_analysis → topic_candidates → content_plans → script_drafts → script_reviews → final_drafts` 这条外键链路真的能走通,不是六段各自独立能跑但拼不起来。
 
 **为什么"能力"和"接线"是分开的两件事**：`runtime_skills/` 下的原子 Skill 本身早就写好了,而且真的用真实模型调用验证过能跑通——但那套验证用的是一个专门隔离出来的验证库,不是真实生产数据库。也就是说,"这个能力本身没问题"和"能不能真的接到日常爆款数据上用"是两件独立的事。这么设计是为了保证 Skill 本身"原子化"——不管换到别的项目、还是被单独拿出来调用,Skill 都不需要知道任何关于这个项目数据库长什么样的信息,只认自己的输入输出格式。真正懂数据库的部分,全部写在 `scripts/core/experience/` 下对应的绑定脚本里(**这一层故意不放在 `business_data` 目录下**,因为 `business_data` 那层被强制要求不准碰大模型,分析/选题/规划这些步骤恰恰整个就是在调用大模型)。
 
@@ -134,14 +134,16 @@
 2. `python -m scripts.core.experience.run_source_to_topic --limit N`——挑一条已经分析过、但还没生成过候选选题的分析结果,把"选题手法/开头手法/结构手法"三段话当证据喂给 `source_to_topic`,生成一条候选选题(标题+切入角度+支撑证据)。**关联判断(这条选题是否和已有内容重复/冲突)目前是老实的占位文字**,不是真判断过——那是另一个还没接的独立能力(`content_relation_judge`)的活,没有冒充。结果存进 `topic_candidates` 表,同样带版本号。
 3. `python -m scripts.core.experience.run_content_plan --limit N`——挑一条状态是"已生成"(`topic_status='generated'`)、但还没规划过的候选选题,喂给 `content_plan` 生成开头候选(1-5个)、选定开头、分段大纲。**两处明确的替代,不是真数据**:①理应由 `tactic_extract`(还没接)产出的"打法候选",现在复用同一条爆款自己的选题/开头/结构手法;②理应来自范例库(物理载体还没定)的"风格范例",现在复用同一条爆款自己的真实转写文字稿摘句。都是真实数据、老实标了替代关系,不是编造。**2026-07-11 更正**:这句话曾经写着"已核实这两项不影响模型实际生成的内容(只读了brief/style_examples)"——那是当时的真实情况,但也是一个真实bug(`tactic_candidates`/`evidence_items` 两个契约要求必传的字段压根没发给模型),这次已经修复,现在这两项**会**真实影响模型输出,不再是"不影响"。结果存进 `content_plans` 表,同样带版本号。
 4. `python -m scripts.core.experience.run_script_generate --limit N`——挑一条还没生成过草稿的规划,把选定的开头、分段大纲、支撑证据喂给 `script_generate`,产出一份成稿草稿(50-6000字)。**一处明确的替代**:理应由 `research_evidence_extract`/`production_research_plan`(都还没接)产出的"研究摘要",现在是一句老实标注"未经真实研究流程,仅汇总已有证据"的文字,不冒充真研究过。结果存进 `script_drafts` 表,同样带版本号。
+5. `python -m scripts.core.experience.run_script_review --limit N`——挑一条已通过审核的成稿草稿,喂给 `script_review`(内部三个子节点:先 `creation_polish` 文案优化、再 `creation_review` 审核、最后 `ai_flavor_judge` 判AI味——**2026-07-13 之前顺序是反的**,先审核再优化,置顶规则总表核对后改成先优化后审核)。**一处明确的替代**:理应来自范例库的"人类参考文本"(`human_reference_refs`),现在复用同一条爆款自己的真实转写文字稿摘句——跟 `content_plan` 的 `style_examples` 同款替代思路,但**这里没有placeholder兜底**,转写文字稿缺失时直接报错,不会拿一句系统占位文字冒充"真实人类写作参考"去做AI味判断。产出润色稿+审核意见+AI味风险,存进 `script_reviews` 表。
+6. `python -m scripts.core.experience.run_final_draft --limit N`——挑一条已通过审核的 `script_reviews` 行,把它的润色稿原样复制成一条新的"最终稿"记录,等待**单独的**人工确认——审核通过不等于最终稿通过,这是置顶规则总表明确要求的两个独立确认动作。存进 `final_drafts` 表。往后没有下一步了,发布是人工手动做的事,不在这条链路里。
 
-**人工审核闸门(2026-07-10 新增)**：`topic_candidates`/`content_plans`/`script_drafts` 三张表各有一个 `human_review_status` 字段,新产出的一行默认是 `pending_review`(待审核)。**没有人明确标记"通过",内容不会自动流到下一步**——第2步查询"还有哪些分析结果没生成选题"不受这个字段影响,但第3步只会挑 `human_review_status='approved'` 的候选选题,第4步同理只挑已通过的规划。这是补给之前一个真实缺口的:最早接这条链路的时候,三步命令挨个跑,中间完全没有人看一眼的环节。审核用这个命令:
+**人工审核闸门(2026-07-10 新增,2026-07-13 扩展到五段)**:`topic_candidates`/`content_plans`/`script_drafts`/`script_reviews`/`final_drafts` 五张表各有一个 `human_review_status` 字段,新产出的一行默认是 `pending_review`(待审核)。**没有人明确标记"通过",内容不会自动流到下一步**——第2步查询"还有哪些分析结果没生成选题"不受这个字段影响,但第3/4/5/6步分别只会挑上一步已经 `human_review_status='approved'` 的行。这是补给之前一个真实缺口的:最早接这条链路的时候,几步命令挨个跑,中间完全没有人看一眼的环节。审核用这个命令:
 ```
 python -m scripts.core.experience.review_queue --list          # 看现在有哪些在等审核(人能读的摘要,不用查数据库)
 python -m scripts.core.experience.review_queue --approve topic t1_topic_v1   # 通过
 python -m scripts.core.experience.review_queue --reject plan p1_plan_v1 --note "开头太标题党"  # 不通过,可以附一句理由
 ```
-`--list` 后面可以跟 `topic`/`plan`/`draft` 只看某一段。**现在还没有任何界面**,只有这个命令行工具——先把"必须有人确认"这道硬闸门加上,界面好不好用是以后的事,不能因为没界面就放过审核这一步。
+`--list` 后面可以跟 `topic`/`plan`/`draft`/`review`/`final` 只看某一段(`review`/`final` 是 2026-07-13 新加的)。**现在还没有任何界面**,只有这个命令行工具——先把"必须有人确认"这道硬闸门加上,界面好不好用是以后的事,不能因为没界面就放过审核这一步。
 
 **归纳共性——`tactic_extract`,以及"归纳出来的东西存哪儿"这层地基(2026-07-11 新增)**：这一块之前一直没做,不只是因为 Skill 没接,还因为深挖之后发现"归纳完的结果压根没地方正式存"——负责这件事的底层机制(`core_command_envelope` + `tactic_state`/`topic_state`/`claim_state`/`experiment_state`/`production_task_state` 五张并列的表,`goal02_schema.sqlite.sql` 里写好了但全仓库从没一行 Python 代码用过)必须先补上,才谈得上真的"归纳"。分两层:
 - `scripts/core/persistence/goal02_store.py`(新增)——通用的"创建一条状态记录/往前流转状态"机制,横跨五种对象类型(仿照 `PersistenceStore` 本身通用横跨 goal01 的做法)。**这次只给"打法/方法"(tactic)这一种类型接了真实调用**,另外四种(选题/待核实说法/实验/生产任务)的表结构已经通用支持,但具体每种状态该怎么排序还没设计,调用会明确报错而不是瞎猜。
@@ -161,9 +163,10 @@ python -m scripts.core.experience.run_tactic_extract --domain-label fan_kepu_soc
 - `recompute_experience_state()`(算一个打法现在成不成熟)算出来的状态词(`active`/`watch`/`paused`/`deprecated`)和 `tactic_state.state` 实际能存的词(`candidate`/`active`/`paused`/`deprecated`)对不上——没有 "watch" 这个槽位,这次没解决。
 - `content_plan` 里"打法候选"字段现在还是复用同一条爆款自己的选题/开头/结构手法,这次没有把它接到真正 `active` 状态的 tactic 上——因为目前没有任何 tactic 会变成 active(见上一条)。
 - **选题目前只用了"对标爆款+评论区"两种候选来源**——研究缺口/当下热点两种候选来源还没接。**2026-07-11 澄清:当前设计没有冻结"选题打分制"**,`.claude/skills/选题/SKILL.md` 里描述的"选题判断维度"评分排序是该交互式技能自己的旧方法,不代表 `runtime_skills/source_to_topic` 当前设计要对齐的目标,不得当作缺口去补。真正的缺口是:当前设计里的选题判断规则、领域约束、去重/冷却、候选来源、人工确认门槛,有没有被真实代码落地并验证——这是 2026-07-09/11 用户直接指出并两次纠偏过的真实缺口,详见 `ROADMAP.md`。
-- **`sample_deep_analyze`/`tactic_extract`已经真花过钱且已验证内容质量**(见上)。`source_to_topic`/`content_plan`/`script_generate`/`script_review` 这四步仍然一次都没真调用过真实大模型,测试用的还是各 Skill 自带的"假模型"——但这四个的提示词这次已经系统性修过一轮已知缺陷,不是带着确认过的bug等下次调用。
+- **`sample_deep_analyze`/`tactic_extract`已经真花过钱且已验证内容质量**(见上)。`source_to_topic`/`content_plan`/`script_generate`/`script_review` 这四步仍然一次都没真调用过真实大模型,测试用的还是各 Skill 自带的"假模型"——但这四个的提示词这次已经系统性修过一轮已知缺陷,不是带着确认过的bug等下次调用。`final_draft` 不调用大模型(纯拷贝润色稿),不算在这条"还没真调用"的清单里。
+- **"研究"这一步没有独立的人工确认闸门**。置顶规则总表要求的六个可暂停节点是"研究/内容计划/初稿/文案优化/审核/最终稿",这次(2026-07-13)补齐了后面五个,但"研究"本身目前没有真实绑定脚本(`research_evidence_extract`/`production_research_plan` 两个原子 Skill 都还没接真实数据,`script_generate` 的"研究摘要"字段现在是老实标注过的占位替代,见上文第4步)——没有真实产出,自然也没有东西可以让人审核。等研究这一步真的接上真实数据后,要补一张 `research_outputs`(或类似)表 + `review_queue.py` 的 `research` 阶段,现在先不做。
 
-**怎么跑**：见上面四条命令依次执行,每次生成完记得跑一下 `review_queue.py --list` 看有没有要审核的,通过了才会继续流到下一步。`N` 是这次要处理几条,默认1条。也可以直接跑 `python -m pytest tests/core/test_topic_to_script_chain_integration.py` 看一次完整的假数据端到端演练(含审核通过的环节,不花钱、不联网)。
+**怎么跑**：见上面六条命令依次执行,每次生成完记得跑一下 `review_queue.py --list` 看有没有要审核的,通过了才会继续流到下一步。`N` 是这次要处理几条,默认1条。也可以直接跑 `python -m pytest tests/core/test_topic_to_script_chain_integration.py` 看一次完整的假数据端到端演练(含全部五道审核通过的环节,不花钱、不联网)。
 
 ## 11. 外部适配器（external_adapters / hermes）
 

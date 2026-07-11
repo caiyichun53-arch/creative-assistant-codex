@@ -1,15 +1,20 @@
-"""Human review gate for the "选题 -> 大纲 -> 成稿" chain (source_to_topic ->
-content_plan -> script_generate).
+"""Human review gate for the "选题 -> 大纲 -> 成稿 -> 文案优化/审核 -> 最终稿" chain
+(source_to_topic -> content_plan -> script_generate -> script_review ->
+final_draft).
 
-2026-07-10: added the same day the chain was first wired end to end, after
-the user pointed out that nothing stopped a generated topic from auto-
-flowing all the way to a script draft with no human ever looking at it --
-generated real output does not represent "ready to use", and production
-needs a human in the loop. Each of the three stage tables (topic_candidates/
-content_plans/script_drafts) has a human_review_status column that starts
-'pending_review'; the next stage's own select_*_pending_*() query will not
-pick up a row until this is 'approved' (see run_content_plan.py/
-run_script_generate.py). This script is the only way to change that value --
+2026-07-10: added the same day the chain was first wired end to end (topic/
+plan/draft stages), after the user pointed out that nothing stopped a
+generated topic from auto-flowing all the way to a script draft with no
+human ever looking at it -- generated real output does not represent "ready
+to use", and production needs a human in the loop.
+
+2026-07-13 (置顶规则总表核对后): extended with two more stages -- review
+(script_reviews, BR-CONTENT-004) and final (final_drafts, BR-CONTENT-005) --
+following the exact same mechanism, not a new one: each stage table has a
+human_review_status column that starts 'pending_review'; the next stage's own
+select_*_pending_*() query will not pick up a row until this is 'approved'
+(see run_content_plan.py/run_script_generate.py/run_script_review.py/
+run_final_draft.py). This script is the only way to change that value --
 there is no UI yet, deliberately (get the gate working and used by hand
 first; a nicer interface is a separate later decision).
 
@@ -51,6 +56,25 @@ STAGES: dict[str, dict[str, Any]] = {
         "table": "script_drafts",
         "id_col": "draft_id",
         "preview": lambda row: (row["draft_text"][:200] + ("…" if len(row["draft_text"]) > 200 else "")),
+    },
+    # 2026-07-13 (置顶规则总表核对后, BR-CONTENT-004): review's own preview shows
+    # the polished text (what a human is actually approving), not the pre-
+    # polish draft_text -- plus the verdict/ai_flavor_risk so a reviewer sees
+    # the Skill's own judgment at a glance before deciding.
+    "review": {
+        "table": "script_reviews",
+        "id_col": "review_id",
+        "preview": lambda row: (
+            f"verdict:{row['verdict']} | AI味:{row['ai_flavor_risk']} | "
+            + row["polished_text"][:200] + ("…" if len(row["polished_text"]) > 200 else "")
+        ),
+    },
+    # BR-CONTENT-005: a separate confirmation from "review" above -- approving
+    # a review does not approve the final draft it could become.
+    "final": {
+        "table": "final_drafts",
+        "id_col": "final_draft_id",
+        "preview": lambda row: (row["final_text"][:200] + ("…" if len(row["final_text"]) > 200 else "")),
     },
 }
 

@@ -53,14 +53,22 @@ class RenderedPromptsReachTheModelTests(ScriptReviewHarnessMixin, unittest.TestC
         harness.worker.run_once()
 
         self.assertEqual(len(provider.prompts_seen), 3)
-        review_prompt, polish_prompt, ai_flavor_prompt = provider.prompts_seen
-
-        self.assertIn(input_payload["draft_text"], review_prompt)
-        self.assertIn(input_payload["brief"], review_prompt)
-        self.assertIn(input_payload["evidence_items"][0]["claim"], review_prompt)
+        # 2026-07-13: polish now runs BEFORE review (置顶规则总表 条目3/30) --
+        # order is polish, review, ai_flavor, not review, polish, ai_flavor.
+        polish_prompt, review_prompt, ai_flavor_prompt = provider.prompts_seen
 
         self.assertIn(input_payload["draft_text"], polish_prompt)
-        self.assertIn("Tighten the opening scene", polish_prompt)  # the deterministic review issue
+        # polish no longer depends on review's findings -- it runs standalone
+        # on the raw draft with its own quality criteria, not edit_notes.
+        self.assertNotIn("Tighten the opening scene", polish_prompt)
+
+        # review now inspects the POLISHED text (which, per the deterministic
+        # fake provider, is the raw draft_text plus an appended suffix), not
+        # the raw draft directly.
+        self.assertIn(input_payload["draft_text"], review_prompt)
+        self.assertIn("Polished pass", review_prompt)
+        self.assertIn(input_payload["brief"], review_prompt)
+        self.assertIn(input_payload["evidence_items"][0]["claim"], review_prompt)
 
         self.assertIn(input_payload["human_reference_refs"][0], ai_flavor_prompt)
 
@@ -122,7 +130,7 @@ class ScriptReviewFixtureTests(ScriptReviewHarnessMixin, unittest.TestCase):
                 self.assertEqual(result.model_route, "business.creation_review")
                 self.assertEqual(
                     harness.provider.routes_seen,
-                    ["business.creation_review", "business.creation_polish", "business.ai_flavor_judge"],
+                    ["business.creation_polish", "business.creation_review", "business.ai_flavor_judge"],
                 )
 
     def test_model_output_failures_are_closed(self) -> None:
@@ -134,6 +142,7 @@ class ScriptReviewFixtureTests(ScriptReviewHarnessMixin, unittest.TestCase):
             "polish_not_json",
             "polish_missing_field",
             "empty_polished_text",
+            "empty_revision_focus",
             "ai_empty",
             "ai_not_json",
             "ai_missing_field",
@@ -160,7 +169,7 @@ class ScriptReviewRuntimeTests(ScriptReviewHarnessMixin, unittest.TestCase):
         self.assertEqual(harness.provider.call_count, 3)
         self.assertEqual(
             harness.provider.routes_seen,
-            ["business.creation_review", "business.creation_polish", "business.ai_flavor_judge"],
+            ["business.creation_polish", "business.creation_review", "business.ai_flavor_judge"],
         )
 
     def test_provider_failure_retries_then_succeeds_without_duplicate_outbox(self) -> None:

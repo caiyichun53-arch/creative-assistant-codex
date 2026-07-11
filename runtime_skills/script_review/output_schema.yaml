@@ -3,6 +3,7 @@ required:
   - verdict
   - issues
   - polished_text
+  - revision_focus
   - ai_flavor_risk
   - revision_targets
   - schema_version
@@ -25,6 +26,14 @@ properties:
     type: string
     minLength: 50
     maxLength: 6000
+  revision_focus:
+    type: array
+    minItems: 1
+    maxItems: 3
+    items:
+      type: string
+      minLength: 1
+      maxLength: 60
   ai_flavor_risk:
     type: string
     enum:

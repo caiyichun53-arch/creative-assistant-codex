@@ -68,6 +68,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts.core.business_data.domain_labels import ALLOWED_DOMAIN_LABELS  # noqa: E402
 from scripts.core.business_data.register_competitor_accounts import DEFAULT_DB, install_schema  # noqa: E402
 from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
 from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
@@ -77,8 +78,6 @@ from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
 )
 from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig  # noqa: E402
 from scripts.core.persistence.goal01_store import content_hash  # noqa: E402
-
-ALLOWED_DOMAIN_LABELS = {"fan_kepu_social_life", "music_entertainment", "third_domain_neutral", "cross_domain", "unknown"}
 # 2026-07-09: matches SAMPLE_DEEP_ANALYZE_BUSINESS_CONTRACT.yaml's
 # input_length_limits.transcript_excerpt_max (also runtime_skills/
 # sample_deep_analyze/input_schema.yaml's maxLength) -- both raised the same
