@@ -919,15 +919,28 @@ traceability:
     prefers real active/watch tactics for the topic''s domain over the old
     per-hit stand-in (tests/core/test_run_content_plan.py, 8 new tests) --
     the consumer side of this rule''s output is now real, closing the loop
-    this rule''s state machine feeds into. NOT implemented: the
+    this rule''s state machine feeds into. 2026-07-13 update (C): a real
+    end-to-end test (test_experience_closed_loop_integration.py) now chains
+    tactic_registry.py''s real registration -> a real active/watch/paused/
+    active cycle driven entirely through run_publication_experiment.py''s
+    real evaluate_and_record_experiment() calls -> content_plan''s real
+    attribution, proving the pieces built across B1/B2 actually compose (not
+    just individually correct in isolation) -- covers active->watch on 1
+    failure, watch->active on 1 later support, active->paused on 3 failures
+    across 3 questions, paused staying paused under an insufficient recovery
+    attempt, paused''s recovery count resetting on a new failure, and
+    paused->active on 2 supports across 2 questions. NOT implemented: the
     human-proposal path for entering/leaving deprecated
     (ExperienceRevisionProposalPublishCommand exists in goal09_experiments.py
     but nothing calls it against real tactic data yet); never exercised
-    against a real self-owned publication (no real account has published
-    anything, per BR-EXPERIENCE-002); as of this writing every domain''s
-    tactics are still all in candidate (no promotion path exists yet -- see
-    TECHNICAL_MANUAL.md), so content_plan''s real-tactic path has never fired
-    on a real production call, only in tests.'
+    against a REAL self-owned publication with a real 7-day wait (no real
+    account has published anything yet, per BR-EXPERIENCE-002 -- this test
+    proves the state machine''s logic is correct against constructed data,
+    not that it has been observed against a real Day7 result); as of this
+    writing every domain''s tactics in the real production database are
+    still all in candidate (no automated promotion entry point exists yet --
+    see TECHNICAL_MANUAL.md), so content_plan''s real-tactic path has never
+    fired on a real production call, only in tests.'
   alignment_status: naming_only
   difference_type: []
   migration_action: none -- newly implemented, not migrated from legacy.
@@ -936,6 +949,7 @@ traceability:
   - tests/core/test_run_publication_experiment.py
   - tests/core/test_goal02_store.py
   - tests/core/test_run_content_plan.py
+  - tests/core/test_experience_closed_loop_integration.py
   evidence:
     source_section: 7 推荐状态状态机 + 29 自营实验与P基线
     defaults:
