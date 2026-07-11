@@ -607,20 +607,61 @@ traceability:
 - requirement_id: BR-TOPIC-004
   observed_legacy_behavior: A topic must not silently become production content or
     publishable state without user confirmation.
-  target_component: TopicPlanningService
-  current_implementation_status: legacy behavior observed; target formalization pending
-    unless noted exact_match
-  alignment_status: naming_only
-  difference_type:
-  - ownership_changed
-  migration_action: Preserve business semantics while moving state/external side effects
-    to formal Core/Adapter boundaries.
+  target_component: 'scripts/core/experience/review_queue.py (the "topic" stage) +
+    scripts/core/experience/run_content_plan.py''s select_topics_pending_plan()
+    (only picks up human_review_status=''approved'' rows). 2026-07-13: this used
+    to say target_component: TopicPlanningService, a class that never existed
+    anywhere in the codebase -- a ghost reference (same class of issue
+    BR-TOPIC-002/BR-RESEARCH-001/BR-EXPERIENCE-002 each had before their own
+    corrections).'
+  current_implementation_status: 'exact_match: real, tested
+    (tests/core/test_review_queue.py,
+    tests/core/test_topic_to_script_chain_integration.py -- the latter proves
+    an unapproved topic_candidates row is never picked up by run_content_plan).'
+  alignment_status: exact_match
+  difference_type: []
+  migration_action: none -- already correct, no migration needed.
   test_ids:
   - Hermes/Core confirmation test
   evidence:
     source_section: 选题人工确认
     defaults:
       autonomy: human_in_loop
+    thresholds: {}
+- requirement_id: BR-TOPIC-005
+  observed_legacy_behavior: A due-for-rotation active tag triggers one real
+    MediaCrawler keyword search, deterministically filtered and ranked, with
+    the top 5 stored for possible deeper processing; discovered tags require
+    human confirmation before becoming active.
+  target_component: scripts/core/business_data/run_domain_search.py +
+    scripts/core/business_data/domain_search_schema.sqlite.sql
+  current_implementation_status: 'partial: tag library (sources.yaml seeding +
+    hit-library suggestion + human-confirm-to-active), rotation cursor,
+    deterministic filter/rank, budget/auto-pause, and real MediaCrawler
+    keyword-search wiring are all real and tested
+    (tests/core/test_run_domain_search.py, 30 tests). NOT implemented: turning
+    a discovered_external_videos row into a real topic_candidates row (no
+    topic-generation path exists for hit-less videos yet -- documented gap,
+    see run_domain_search.py''s module docstring), and feeding discovered
+    videos into ASR/deep analysis. Never exercised against a real live search
+    (domain_search.live_enabled is false by default; no real call made this
+    session).'
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: none -- newly implemented, not migrated from legacy.
+  test_ids:
+  - domain search tag rotation fixture
+  - deterministic filter/ranking fixture
+  - suggested tag requires human confirmation before becoming active fixture
+  evidence:
+    source_section: 领域话题标签搜索
+    defaults:
+      live_enabled: false
+      rotation_days: 7
+      search_read_max: 20
+      deep_processing_max_per_tag: 5
+      consecutive_cycles_before_pause: 3
+      daily_deep_processing_max_per_domain: 10
     thresholds: {}
 - requirement_id: BR-CONTENT-001
   observed_legacy_behavior: Banned/risk word constraints are deterministic post-generation
@@ -770,9 +811,20 @@ traceability:
   legacy_functions: []
   observed_legacy_behavior: Self-account Day7 performance is long-cycle validation
     for topic/structure experience, not immediate prompt mutation.
-  target_component: ExperienceEngine
-  current_implementation_status: legacy behavior observed; target formalization pending
-    unless noted exact_match
+  target_component: 'scripts/core/business_data/own_publications_schema.sqlite.sql +
+    own_publications.py (2026-07-13, 置顶规则总表核对后). target_component used to
+    say ExperienceEngine, a class that never existed anywhere in the codebase --
+    a ghost reference (same class of issue BR-TOPIC-002/BR-RESEARCH-001 each had
+    before their own corrections).'
+  current_implementation_status: 'partial: own_accounts/own_publications/
+    own_publication_checks/own_publication_baselines/own_experiments schema +
+    registration functions exist, real-data-tested
+    (tests/core/test_own_publications.py, 10 tests). The evaluation logic that
+    would actually USE this data to move a tactic from candidate to active
+    (wiring goal09_experiments.py''s ExperimentMaterializer/
+    recompute_experience_state) is not built yet -- separate, larger piece of
+    work. No real self-owned account has published anything yet, so this has
+    only ever been exercised against fixture data, never a real Day7 result.'
   alignment_status: naming_only
   difference_type: []
   migration_action: Preserve business semantics while moving state/external side effects

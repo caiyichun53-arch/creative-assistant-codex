@@ -42,7 +42,7 @@ class LocalMediaCrawlerExecutor:
     def execute(self, command: ExternalAdapterCommand) -> ExternalCommandResult:
         if command.adapter_id not in {"collector.mediacrawler", "collector.comments"}:
             raise ExternalAdapterError(f"unsupported local MediaCrawler adapter: {command.adapter_id}")
-        if command.capability not in {"platform.video_snapshot", "platform.comment_collection"}:
+        if command.capability not in {"platform.video_snapshot", "platform.comment_collection", "platform.keyword_search"}:
             raise ExternalAdapterError(f"unsupported local MediaCrawler capability: {command.capability}")
 
         run_dir = self._make_run_dir(command)
@@ -131,14 +131,18 @@ class LocalMediaCrawlerExecutor:
         platform = _PLATFORM_MAP.get(str(command.input_payload.get("platform") or "").lower())
         if not platform:
             raise ExternalAdapterError("MediaCrawler platform is missing or unsupported")
-        source_url = str(command.input_payload.get("source_url") or "").strip()
-        if not source_url:
-            raise ExternalAdapterError("MediaCrawler source_url is required")
 
         source_kind = str(command.input_payload.get("source_kind") or "detail")
         if command.capability == "platform.comment_collection":
             source_kind = "detail"
-        if source_kind not in {"creator", "detail"}:
+        # 2026-07-13 (置顶规则总表核对后, A4): "search" wires the real tool's
+        # own keyword-search mode (vendor/MediaCrawler/cmd_arg/arg.py's
+        # --keywords flag, CRAWLER_TYPE="search" in its own config) -- this
+        # was never used before, only "creator"/"detail" were. Search mode
+        # takes keywords, not a creator_id/specified_id -- a real, structural
+        # difference in what MediaCrawler needs as input, not just a new
+        # enum value plugged into the same shape.
+        if source_kind not in {"creator", "detail", "search"}:
             raise ExternalAdapterError(f"unsupported MediaCrawler source_kind: {source_kind}")
 
         python = self._python()
@@ -164,10 +168,19 @@ class LocalMediaCrawlerExecutor:
             "--get_sub_comment",
             "no",
         ]
-        if source_kind == "creator":
-            args.extend(["--creator_id", source_url])
+        if source_kind == "search":
+            keywords = command.input_payload.get("keywords")
+            if not keywords or not isinstance(keywords, list):
+                raise ExternalAdapterError("MediaCrawler search mode requires a non-empty keywords list")
+            args.extend(["--keywords", ",".join(str(k) for k in keywords)])
         else:
-            args.extend(["--specified_id", source_url])
+            source_url = str(command.input_payload.get("source_url") or "").strip()
+            if not source_url:
+                raise ExternalAdapterError("MediaCrawler source_url is required")
+            if source_kind == "creator":
+                args.extend(["--creator_id", source_url])
+            else:
+                args.extend(["--specified_id", source_url])
         if command.capability == "platform.comment_collection":
             args.extend(["--max_comments_count_singlenotes", str(command.max_items)])
         return args

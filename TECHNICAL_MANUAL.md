@@ -123,7 +123,7 @@
 
 ## 10. 经验库（experience）
 
-[已完成](部分) "选题→大纲→成稿→文案优化/审核→最终稿"这条创作主链路六步全部接上真实数据(2026-07-08 首步,2026-07-09 三步接完到成稿,2026-07-13 置顶规则总表核对后再接文案优化/审核+最终稿两步,均有端到端集成测试验证全链路真的能跑通)。"归纳共性"(`tactic_extract`)2026-07-11 也接上了真实数据(见下方新增段落)。"自营P基线怎么用"这一块还没做。
+[已完成](部分) "选题→大纲→成稿→文案优化/审核→最终稿"这条创作主链路六步全部接上真实数据(2026-07-08 首步,2026-07-09 三步接完到成稿,2026-07-13 置顶规则总表核对后再接文案优化/审核+最终稿两步,均有端到端集成测试验证全链路真的能跑通)。"归纳共性"(`tactic_extract`)2026-07-11 也接上了真实数据(见下方新增段落)。"自营P基线怎么用"这一块(2026-07-13 更新)**表和登记函数已经建好**(`scripts/core/business_data/own_publications_schema.sqlite.sql` + `own_publications.py`:`own_accounts`/`own_publications`/`own_publication_checks`/`own_publication_baselines`/`own_experiments` 五张表,10个测试全过),但**真正"用发布数据评估一条候选方法"的逻辑还没接**——已经写好但没人调用的 `goal09_experiments.py` 还是没人调用它,这块留给下一步。而且现实约束摆在这:目前没有任何自营账号真的发布过内容,这套表和函数只用假想数据测过,从没被真实数据喂过。
 
 **这一层干什么**：把已经备好料(有转写文字稿+评论)的爆款,喂给大模型做"深度分析",提炼出可复用的选题手法/开头手法/结构手法——旧系统管这叫"DNA拆解",现在不这么叫了,对应的是 `runtime_skills/sample_deep_analyze` 这个独立的原子能力。分析结果再喂给 `runtime_skills/source_to_topic` 生成候选选题,候选选题再喂给 `runtime_skills/content_plan` 规划钩子(开头)和大纲,大纲再喂给 `runtime_skills/script_generate` 写出成稿草稿,草稿再喂给 `runtime_skills/script_review` 做文案优化+审核+AI味判定,审核通过的润色稿最后被复制成一条"最终稿"等待单独确认——这是"选题→大纲→成稿→文案优化/审核→最终稿"这条创作主链路的全部六环,`tests/core/test_topic_to_script_chain_integration.py` 会真的把一条测试爆款从头跑到尾,验证 `hit_deep_analysis → topic_candidates → content_plans → script_drafts → script_reviews → final_drafts` 这条外键链路真的能走通,不是六段各自独立能跑但拼不起来。
 
@@ -162,11 +162,13 @@ python -m scripts.core.experience.run_tactic_extract --domain-label fan_kepu_soc
 - **候选(candidate)之后怎么变成正式生效(active)——这一步完全没做**。`goal02_store.py` 的 `transition_state()` 已经写好并测试过,但现在没有任何真实调用方去调它,一条 `tactic_state` 创建出来之后永远停在 `candidate`,不会自动、也没有人工入口让它变成 `active`。
 - `recompute_experience_state()`(算一个打法现在成不成熟)算出来的状态词(`active`/`watch`/`paused`/`deprecated`)和 `tactic_state.state` 实际能存的词(`candidate`/`active`/`paused`/`deprecated`)对不上——没有 "watch" 这个槽位,这次没解决。
 - `content_plan` 里"打法候选"字段现在还是复用同一条爆款自己的选题/开头/结构手法,这次没有把它接到真正 `active` 状态的 tactic 上——因为目前没有任何 tactic 会变成 active(见上一条)。
-- **选题目前只用了"对标爆款+评论区"两种候选来源**——研究缺口/当下热点两种候选来源还没接。**2026-07-11 澄清:当前设计没有冻结"选题打分制"**,`.claude/skills/选题/SKILL.md` 里描述的"选题判断维度"评分排序是该交互式技能自己的旧方法,不代表 `runtime_skills/source_to_topic` 当前设计要对齐的目标,不得当作缺口去补。真正的缺口是:当前设计里的选题判断规则、领域约束、去重/冷却、候选来源、人工确认门槛,有没有被真实代码落地并验证——这是 2026-07-09/11 用户直接指出并两次纠偏过的真实缺口,详见 `ROADMAP.md`。
+- **选题目前只用了"对标爆款+评论区"两种候选来源**——研究缺口/当下热点两种候选来源还没接。**2026-07-11 澄清:当前设计没有冻结"选题打分制"**,`.claude/skills/选题/SKILL.md` 里描述的"选题判断维度"评分排序是该交互式技能自己的旧方法,不代表 `runtime_skills/source_to_topic` 当前设计要对齐的目标,不得当作缺口去补。真正的缺口是:当前设计里的选题判断规则、领域约束、去重/冷却、候选来源、人工确认门槛,有没有被真实代码落地并验证——这是 2026-07-09/11 用户直接指出并两次纠偏过的真实缺口,详见 `ROADMAP.md`。**2026-07-13 更新**:补上了第三种来源"领域话题标签搜索"(见下方新增小节),但"搜到的视频怎么变成正式选题"这一环还没接(见下方说明)——真正能喂给 `source_to_topic` 的候选来源目前还是只有两种。
 - **`sample_deep_analyze`/`tactic_extract`已经真花过钱且已验证内容质量**(见上)。`source_to_topic`/`content_plan`/`script_generate`/`script_review` 这四步仍然一次都没真调用过真实大模型,测试用的还是各 Skill 自带的"假模型"——但这四个的提示词这次已经系统性修过一轮已知缺陷,不是带着确认过的bug等下次调用。`final_draft` 不调用大模型(纯拷贝润色稿),不算在这条"还没真调用"的清单里。
 - **"研究"这一步没有独立的人工确认闸门**。置顶规则总表要求的六个可暂停节点是"研究/内容计划/初稿/文案优化/审核/最终稿",这次(2026-07-13)补齐了后面五个,但"研究"本身目前没有真实绑定脚本(`research_evidence_extract`/`production_research_plan` 两个原子 Skill 都还没接真实数据,`script_generate` 的"研究摘要"字段现在是老实标注过的占位替代,见上文第4步)——没有真实产出,自然也没有东西可以让人审核。等研究这一步真的接上真实数据后,要补一张 `research_outputs`(或类似)表 + `review_queue.py` 的 `research` 阶段,现在先不做。
 
 **怎么跑**：见上面六条命令依次执行,每次生成完记得跑一下 `review_queue.py --list` 看有没有要审核的,通过了才会继续流到下一步。`N` 是这次要处理几条,默认1条。也可以直接跑 `python -m pytest tests/core/test_topic_to_script_chain_integration.py` 看一次完整的假数据端到端演练(含全部五道审核通过的环节,不花钱、不联网)。
+
+**领域话题标签搜索——第三种选题来源(2026-07-13 新增, 置顶规则总表核对后, 原文档第21章)**:每个领域一份 `sources.yaml`(人工写初始"活跃标签",比如"房产中介""运动鞋"这种短标签,不是完整选题),`scripts/core/business_data/run_domain_search.py` 读进来建成 `domain_search_tags` 表。爆款库里真实视频描述里的 `#xxx` 标签也会被扫出来,但只会落成"建议"状态,要在 `review_queue.py --approve tag <id>` 里人工确认才转正成"活跃"——不自动转正。活跃标签**默认7天轮换搜索一次**,每次调真实的 MediaCrawler 关键词搜索模式(之前只有"按账号抓"能用,这次把工具本来就有的"按关键词搜"模式接上了),读回来的结果先做零成本的确定性过滤(去重+标签真的命中)、再按热度粗排,最多留5条。搜到的视频存进独立的 `discovered_external_videos` 表,**不写进 `hits`/`competitor_videos`**——因为这些视频没有正式追踪账号那样的基线数据,不能跟正式证据混用。真实抓取默认关闭(`config/settings.yaml` 的 `domain_search.live_enabled: false`),这次只跑通了"关闭状态下该报错、打开后该怎么跑"这条逻辑链路,没有真的花钱搜过。**明确没做的**:搜到的视频怎么变成一条真正的 `topic_candidates`,现在完全没有路径——`topic_candidates.source_analysis_id` 是必填外键,指向 `hit_deep_analysis`,而这些搜索发现的视频压根没有走过"深度分析"这一步,这条路径需要专门设计,这次没做。
 
 ## 11. 外部适配器（external_adapters / hermes）
 

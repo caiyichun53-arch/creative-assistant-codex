@@ -125,6 +125,17 @@ hit_detection:
   first_crawl_fetch_buffer: 5
   recheck_interval_hours: 24
 
+# 2026-07-13 (BR-TOPIC-005): 领域话题标签搜索的真实抓取默认关闭,跟
+# BR-RESEARCH-003 的"真实抓取需要显式开门"同一个纪律。这些数字全部来自原文档
+# 第21章真实写的默认值,不是拍脑袋定的。
+domain_search:
+  live_enabled: false
+  rotation_days: 7
+  search_read_max: 20
+  deep_processing_max_per_tag: 5
+  consecutive_cycles_before_pause: 3
+  daily_deep_processing_max_per_domain: 10
+
 reverse_engine:
   # Local model root. Keep real absolute paths in config/settings.yaml only.
   models_root: models

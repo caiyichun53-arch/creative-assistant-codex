@@ -39,6 +39,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.core.business_data.register_competitor_accounts import DEFAULT_DB, install_schema  # noqa: E402
+from scripts.core.business_data.run_domain_search import install_schema as install_domain_search_schema  # noqa: E402
 from scripts.core.experience.run_sample_deep_analyze import _safe_db_path  # noqa: E402
 
 STAGES: dict[str, dict[str, Any]] = {
@@ -75,6 +76,16 @@ STAGES: dict[str, dict[str, Any]] = {
         "table": "final_drafts",
         "id_col": "final_draft_id",
         "preview": lambda row: (row["final_text"][:200] + ("…" if len(row["final_text"]) > 200 else "")),
+    },
+    # BR-TOPIC-005 (A3, 2026-07-13): a tag discovered from the hit library
+    # (source='discovered') starts status=suggested; approving it here is
+    # what a real trigger (domain_search_tags_promote_on_approval) uses to
+    # flip status to active. Tags seeded from sources.yaml are inserted
+    # already human_review_status='approved' and never appear in this queue.
+    "tag": {
+        "table": "domain_search_tags",
+        "id_col": "tag_id",
+        "preview": lambda row: f"#{row['tag']} | 领域:{row['domain_label']} | 来自视频:{row['source_video_id']}",
     },
 }
 
@@ -137,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     conn.row_factory = sqlite3.Row
     try:
         install_schema(conn)
+        install_domain_search_schema(conn)
         if args.list is not None:
             stage = None if args.list == "__all__" else args.list
             items = list_pending(conn, stage=stage)

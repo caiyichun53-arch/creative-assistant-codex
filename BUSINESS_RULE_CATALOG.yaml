@@ -1861,6 +1861,67 @@ rules:
   supersedes: []
   validation_required:
   - Hermes/Core confirmation test
+- requirement_id: BR-TOPIC-005
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx (第21章
+    "领域话题标签搜索")
+  source_section: 领域话题标签搜索
+  priority: P1
+  domain_scope: domain layer
+  status: '2026-07-13 new (置顶规则总表核对后, A3/A4): the source document''s
+    real design for this (§21.1-21.3, verified against the actual document
+    text, not summarized from the pinned-rules table alone) requires initial
+    active tags to come from a per-domain sources.yaml (human-curated), new
+    tags discovered from the hit library to enter status=suggested requiring
+    human confirmation before becoming active, deterministic (not LLM-scored)
+    filtering, and explicit real numbers: 7-day rotation, 20 raw results read
+    per search, top 5 selected for deep processing, 3 consecutive cycles with
+    no validated topic auto-pauses a tag. This entry did not exist before --
+    the capability itself (MediaCrawler keyword search) was never wired in
+    either, see scripts/core/external_adapters/local_mediacrawler_executor.py.'
+  trigger: domain tag rotation search
+  inputs:
+  - domain_label
+  - active tag
+  expected_behavior: A due-for-rotation active tag triggers one real
+    MediaCrawler keyword search (--keywords), reading up to 20 raw results,
+    deterministically filtered (platform-id dedup, tag actually present in
+    text) and ranked (search position + engagement, no formal baseline
+    multiplier since discovered videos have no D-baseline), with the top 5
+    stored for possible deeper processing. New tags discovered from the hit
+    library enter status=suggested and require human confirmation (via
+    review_queue.py) before becoming active.
+  defaults:
+    live_enabled: false
+    rotation_days: 7
+    search_read_max: 20
+    deep_processing_max_per_tag: 5
+    consecutive_cycles_before_pause: 3
+    daily_deep_processing_max_per_domain: 10
+  thresholds: {}
+  timing_semantics: Each active tag is due once every rotation_days; a search
+    cycle updates the tag''s rotation cursor regardless of outcome.
+  state_effects:
+  - domain_search_tags insert/update
+  - domain_search_cursor update
+  - discovered_external_videos insert
+  allowed_side_effects:
+  - platform read (real MediaCrawler search)
+  forbidden_behavior:
+  - LLM-based or scored tag/domain matching (BR-TOPIC-001''s no-scoring stance
+    applies here too)
+  - auto-promoting a suggested tag to active without human confirmation
+  - writing a discovered video into hits/competitor_videos (would misrepresent
+    it as having a formal D-baseline it does not have)
+  - treating a discovered video''s absolute numbers as a formal multiplier
+  edge_cases:
+  - a domain with zero active tags yet (sources.yaml not filled in)
+  - a search that returns zero results for a real tag
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - domain search tag rotation fixture
+  - deterministic filter/ranking fixture
+  - suggested tag requires human confirmation before becoming active fixture
 - requirement_id: BR-CONTENT-001
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
   source_section: 禁令进代码

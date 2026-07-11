@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from scripts.core.business_data.register_competitor_accounts import install_schema
+from scripts.core.business_data.run_domain_search import install_schema as install_domain_search_schema
 from scripts.core.experience.review_queue import list_pending, set_review_status
 
 
@@ -14,6 +15,7 @@ def _connect(tmp: str) -> sqlite3.Connection:
     conn = sqlite3.connect(Path(tmp) / "test.sqlite3")
     conn.row_factory = sqlite3.Row
     install_schema(conn)
+    install_domain_search_schema(conn)
     return conn
 
 
