@@ -44,7 +44,7 @@
 
 `runtime_skills/` 下 12 个业务 Skill,这条主链路**2026-07-13 起是五环**(原来三环,F4/F5 新增文案优化/审核、最终稿两环)都已接上真实数据,且有一条端到端集成测试(`tests/core/test_topic_to_script_chain_integration.py`)证明"一条爆款分析结果"真的能一路流转成"一份最终稿",外键全程可追溯(`hit_deep_analysis → topic_candidates → content_plans → script_drafts → script_reviews → final_drafts`),**且中途卡在人工审核闸门上,不会没人看就自动流完**：
 
-1. **`source_to_topic`**:从证据/来源转成候选选题。`scripts/core/experience/run_source_to_topic.py`——吃 `hit_deep_analysis`(sample_deep_analyze 的真实输出:选题/开头/结构手法)+ `hit_comments`(2026-07-10 新增:同一条爆款下面最热的3条真实评论)当证据,生成候选选题,写入新表 `topic_candidates`(带版本号)。18个测试。**明确的简化**:`relation_summary`(这条选题和现有内容是否重复/冲突)现在是老实的占位文字,不是真判断过——`content_relation_judge` 还没接,不冒充。
+1. **`source_to_topic`**:从证据/来源转成候选选题。`scripts/core/experience/run_source_to_topic.py`——吃 `hit_deep_analysis`(sample_deep_analyze 的真实输出:选题/开头/结构手法)+ `hit_comments`(2026-07-10 新增:同一条爆款下面最热的3条真实评论)+ `hotspot_events`(2026-07-13 D1 新增:30天窗口内同领域的人工登记热点)当证据,生成候选选题,写入新表 `topic_candidates`(带版本号)。**明确的简化**:skill 自身产出的 `relation_summary` 字段(这条选题和现有内容是否重复/冲突)仍然是老实的占位文字——2026-07-13(D3)接上的去重判断是生成**之后**的独立后处理步骤(见下方"真实选题流程还缺什么"),不改写这个字段,所以这句话依然准确,不是漏改。
 2. **`content_plan`**:选题→钩子+大纲。`scripts/core/experience/run_content_plan.py`——吃 `topic_candidates` 里 `topic_status='generated'` **且人工已审核通过**的候选选题,写入新表 `content_plans`(带版本号)。16个测试。**明确的简化**:`style_examples`(应来自范例库,物理载体还没定)复用同一条视频的真实转写文字稿摘句,真实数据、老实标注了替代关系,不是编造。`tactic_candidates` 这一项**2026-07-13(B2)已经接上真数据**:优先查这条选题所在领域真实处于 `active`/`watch` 的方法(见下方"已完成(2026-07-13...)"批次),只有该领域没有任何方法离开过候选状态时才退回旧的per-hit替代。**2026-07-11 更正**:曾经写过"这两个字段不影响实际调模型的两次调用"——那是一个真实bug(`tactic_candidates`/`evidence_items` 契约要求必传的字段没发给模型),已经修复,现在**会**真实影响输出。
 3. **`script_generate`**:大纲+brief→成稿草稿。`scripts/core/experience/run_script_generate.py`——吃 `content_plans` 里**人工已审核通过**、还没生成过草稿的规划,写入新表 `script_drafts`(带版本号)。12个测试。**明确的简化**:`research_summary`(应由 `research_evidence_extract`/`production_research_plan` 产出,都还没接)现在是"汇总已有证据,不是真研究"的老实标注文字。
 4. **`script_review`**(2026-07-13 新增,F4):成稿→文案优化+审核+AI味判定。`scripts/core/experience/run_script_review.py`——内部三个子节点,先 `creation_polish` 文案优化、再 `creation_review` 审核、最后 `ai_flavor_judge` 判AI味(**2026-07-13 之前顺序是反的**,已按置顶规则总表核对结果改成先优化后审核),写入新表 `script_reviews`。
@@ -62,13 +62,13 @@
 
 - ✅ 对标爆款(`hit_deep_analysis`)——已接,候选来源之一。
 - ⚠️ 评论区(`hit_comments` 最热3条)——2026-07-10 已接,但**"3条"这个数字是编的,没有任何文档依据**(已在代码里显式标注 `UNSOURCED`,见下方"评论数量待定"),需要用户确认合理值。
-- ❌ 研究缺口——`research_evidence_extract` 还没接真实数据,这个候选来源目前完全没有。
-- ❌ 当下热点——**2026-07-10 已核实:旧系统(`I:\Creation_assistant`,未清洗的完整版本)里翻遍 `scripts/collect`/`scripts/topics`/`scripts/research`/`scripts/reverse`/`vendor/MediaCrawler`/`tools/`,没有找到任何专门做"热点采集"的代码或开源项目引用**。"热点"在旧系统里只是一个内容分类标签(如"热点解读"),不是数据源;"研究"这一步靠的是通用网页搜索,不是热点榜单抓取。这个仓库的 git 历史起点是一次"清洗后上传",清洗之前如果确实用过某个开源项目,现在已经无从查起,需要用户直接指出名字。
-- ❌ 选题判断规则/领域约束——`source_to_topic` 目前没有任何"这条候选是否符合本领域约束、是否值得立项"的判断规则,不管是评分式还是非评分式的规则都还没设计、没落地。**旧系统留下的"选题判断维度.md"评分标准不是这个缺口的答案**——全仓库/全vault路径搜索确认该文件不存在,产出它的技能(`.claude/skills/归纳`)已删除,**不予恢复,也不用别的方式重建同类评分机制**。这个规则需要重新设计,形态由用户决定(不预设是评分制)。
-- ❌ 去重/冷却——候选选题之间(以及候选与已有内容之间)目前没有去重或冷却机制,`relation_summary` 字段现在是老实的占位文字,真判断要等 `content_relation_judge` 接入。
+- ✅ 当下热点——2026-07-13(D1)已接:`hotspot_events` 表(A6 人工登记)按 `domain_label` 匹配 + 30天窗口自动纳入证据,不需要人工逐条关联。数字详见下方"已完成"批次。
+- ✅ 选题判断规则/领域约束——2026-07-13(D2)已接,但**范围刻意收窄**:只做一条确定性检查(账号 `domain_label` 落在已知领域枚举之外时强制 `needs_review`),不是"这条候选选题内容好不好"的判断规则,更不是评分制——**当前设计依然没有冻结"选题打分制"**,这一条不是旧评分体系的替代品,只是关掉了"领域都对不上还自动生成"这一个具体漏洞。
+- ✅ 去重/冷却——2026-07-13(D3)已接:第一次真实绑定 `content_relation_judge`(全仓库此前从未被任何脚本调用过),同账号30天窗口内最近20条候选逐一比对,命中 `same_item`/`equivalent`/`contains`/`contained_by` 四种"实质重复"关系(`contradicts`/`related_distinct`/`no_relation`/`insufficient_evidence` 不算重复)就把候选标 `needs_review`。数字详见下方"已完成"批次,同样不是评分排序。
+- ❌ 研究缺口——**2026-07-13 重新核查后确认:这个概念本身有严重混乱,不是"排期靠后",是现在说不清楚定义**。唯一找到的定义在 `.claude/skills/选题/SKILL.md`("研究里竞品没讲、观众想知道的角度"),但该文件自称是过时方法、不代表当前设计;`runtime_skills/research_evidence_extract` 是完全独立的一步("研究"本身,不是"选题的第四种来源")。用户当场指出"研究缺口"作为选题候选来源和"领域话题搜索"(A3 已实现)之间可能存在混淆,且这个问题在更早的审计里就提过、一直没被真正改掉。**不猜、不编造设计**,留到能重新核对原总控文档时再定义这个概念到底是什么。
 - ❌ 人工确认门槛——`review_queue.py` 现在只有"通过/不通过"二选一,而且**没有对接项目里已经存在的、更合适的"修正+留痕"框架**(`scripts/core/correction/goal10_corrections.py`,已归档,见下方"人工审核")。
 
-**建议节奏**:这几项工作量都不小,不建议在治理修复的同一批里赶工。下一次专门做选题流程,建议顺序:研究缺口(复用已有的 research_evidence_extract 骨架)→ 热点采集(需要用户先定数据源/工具)→ 选题判断规则与领域约束(需要用户先定形态,不预设评分制)→ 去重/冷却机制 → 人工确认门槛形态重新设计(见下方 goal10_corrections 集成问题)。
+**当前节奏**:研究缺口的定义问题、以及人工确认门槛形态重新设计,都需要用户先给依据/先定形态,不由 AI 单方面排期或猜测。
 
 #### 评论数量待定(2026-07-10 新发现)
 
@@ -79,15 +79,6 @@
 `review_queue.py` 现在的"通过/不通过"是简化版。代码库里曾经有一套专门做"修正登记 + 影响传播 + 留痕"的框架(`scripts/core/correction/goal10_corrections.py`,1402行 + 独立验证脚本728行),概念上更贴近"审核不只是通过/不通过,还可能涉及编辑、要记下怎么改的、为什么改"这个真实需求。但它绑定在另一套完全独立的持久化系统(`PersistenceStore`/`VersionRef`,即 Goal01-12 那条"正式生产链路")上,而 `topic_candidates`/`content_plans`/`script_drafts` 这些新表用的是普通 SQLite 表,两套机制从来没有打通过。
 
 **2026-07-11 更新**:经全仓库真实 import 传递闭包核实(不是凭文件名),`correction/`(含 `goal10_corrections.py`)、`production/`、`host/`、`hermes/`、`state/` 整个目录 + `workflow/goal_phase5_business_workflow.py` 确认零真实生产入口依赖,已按用户指令的"清场式保留重构"归档到 `archive/dead_goal_chain_20260709/`(详见该目录的 `README.md`)。这不是删除这个需求本身——如果未来确实需要"编辑+留痕"这个能力,是一次新的、独立的架构决策(要么给轻量方案单独加字段,要么重新设计一套接得上 `topic_candidates` 等真实表的修正框架),不是简单地把归档代码接回来。`persistence`/`scheduler`/`workflow/goal05_workflow.py`/`research/goal06_formal_research.py` 反而是这次闭包计算证实的、被真实生产代码(`model_gateway`/`external_adapters`)传递依赖的模块,保留在原地——这四个模块名字虽然带着旧的 `goal0X` 编号,但不能凭名字判断该不该归档。
-
-### 2. 两套 Skill 实现的迁移(2026-07-09 用户拍板方向,尚未开始执行)
-
-**决定**:以 `runtime_skills/` 为唯一权威,裁决标准是"能否跨平台独立执行"——`.claude/skills/*`(选题/大纲/钩子/成稿/审稿/精修/优化诊断/研究/对齐/范例升级/评论真人味/真人写作基石/humanizer-zh,共13个)依赖 Claude Code 会话内 `Read`/`Write` 工具和子 agent 机制,天然不满足这条标准;`runtime_skills/` 经 Model Port 抽象层(`model_router.py` 的 `validate_workflow_node_bindings()` + `business_route_registry.py` 的静态扫描护栏)验证过真正可替换供应商,满足。
-
-**现状**:这只是定了方向和标准,`.claude/skills/*` 一个都还没有迁移/淘汰,目前仍在正常使用,**不要假设它已经废弃**。执行计划(需要用户确认节奏,不由 AI 单方面排):
-- 上面"第1项"跑通后,`.claude/skills/` 里的"钩子"/"大纲"/"成稿"三个与 `content_plan`+`script_generate` 职责重叠的会话技能,理论上可以退役——但退役前需要用户确认新链路产出质量不低于旧链路。
-- `.claude/skills/审稿`/`精修`/`优化诊断` 与 `runtime_skills/script_review` 的三段式(review+polish+ai_flavor_judge)重叠,同样等新链路验证过再谈退役。
-- `范例升级`/`评论真人味`/`真人写作基石`/`选题`/`对齐`/`研究`/`humanizer-zh` 这几个和 `runtime_skills/` 侧的对应关系还没有逐条核实清楚(2026-07-09 审计只按一句话描述做了推断,没打开正文逐条比对),需要单独一次核实再决定去留。
 
 ## 未排期(已知缺口,顺序需要用户确认)
 
@@ -166,3 +157,16 @@
 不属于任何规划文件,是用户在核实系统真实状态过程中当场做的决定,不是预先排期的工作:用户问"提示词和skill有没有限制token造成输入输出截断",核查后发现声明的token预算只是"存在性检查",从没真的数过要发的内容有多少token;而且已经发生过一次真实事故(2026-07-09,一处2200字的硬截断让模型对着被腰斩的转写编造了从没出现过的结尾)。用户在"截断后报错"和"彻底不设上限"两个选项里选了后者(不是折中方案)。
 
 移除范围:全部12份 `*_BUSINESS_CONTRACT.yaml` 契约里的 `context_budget`/`token_budget`/`input_length_limits` + 对应的 `maxLength` 校验;`BUSINESS_MODEL_ROUTE_REGISTRY.yaml` 的15个 `token_context_budget`;`formal_skill_adapter.py`/`business_route_registry.py` 的运行时校验;6个真实绑定脚本(`sample_deep_analyze`/`source_to_topic`/`content_plan`/`script_generate`/`script_review`/`tactic_extract`)里全部截断常量和 `max_completion_tokens` 参数——包括 `tactic_extract` 那道"超过2500字就报错"的边界也一并取消,不是只取消静默截断。**用户明确接受的风险**:真实调用现在可能因为内容过长被 Hermes 自己拒绝、或者让单次成本变高,系统不会再提前拦截或警告。详见 `TECHNICAL_MANUAL.md`"字符/token 上限已彻底取消"小节。716个测试全绿。
+
+## 已完成(2026-07-13,选题环节补三缺口:热点接入 + 领域约束 + 去重冷却)
+
+执行计划见 `C:\Users\15891\.claude\plans\splendid-petting-rain.md`(用户已批准)。背景:`BR-TOPIC-001` 长期标注去重/冷却/领域约束 `pending_implementation`,这次逐项核实原定四个缺口,**做了三个,一个明确不做(研究缺口,见上方"真实选题流程还缺什么")**。同一批顺手把 ROADMAP 第2项"两套 Skill 实现的迁移"整项收回——前提本来就错了,`.claude/skills/*` 是交互式协作创作工具,不是要被 `runtime_skills/` 取代的旧实现,这个系统本来就不打算靠它撑起运行期,不存在"迁移"这件事。
+
+- **D1(热点自动纳入证据)**:`run_source_to_topic.py` 新增 `_hotspot_evidence_items()`,按账号 `domain_label` 匹配 `hotspot_events`(A6 人工登记表)+ 30天窗口(`HOTSPOT_EVIDENCE_WINDOW_DAYS`,这次给的合理默认,非文档依据),自动纳入证据,不需要人工逐条关联。`assemble_source_to_topic_input()` 签名新增 `conn` 参数(跟 B2 给 `assemble_content_plan_input()` 加 `conn` 同一种改法)。
+- **D2(领域约束,范围收窄)**:新增 `_apply_domain_constraint()`,只做一条确定性检查——账号 `domain_label` 落在 `ALLOWED_DOMAIN_LABELS` 之外且 skill 判定为 `generated` 时,强制改成 `needs_review` 并在 `source_constraints` 记录原因,不覆盖已经是 `needs_review`/`no_result` 的情况。不做语义判断,不是评分机制。
+- **D3(去重/冷却,第一次真实绑定 `content_relation_judge`)**:新增 `check_topic_candidate_duplicate()`,同账号30天窗口(`DEDUP_CANDIDATE_WINDOW_DAYS`)内最近20条(`DEDUP_CANDIDATE_COMPARE_MAX`,与 A3/`tactic_extract` 等处反复出现的20条上限保持一致)候选逐一比对,命中 `same_item`/`equivalent`/`contains`/`contained_by` 四种"实质重复"关系(`DUPLICATE_RELATION_TYPES`)即标 `needs_review` 并停止继续比对——`contradicts`(相互矛盾)明确不算重复,可能是两个值得单独报的角度。过程中修了一个真实bug:`content_relation_judge` 自己的契约要求"具体关系类型"必须双方都有非空证据,`supporting_evidence` 为空时退回用候选文本本身兜底,否则任务会以 `FormalSkillValidationError` 失败。
+- **执行契约**:`validate_source_to_topic_execution_contract()` 从只引用 `BR-DNA-001` 扩展为同时引用 `BR-TOPIC-001`/`BR-TOPIC-006`。
+- **目录同步**:`BUSINESS_RULE_CATALOG.yaml`(`BR-TOPIC-001`/`BR-TOPIC-006`/`BR-REL-001` 的 `status` 更新)、`REQUIREMENT_CODE_TRACEABILITY.yaml`(同三条 `target_component`/`current_implementation_status` 更新,顺手修了 `BR-REL-001` 一个此前未发现的幽灵引用 `ContentRelationService`)、`TECHNICAL_MANUAL.md` 均已同步,均在同一批提交。
+- 新增测试:`HotspotEvidenceItemsTests`(5)/`DomainConstraintTests`(4)/`DedupCooldownTests`(8),共17个新测试,全部有正向+反向覆盖。
+
+**现实约束(不冒充已完成)**:这三项全部只用 `content_relation_judge` 自带的确定性假 Provider 测试通过,跟 `source_to_topic` 本身一样,从没有真实调用过 Hermes——30天窗口/20条上限这两个数字是这次给的合理默认,不是原总控文档依据,真实跑起来后可能需要调整。

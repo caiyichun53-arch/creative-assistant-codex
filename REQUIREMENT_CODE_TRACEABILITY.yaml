@@ -558,16 +558,25 @@ traceability:
     not use score/rank/weight as production logic; this row is kept as an audit
     trail of what the old document said, not current behavior.'
   target_component: 'scripts/core/experience/run_source_to_topic.py (candidate
-    generation from hit_deep_analysis/hit_comments into topic_candidates) +
+    generation from hit_deep_analysis/hit_comments/hotspot_events into
+    topic_candidates, _apply_domain_constraint() for domain constraint,
+    check_topic_candidate_duplicate() for dedup/cooldown) +
     scripts/core/experience/review_queue.py (human_review_status confirmation
-    gate) -- both real, implemented components. Deduplication, cooldown, and
-    domain-constraint checking have NO component yet: pending_implementation,
-    not TopicPlanningService (that class never existed in this codebase; the
-    name was a ghost reference removed in this correction).'
-  current_implementation_status: 'partial: candidate generation and human
-    confirmation are implemented and tested (see test_ids); deduplication,
-    cooldown, and domain constraints are pending_implementation -- not started,
-    not to be assumed done.'
+    gate) -- all real, implemented components as of 2026-07-13(D1/D2/D3). Not
+    TopicPlanningService (that class never existed in this codebase; the
+    name was a ghost reference removed in an earlier correction).'
+  current_implementation_status: '2026-07-13 update (D1/D2/D3): candidate
+    generation, human confirmation, domain constraint, and dedup/cooldown are
+    all real and tested (see test_ids) -- no longer pending_implementation.
+    Domain constraint is deliberately narrow (only checks whether the
+    account''s domain_label fell outside ALLOWED_DOMAIN_LABELS, not a
+    semantic "does this content really fit" judgement, per explicit user
+    decision to avoid anything score-like). Dedup/cooldown''s 30-day window
+    and 20-candidate compare cap are this session''s reasoned defaults, not
+    values from the source document (which only says "去重+冷却" without
+    numbers). Never exercised against a real Hermes call for
+    content_relation_judge (see BR-REL-001''s own status) -- tested against
+    the Skill''s deterministic fixture port only.'
   alignment_status: naming_only
   difference_type:
   - ownership_changed
@@ -581,7 +590,9 @@ traceability:
   evidence:
     source_section: 每日候选选题筛选、去重、冷却、领域约束、来源追溯与人工确认（2026-07-11 现行设计口径，
       不是原文档小节标题；见 BUSINESS_RULE_CATALOG.yaml BR-TOPIC-001 status 字段）
-    defaults: {}
+    defaults:
+      dedup_cooldown_window_days: 30
+      dedup_candidate_compare_max: 20
     thresholds: {}
 - requirement_id: BR-TOPIC-002
   observed_legacy_behavior: Unselected topics become candidates for a future daily
@@ -700,19 +711,23 @@ traceability:
     matches are a valid outcome.
   target_component: scripts/core/business_data/run_hotspot_registration.py +
     scripts/core/business_data/domain_search_schema.sqlite.sql (hotspot_events
-    table)
+    table) + scripts/core/experience/run_source_to_topic.py
+    (_hotspot_evidence_items(), 2026-07-13/D1, the real consumer)
   current_implementation_status: 'partial: manual CLI registration + deterministic
     tag matching are real and tested (tests/core/test_run_hotspot_registration.py,
-    10 tests). NOT implemented: any real Feishu integration (source=feishu_manual
-    is a forward-looking label only -- Feishu is not actually wired into this
-    repo, see CLAUDE.md), and TrendRadar or any automatic hotspot aggregation
-    (explicitly out of this round''s scope per the source document''s own
-    "未完成节点" framing).'
+    10 tests). 2026-07-13 update (D1): registered hotspot_events now have a
+    real consumer -- run_source_to_topic.py auto-includes a domain''s recent
+    (30-day window) hotspot events as 选题 evidence. NOT implemented: any real
+    Feishu integration (source=feishu_manual is a forward-looking label only
+    -- Feishu is not actually wired into this repo, see CLAUDE.md), and
+    TrendRadar or any automatic hotspot aggregation (explicitly out of this
+    round''s scope per the source document''s own "未完成节点" framing).'
   alignment_status: naming_only
   difference_type: []
   migration_action: none -- newly implemented, not migrated from legacy.
   test_ids:
   - hotspot registration keyword-match fixture
+  - tests/core/test_run_source_to_topic.py::HotspotEvidenceItemsTests
   evidence:
     source_section: 热点转化
     defaults:
@@ -1172,15 +1187,28 @@ traceability:
   legacy_functions: []
   observed_legacy_behavior: Classification and relation judgement must be explicit
     artifacts; deterministic tags/clusters remain separate from LLM interpretation.
-  target_component: ContentRelationService
-  current_implementation_status: legacy behavior observed; target formalization pending
-    unless noted exact_match
+  target_component: 'runtime_skills/content_relation_judge +
+    scripts/core/experience/run_source_to_topic.py
+    (check_topic_candidate_duplicate(), 2026-07-13/D3). target_component used
+    to say ContentRelationService, a class that never existed anywhere in
+    the codebase -- a ghost reference (same class of issue BR-TOPIC-002/
+    BR-RESEARCH-001/BR-TOPIC-004 each had before their own corrections).'
+  current_implementation_status: '2026-07-13 update (D3): the Skill contract
+    existed with zero real callers anywhere in the repo before this --
+    run_source_to_topic.py''s check_topic_candidate_duplicate() is the first
+    real binding, used for BR-TOPIC-001''s 选题 dedup/cooldown. Never
+    exercised against a real Hermes call (same credential gap as the other
+    real bindings); tested against the Skill''s own deterministic fixture
+    port (tests/core/test_run_source_to_topic.py::DedupCooldownTests, 8
+    tests).'
   alignment_status: naming_only
-  difference_type: []
+  difference_type:
+  - ownership_changed
   migration_action: Preserve business semantics while moving state/external side effects
     to formal Core/Adapter boundaries.
   test_ids:
   - classification fixture
+  - tests/core/test_run_source_to_topic.py::DedupCooldownTests
   evidence:
     source_section: 内容分类与关系判断
     defaults:

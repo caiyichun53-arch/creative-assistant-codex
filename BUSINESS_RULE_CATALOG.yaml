@@ -1785,11 +1785,17 @@ rules:
   status: '2026-07-11 corrected: 当前设计没有冻结"选题打分制"，系统不采用 score/rank/weight/评分维度
     作为生产逻辑选题的机制。原文档"每日选题排序"一节描述的 cluster_boost 聚类加权、top_new/top_candidates
     截断排序等，均是旧系统的排序设计，不代表当前设计目标，已从 defaults/thresholds 移除，不新增替代评分参数。
-    当前设计口径：每日候选选题筛选、去重、冷却、领域约束、来源追溯与人工确认。真实实现现状（见
-    REQUIREMENT_CODE_TRACEABILITY.yaml 对应条目）：候选生成与人工确认已有真实组件
-    (scripts/core/experience/run_source_to_topic.py 生成候选写入 topic_candidates 表 +
-    scripts/core/experience/review_queue.py 人工审核闸门，human_review_status 字段)；去重、冷却、
-    领域约束尚未落地，标注 pending_implementation，不冒充已完成。'
+    当前设计口径：每日候选选题筛选、去重、冷却、领域约束、来源追溯与人工确认。2026-07-13(D2/D3) 更新：
+    去重/冷却/领域约束三项已经是真实、确定性的代码（不是评分排序），不再是 pending_implementation：
+    领域约束只做一条确定性检查——候选所属账号 domain_label 落在 ALLOWED_DOMAIN_LABELS 之外时强制
+    needs_review，不做"内容是否真的符合该领域"这类语义判断（run_source_to_topic.py 的
+    _apply_domain_constraint()）；去重/冷却第一次把 content_relation_judge（此前全仓库零真实调用方）
+    接上真实数据——同一账号最近 30 天内、最多 20 条候选逐条比对，命中 same_item/equivalent/contains/
+    contained_by 任一种"实质重复"关系时标 needs_review（不自动拒绝，匹配下方
+    user_confirmation_required 和 BR-TOPIC-004），contradicts/complementary/related_distinct/
+    no_relation/insufficient_evidence 都不算重复（run_source_to_topic.py 的
+    check_topic_candidate_duplicate()）。30 天窗口、20 条比较上限这两个数字是这次会话给出的合理默认，
+    不是原文档依据（原文档只说"去重+冷却"，没给具体数字）。'
   trigger: daily topic flow
   inputs:
   - new hits
@@ -1799,7 +1805,9 @@ rules:
     constraints, keeps source traceability (which hit/evidence a candidate came
     from), and requires human confirmation before a candidate proceeds to the next
     stage. No scoring/ranking mechanism selects or orders candidates.
-  defaults: {}
+  defaults:
+    dedup_cooldown_window_days: 30
+    dedup_candidate_compare_max: 20
   thresholds: {}
   timing_semantics: Runs after collect and hit judgement.
   state_effects:
@@ -1814,8 +1822,7 @@ rules:
   user_confirmation_required: true
   supersedes: []
   validation_required:
-  - candidate dedup/cooldown/domain-constraint fixture (pending_implementation, not
-    yet written)
+  - tests/core/test_run_source_to_topic.py (HotspotEvidenceItemsTests/DomainConstraintTests/DedupCooldownTests)
 - requirement_id: BR-TOPIC-002
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
   source_section: 候选池衰减回温
@@ -1983,7 +1990,11 @@ rules:
     optional extension). Feishu itself is not actually wired into this repo
     (see CLAUDE.md) -- the real registration entry point this pass builds is
     a CLI, not a live Feishu integration; source=feishu_manual is kept as a
-    forward-looking label, not a claim that Feishu is connected.'
+    forward-looking label, not a claim that Feishu is connected. 2026-07-13
+    update (D1): registered hotspot_events rows now have a real consumer --
+    scripts/core/experience/run_source_to_topic.py auto-includes a domain''s
+    recent (30-day window, see BR-TOPIC-001) hotspot events as 选题 evidence,
+    no per-topic manual linking required.'
   trigger: manual hotspot registration
   inputs:
   - domain_label
@@ -2629,6 +2640,15 @@ rules:
   source_section: 内容分类与关系判断
   priority: P1
   domain_scope: domain layer
+  status: '2026-07-13 update (D3): runtime_skills/content_relation_judge''s
+    contract existed with zero real callers anywhere in the repo before this
+    -- scripts/core/experience/run_source_to_topic.py''s
+    check_topic_candidate_duplicate() is the first real binding, used for
+    BR-TOPIC-001''s 选题 dedup/cooldown check (comparing a new candidate
+    against the same account''s recent candidates). Not yet exercised
+    against a real Hermes call (same credential gap as the other five real
+    bindings, see ROADMAP.md); tested against the Skill''s own deterministic
+    fixture port.'
   trigger: topic/research/content assembly
   inputs:
   - tags

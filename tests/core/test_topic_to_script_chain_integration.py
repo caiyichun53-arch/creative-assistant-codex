@@ -25,6 +25,7 @@ import unittest
 from pathlib import Path
 
 from scripts.core.business_data.register_competitor_accounts import install_schema
+from scripts.core.business_data.run_domain_search import install_schema as install_domain_search_schema
 from scripts.core.experience.review_queue import set_review_status
 from scripts.core.experience.run_content_plan import run_content_plan
 from scripts.core.experience.run_final_draft import run_final_draft
@@ -48,6 +49,7 @@ class TopicToScriptChainIntegrationTests(unittest.TestCase):
             conn = sqlite3.connect(Path(tmp) / "test.sqlite3")
             conn.row_factory = sqlite3.Row
             install_schema(conn)
+            install_domain_search_schema(conn)
             PersistenceStore(conn).install_schema()
             conn.executescript(_GOAL02_SCHEMA_PATH.read_text(encoding="utf-8"))
             try:

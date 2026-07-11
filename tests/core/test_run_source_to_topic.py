@@ -7,24 +7,38 @@ import unittest
 from pathlib import Path
 
 from scripts.core.business_data.register_competitor_accounts import install_schema
+from scripts.core.business_data.run_domain_search import install_schema as install_domain_search_schema
 from scripts.core.experience.run_source_to_topic import (
     ALLOWED_DOMAIN_LABELS,
+    DEDUP_CANDIDATE_COMPARE_MAX,
+    DEDUP_CANDIDATE_WINDOW_DAYS,
+    DOMAIN_CONSTRAINT_NOTE,
+    HOTSPOT_EVIDENCE_WINDOW_DAYS,
     REVERSE_PREP_MAX_COMMENTS_PER_HIT,
     SOURCE_EVIDENCE_ITEMS_MAX,
+    _apply_domain_constraint,
     _comment_evidence_items,
+    _hotspot_evidence_items,
+    _load_recent_candidates_for_dedup,
     assemble_source_to_topic_input,
+    check_topic_candidate_duplicate,
     generate_one_topic,
     run_source_to_topic,
     select_analyses_pending_topic,
     validate_source_to_topic_execution_contract,
 )
-from scripts.core.model_gateway.formal_skill_adapter import make_source_to_topic_harness
+from scripts.core.model_gateway.formal_skill_adapter import (
+    DeterministicContentRelationJudgeModelPort,
+    make_content_relation_judge_harness,
+    make_source_to_topic_harness,
+)
 
 
 def _connect(tmp: str) -> sqlite3.Connection:
     conn = sqlite3.connect(Path(tmp) / "test.sqlite3")
     conn.row_factory = sqlite3.Row
     install_schema(conn)
+    install_domain_search_schema(conn)
     return conn
 
 
@@ -91,10 +105,28 @@ def _insert_comment(conn: sqlite3.Connection, hit_id: str, comment_id: str, *, t
     )
 
 
+def _insert_hotspot(
+    conn: sqlite3.Connection, event_id: str, *, domain_label: str = "fan_kepu_social_life",
+    raw_text: str = "真实热点文本", created_at: str | None = None,
+) -> None:
+    if created_at is None:
+        conn.execute(
+            "INSERT INTO hotspot_events(event_id, domain_label, raw_text, created_by) VALUES (?, ?, ?, 'tester')",
+            (event_id, domain_label, raw_text),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO hotspot_events(event_id, domain_label, raw_text, created_by, created_at) VALUES (?, ?, ?, 'tester', ?)",
+            (event_id, domain_label, raw_text, created_at),
+        )
+
+
 class ValidateExecutionContractTests(unittest.TestCase):
-    def test_cites_br_dna_001(self) -> None:
+    def test_cites_br_dna_001_and_topic_rules(self) -> None:
         contract = validate_source_to_topic_execution_contract()
         self.assertIn("BR-DNA-001", contract)
+        self.assertIn("BR-TOPIC-001", contract)
+        self.assertIn("BR-TOPIC-006", contract)
 
 
 class SelectAnalysesPendingTopicTests(unittest.TestCase):
@@ -203,7 +235,7 @@ class AssembleSourceToTopicInputTests(unittest.TestCase):
                 _insert_hit(conn, "h1", title="为什么电梯早高峰总堵")
                 _insert_analysis(conn, "a1", "h1", topic_pattern="日常现象反常识切入", hook_pattern="直接抛出疑问", structure_pattern="现象-原因-反转")
                 row = select_analyses_pending_topic(conn, limit=1)[0]
-                payload = assemble_source_to_topic_input(row, run_id="run_test")
+                payload = assemble_source_to_topic_input(conn, row, run_id="run_test")
             finally:
                 conn.close()
 
@@ -231,7 +263,7 @@ class AssembleSourceToTopicInputTests(unittest.TestCase):
                 _insert_comment(conn, "h1", "c1", text="求你讲讲这个话题", sample_rank=0)
                 _insert_comment(conn, "h1", "c2", text="太真实了", sample_rank=1)
                 row = select_analyses_pending_topic(conn, limit=1)[0]
-                payload = assemble_source_to_topic_input(row, run_id="run_test")
+                payload = assemble_source_to_topic_input(conn, row, run_id="run_test")
             finally:
                 conn.close()
         self.assertEqual(len(payload["source_evidence_items"]), 5)
@@ -247,7 +279,7 @@ class AssembleSourceToTopicInputTests(unittest.TestCase):
                 _insert_hit(conn, "h1")
                 _insert_analysis(conn, "a1", "h1")
                 row = select_analyses_pending_topic(conn, limit=1)[0]
-                payload = assemble_source_to_topic_input(row, run_id="run_test")
+                payload = assemble_source_to_topic_input(conn, row, run_id="run_test")
             finally:
                 conn.close()
         self.assertEqual(len(payload["source_evidence_items"]), 3)
@@ -260,7 +292,7 @@ class AssembleSourceToTopicInputTests(unittest.TestCase):
                 _insert_hit(conn, "h1")
                 _insert_analysis(conn, "a1", "h1")
                 row = select_analyses_pending_topic(conn, limit=1)[0]
-                payload = assemble_source_to_topic_input(row, run_id="run_test")
+                payload = assemble_source_to_topic_input(conn, row, run_id="run_test")
             finally:
                 conn.close()
         self.assertEqual(payload["domain_label"], "unknown")
@@ -275,7 +307,7 @@ class AssembleSourceToTopicInputTests(unittest.TestCase):
                 _insert_hit(conn, "h1")
                 _insert_analysis(conn, "a1", "h1", topic_pattern="字" * 500, hook_pattern="字" * 500, structure_pattern="字" * 500)
                 row = select_analyses_pending_topic(conn, limit=1)[0]
-                payload = assemble_source_to_topic_input(row, run_id="run_test")
+                payload = assemble_source_to_topic_input(conn, row, run_id="run_test")
             finally:
                 conn.close()
         for item in payload["source_evidence_items"]:
@@ -295,7 +327,7 @@ class AssembleSourceToTopicInputTests(unittest.TestCase):
                 for i in range(REVERSE_PREP_MAX_COMMENTS_PER_HIT):
                     _insert_comment(conn, "h1", f"c{i}", text=f"评论{i}", sample_rank=i)
                 row = select_analyses_pending_topic(conn, limit=1)[0]
-                payload = assemble_source_to_topic_input(row, run_id="run_test")
+                payload = assemble_source_to_topic_input(conn, row, run_id="run_test")
             finally:
                 conn.close()
         self.assertEqual(len(payload["source_evidence_items"]), 3 + REVERSE_PREP_MAX_COMMENTS_PER_HIT)
@@ -315,9 +347,278 @@ class AssembleSourceToTopicInputTests(unittest.TestCase):
                     _insert_comment(conn, "h1", f"c{i}", text=f"评论{i}", sample_rank=i)
                 row = select_analyses_pending_topic(conn, limit=1)[0]
                 with self.assertRaises(ValueError):
-                    assemble_source_to_topic_input(row, run_id="run_test")
+                    assemble_source_to_topic_input(conn, row, run_id="run_test")
             finally:
                 conn.close()
+
+
+class HotspotEvidenceItemsTests(unittest.TestCase):
+    """D1 (2026-07-13, BR-TOPIC-006): real hotspot_events auto-included as
+    source_to_topic evidence, no per-topic manual linking."""
+
+    def test_hotspot_within_window_is_included(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_hotspot(conn, "e1", raw_text="真实热点事件A")
+                items = _hotspot_evidence_items(conn, domain_label="fan_kepu_social_life")
+            finally:
+                conn.close()
+        self.assertEqual(items, ["当下热点:真实热点事件A"])
+
+    def test_hotspot_for_a_different_domain_is_excluded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_hotspot(conn, "e1", domain_label="music_entertainment", raw_text="音乐领域热点")
+                items = _hotspot_evidence_items(conn, domain_label="fan_kepu_social_life")
+            finally:
+                conn.close()
+        self.assertEqual(items, [])
+
+    def test_hotspot_outside_the_window_is_excluded(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                stale_at = (datetime.now(timezone.utc) - timedelta(days=HOTSPOT_EVIDENCE_WINDOW_DAYS + 1)).isoformat()
+                _insert_hotspot(conn, "e1", raw_text="过期热点", created_at=stale_at)
+                items = _hotspot_evidence_items(conn, domain_label="fan_kepu_social_life")
+            finally:
+                conn.close()
+        self.assertEqual(items, [])
+
+    def test_no_hotspots_returns_empty_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                items = _hotspot_evidence_items(conn, domain_label="fan_kepu_social_life")
+            finally:
+                conn.close()
+        self.assertEqual(items, [])
+
+    def test_real_topic_generation_pulls_in_hotspot_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1")
+                _insert_analysis(conn, "a1", "h1")
+                _insert_hotspot(conn, "e1", raw_text="真实热点事件A")
+                row = select_analyses_pending_topic(conn, limit=1)[0]
+                payload = assemble_source_to_topic_input(conn, row, run_id="run_test")
+            finally:
+                conn.close()
+        self.assertIn("当下热点:真实热点事件A", payload["source_evidence_items"])
+
+
+class DomainConstraintTests(unittest.TestCase):
+    """D2 (2026-07-13, BR-TOPIC-001): deterministic domain-constraint check."""
+
+    def test_unknown_domain_forces_generated_to_needs_review(self) -> None:
+        input_payload = {"domain_label": "unknown"}
+        output = {"topic_status": "generated", "source_constraints": []}
+        result = _apply_domain_constraint(input_payload, output)
+        self.assertEqual(result["topic_status"], "needs_review")
+        self.assertIn(DOMAIN_CONSTRAINT_NOTE, result["source_constraints"])
+
+    def test_known_domain_is_left_alone(self) -> None:
+        input_payload = {"domain_label": "fan_kepu_social_life"}
+        output = {"topic_status": "generated", "source_constraints": []}
+        result = _apply_domain_constraint(input_payload, output)
+        self.assertEqual(result["topic_status"], "generated")
+        self.assertEqual(result["source_constraints"], [])
+
+    def test_unknown_domain_does_not_override_an_already_needs_review_status(self) -> None:
+        input_payload = {"domain_label": "unknown"}
+        output = {"topic_status": "needs_review", "source_constraints": ["原始理由"]}
+        result = _apply_domain_constraint(input_payload, output)
+        self.assertEqual(result["source_constraints"], ["原始理由"])
+
+    def test_unknown_domain_does_not_override_no_result(self) -> None:
+        input_payload = {"domain_label": "unknown"}
+        output = {"topic_status": "no_result", "source_constraints": []}
+        result = _apply_domain_constraint(input_payload, output)
+        self.assertEqual(result["topic_status"], "no_result")
+
+
+class DedupCooldownTests(unittest.TestCase):
+    """D3 (2026-07-13, BR-TOPIC-001/BR-TOPIC-004): real content_relation_judge
+    binding driving topic-candidate dedup/cooldown."""
+
+    def _insert_topic(
+        self, conn: sqlite3.Connection, topic_id: str, analysis_id: str, *, candidate_topic: str,
+        topic_angle: str = "角度", created_at: str | None = None,
+    ) -> None:
+        if created_at is None:
+            conn.execute(
+                "INSERT INTO topic_candidates(topic_id, source_analysis_id, version, request_id, correlation_id, "
+                "topic_status, candidate_topic, topic_angle, supporting_evidence, source_constraints, "
+                "no_result_reason, confidence, model_name, run_id) "
+                "VALUES (?, ?, 1, 'req1', 'corr1', 'generated', ?, ?, '[]', '[]', 'none', 'high', 'model', 'run1')",
+                (topic_id, analysis_id, candidate_topic, topic_angle),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO topic_candidates(topic_id, source_analysis_id, version, request_id, correlation_id, "
+                "topic_status, candidate_topic, topic_angle, supporting_evidence, source_constraints, "
+                "no_result_reason, confidence, model_name, run_id, created_at) "
+                "VALUES (?, ?, 1, 'req1', 'corr1', 'generated', ?, ?, '[]', '[]', 'none', 'high', 'model', 'run1', ?)",
+                (topic_id, analysis_id, candidate_topic, topic_angle, created_at),
+            )
+
+    def test_identical_candidate_triggers_needs_review(self) -> None:
+        # Deterministic port returns same_item when left/right text is identical.
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            relation_harness = make_content_relation_judge_harness()
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1")
+                _insert_hit(conn, "h2")
+                _insert_analysis(conn, "a1", "h1")
+                _insert_analysis(conn, "a2", "h2")
+                self._insert_topic(conn, "t1", "a1", candidate_topic="同一个选题", topic_angle="同一个角度")
+                self._insert_topic(conn, "t2", "a2", candidate_topic="同一个选题", topic_angle="同一个角度")
+                conn.commit()
+
+                result = check_topic_candidate_duplicate(conn, relation_harness, topic_id="t2")
+
+                self.assertIsNotNone(result)
+                self.assertEqual(result["duplicate_of"], "t1")
+                self.assertEqual(result["relation_type"], "same_item")
+                row = conn.execute("SELECT * FROM topic_candidates WHERE topic_id='t2'").fetchone()
+                self.assertEqual(row["topic_status"], "needs_review")
+                self.assertTrue(any("t1" in c for c in json.loads(row["source_constraints"])))
+            finally:
+                conn.close()
+                relation_harness.close()
+
+    def test_unrelated_candidates_do_not_trigger_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            relation_harness = make_content_relation_judge_harness()
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1")
+                _insert_hit(conn, "h2")
+                _insert_analysis(conn, "a1", "h1")
+                _insert_analysis(conn, "a2", "h2")
+                # 用确定性假 Provider 明确判定为 no_relation 的关键词对
+                # (见 DeterministicContentRelationJudgeModelPort._looks_unrelated)。
+                self._insert_topic(conn, "t1", "a1", candidate_topic="小区电梯维保停梯的真实经历", topic_angle="角度甲")
+                self._insert_topic(conn, "t2", "a2", candidate_topic="一张老专辑的制作幕后故事", topic_angle="角度乙")
+                conn.commit()
+
+                result = check_topic_candidate_duplicate(conn, relation_harness, topic_id="t2")
+
+                self.assertIsNone(result)
+                row = conn.execute("SELECT * FROM topic_candidates WHERE topic_id='t2'").fetchone()
+                self.assertEqual(row["topic_status"], "generated")
+            finally:
+                conn.close()
+                relation_harness.close()
+
+    def test_no_recent_candidates_returns_none_without_calling_the_model(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            provider = DeterministicContentRelationJudgeModelPort()
+            relation_harness = make_content_relation_judge_harness(provider=provider)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1")
+                _insert_analysis(conn, "a1", "h1")
+                self._insert_topic(conn, "t1", "a1", candidate_topic="唯一的选题", topic_angle="唯一的角度")
+                conn.commit()
+
+                result = check_topic_candidate_duplicate(conn, relation_harness, topic_id="t1")
+
+                self.assertIsNone(result)
+                self.assertEqual(provider.call_count, 0)
+            finally:
+                conn.close()
+                relation_harness.close()
+
+    def test_candidate_outside_the_cooldown_window_is_excluded_from_comparison(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            relation_harness = make_content_relation_judge_harness()
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1")
+                _insert_hit(conn, "h2")
+                _insert_analysis(conn, "a1", "h1")
+                _insert_analysis(conn, "a2", "h2")
+                stale_at = (datetime.now(timezone.utc) - timedelta(days=DEDUP_CANDIDATE_WINDOW_DAYS + 1)).isoformat()
+                self._insert_topic(conn, "t1", "a1", candidate_topic="同一个选题", topic_angle="同一个角度", created_at=stale_at)
+                self._insert_topic(conn, "t2", "a2", candidate_topic="同一个选题", topic_angle="同一个角度")
+                conn.commit()
+
+                result = check_topic_candidate_duplicate(conn, relation_harness, topic_id="t2")
+
+                self.assertIsNone(result)
+            finally:
+                conn.close()
+                relation_harness.close()
+
+    def test_candidate_from_a_different_account_is_excluded_from_comparison(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            relation_harness = make_content_relation_judge_harness()
+            try:
+                _insert_account(conn, account_id="acc1")
+                _insert_account(conn, account_id="acc2")
+                _insert_hit(conn, "h1", account_id="acc1")
+                _insert_hit(conn, "h2", account_id="acc2")
+                _insert_analysis(conn, "a1", "h1")
+                _insert_analysis(conn, "a2", "h2")
+                self._insert_topic(conn, "t1", "a1", candidate_topic="同一个选题", topic_angle="同一个角度")
+                self._insert_topic(conn, "t2", "a2", candidate_topic="同一个选题", topic_angle="同一个角度")
+                conn.commit()
+
+                result = check_topic_candidate_duplicate(conn, relation_harness, topic_id="t2")
+
+                self.assertIsNone(result)
+            finally:
+                conn.close()
+                relation_harness.close()
+
+    def test_compares_at_most_the_configured_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            provider = DeterministicContentRelationJudgeModelPort()
+            relation_harness = make_content_relation_judge_harness(provider=provider)
+            try:
+                _insert_account(conn)
+                for i in range(DEDUP_CANDIDATE_COMPARE_MAX + 5):
+                    _insert_hit(conn, f"h{i}")
+                    _insert_analysis(conn, f"a{i}", f"h{i}")
+                    self._insert_topic(conn, f"t{i}", f"a{i}", candidate_topic=f"完全不相关的选题{i}号内容很长很长", topic_angle=f"角度{i}")
+                _insert_hit(conn, "h_new")
+                _insert_analysis(conn, "a_new", "h_new")
+                self._insert_topic(conn, "t_new", "a_new", candidate_topic="完全不相关的最新选题内容很长很长", topic_angle="最新角度")
+                conn.commit()
+
+                check_topic_candidate_duplicate(conn, relation_harness, topic_id="t_new")
+
+                self.assertLessEqual(provider.call_count, DEDUP_CANDIDATE_COMPARE_MAX)
+            finally:
+                conn.close()
+                relation_harness.close()
+
+    def test_missing_topic_id_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            relation_harness = make_content_relation_judge_harness()
+            try:
+                with self.assertRaises(ValueError):
+                    check_topic_candidate_duplicate(conn, relation_harness, topic_id="not_a_real_topic_id")
+            finally:
+                conn.close()
+                relation_harness.close()
 
 
 class GenerateOneTopicAndRunTests(unittest.TestCase):
