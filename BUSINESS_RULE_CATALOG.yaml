@@ -322,6 +322,52 @@ rules:
   supersedes: []
   validation_required:
   - netease adapter uses a distinct adapter_id from mediacrawler fixture
+- requirement_id: BR-COLLECT-009
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
+  source_section: 标签搜索发现账号的复查触发
+  priority: P2
+  domain_scope: domain layer
+  status: '2026-07-13 new (置顶规则总表核对后, A5): real numbers from §7.1,
+    verified against the actual document text. This does NOT auto-register
+    accounts -- it only creates a review task for a human to decide on. The
+    document''s "拉这个账号最近10条可访问视频" step is not implemented (would
+    need a fresh real network call); this uses only the videos already
+    discovered by BR-TOPIC-005''s tag search, honestly labeled as such.'
+  trigger: an untracked account crosses 3 distinct videos discovered within a
+    30-day window for one domain
+  inputs:
+  - account_platform_id
+  - domain_label
+  expected_behavior: 'System no longer judges "sustained research value" --
+    it only reports the objective fact of repeated appearance (原文档: "系统不再
+    判断有持续研究价值，只报告客观重复出现事实"). Create ONE discovered_account_review
+    row (not one per triggering video), and require an explicit human
+    disposition (added/ignored_30d/ignored_permanently) before any
+    registration can happen. "added" does not itself register the account --
+    that still requires the existing, separately human-confirmed
+    register_competitor_accounts.py path.'
+  defaults:
+    review_window_days: 30
+    min_videos_to_trigger: 3
+  thresholds: {}
+  timing_semantics: Re-evaluated each time find_accounts_due_for_review() runs;
+    an ignored_30d account is skipped until its ignored_until timestamp passes.
+  state_effects:
+  - discovered_account_review insert/update
+  allowed_side_effects: []
+  forbidden_behavior:
+  - auto-register a discovered account into competitor_accounts
+  - build an unexplained account-wide score
+  - re-trigger a review for an account still within its ignored_30d window
+  edge_cases:
+  - fewer than 3 videos -- no review created
+  - account discovered in more than one domain -- one review row per domain
+    (UNIQUE(account_platform_id, domain_label))
+  user_confirmation_required: true
+  supersedes: []
+  validation_required:
+  - account review 30-day/3-video trigger fixture
+  - three-way disposition fixture (added/ignored_30d/ignored_permanently)
 - requirement_id: BR-BASELINE-001
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
   source_section: 账号正式基线
@@ -1922,6 +1968,53 @@ rules:
   - domain search tag rotation fixture
   - deterministic filter/ranking fixture
   - suggested tag requires human confirmation before becoming active fixture
+- requirement_id: BR-TOPIC-006
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx (第19章
+    "热点转化")
+  source_section: 热点转化
+  priority: P2
+  domain_scope: domain layer
+  status: '2026-07-13 new (置顶规则总表核对后, A6): the source document itself
+    says automatic hotspot data sources are an acknowledged unfinished node
+    ("自动热点数据源当前属于未完成节点"), and that MVP runs on manual Feishu-style
+    input via a generic hotspot_event interface -- this entry only covers
+    that manual-registration MVP scope, not TrendRadar or any automatic
+    aggregator (explicitly out of this round''s scope, deferred as a future
+    optional extension). Feishu itself is not actually wired into this repo
+    (see CLAUDE.md) -- the real registration entry point this pass builds is
+    a CLI, not a live Feishu integration; source=feishu_manual is kept as a
+    forward-looking label, not a claim that Feishu is connected.'
+  trigger: manual hotspot registration
+  inputs:
+  - domain_label
+  - raw_text
+  - created_by
+  expected_behavior: 热点本身不是选题 -- a hotspot is first saved as a standalone
+    hotspot_event, then its relationship to the domain is judged by
+    deterministic keyword-overlap against that domain''s topic-tag library
+    (domain_search_tags, BR-TOPIC-005), not by an LLM guessing what counts as
+    a hotspot. matched_tags records which real tags actually matched; an
+    empty match is a valid, honest outcome, not an error.
+  defaults:
+    source: feishu_manual
+  thresholds: {}
+  timing_semantics: One-shot registration per call; no automatic recurring
+    collection.
+  state_effects:
+  - hotspot_events insert
+  allowed_side_effects: []
+  forbidden_behavior:
+  - the system deciding on its own that something "is a hotspot" without an
+    explicit human registration
+  - LLM-based domain-relevance scoring (same no-scoring stance as BR-TOPIC-001/005)
+  - claiming a real Feishu integration exists
+  edge_cases:
+  - hotspot text matching zero domain tags
+  - empty raw_text
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - hotspot registration keyword-match fixture
 - requirement_id: BR-CONTENT-001
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
   source_section: 禁令进代码

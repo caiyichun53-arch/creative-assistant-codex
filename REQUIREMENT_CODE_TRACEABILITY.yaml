@@ -184,6 +184,35 @@ traceability:
     defaults: {}
     thresholds:
       max_comments_per_song: 100
+- requirement_id: BR-COLLECT-009
+  observed_legacy_behavior: An untracked account crossing 3 distinct videos
+    discovered within a 30-day window for one domain creates ONE real review
+    task, not an auto-registered account.
+  target_component: scripts/core/business_data/run_account_discovery.py
+  current_implementation_status: 'partial: the 30-day/3-video trigger, the
+    three-way disposition (added/ignored_30d/ignored_permanently), and the
+    ignored_30d re-trigger-after-expiry behavior are all real and tested
+    (tests/core/test_run_account_discovery.py, 15 tests). NOT implemented:
+    the source document''s "拉这个账号最近10条可访问视频" step -- this uses
+    only videos already discovered by BR-TOPIC-005''s tag search rather than
+    making a fresh real network call, and does not compute the four
+    统计 categories (领域相关/口播适配/独立选题/排除内容) the document names --
+    those need deterministic classifiers this pass does not build. "added"
+    disposition does not itself register the account; that still requires
+    the separate, already-human-confirmed register_competitor_accounts.py
+    path.'
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: none -- newly implemented, not migrated from legacy.
+  test_ids:
+  - account review 30-day/3-video trigger fixture
+  - three-way disposition fixture (added/ignored_30d/ignored_permanently)
+  evidence:
+    source_section: 标签搜索发现账号的复查触发
+    defaults:
+      review_window_days: 30
+      min_videos_to_trigger: 3
+    thresholds: {}
 - requirement_id: BR-BASELINE-001
   observed_legacy_behavior: Baseline is account-relative and computed from settled
     videos, using median and P90 as threshold ingredients.
@@ -662,6 +691,32 @@ traceability:
       deep_processing_max_per_tag: 5
       consecutive_cycles_before_pause: 3
       daily_deep_processing_max_per_domain: 10
+    thresholds: {}
+- requirement_id: BR-TOPIC-006
+  observed_legacy_behavior: A human manually registers one hotspot observation
+    (domain_label + raw_text + created_by); the system stores it as a standalone
+    hotspot_event and computes matched_tags via deterministic keyword-overlap
+    against that domain's active domain_search_tags -- no LLM scoring, empty
+    matches are a valid outcome.
+  target_component: scripts/core/business_data/run_hotspot_registration.py +
+    scripts/core/business_data/domain_search_schema.sqlite.sql (hotspot_events
+    table)
+  current_implementation_status: 'partial: manual CLI registration + deterministic
+    tag matching are real and tested (tests/core/test_run_hotspot_registration.py,
+    10 tests). NOT implemented: any real Feishu integration (source=feishu_manual
+    is a forward-looking label only -- Feishu is not actually wired into this
+    repo, see CLAUDE.md), and TrendRadar or any automatic hotspot aggregation
+    (explicitly out of this round''s scope per the source document''s own
+    "未完成节点" framing).'
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: none -- newly implemented, not migrated from legacy.
+  test_ids:
+  - hotspot registration keyword-match fixture
+  evidence:
+    source_section: 热点转化
+    defaults:
+      source: feishu_manual
     thresholds: {}
 - requirement_id: BR-CONTENT-001
   observed_legacy_behavior: Banned/risk word constraints are deterministic post-generation

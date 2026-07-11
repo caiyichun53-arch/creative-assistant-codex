@@ -170,6 +170,10 @@ python -m scripts.core.experience.run_tactic_extract --domain-label fan_kepu_soc
 
 **领域话题标签搜索——第三种选题来源(2026-07-13 新增, 置顶规则总表核对后, 原文档第21章)**:每个领域一份 `sources.yaml`(人工写初始"活跃标签",比如"房产中介""运动鞋"这种短标签,不是完整选题),`scripts/core/business_data/run_domain_search.py` 读进来建成 `domain_search_tags` 表。爆款库里真实视频描述里的 `#xxx` 标签也会被扫出来,但只会落成"建议"状态,要在 `review_queue.py --approve tag <id>` 里人工确认才转正成"活跃"——不自动转正。活跃标签**默认7天轮换搜索一次**,每次调真实的 MediaCrawler 关键词搜索模式(之前只有"按账号抓"能用,这次把工具本来就有的"按关键词搜"模式接上了),读回来的结果先做零成本的确定性过滤(去重+标签真的命中)、再按热度粗排,最多留5条。搜到的视频存进独立的 `discovered_external_videos` 表,**不写进 `hits`/`competitor_videos`**——因为这些视频没有正式追踪账号那样的基线数据,不能跟正式证据混用。真实抓取默认关闭(`config/settings.yaml` 的 `domain_search.live_enabled: false`),这次只跑通了"关闭状态下该报错、打开后该怎么跑"这条逻辑链路,没有真的花钱搜过。**明确没做的**:搜到的视频怎么变成一条真正的 `topic_candidates`,现在完全没有路径——`topic_candidates.source_analysis_id` 是必填外键,指向 `hit_deep_analysis`,而这些搜索发现的视频压根没有走过"深度分析"这一步,这条路径需要专门设计,这次没做。
 
+**账号发现复查(2026-07-13 新增, 原文档7.1)**:领域话题标签搜索搜出来的视频,如果发现"同一个还没追踪的账号,30天内有至少3条不同视频"命中了同一个领域,`scripts/core/business_data/run_account_discovery.py` 会建一条复查任务——不是搜到一次就建,系统也不打分,只报告"这个账号客观上反复出现"这个事实。这条任务需要人工三选一:"加入"(值得追踪,但这个函数本身不会自动注册,还是要走现有的 `register_competitor_accounts.py` 正式注册流程)/"忽略30天"(30天后如果又满足条件会重新触发)/"永久忽略"。**明确没做的**:原文档要求复查时"拉这个账号最近10条可访问视频"重新统计"领域相关/口播适配/独立选题/排除内容"四类数量——这次没有做真的重新拉取(需要一次新的真实网络请求),也没有实现这四类判断需要的规则(这些偏语义判断,不是简单能写死的规则),诚实地只用已经发现、已经落库的真实视频数量做统计。
+
+**热点转化——人工登记 MVP(2026-07-13 新增, 原文档第19章, BR-TOPIC-006)**:原文档自己说"自动热点数据源当前属于未完成节点",MVP 阶段本来就是靠人工在飞书里输入。这次只做了这一段的最小闭环:`python -m scripts.core.business_data.run_hotspot_registration --domain-label <领域> --text "<热点文本>" --created-by "<登记人>" --db <数据库路径>`,把一条热点文本存成 `hotspot_events` 表里的一行,并用当前领域已经"活跃"(`active`,不含还没人工确认的 `suggested`/`suggested_pause`)的话题标签(A3 的 `domain_search_tags`)做确定性关键词重合匹配,算出 `matched_tags`——不调 LLM 打分,零命中是诚实的正常结果,不是错误。**明确没做的**:这不是真的飞书接入(`source` 字段目前只有 `feishu_manual` 一个值,是给未来真接了飞书预留的语义,这次的真实登记入口是命令行,见 CLAUDE.md 关于飞书现状的说明);TrendRadar 或任何自动热点抓取整体不在这次范围内,是原文档自己标注的"未完成节点"的一个可选后续扩展。
+
 ## 11. 外部适配器（external_adapters / hermes）
 
 [占位] 待补：这两个模块具体接的是什么外部系统、能做什么不能做什么。

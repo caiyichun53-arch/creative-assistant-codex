@@ -88,3 +88,55 @@ ON discovered_external_videos(account_platform_id, is_tracked_account, discovere
 
 CREATE INDEX IF NOT EXISTS idx_discovered_external_videos_tag
 ON discovered_external_videos(tag_id, discovered_at);
+
+-- 账号发现复查任务(A5, 2026-07-13, 原文档7.1"标签搜索发现账号的复查触发")。
+-- 一条账号只建一条复查任务(即使后续又通过筛选,也不会重复触发第二条——见
+-- run_account_discovery.py 的 find_accounts_due_for_review() 排除已有记录的
+-- 逻辑),直到这条任务被处理完(disposition 从 pending 变成别的)。
+-- disposition 三选一,不是二选一的 approved/rejected——原文档明确要求"加入/
+-- 忽略30天/永久忽略"三种结果,套不进 review_queue.py 现有的通过/拒绝二元机制,
+-- 这里用自己的 resolve_account_review() 函数处理,不勉强复用。
+-- video_count 是触发时真实符合条件的视频数(>=3),不是"最近10条"的固定数字——
+-- 原文档要求复查任务额外拉这个账号"最近10条可访问视频"重新统计,但那需要一次
+-- 新的真实网络请求(账号主页快照),这次没有实现,诚实地只用已经发现、已经落库
+-- 的真实视频做统计,不假装拉了"最近10条"。
+CREATE TABLE IF NOT EXISTS discovered_account_review (
+    review_id TEXT PRIMARY KEY,
+    account_platform_id TEXT NOT NULL,
+    account_handle TEXT,
+    domain_label TEXT NOT NULL,
+    video_count INTEGER NOT NULL,
+    triggered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    disposition TEXT NOT NULL DEFAULT 'pending'
+        CHECK(disposition IN ('pending', 'added', 'ignored_30d', 'ignored_permanently')),
+    ignored_until TEXT,
+    resolved_at TEXT,
+    resolved_note TEXT,
+    run_id TEXT NOT NULL,
+    UNIQUE(account_platform_id, domain_label)
+);
+
+CREATE INDEX IF NOT EXISTS idx_discovered_account_review_disposition
+ON discovered_account_review(disposition, domain_label);
+
+-- 热点转化(A6, 2026-07-13, 原文档第19章"热点转化", 范围收窄)。原文档自己写着
+-- "自动热点数据源当前属于未完成节点;MVP可先通过飞书人工热点输入和通用
+-- hotspot_event接口运行"——这次只做这一段:人工登记一条热点文本、系统存成
+-- hotspot_event、用领域话题标签库(A3 的 domain_search_tags)做确定性关键词
+-- 匹配来判断"这条热点跟当前领域有没有关系"(不调LLM,呼应 BR-TOPIC-001 的
+-- 不打分排序原则)。TrendRadar 自动抓取整体不在这次范围内。source 目前只有
+-- feishu_manual 一个值,虽然飞书当前实际没有真实接入(CLAUDE.md 已经写明)——
+-- 这个字段名字保留"未来真接了飞书用哪个来源"的语义,这次的登记入口是命令行,
+-- 不是真的飞书。
+CREATE TABLE IF NOT EXISTS hotspot_events (
+    event_id TEXT PRIMARY KEY,
+    domain_label TEXT NOT NULL,
+    raw_text TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'feishu_manual' CHECK(source IN ('feishu_manual')),
+    matched_tags TEXT NOT NULL DEFAULT '[]',
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_hotspot_events_domain
+ON hotspot_events(domain_label, created_at);
