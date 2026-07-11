@@ -220,17 +220,35 @@ CREATE TABLE IF NOT EXISTS hit_transcripts (
 CREATE INDEX IF NOT EXISTS idx_hit_transcripts_hit
 ON hit_transcripts(hit_id, version);
 
--- One row per top-level comment fetched alongside the same MediaCrawler
--- detail call that resolved the download URL (source document section 16 /
--- CLAUDE.md: "合并成一趟 detail 爬 -- 下载链接+评论一次拿"), not a separate
--- comment-collection pass. Reply/second-level comments are excluded at the
--- crawler level (LocalMediaCrawlerExecutor always passes --get_sub_comment
--- no), matching section 16's "第一阶段关闭二级评论". sample_rank preserves
--- the crawler's own hotness ordering (section 16: "保留采集器热度顺序和
--- sample_rank"), assigned before any filtering/dedup so gaps in the sequence
--- are visible where a comment was dropped. INSERT OR IGNORE on retry:
--- comments are append-only evidence, a rerun should not duplicate rows
--- already captured.
+-- One row per top-level comment fetched alongside a MediaCrawler detail call
+-- (source document section 16 / CLAUDE.md: "合并成一趟 detail 爬 -- 下载链接+
+-- 评论一次拿"). Reply/second-level comments are excluded at the crawler level
+-- (LocalMediaCrawlerExecutor always passes --get_sub_comment no), matching
+-- section 16's "第一阶段关闭二级评论". sample_rank preserves the crawler's own
+-- hotness ordering (section 16: "保留采集器热度顺序和sample_rank"), assigned
+-- before any filtering/dedup so gaps in the sequence are visible where a
+-- comment was dropped.
+--
+-- 2026-07-13 (BR-HIT-007, 置顶规则总表核对后): section 16 requires comment
+-- collection to happen at up to two DIFFERENT points in a hit's lifecycle for
+-- the same video -- early_topic (first candidate trigger, before D7) and
+-- mature_analysis (D7/P+7d) are each a fresh, independent top-60 fetch, not
+-- an update to the earlier one. purpose distinguishes which collection pass a
+-- row belongs to (early_topic / mature_analysis / mature_history /
+-- external_snapshot). The PRIMARY KEY includes purpose (not just
+-- hit_id+comment_id) precisely so a comment that genuinely appears in both
+-- the early_topic and mature_analysis passes gets two rows, not one silently
+-- dropped by INSERT OR IGNORE -- losing that would misrepresent which
+-- evidence was actually available at which observation point. Re-running the
+-- SAME purpose's collection for a hit is still idempotent (identical
+-- comment_id+purpose pairs are ignored on retry), which in practice also
+-- covers BR-HIT-007's "must not create a duplicate batch" requirement without
+-- a separate batch table -- a deliberate simplification, not the literal
+-- (video, purpose, observation_point, sampling_strategy) unique constraint
+-- the document names (that constraint additionally catches a batch retry
+-- whose comment set has PARTIALLY changed since the last run; this schema
+-- does not detect that case as a "duplicate batch", it just naturally
+-- dedupes whatever comment_ids do overlap).
 CREATE TABLE IF NOT EXISTS hit_comments (
     hit_id TEXT NOT NULL REFERENCES hits(hit_id) ON DELETE RESTRICT,
     comment_id TEXT NOT NULL,
@@ -238,9 +256,23 @@ CREATE TABLE IF NOT EXISTS hit_comments (
     like_count INTEGER NOT NULL DEFAULT 0,
     parent_comment_id TEXT,
     sample_rank INTEGER NOT NULL,
+    -- Which collection pass this row belongs to (section 16 / BR-HIT-007).
+    -- NOT NULL with no default -- every caller must say which pass this is,
+    -- rather than silently defaulting to one and hiding the real trigger.
+    purpose TEXT NOT NULL CHECK(purpose IN ('early_topic', 'mature_analysis', 'mature_history', 'external_snapshot')),
+    -- D/P point this batch was collected at (e.g. 'D0'..'D7', 'P+7d'); NULL
+    -- when the purpose has no meaningful observation point (e.g. a one-off
+    -- external_snapshot on a tag-searched video with no D/P baseline at all).
+    observation_point TEXT,
+    -- How this batch was selected -- currently only one real strategy exists
+    -- (crawler's own popularity ranking, top N), kept as free text rather
+    -- than an enum since new strategies are expected once purpose-tagged
+    -- multi-stage collection is fully wired (see run_reverse_prep.py's
+    -- module docstring for exactly what is/isn't implemented yet).
+    sampling_strategy TEXT,
     run_id TEXT NOT NULL,
     fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (hit_id, comment_id)
+    PRIMARY KEY (hit_id, comment_id, purpose)
 );
 
 CREATE INDEX IF NOT EXISTS idx_hit_comments_hit

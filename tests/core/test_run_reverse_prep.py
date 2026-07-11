@@ -313,6 +313,144 @@ class PrepOneHitTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_comment_batch_is_tagged_with_purpose_and_sampling_strategy(self) -> None:
+        # BR-HIT-007: this worker's single fetch-per-promoted-hit collection
+        # is the "D7/P+7d 才首次正式触发" case, so it must record
+        # purpose='mature_analysis', not leave the column to a database
+        # default (there is none -- NOT NULL with no default, deliberately).
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_hit(conn, "h1")
+                executor = _FakeExecutor(_fake_detail_result(tmp, comments=[{"comment_id": "c1", "text": "很不错的内容"}]))
+
+                with patch("scripts.core.business_data.run_reverse_prep.requests.get", return_value=_fake_response()), \
+                     patch("scripts.core.business_data.run_reverse_prep.subprocess.run", side_effect=_fake_subprocess_for_prep("这是一段足够长的转写文本用于测试")):
+                    prep_one_hit(
+                        conn, executor, conn.execute("SELECT * FROM hits WHERE hit_id='h1'").fetchone(),
+                        reverse_cfg=REVERSE_CFG, run_id="run_test",
+                    )
+
+                comment = conn.execute("SELECT * FROM hit_comments WHERE hit_id='h1'").fetchone()
+                self.assertEqual(comment["purpose"], "mature_analysis")
+                self.assertEqual(comment["sampling_strategy"], "top_n_by_platform_popularity")
+            finally:
+                conn.close()
+
+    def test_observation_point_comes_from_the_video_first_trigger_when_known(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_hit(conn, "h1")
+                conn.execute(
+                    "UPDATE competitor_videos SET first_trigger_observation='D3' WHERE video_id='h1_vid'"
+                )
+                executor = _FakeExecutor(_fake_detail_result(tmp, comments=[{"comment_id": "c1", "text": "很不错的内容"}]))
+
+                with patch("scripts.core.business_data.run_reverse_prep.requests.get", return_value=_fake_response()), \
+                     patch("scripts.core.business_data.run_reverse_prep.subprocess.run", side_effect=_fake_subprocess_for_prep("这是一段足够长的转写文本用于测试")):
+                    prep_one_hit(
+                        conn, executor,
+                        conn.execute(
+                            """
+                            SELECT hits.*, video.first_trigger_observation AS video_first_trigger_observation
+                              FROM hits JOIN competitor_videos AS video ON video.video_id = hits.video_id
+                             WHERE hits.hit_id='h1'
+                            """
+                        ).fetchone(),
+                        reverse_cfg=REVERSE_CFG, run_id="run_test",
+                    )
+
+                comment = conn.execute("SELECT * FROM hit_comments WHERE hit_id='h1'").fetchone()
+                self.assertEqual(comment["observation_point"], "D3")
+            finally:
+                conn.close()
+
+    def test_observation_point_is_none_when_row_has_no_join_not_a_crash(self) -> None:
+        # Reverse case for the fix above: calling prep_one_hit with a plain
+        # "SELECT * FROM hits" row (no video_first_trigger_observation
+        # column at all) must not raise -- it should record NULL, not crash
+        # the whole hit into a spurious "failed" status.
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_hit(conn, "h1")
+                executor = _FakeExecutor(_fake_detail_result(tmp, comments=[{"comment_id": "c1", "text": "很不错的内容"}]))
+
+                with patch("scripts.core.business_data.run_reverse_prep.requests.get", return_value=_fake_response()), \
+                     patch("scripts.core.business_data.run_reverse_prep.subprocess.run", side_effect=_fake_subprocess_for_prep("这是一段足够长的转写文本用于测试")):
+                    result = prep_one_hit(
+                        conn, executor, conn.execute("SELECT * FROM hits WHERE hit_id='h1'").fetchone(),
+                        reverse_cfg=REVERSE_CFG, run_id="run_test",
+                    )
+
+                self.assertEqual(result["status"], "completed")
+                comment = conn.execute("SELECT * FROM hit_comments WHERE hit_id='h1'").fetchone()
+                self.assertIsNone(comment["observation_point"])
+            finally:
+                conn.close()
+
+    def test_same_comment_can_exist_under_two_different_purposes(self) -> None:
+        # Schema-level proof of the design goal behind including purpose in
+        # the PRIMARY KEY (BR-HIT-007): the same real comment genuinely
+        # collected again at a later purpose must get its own row, not be
+        # silently dropped by INSERT OR IGNORE the way the old
+        # (hit_id, comment_id) primary key would have. run_reverse_prep.py
+        # itself only ever writes purpose='mature_analysis' today (early_topic
+        # collection is not wired -- see its module docstring); this proves
+        # the schema is ready for that once it is.
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_hit(conn, "h1")
+                conn.execute(
+                    """
+                    INSERT INTO hit_comments(hit_id, comment_id, text, like_count, sample_rank, purpose, run_id)
+                    VALUES ('h1', 'c1', '很不错的内容', 5, 0, 'early_topic', 'run_early')
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO hit_comments(hit_id, comment_id, text, like_count, sample_rank, purpose, run_id)
+                    VALUES ('h1', 'c1', '很不错的内容', 12, 0, 'mature_analysis', 'run_mature')
+                    """
+                )
+                conn.commit()
+
+                rows = conn.execute(
+                    "SELECT purpose, like_count FROM hit_comments WHERE hit_id='h1' AND comment_id='c1' ORDER BY purpose"
+                ).fetchall()
+                self.assertEqual([r["purpose"] for r in rows], ["early_topic", "mature_analysis"])
+                self.assertEqual([r["like_count"] for r in rows], [5, 12])
+            finally:
+                conn.close()
+
+    def test_retrying_the_same_purpose_stays_deduped_not_a_second_row(self) -> None:
+        # Reverse case for the test above: a genuine retry of the SAME
+        # purpose (not a different one) must still be idempotent -- the PK
+        # change adds purpose as a dimension, it does not turn off dedup
+        # within a single purpose.
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_hit(conn, "h1")
+                for run_id in ("run_1", "run_2"):
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO hit_comments(hit_id, comment_id, text, like_count, sample_rank, purpose, run_id)
+                        VALUES ('h1', 'c1', '很不错的内容', 5, 0, 'mature_analysis', ?)
+                        """,
+                        (run_id,),
+                    )
+                conn.commit()
+
+                rows = conn.execute(
+                    "SELECT * FROM hit_comments WHERE hit_id='h1' AND comment_id='c1' AND purpose='mature_analysis'"
+                ).fetchall()
+                self.assertEqual(len(rows), 1)
+            finally:
+                conn.close()
+
     def test_ffmpeg_and_asr_python_paths_come_from_reverse_cfg_not_hardcoded(self) -> None:
         # Regression test for the ffmpeg/local-ASR-python absolute paths that
         # used to be hardcoded module constants (duplicated identically in

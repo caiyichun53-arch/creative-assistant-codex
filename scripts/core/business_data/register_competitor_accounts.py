@@ -59,6 +59,12 @@ def install_schema(conn: sqlite3.Connection) -> None:
     # 2 verification rows, nothing else reads the old shape.
     _drop_table_if_old_shape(conn, "hit_transcripts", removed_column="transcript_text")
     _drop_table_if_old_shape(conn, "hit_comments", added_not_null_column="sample_rank")
+    # 2026-07-13 (BR-HIT-007): hit_comments gained purpose/observation_point/
+    # sampling_strategy and its PRIMARY KEY changed to include purpose -- a
+    # real column + PK change, not something ALTER TABLE ADD COLUMN can do,
+    # and this table holds real production data by now (unlike the 2026-07-08
+    # redesign above), so this is a copy-migrate, not a drop.
+    _migrate_hit_comments_add_purpose(conn)
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     # 2026-07-08: CREATE TABLE IF NOT EXISTS does not retroactively add columns
     # to a table that already exists (e.g. the real production DB) -- this
@@ -83,6 +89,57 @@ def _drop_table_if_old_shape(
     )
     if is_old_shape:
         conn.execute(f"DROP TABLE {table}")
+
+
+# Every existing hit_comments row was collected by the single fetch-per-
+# promoted-hit path run_reverse_prep.py currently implements, which fires
+# once a hit clears judgement -- of the four purposes BR-HIT-007 defines,
+# that is closest to "D7/P+7d 才首次正式触发 -> 采一次 mature_analysis"
+# (the D7-first-trigger case), not an early-topic pass. Backfilling existing
+# rows to anything else would be guessing at history this schema never
+# recorded; 'mature_analysis' is the one honestly defensible default given
+# what the collector actually did at the time.
+_HIT_COMMENTS_BACKFILL_PURPOSE = "mature_analysis"
+_HIT_COMMENTS_BACKFILL_SAMPLING_STRATEGY = "top_n_by_platform_popularity"
+
+
+def _migrate_hit_comments_add_purpose(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(hit_comments)").fetchall()}
+    if not columns or "purpose" in columns:
+        return  # table doesn't exist yet, or already migrated -- nothing to do
+    conn.execute(
+        """
+        CREATE TABLE hit_comments_new (
+            hit_id TEXT NOT NULL REFERENCES hits(hit_id) ON DELETE RESTRICT,
+            comment_id TEXT NOT NULL,
+            text TEXT NOT NULL,
+            like_count INTEGER NOT NULL DEFAULT 0,
+            parent_comment_id TEXT,
+            sample_rank INTEGER NOT NULL,
+            purpose TEXT NOT NULL CHECK(purpose IN ('early_topic', 'mature_analysis', 'mature_history', 'external_snapshot')),
+            observation_point TEXT,
+            sampling_strategy TEXT,
+            run_id TEXT NOT NULL,
+            fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (hit_id, comment_id, purpose)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO hit_comments_new(
+            hit_id, comment_id, text, like_count, parent_comment_id, sample_rank,
+            purpose, observation_point, sampling_strategy, run_id, fetched_at
+        )
+        SELECT hit_id, comment_id, text, like_count, parent_comment_id, sample_rank,
+               ?, NULL, ?, run_id, fetched_at
+        FROM hit_comments
+        """,
+        (_HIT_COMMENTS_BACKFILL_PURPOSE, _HIT_COMMENTS_BACKFILL_SAMPLING_STRATEGY),
+    )
+    conn.execute("DROP TABLE hit_comments")
+    conn.execute("ALTER TABLE hit_comments_new RENAME TO hit_comments")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_hit_comments_hit ON hit_comments(hit_id, sample_rank)")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, column_type: str) -> None:

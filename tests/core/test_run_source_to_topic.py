@@ -84,8 +84,8 @@ def _insert_analysis(
 def _insert_comment(conn: sqlite3.Connection, hit_id: str, comment_id: str, *, text: str, sample_rank: int, like_count: int = 10) -> None:
     conn.execute(
         """
-        INSERT INTO hit_comments(hit_id, comment_id, text, like_count, sample_rank, run_id)
-        VALUES (?, ?, ?, ?, ?, 'run1')
+        INSERT INTO hit_comments(hit_id, comment_id, text, like_count, sample_rank, purpose, run_id)
+        VALUES (?, ?, ?, ?, ?, 'mature_analysis', 'run1')
         """,
         (hit_id, comment_id, text, like_count, sample_rank),
     )

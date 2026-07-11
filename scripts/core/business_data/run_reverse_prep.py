@@ -33,9 +33,14 @@ supports them:
 Explicitly NOT implemented (documented limitations, not oversights):
   - Priority tier 1 (已选 production_task/用户明确研究对象) -- no "selected
     production task" concept exists in the schema yet.
-  - Purpose-tagged multi-stage comment re-collection at different observation
-    points (BR-HIT-002/006/007) -- this worker only does a single fetch for
-    an already-promoted hit.
+  - Multi-stage comment re-collection (BR-HIT-002/006/007): hit_comments now
+    records which purpose a batch belongs to (2026-07-13), but this worker
+    still only fires once, when a hit clears judgement, and always tags that
+    single fetch purpose='mature_analysis' -- the early_topic pass (collect
+    again as soon as a video FIRST triggers candidacy, before D7) is not
+    wired up; it needs a real trigger hook into the D0-D6 candidate-detection
+    path (BR-HIT-005), which is a separate, larger piece of work than the
+    schema change alone.
 
 scripts/tools/compare_asr_providers.py is a different, narrower thing: a
 one-off BR-ASR-003 benchmark comparing local vs cloud ASR, explicitly not a
@@ -168,7 +173,8 @@ def select_pending_hits(conn: sqlite3.Connection, *, limit: int, judgement_run_i
     through the backlog."""
     query = """
         SELECT hits.*, video.baseline_mode AS video_baseline_mode,
-               video.first_contact_category AS video_first_contact_category
+               video.first_contact_category AS video_first_contact_category,
+               video.first_trigger_observation AS video_first_trigger_observation
         FROM hits
         JOIN competitor_videos AS video ON video.video_id = hits.video_id
         WHERE hits.reverse_status='pending'
@@ -399,15 +405,29 @@ def prep_one_hit(
             min_comment_len=int(reverse_cfg["min_comment_len"]),
             top_comments=int(reverse_cfg["top_comments"]),
         )
+        # This worker fires once, when a hit clears judgement -- of BR-HIT-007's
+        # four purposes, that is the "D7/P+7d 才首次正式触发 -> 采一次
+        # mature_analysis" case (not an early-topic pass; see module docstring
+        # for what multi-stage collection still isn't implemented).
+        # observation_point comes from the video's own real first-trigger
+        # point when known; NULL when the video has no formal D baseline yet
+        # (rough/cold-start candidates) rather than guessing one.
+        observation_point = (
+            hit_row["video_first_trigger_observation"] if "video_first_trigger_observation" in hit_row.keys() else None
+        )
         for comment in kept_comments:
             conn.execute(
                 """
-                INSERT OR IGNORE INTO hit_comments(hit_id, comment_id, text, like_count, parent_comment_id, sample_rank, run_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT OR IGNORE INTO hit_comments(
+                    hit_id, comment_id, text, like_count, parent_comment_id, sample_rank,
+                    purpose, observation_point, sampling_strategy, run_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     hit_id, comment["comment_id"], comment["text"], comment["like_count"],
-                    comment["parent_comment_id"], comment["sample_rank"], run_id,
+                    comment["parent_comment_id"], comment["sample_rank"],
+                    "mature_analysis", observation_point, "top_n_by_platform_popularity", run_id,
                 ),
             )
 

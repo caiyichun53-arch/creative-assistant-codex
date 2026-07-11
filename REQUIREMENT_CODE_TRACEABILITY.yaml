@@ -437,8 +437,16 @@ traceability:
       section_cap: 1200
 - requirement_id: BR-RESEARCH-001
   observed_legacy_behavior: Formal research structurally has no video platform search/read/download/ASR/comment/MediaCrawler
-    path.
-  target_component: FormalResearchService
+    path, except the music_entertainment domain may use work-specific
+    (netease/douban-style) comments as formal evidence for that domain only
+    (2026-07-13 correction, see BUSINESS_RULE_CATALOG.yaml BR-RESEARCH-001
+    status field -- FormalResearchService below is a ghost reference, same
+    class of issue as BR-TOPIC-002/BR-DNA-004 each had before their own
+    corrections; no real component implements this rule at all yet).
+  target_component: 'No real binding exists yet (runtime_skills/
+    research_evidence_extract and production_research_plan are unbound atomic
+    Skills, per CLAUDE.md). target_component used to say FormalResearchService,
+    a class that never existed anywhere in the codebase.'
   current_implementation_status: legacy behavior observed; target formalization pending
     unless noted exact_match
   alignment_status: conflict
@@ -446,13 +454,18 @@ traceability:
   - removed
   - ownership_changed
   migration_action: Disable legacy direct WebSearch/video-adjacent paths in formal
-    research.
+    research; when a real formal-research binding is built, wire the
+    music_entertainment domain exception in from the start rather than adding
+    it as an afterthought.
   test_ids:
   - formal research blocked platform test
+  - music_entertainment domain comment-evidence allowed test
+  - non-music domain comment-evidence still blocked test
   evidence:
     source_section: 正式资料研究无视频平台能力
     defaults:
       video_platform_allowed: false
+      domain_comment_exception: music_entertainment
     thresholds: {}
 - requirement_id: BR-RESEARCH-002
   observed_legacy_behavior: Video learning/reverse evidence and formal research evidence
@@ -522,16 +535,29 @@ traceability:
     defaults: {}
     thresholds: {}
 - requirement_id: BR-TOPIC-002
-  observed_legacy_behavior: Unselected topics become candidates, decay over time and
-    can be reheated by related fresh hits.
-  target_component: TopicPlanningService
-  current_implementation_status: legacy behavior observed; target formalization pending
-    unless noted exact_match
+  observed_legacy_behavior: Unselected topics become candidates for a future daily
+    batch; no scoring/ranking/decay-weight mechanism selects or reheats them.
+  target_component: 'scripts/core/experience/run_source_to_topic.py (candidate
+    selection lives here; no dedicated component for this rule, same as BR-TOPIC-001).
+    2026-07-13: this used to say target_component: TopicPlanningService, a class
+    that never existed anywhere in the codebase -- a ghost reference (same class
+    of issue BR-TOPIC-001/BR-EXPERIENCE-001/BR-DNA-004 each had before their own
+    corrections). The decay/reheat scoring fields this rule originally described
+    (half_life_days/reheat_boost/expire_heat) were removed from both
+    BUSINESS_RULE_CATALOG.yaml and config/settings.yaml/settings.example.yaml
+    as part of the same correction -- see BUSINESS_RULE_CATALOG.yaml BR-TOPIC-002
+    status field.'
+  current_implementation_status: 'the scoring mechanism this rule originally
+    described has been removed, not implemented -- there is nothing to formalize
+    here anymore. Candidate/dedup/cooldown/domain-constraint (the actual current
+    scope) remains pending_implementation per BR-TOPIC-001.'
   alignment_status: naming_only
   difference_type:
   - ownership_changed
-  migration_action: Preserve business semantics while moving state/external side effects
-    to formal Core/Adapter boundaries.
+  migration_action: No scoring/decay mechanism to preserve or migrate -- this rule's
+    scope has been reduced to match BR-TOPIC-001's no-scoring stance. Future
+    candidate-pool management, if designed, is a new decision, not a revival of
+    this rule's original fields.
   test_ids:
   - candidate decay fixture
   evidence:
@@ -1309,17 +1335,23 @@ business_data_competitor_registration_execution:
     BR-HIT-004: missing_in_code
     BR-HIT-005: exact_match
     BR-HIT-006: missing_in_code
-    BR-HIT-007: missing_in_code
-  missing_in_code_note: 'BR-HIT-002 (control/counter-example sample recall),
-    BR-HIT-006 (five-tier processing/deep_eligibility), and BR-HIT-007
-    (purpose-tagged multi-stage comment collection) are acknowledged gaps, not
+    BR-HIT-007: naming_only
+  missing_in_code_note: 'BR-HIT-002 (control/counter-example sample recall) and
+    BR-HIT-006 (five-tier processing/deep_eligibility) are acknowledged gaps, not
     drift -- deferred in the 2026-07-07 rewrite because no broader
     comment-collection pipeline exists yet to hook them into. BR-COLLECT-005/006
     (reverse-prep comment collection, comment noise filtering) were also in this
     list until 2026-07-08, when scripts/core/business_data/run_reverse_prep.py
     implemented them for the narrower scope those two rules actually describe
-    (already-promoted hits) -- BR-HIT-002/006/007''s broader pipeline is still
-    not built. BR-HIT-004 (the old share_comment_ratio derived-evidence-only
+    (already-promoted hits). 2026-07-13: BR-HIT-007 (purpose-tagged multi-stage
+    comment collection) moved from missing_in_code to naming_only, not
+    exact_match -- hit_comments now has a real purpose/observation_point/
+    sampling_strategy schema and every write is correctly tagged, but
+    run_reverse_prep.py still only ever fires once per hit and always tags
+    purpose=mature_analysis; the early_topic re-collection trigger (hook into
+    BR-HIT-005''s D0-D6 candidate detection) is not built. BR-HIT-002/006''s
+    broader pipeline is still not built. BR-HIT-004 (the old share_comment_ratio
+    derived-evidence-only
     rule) is superseded, not merely missing -- the new design folds share_count
     into its own independent share_anomaly channel (BR-HIT-001 section D), so
     BR-HIT-004 as literally worded no longer describes a real code path.'

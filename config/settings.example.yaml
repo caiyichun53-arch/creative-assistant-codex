@@ -125,11 +125,6 @@ hit_detection:
   first_crawl_fetch_buffer: 5
   recheck_interval_hours: 24
 
-candidate_pool:
-  decay_half_life_days: 7
-  expire_heat: 0.1
-  reheat_boost: 0.5
-
 reverse_engine:
   # Local model root. Keep real absolute paths in config/settings.yaml only.
   models_root: models

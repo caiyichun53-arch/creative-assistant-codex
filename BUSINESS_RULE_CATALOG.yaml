@@ -223,8 +223,14 @@ rules:
   status: '2026-07-08: implemented in scripts/core/business_data/run_reverse_prep.py
     (filter_comments) -- pure deterministic filtering (min length, dedup by
     comment_id, content-hash fallback when comment_id is missing), no LLM
-    involved. Storage is hit_comments INSERT OR IGNORE keyed on (hit_id,
-    comment_id), so retries cannot create duplicate rows.'
+    involved. 2026-07-13 correction (置顶规则总表 V0.6.3 卷首核对后): storage key
+    changed from (hit_id, comment_id) to (hit_id, comment_id, purpose) -- see
+    BR-HIT-007. Dedup within a single purpose is unchanged (a retry of the same
+    collection pass still cannot create duplicate rows); the same comment_id
+    genuinely collected again under a DIFFERENT purpose (e.g. early_topic then
+    mature_analysis) now gets its own row instead of being silently dropped by
+    the old key, which the user pointed out was necessary precisely because
+    section 16 designs multiple collection passes per video.'
   trigger: store hit comments
   inputs:
   - comment_id
@@ -1585,29 +1591,53 @@ rules:
   source_section: 正式资料研究无视频平台能力
   priority: P0
   domain_scope: all domains
+  status: '2026-07-13 corrected (置顶规则总表 V0.6.3 卷首核对后,用户拍板,条目41): the
+    original wording here was a blanket "comments are never formal evidence"
+    ban with no domain carve-out, but the pinned-rules table requires exactly
+    one exception -- the music_entertainment domain may use netease/douban-style
+    work comments (评论) as formal research evidence, since audience reception of
+    a musical work is itself a legitimate research fact for that domain; every
+    other domain keeps the blanket ban. No enforcement code exists for this rule
+    yet either way (formal research has no real bound Skill -- see
+    runtime_skills/research_evidence_extract/production_research_plan), so this
+    is a rule-text correction, not a behavior change. Whether the existing
+    config/settings.yaml netease comment collector under 语燃料/language_fuel
+    (creation-material fuel, a different concept from formal research evidence)
+    is meant to BE this exception''s real data source, or a separate pipeline
+    needs to feed formal research specifically, is still open -- flagged for
+    whoever builds the real formal-research binding, not resolved here.'
   trigger: formal research run
   inputs:
   - query
   - provider results
+  - domain_label
   expected_behavior: Formal research structurally has no video platform search/read/download/ASR/comment/MediaCrawler
-    path.
+    path, EXCEPT in the music_entertainment domain, where work-specific comments
+    (netease/douban-style) may be used as formal evidence for that domain only.
   defaults:
     video_platform_allowed: false
+    domain_comment_exception: music_entertainment
   thresholds: {}
   timing_semantics: Boundary is structural, not default-disabled.
   state_effects:
   - formal evidence artifact only from allowed sources
   allowed_side_effects:
   - search provider read
+  - music_entertainment-domain work-comment read
   forbidden_behavior:
   - temporarily enable Douyin/video in formal research
-  - use comments as formal evidence
+  - use comments as formal evidence outside the music_entertainment domain
+  - use non-work-specific/general comments as formal evidence even in the
+    music_entertainment domain
   edge_cases:
   - hard-to-research topic
+  - a music_entertainment topic with no matching work (no comments to draw on)
   user_confirmation_required: false
   supersedes: []
   validation_required:
   - formal research blocked platform test
+  - music_entertainment domain comment-evidence allowed test
+  - non-music domain comment-evidence still blocked test
 - requirement_id: BR-RESEARCH-002
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
   source_section: 视频学习与正式研究分离
@@ -1707,30 +1737,39 @@ rules:
   source_section: 候选池衰减回温
   priority: P1
   domain_scope: domain layer
+  status: '2026-07-13 corrected (置顶规则总表 V0.6.3 卷首核对后,用户拍板): this rule''s
+    half_life_days/reheat_boost/expire_heat fields were a numeric decay/reheat
+    weighting scheme -- functionally a scoring/ranking mechanism, the same class
+    of thing BR-TOPIC-001''s 2026-07-11 correction explicitly removed elsewhere but
+    did not catch here (a sibling rule from the same 2026-07-02 bulk-generated
+    catalog commit, never revisited since). User decision: not part of this stage''s
+    design ("不是这个阶段该有的东西"); a real candidate-pool management mechanism may
+    be designed later as a separate, deliberate decision -- this is not that
+    decision. defaults/thresholds below removed; corresponding config/settings.yaml
+    candidate_pool block also removed (config/settings.example.yaml mirrors this).'
   trigger: daily topic flow
   inputs:
   - pushed-but-unselected topics
   - fresh hit tags
-  expected_behavior: Unselected topics become candidates, decay over time and can
-    be reheated by related fresh hits.
-  defaults:
-    half_life_days: 7
-    reheat_boost: 0.5
-  thresholds:
-    expire_heat: 0.1
-  timing_semantics: Decay uses age since pushed_at/created_at.
+  expected_behavior: Unselected topics become candidates for a future daily batch;
+    no scoring/ranking/decay-weight mechanism selects or reheats them (see BR-TOPIC-001
+    for the current no-scoring stance this rule now follows).
+  defaults: {}
+  thresholds: {}
+  timing_semantics: n/a -- decay/reheat mechanism removed, see status.
   state_effects:
-  - topic status/current_heat/reheat_count
+  - topic status
   allowed_side_effects: []
   forbidden_behavior:
   - drop all unselected topics
   - LLM-only candidate memory
+  - score/rank/weight/decay-based candidate reheat or selection
   edge_cases:
   - missing tags
   user_confirmation_required: false
   supersedes: []
   validation_required:
-  - candidate decay fixture
+  - candidate pool has no active decay/reheat scoring fixture (reverse test)
 - requirement_id: BR-TOPIC-003
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
   source_section: 原创题目优先缺口
