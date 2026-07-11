@@ -318,6 +318,8 @@ fixtures:
       relation_direction: not_applicable
 
   - fixture_id: overlong_input
+    # 2026-07-13 用户明确拍板取消字符上限:超长 left_content 不再在校验阶段
+    # 被拒绝,原样送进模型正常走完整个关系判断流程。
     input:
       request_id: relation-overlong
       correlation_id: relation-fixture-overlong
@@ -330,7 +332,9 @@ fixtures:
       domain_context: unknown
       relation_scope: evidence_unit
       schema_version: content_relation_judge.input.v1
-    expected_error: validation_error
+    expected:
+      relation_type: equivalent
+      relation_direction: symmetric
 
   - fixture_id: mixed_language
     input:

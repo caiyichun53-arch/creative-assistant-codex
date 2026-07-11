@@ -14,23 +14,18 @@ properties:
   request_id:
     type: string
     minLength: 1
-    maxLength: 80
   correlation_id:
     type: string
     minLength: 1
-    maxLength: 80
   experiment_id:
     type: string
     minLength: 1
-    maxLength: 80
   experiment_design:
     type: string
     minLength: 1
-    maxLength: 1800
   execution_summary:
     type: string
     minLength: 1
-    maxLength: 1800
   result_metrics:
     type: object
   evidence_items:
@@ -46,7 +41,6 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 160
   domain_label:
     type: string
     enum:

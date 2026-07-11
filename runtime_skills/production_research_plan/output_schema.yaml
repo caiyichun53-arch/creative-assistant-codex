@@ -9,7 +9,6 @@ properties:
   summary:
     type: string
     minLength: 1
-    maxLength: 800
   claims:
     type: array
     minItems: 1
@@ -17,7 +16,6 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 240
   plan_steps:
     type: array
     minItems: 1
@@ -31,7 +29,6 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 240
   schema_version:
     type: string
     const: production_research_plan.output.v1

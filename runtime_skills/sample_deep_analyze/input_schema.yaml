@@ -12,19 +12,15 @@ properties:
   request_id:
     type: string
     minLength: 1
-    maxLength: 80
   correlation_id:
     type: string
     minLength: 1
-    maxLength: 80
   sample_id:
     type: string
     minLength: 1
-    maxLength: 80
   candidate_topic:
     type: string
     minLength: 1
-    maxLength: 120
   transcript_excerpt:
     type: string
     minLength: 1
@@ -38,7 +34,6 @@ properties:
     # text -> ~7000 chars. Covers the real observed max (4528 chars) with
     # margin, without being an arbitrary round number disconnected from the
     # actual token budget it has to fit inside.
-    maxLength: 7000
   metrics:
     type: object
   domain_label:

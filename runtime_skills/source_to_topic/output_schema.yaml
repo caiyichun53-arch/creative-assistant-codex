@@ -17,10 +17,8 @@ properties:
       - no_result
   candidate_topic:
     type: string
-    maxLength: 120
   topic_angle:
     type: string
-    maxLength: 240
   supporting_evidence:
     type: array
     minItems: 0

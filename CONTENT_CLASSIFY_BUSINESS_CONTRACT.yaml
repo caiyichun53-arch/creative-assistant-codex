@@ -135,18 +135,6 @@ cross_domain_behavior:
 third_domain_behavior:
   label: third_domain_neutral
   limitation: Passing third-domain fixtures proves extensibility only, not third-domain business quality.
-input_length_limits:
-  request_id_max: 80
-  correlation_id_max: 80
-  content_id_max: 80
-  title_max: 120
-  body_max: 1200
-  evidence_item_max: 240
-  evidence_items_max: 8
-context_budget:
-  max_input_tokens: 2000
-token_budget:
-  max_output_tokens: 700
 timeout:
   milliseconds: 30000
 retry:
@@ -322,7 +310,6 @@ model_binding:
       rationale:
         type: string
         minLength: 1
-        maxLength: 500
       evidence_used:
         type: array
         minItems: 0
@@ -385,21 +372,16 @@ input_schema:
     request_id:
       type: string
       minLength: 1
-      maxLength: 80
     correlation_id:
       type: string
       minLength: 1
-      maxLength: 80
     content_id:
       type: string
       minLength: 1
-      maxLength: 80
     title:
       type: string
-      maxLength: 120
     body:
       type: string
-      maxLength: 1200
     evidence_items:
       type: array
       minItems: 1
@@ -407,7 +389,6 @@ input_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 240
     language_hint:
       type: string
       enum:
@@ -492,7 +473,6 @@ output_schema:
     rationale:
       type: string
       minLength: 1
-      maxLength: 500
     evidence_used:
       type: array
       minItems: 0

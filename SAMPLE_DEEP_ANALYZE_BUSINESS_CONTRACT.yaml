@@ -58,23 +58,15 @@ evidence_requirements:
   transcript_excerpt_required: true
   metrics_required: true
   output_must_not_claim_unprovided_comments: true
-input_length_limits:
-  request_id_max: 80
-  correlation_id_max: 80
-  sample_id_max: 80
-  candidate_topic_max: 120
-  # 2026-07-09: raised from 2200 -- derived from context_budget.max_input_tokens
-  # below (~1500 tokens reserved for prompt+metrics overhead, ~10500 left for
-  # transcript at a conservative 1.5 chars/token for Chinese). 2200 was cutting
-  # ~24% of real transcripts mid-content; confirmed on real data that this
-  # visibly degraded structure_pattern output (the model fabricated an ending
-  # for content it never saw). See runtime_skills/sample_deep_analyze/
-  # input_schema.yaml for the same derivation.
-  transcript_excerpt_max: 7000
-context_budget:
-  max_input_tokens: 12000
-token_budget:
-  max_output_tokens: 2500
+# 2026-07-13 用户明确拍板:彻底取消这份契约曾经声明的字符/token 上限
+# (input_length_limits.transcript_excerpt_max/context_budget/token_budget),
+# 转写文字稿等真实内容一律原样完整发给模型,不再截断,也不再对真实调用施加
+# max_completion_tokens 限制。历史教训留痕(不是删掉就当没发生过):2026-07-09
+# 曾经把 transcript_excerpt_max 从2200字硬截断,真实数据验证过这会切掉约24%
+# 真实转写文字稿的正文中段,模型在结构手法输出里编造了它从没见过的结尾——这
+# 正是"偷偷截断"最危险的地方:错误不会报出来,只会安静地污染产出。这次的决定
+# 就是不再允许这种情况发生,风险(真实调用可能因为内容过长而报错、或成本变高)
+# 由用户明确接受。
 timeout:
   milliseconds: 90000
 retry:
@@ -159,7 +151,6 @@ model_binding:
       candidate_topic:
         type: string
         minLength: 1
-        maxLength: 120
       transcript_excerpt: string
       metrics: object
     additional_properties: false
@@ -221,15 +212,12 @@ model_binding:
       topic_pattern:
         type: string
         minLength: 1
-        maxLength: 800
       hook_pattern:
         type: string
         minLength: 1
-        maxLength: 800
       structure_pattern:
         type: string
         minLength: 1
-        maxLength: 800
       schema_version:
         type: string
         const: sample_deep_analyze.output.v1
@@ -262,23 +250,18 @@ input_schema:
     request_id:
       type: string
       minLength: 1
-      maxLength: 80
     correlation_id:
       type: string
       minLength: 1
-      maxLength: 80
     sample_id:
       type: string
       minLength: 1
-      maxLength: 80
     candidate_topic:
       type: string
       minLength: 1
-      maxLength: 120
     transcript_excerpt:
       type: string
       minLength: 1
-      maxLength: 7000
     metrics:
       type: object
     domain_label:
@@ -304,15 +287,12 @@ output_schema:
     topic_pattern:
       type: string
       minLength: 1
-      maxLength: 800
     hook_pattern:
       type: string
       minLength: 1
-      maxLength: 800
     structure_pattern:
       type: string
       minLength: 1
-      maxLength: 800
     schema_version:
       type: string
       const: sample_deep_analyze.output.v1

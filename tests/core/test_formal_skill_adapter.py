@@ -104,8 +104,8 @@ class ContentClassifyBusinessContractTests(unittest.TestCase):
             validate_payload(sample_content_classify_input(domain_hint="legacy_domain"), contract.input_schema)
         with self.assertRaises(FormalSkillValidationError):
             validate_payload(sample_content_classify_input(evidence_items=[]), contract.input_schema)
-        with self.assertRaises(FormalSkillValidationError):
-            validate_payload(sample_content_classify_input(body="x" * 1201), contract.input_schema)
+        # 2026-07-13 用户明确拍板取消字符上限校验:超长 body 不再被拒绝,原样通过。
+        validate_payload(sample_content_classify_input(body="x" * 1201), contract.input_schema)
 
     def test_formal_output_schema_and_semantics_reject_bad_results(self) -> None:
         contract = FormalSkillContract.from_yaml()

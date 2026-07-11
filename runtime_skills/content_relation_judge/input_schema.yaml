@@ -13,17 +13,13 @@ properties:
   request_id:
     type: string
     minLength: 1
-    maxLength: 80
   correlation_id:
     type: string
     minLength: 1
-    maxLength: 80
   left_content:
     type: string
-    maxLength: 1200
   right_content:
     type: string
-    maxLength: 1200
   left_evidence_items:
     type: array
     minItems: 0
@@ -31,7 +27,6 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 240
   right_evidence_items:
     type: array
     minItems: 0
@@ -39,7 +34,6 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 240
   domain_context:
     type: string
     enum:

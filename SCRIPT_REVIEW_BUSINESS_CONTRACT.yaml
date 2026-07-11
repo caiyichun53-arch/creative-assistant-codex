@@ -57,15 +57,6 @@ evidence_requirements:
   human_reference_refs_max: 8
   issues_max: 8
   revision_targets_max: 8
-input_length_limits:
-  request_id_max: 80
-  correlation_id_max: 80
-  draft_text_max: 6000
-  brief_max: 3000
-context_budget:
-  max_input_tokens: 12000
-token_budget:
-  max_output_tokens: 4500
 timeout:
   milliseconds: 120000
 retry:
@@ -141,7 +132,6 @@ review_model_output_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 240
     schema_version:
       type: string
       const: script_review.review_output.v1
@@ -156,7 +146,6 @@ polish_model_output_schema:
     polished_text:
       type: string
       minLength: 50
-      maxLength: 6000
     revision_focus:
       type: array
       minItems: 1
@@ -164,7 +153,6 @@ polish_model_output_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 60
     schema_version:
       type: string
       const: script_review.polish_output.v1
@@ -189,7 +177,6 @@ ai_flavor_model_output_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 240
     schema_version:
       type: string
       const: script_review.ai_flavor_output.v1
@@ -276,19 +263,15 @@ input_schema:
     request_id:
       type: string
       minLength: 1
-      maxLength: 80
     correlation_id:
       type: string
       minLength: 1
-      maxLength: 80
     draft_text:
       type: string
       minLength: 50
-      maxLength: 6000
     brief:
       type: string
       minLength: 1
-      maxLength: 3000
     evidence_items:
       type: array
       minItems: 1
@@ -302,7 +285,6 @@ input_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 240
     domain_label:
       type: string
       enum:
@@ -339,11 +321,9 @@ output_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 240
     polished_text:
       type: string
       minLength: 50
-      maxLength: 6000
     revision_focus:
       type: array
       minItems: 1
@@ -351,7 +331,6 @@ output_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 60
     ai_flavor_risk:
       type: string
       enum:
@@ -365,7 +344,6 @@ output_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 240
     schema_version:
       type: string
       const: script_review.output.v1

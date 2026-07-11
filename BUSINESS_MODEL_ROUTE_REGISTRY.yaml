@@ -41,9 +41,6 @@ nodes:
     retry:
       max_attempts: 1
       retry_on: []
-    token_context_budget:
-      max_input_tokens: 2000
-      max_output_tokens: 700
     allowed_provider_policy:
       inherit: runtime_policy_defaults
     fallback_policy:
@@ -77,9 +74,6 @@ nodes:
     retry:
       max_attempts: 1
       retry_on: []
-    token_context_budget:
-      max_input_tokens: 2400
-      max_output_tokens: 900
     allowed_provider_policy:
       inherit: runtime_policy_defaults
     fallback_policy:
@@ -120,9 +114,6 @@ nodes:
     retry:
       max_attempts: 1
       retry_on: []
-    token_context_budget:
-      max_input_tokens: 5000
-      max_output_tokens: 1200
     allowed_provider_policy:
       inherit: runtime_policy_defaults
     fallback_policy:
@@ -163,9 +154,6 @@ nodes:
     retry:
       max_attempts: 1
       retry_on: []
-    token_context_budget:
-      max_input_tokens: 9000
-      max_output_tokens: 1800
     allowed_provider_policy:
       inherit: runtime_policy_defaults
     fallback_policy:
@@ -199,9 +187,6 @@ nodes:
     retry:
       max_attempts: 1
       retry_on: []
-    token_context_budget:
-      max_input_tokens: 12000
-      max_output_tokens: 2500
     allowed_provider_policy:
       inherit: runtime_policy_defaults
     fallback_policy:
@@ -235,9 +220,6 @@ nodes:
     retry:
       max_attempts: 1
       retry_on: []
-    token_context_budget:
-      max_input_tokens: 14000
-      max_output_tokens: 2800
     allowed_provider_policy:
       inherit: runtime_policy_defaults
     fallback_policy:
@@ -271,9 +253,6 @@ nodes:
     retry:
       max_attempts: 1
       retry_on: []
-    token_context_budget:
-      max_input_tokens: 9000
-      max_output_tokens: 1800
     allowed_provider_policy:
       inherit: runtime_policy_defaults
     fallback_policy:
@@ -307,9 +286,6 @@ nodes:
     retry:
       max_attempts: 1
       retry_on: []
-    token_context_budget:
-      max_input_tokens: 8000
-      max_output_tokens: 1500
     allowed_provider_policy:
       inherit: runtime_policy_defaults
     fallback_policy:
@@ -341,9 +317,6 @@ nodes:
     retry:
       max_attempts: 1
       retry_on: []
-    token_context_budget:
-      max_input_tokens: 9000
-      max_output_tokens: 1800
     allowed_provider_policy:
       inherit: runtime_policy_defaults
     fallback_policy:
@@ -376,9 +349,6 @@ nodes:
     retry:
       max_attempts: 1
       retry_on: []
-    token_context_budget:
-      max_input_tokens: 12000
-      max_output_tokens: 4500
     allowed_provider_policy:
       inherit: runtime_policy_defaults
     fallback_policy:
@@ -410,9 +380,6 @@ nodes:
     retry:
       max_attempts: 1
       retry_on: []
-    token_context_budget:
-      max_input_tokens: 10000
-      max_output_tokens: 2000
     allowed_provider_policy:
       inherit: runtime_policy_defaults
     fallback_policy:
@@ -445,9 +412,6 @@ nodes:
     retry:
       max_attempts: 1
       retry_on: []
-    token_context_budget:
-      max_input_tokens: 11000
-      max_output_tokens: 4500
     allowed_provider_policy:
       inherit: runtime_policy_defaults
     fallback_policy:
@@ -480,9 +444,6 @@ nodes:
     retry:
       max_attempts: 1
       retry_on: []
-    token_context_budget:
-      max_input_tokens: 9000
-      max_output_tokens: 1800
     allowed_provider_policy:
       inherit: runtime_policy_defaults
     fallback_policy:
@@ -516,9 +477,6 @@ nodes:
     retry:
       max_attempts: 1
       retry_on: []
-    token_context_budget:
-      max_input_tokens: 7000
-      max_output_tokens: 1800
     allowed_provider_policy:
       inherit: runtime_policy_defaults
     fallback_policy:
@@ -560,9 +518,6 @@ nodes:
     retry:
       max_attempts: 1
       retry_on: []
-    token_context_budget:
-      max_input_tokens: 8000
-      max_output_tokens: 2000
     allowed_provider_policy:
       inherit: runtime_policy_defaults
     fallback_policy:

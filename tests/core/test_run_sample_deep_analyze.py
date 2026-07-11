@@ -281,7 +281,9 @@ class AssembleSampleDeepAnalyzeInputTests(unittest.TestCase):
         self.assertEqual(payload["domain_label"], "unknown")
         self.assertIn(payload["domain_label"], ALLOWED_DOMAIN_LABELS)
 
-    def test_transcript_excerpt_truncated_to_7000_chars(self) -> None:
+    def test_a_transcript_longer_than_the_old_7000_cap_is_never_truncated(self) -> None:
+        # 2026-07-13 用户明确拍板取消字符上限:即使超过旧的7000字上限,也必须
+        # 原样完整保留,不截断。
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
@@ -292,7 +294,7 @@ class AssembleSampleDeepAnalyzeInputTests(unittest.TestCase):
                 payload = assemble_sample_deep_analyze_input(hit_row, run_id="run_test")
             finally:
                 conn.close()
-        self.assertEqual(len(payload["transcript_excerpt"]), 7000)
+        self.assertEqual(len(payload["transcript_excerpt"]), 8000)
 
     def test_a_real_length_transcript_passes_through_untruncated(self) -> None:
         # Regression for the real bug found 2026-07-09: a 4409-char real

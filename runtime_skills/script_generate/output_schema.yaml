@@ -6,7 +6,6 @@ properties:
   draft_text:
     type: string
     minLength: 50
-    maxLength: 6000
   schema_version:
     type: string
     const: script_generate.output.v1

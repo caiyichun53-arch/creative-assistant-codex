@@ -71,12 +71,12 @@ from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
     make_content_plan_harness,
 )
 from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig  # noqa: E402
-# CONTENT_PLAN_BUSINESS_CONTRACT.yaml input_length_limits.
-BRIEF_MAX_CHARS = 3000
+# 条数上限(CONTENT_PLAN_BUSINESS_CONTRACT.yaml evidence_requirements,数组
+# 长度限制,不是字符上限,这次不在用户要求取消的范围内)。字符上限
+# (BRIEF_MAX_CHARS/TACTIC_CANDIDATE_MAX_CHARS/STYLE_EXAMPLE_MAX_CHARS)
+# 2026-07-13 用户明确拍板彻底取消,真实内容一律原样完整发给模型。
 EVIDENCE_ITEMS_MAX = 12
-TACTIC_CANDIDATE_MAX_CHARS = 240
 TACTIC_CANDIDATES_MAX = 12
-STYLE_EXAMPLE_MAX_CHARS = 400
 STYLE_EXAMPLES_MAX = 6
 _SENTENCE_SPLIT = re.compile(r"[。！？.!?\n]+")
 
@@ -163,7 +163,7 @@ def _load_real_tactic_candidates_for_domain(conn: sqlite3.Connection, domain_lab
     candidates: list[str] = []
     for _, _, common_patterns in matched:
         for pattern in common_patterns:
-            candidates.append(str(pattern)[:TACTIC_CANDIDATE_MAX_CHARS])
+            candidates.append(str(pattern))
             if len(candidates) >= TACTIC_CANDIDATES_MAX:
                 return candidates
     return candidates
@@ -178,8 +178,8 @@ def _style_examples_from_transcript(transcript_text: str) -> list[str]:
     if not transcript_text:
         return ["(无可用转写文字稿,暂无风格参考文本)"]
     sentences = [s.strip() for s in _SENTENCE_SPLIT.split(transcript_text) if s.strip()]
-    examples = [s[:STYLE_EXAMPLE_MAX_CHARS] for s in sentences[:STYLE_EXAMPLES_MAX]]
-    return examples or [transcript_text[:STYLE_EXAMPLE_MAX_CHARS]]
+    examples = sentences[:STYLE_EXAMPLES_MAX]
+    return examples or [transcript_text]
 
 
 def assemble_content_plan_input(conn: sqlite3.Connection, topic_row: sqlite3.Row, *, run_id: str) -> dict[str, Any]:
@@ -208,7 +208,7 @@ def assemble_content_plan_input(conn: sqlite3.Connection, topic_row: sqlite3.Row
         evidence_items = [{"type": "topic_angle", "text": topic_row["topic_angle"]}]
     evidence_items = evidence_items[:EVIDENCE_ITEMS_MAX]
 
-    brief = f"选题:{topic_row['candidate_topic']}。切入角度:{topic_row['topic_angle']}"[:BRIEF_MAX_CHARS]
+    brief = f"选题:{topic_row['candidate_topic']}。切入角度:{topic_row['topic_angle']}"
 
     tactic_candidates = _load_real_tactic_candidates_for_domain(conn, domain_label)
     if not tactic_candidates:
@@ -216,15 +216,15 @@ def assemble_content_plan_input(conn: sqlite3.Connection, topic_row: sqlite3.Row
         # domain yet (see module docstring's 2026-07-13/B2 note) -- reuse the
         # same hit's own unreduced analysis, same as before B2.
         tactic_candidates = [
-            f"选题手法:{topic_row['topic_pattern']}"[:TACTIC_CANDIDATE_MAX_CHARS],
-            f"开头手法:{topic_row['hook_pattern']}"[:TACTIC_CANDIDATE_MAX_CHARS],
-            f"结构手法:{topic_row['structure_pattern']}"[:TACTIC_CANDIDATE_MAX_CHARS],
+            f"选题手法:{topic_row['topic_pattern']}",
+            f"开头手法:{topic_row['hook_pattern']}",
+            f"结构手法:{topic_row['structure_pattern']}",
         ]
 
     return {
         "request_id": f"content_plan_{topic_row['topic_id']}",
         "correlation_id": run_id,
-        "candidate_topic": topic_row["candidate_topic"][:120],
+        "candidate_topic": topic_row["candidate_topic"],
         "brief": brief,
         "evidence_items": evidence_items,
         "tactic_candidates": tactic_candidates,

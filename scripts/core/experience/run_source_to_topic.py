@@ -57,14 +57,13 @@ from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
 )
 from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig  # noqa: E402
 from scripts.core.persistence.goal01_store import content_hash  # noqa: E402
-# SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml input_length_limits.
-SOURCE_CONTENT_MAX_CHARS = 1600
-EVIDENCE_ITEM_MAX_CHARS = 240
-RELATION_SUMMARY_MAX_CHARS = 600
+# 字符上限(SOURCE_CONTENT_MAX_CHARS/EVIDENCE_ITEM_MAX_CHARS/
+# RELATION_SUMMARY_MAX_CHARS)2026-07-13 用户明确拍板彻底取消,真实内容一律
+# 原样完整发给模型。
 NO_RELATION_JUDGEMENT_YET = (
     "尚未做过来源关联判断(content_relation_judge 这个 Skill 还没有接上真实数据)——"
     "本次候选选题只依据下面列出的证据本身生成,不代表已经和现有内容/选题库比对过是否重复或冲突。"
-)[:RELATION_SUMMARY_MAX_CHARS]
+)
 # 2026-07-10: comments are the second of four evidence sources the project's
 # own 选题 methodology (the topic-selection session skill's writeup, see
 # ROADMAP.md for the exact reference) calls for -- "评论区（最值钱）：来源爆款
@@ -142,7 +141,7 @@ def _comment_evidence_items(top_comments_text: str | None) -> list[str]:
     if not top_comments_text:
         return []
     comments = [c for c in top_comments_text.split(TOP_COMMENTS_DELIMITER) if c.strip()]
-    return [f"热门评论:{c}"[:EVIDENCE_ITEM_MAX_CHARS] for c in comments]
+    return [f"热门评论:{c}" for c in comments]
 
 
 def assemble_source_to_topic_input(analysis_row: sqlite3.Row, *, run_id: str) -> dict[str, Any]:
@@ -161,11 +160,11 @@ def assemble_source_to_topic_input(analysis_row: sqlite3.Row, *, run_id: str) ->
         domain_label = "unknown"
     account_name = (analysis_row["account_name"] or "").strip()
     hit_title = (analysis_row["hit_title"] or "").strip()
-    source_content = f"账号「{account_name}」的爆款视频「{hit_title}」经深度分析后提炼的选题/开头/结构手法。"[:SOURCE_CONTENT_MAX_CHARS]
+    source_content = f"账号「{account_name}」的爆款视频「{hit_title}」经深度分析后提炼的选题/开头/结构手法。"
     evidence_items = [
-        f"选题手法:{analysis_row['topic_pattern']}"[:EVIDENCE_ITEM_MAX_CHARS],
-        f"开头手法:{analysis_row['hook_pattern']}"[:EVIDENCE_ITEM_MAX_CHARS],
-        f"结构手法:{analysis_row['structure_pattern']}"[:EVIDENCE_ITEM_MAX_CHARS],
+        f"选题手法:{analysis_row['topic_pattern']}",
+        f"开头手法:{analysis_row['hook_pattern']}",
+        f"结构手法:{analysis_row['structure_pattern']}",
     ]
     try:
         top_comments_text = analysis_row["top_comments_text"]
@@ -266,7 +265,7 @@ def build_real_harness(*, env_path: Path | None = None) -> tuple[FormalBusinessS
         model_name=model_name,
         config_version="source_to_topic.production.v1",
         config_hash=content_hash({"route": "business.source_to_topic", "provider": "hermes", "model": model_name}),
-        parameters={"temperature": 0, "max_completion_tokens": 1200, "response_format": {"type": "json_object"}},
+        parameters={"temperature": 0, "response_format": {"type": "json_object"}},
         timeout_ms=60000,
     )
     harness = make_source_to_topic_harness(provider=adapter, route=route)  # type: ignore[arg-type]

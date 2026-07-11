@@ -59,17 +59,6 @@ evidence_requirements:
   evidence_items_max: 12
   output_draft_min_length: 50
   output_draft_max_length: 6000
-input_length_limits:
-  request_id_max: 80
-  correlation_id_max: 80
-  brief_max: 3000
-  selected_hook_max: 240
-  beat_max: 360
-  research_summary_max: 1000
-context_budget:
-  max_input_tokens: 12000
-token_budget:
-  max_output_tokens: 4500
 timeout:
   milliseconds: 120000
 retry:
@@ -170,15 +159,12 @@ model_binding:
         items:
           type: string
           minLength: 1
-          maxLength: 360
       brief:
         type: string
         minLength: 1
-        maxLength: 3000
       selected_hook:
         type: string
         minLength: 1
-        maxLength: 240
       evidence_items:
         type: array
         minItems: 1
@@ -188,7 +174,6 @@ model_binding:
       research_summary:
         type: string
         minLength: 1
-        maxLength: 1000
     additional_properties: false
   # 2026-07-11: rewritten from a one-line "return JSON, don't do X" template.
   # Real production data review found the old prompt gave the model zero
@@ -249,7 +234,6 @@ model_binding:
       draft_text:
         type: string
         minLength: 50
-        maxLength: 6000
       schema_version:
         type: string
         const: script_generate.output.v1
@@ -277,19 +261,15 @@ input_schema:
     request_id:
       type: string
       minLength: 1
-      maxLength: 80
     correlation_id:
       type: string
       minLength: 1
-      maxLength: 80
     brief:
       type: string
       minLength: 1
-      maxLength: 3000
     selected_hook:
       type: string
       minLength: 1
-      maxLength: 240
     beats:
       type: array
       minItems: 1
@@ -297,11 +277,9 @@ input_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 360
     research_summary:
       type: string
       minLength: 1
-      maxLength: 1000
     evidence_items:
       type: array
       minItems: 1
@@ -329,7 +307,6 @@ output_schema:
     draft_text:
       type: string
       minLength: 50
-      maxLength: 6000
     schema_version:
       type: string
       const: script_generate.output.v1

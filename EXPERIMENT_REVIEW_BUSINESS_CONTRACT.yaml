@@ -56,16 +56,6 @@ evidence_requirements:
   tested_experience_refs_min: 1
   tested_experience_refs_max: 8
   output_evidence_used_must_reference_input_claims: true
-input_length_limits:
-  request_id_max: 80
-  correlation_id_max: 80
-  experiment_id_max: 80
-  experiment_design_max: 1800
-  execution_summary_max: 1800
-context_budget:
-  max_input_tokens: 7000
-token_budget:
-  max_output_tokens: 1800
 timeout:
   milliseconds: 60000
 retry:
@@ -220,7 +210,6 @@ model_binding:
         items:
           type: string
           minLength: 1
-          maxLength: 240
       evidence_used:
         type: array
         minItems: 0
@@ -234,7 +223,6 @@ model_binding:
         items:
           type: string
           minLength: 1
-          maxLength: 240
       schema_version:
         type: string
         const: experiment_review.output.v1
@@ -281,23 +269,18 @@ input_schema:
     request_id:
       type: string
       minLength: 1
-      maxLength: 80
     correlation_id:
       type: string
       minLength: 1
-      maxLength: 80
     experiment_id:
       type: string
       minLength: 1
-      maxLength: 80
     experiment_design:
       type: string
       minLength: 1
-      maxLength: 1800
     execution_summary:
       type: string
       minLength: 1
-      maxLength: 1800
     result_metrics:
       type: object
     evidence_items:
@@ -313,7 +296,6 @@ input_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 160
     domain_label:
       type: string
       enum:
@@ -370,7 +352,6 @@ output_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 240
     evidence_used:
       type: array
       minItems: 0
@@ -384,7 +365,6 @@ output_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 240
     schema_version:
       type: string
       const: experiment_review.output.v1

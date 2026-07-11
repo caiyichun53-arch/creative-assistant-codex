@@ -24,10 +24,8 @@ properties:
   target_experience_ref:
     type: string
     minLength: 1
-    maxLength: 160
   candidate_summary:
     type: string
-    maxLength: 1000
   change_rationale:
     type: array
     minItems: 0
@@ -35,7 +33,6 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 240
   evidence_refs:
     type: array
     minItems: 0
@@ -49,7 +46,6 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 240
   schema_version:
     type: string
     const: experience_revision_propose.output.v1

@@ -41,7 +41,6 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 240
   evidence_used:
     type: array
     minItems: 0
@@ -55,7 +54,6 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 240
   schema_version:
     type: string
     const: experiment_review.output.v1

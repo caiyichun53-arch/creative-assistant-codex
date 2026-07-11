@@ -10,15 +10,12 @@ properties:
   request_id:
     type: string
     minLength: 1
-    maxLength: 80
   correlation_id:
     type: string
     minLength: 1
-    maxLength: 80
   analysis_batch_id:
     type: string
     minLength: 1
-    maxLength: 80
   dna_note_refs:
     type: array
     minItems: 2
@@ -26,7 +23,6 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 2500
   domain_label:
     type: string
     enum:

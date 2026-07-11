@@ -54,32 +54,15 @@ reduction_policy:
 # 2026-07-11: dna_note_refs_max raised 12->20 by explicit user decision, so a
 # single real batch of 20 sample_deep_analyze results (see
 # production_activation_deviation_top20 in HANDOFF_STATE.md) can be reduced in
-# one tactic_extract call instead of being arbitrarily split. dna_note_ref_max
-# raised in three passes the same day: 160->320 (a single note could not carry
-# a labeled summary of all three real pattern fields -- topic/hook/structure
-# -- at 160 chars at all); 320->450 after checking real data showed a fixed
-# 90-char-per-field split (run_tactic_extract.py's first implementation) was
-# silently truncating real content on 2 of 22 real hit_deep_analysis rows
-# (structure_pattern is naturally the longest field, a multi-step narrative
-# breakdown; real max observed 233 chars, cut to 90 lost the back half);
-# then 450->2500 per explicit user instruction to remove all character-length
-# caps on this note-packing entirely -- run_tactic_extract.py's
-# _note_for_evidence_row() no longer truncates at all. 2500 is not an
-# empirical "covers what we've seen so far" number, it is the true provable
-# ceiling: sample_deep_analyze's own output_schema.yaml caps each of the 3
-# fields at 800 chars, so 3*800=2400 plus ~100 chars of overhead for the
-# analysis_id and field labels is the maximum any real note this pipeline can
-# ever produce -- 2500 covers that with margin, meaning this maxLength can
-# mathematically never bind against real content (see run_tactic_extract.py's
-# NoteExceedsSchemaCeilingError, which would only fire if sample_deep_
-# analyze's own schema changed without this file being updated to match).
-# context_budget.max_input_tokens (14000) was left unchanged -- accepted,
-# documented residual risk: 20 notes simultaneously at the true 2500-char
-# ceiling would be ~33000 estimated tokens (at this codebase's own ~1.5
-# chars/token estimate for Chinese text), which would exceed it. Real
-# observed data is nowhere near this (20 real notes total ~3000 chars, ~2000
-# tokens) -- this edge case is flagged, not dynamically guarded against by
-# shrinking batch size, since that was not asked for.
+# one tactic_extract call instead of being arbitrarily split.
+# 2026-07-13 用户明确拍板:这份契约曾经声明的 dna_note_ref_max(单条note的字符
+# 上限,历史上从160一路加宽到2500)、context_budget.max_input_tokens 这些字符/
+# token 上限已经彻底取消——run_tactic_extract.py 的 _note_for_evidence_row()
+# 不再截断,真实内容一律原样完整发给模型。历史教训留痕:这条上限曾经真的
+# 切掉过真实内容(90字/字段的早期实现,在22条真实分析里有2条被切掉后半段,
+# structure_pattern 这种长字段最容易受伤),这正是这次彻底取消上限的理由,不是
+# 平白无故删掉一道护栏。风险(真实调用可能因为内容过长报错、或成本变高)由
+# 用户明确接受。
 # 2026-07-11: output_arrays_max raised 12->200 (effectively uncapped for a
 # diagnostic run). The prior 12 had zero BUSINESS_RULE_CATALOG.yaml backing
 # -- BR-DNA-004 (the catalog entry for this exact step) records a real
@@ -97,15 +80,6 @@ evidence_requirements:
   dna_note_refs_max: 20
   output_arrays_min: 1
   output_arrays_max: 200
-input_length_limits:
-  request_id_max: 80
-  correlation_id_max: 80
-  analysis_batch_id_max: 80
-  dna_note_ref_max: 2500
-context_budget:
-  max_input_tokens: 14000
-token_budget:
-  max_output_tokens: 2800
 timeout:
   milliseconds: 90000
 retry:
@@ -239,7 +213,6 @@ model_binding:
         items:
           type: string
           minLength: 1
-          maxLength: 240
       example_candidates:
         type: array
         minItems: 1
@@ -247,7 +220,6 @@ model_binding:
         items:
           type: string
           minLength: 1
-          maxLength: 240
       schema_version:
         type: string
         const: tactic_extract.output.v1
@@ -275,15 +247,12 @@ input_schema:
     request_id:
       type: string
       minLength: 1
-      maxLength: 80
     correlation_id:
       type: string
       minLength: 1
-      maxLength: 80
     analysis_batch_id:
       type: string
       minLength: 1
-      maxLength: 80
     dna_note_refs:
       type: array
       minItems: 2
@@ -291,7 +260,6 @@ input_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 2500
     domain_label:
       type: string
       enum:
@@ -318,7 +286,6 @@ output_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 240
     example_candidates:
       type: array
       minItems: 1
@@ -326,7 +293,6 @@ output_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 240
     schema_version:
       type: string
       const: tactic_extract.output.v1

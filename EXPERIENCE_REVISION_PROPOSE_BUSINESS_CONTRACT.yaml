@@ -56,13 +56,6 @@ evidence_requirements:
   new_evidence_items_max: 12
   tactic_candidates_max: 12
   output_evidence_refs_must_reference_input_source_refs: true
-input_length_limits:
-  request_id_max: 80
-  correlation_id_max: 80
-context_budget:
-  max_input_tokens: 8000
-token_budget:
-  max_output_tokens: 2000
 timeout:
   milliseconds: 60000
 retry:
@@ -200,10 +193,8 @@ model_binding:
       target_experience_ref:
         type: string
         minLength: 1
-        maxLength: 160
       candidate_summary:
         type: string
-        maxLength: 1000
       change_rationale:
         type: array
         minItems: 0
@@ -211,7 +202,6 @@ model_binding:
         items:
           type: string
           minLength: 1
-          maxLength: 240
       evidence_refs:
         type: array
         minItems: 0
@@ -225,7 +215,6 @@ model_binding:
         items:
           type: string
           minLength: 1
-          maxLength: 240
       schema_version:
         type: string
         const: experience_revision_propose.output.v1
@@ -270,11 +259,9 @@ input_schema:
     request_id:
       type: string
       minLength: 1
-      maxLength: 80
     correlation_id:
       type: string
       minLength: 1
-      maxLength: 80
     frozen_experience_versions:
       type: array
       minItems: 0
@@ -296,7 +283,6 @@ input_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 160
     domain_label:
       type: string
       enum:
@@ -336,10 +322,8 @@ output_schema:
     target_experience_ref:
       type: string
       minLength: 1
-      maxLength: 160
     candidate_summary:
       type: string
-      maxLength: 1000
     change_rationale:
       type: array
       minItems: 0
@@ -347,7 +331,6 @@ output_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 240
     evidence_refs:
       type: array
       minItems: 0
@@ -361,7 +344,6 @@ output_schema:
       items:
         type: string
         minLength: 1
-        maxLength: 240
     schema_version:
       type: string
       const: experience_revision_propose.output.v1

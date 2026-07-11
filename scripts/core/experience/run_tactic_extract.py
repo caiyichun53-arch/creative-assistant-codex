@@ -18,29 +18,18 @@ What counts as one "dna_note_ref" here: each ref packs a labeled, complete
 copy of all three real sample_deep_analyze pattern fields (topic_pattern/
 hook_pattern/structure_pattern) for one piece of evidence. 2026-07-11, in two
 passes: first the Skill's own dna_note_ref_max was raised 160->320 (a single
-note could not carry all three fields at all at 160); then, after the user
-explicitly asked for all character-length caps on this note-packing to be
-removed (following a real bug where a fixed 90-char-per-field split silently
-cut real content -- structure_pattern's real max observed was 233 chars, a
-multi-step narrative breakdown, cut to 90 lost the back half), the binding
-code no longer truncates notes at all -- _note_for_evidence_row() returns the
-full, untruncated string, unconditionally. dna_note_ref_max was raised again,
-320->2500, derived from sample_deep_analyze's own output_schema.yaml ceiling
-(3 fields x 800 chars max + ~100 chars overhead for the analysis_id/labels)
-so that no real note this pipeline can ever produce is capable of exceeding
-it -- this is a provable ceiling, not an empirical one. If a future note
-somehow still exceeded 2500 chars, runtime_skills/tactic_extract's own input
-validation would reject the job with a clear schema error rather than the
-content being silently cut, which is the correct failure mode here.
+note could not carry all three fields at all at 160); then, after a real bug
+where a fixed 90-char-per-field split silently cut real content
+(structure_pattern's real max observed was 233 chars, a multi-step narrative
+breakdown, cut to 90 lost the back half), the binding code stopped
+truncating notes -- but still enforced a raised, provably-safe ceiling
+(dna_note_ref_max=2500) that would raise a clear error rather than silently
+cut content if real data ever somehow exceeded it.
 
-Residual, accepted risk (not solved by this pass, called out rather than
-hidden): context_budget.max_input_tokens is 14000, and 20 notes at the true
-2500-char ceiling would be ~33000 estimated tokens -- if every note in a
-batch happened to be near that ceiling simultaneously, the real call could
-exceed the model's actual context window. Real observed data is nowhere
-near this (20 real notes total ~3000 chars, ~2000 tokens) -- this is
-flagged as a known, currently-inert edge case, not dynamically guarded
-against by shrinking batch size, since that was not asked for here.
+2026-07-13 用户明确拍板:连这道"超过就报错"的边界也一并取消了(不只是取消
+静默截断)——_note_for_evidence_row() 和 assemble_dna_note_refs() 现在对真实
+内容不做任何长度检查,原样完整发给模型。风险(真实调用可能因为内容过长报错、
+或成本变高)由用户明确接受,不再靠这个模块自己拦。
 
 A single tactic_extract call can only reduce 2-20 pieces of evidence
 (dna_note_refs_min/max) and only one domain_label at a time (no mixing) --
@@ -77,18 +66,13 @@ from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
 )
 from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig  # noqa: E402
 from scripts.core.persistence.goal01_store import content_hash  # noqa: E402
-# TACTIC_EXTRACT_BUSINESS_CONTRACT.yaml's evidence_requirements/input_length_limits.
+# TACTIC_EXTRACT_BUSINESS_CONTRACT.yaml's evidence_requirements (数组条数上限,
+# 不是字符上限,这次不在用户要求取消的范围内)。
 BATCH_MIN = 2
 BATCH_MAX = 20
-# 2026-07-11 (third pass): per explicit user instruction, all character
-# caps on note packing are removed -- _note_for_evidence_row() no longer
-# truncates. This constant now exists only to declare the schema's ceiling
-# (dna_note_ref_max in TACTIC_EXTRACT_BUSINESS_CONTRACT.yaml/input_schema.yaml),
-# derived from sample_deep_analyze's own output_schema.yaml guarantee (3
-# fields x 800 chars max + ~100 chars overhead) so it can never actually bind
-# against real content this pipeline produces -- see module docstring for
-# the full derivation and the accepted residual risk.
-NOTE_MAX_CHARS = 2500
+# 2026-07-13 用户明确拍板:连"超过某个字符数就报错停下"这道边界也一并取消
+# (不只是取消静默截断)——真实内容一律原样完整发给模型,不设任何上限,风险
+# (真实调用可能因为内容过长报错、或成本变高)由用户明确接受。
 
 
 def validate_run_tactic_extract_execution_contract() -> dict[str, Any]:
@@ -136,16 +120,6 @@ def select_evidence_for_tactic_batch(conn: sqlite3.Connection, *, domain_label: 
     ).fetchall()
 
 
-class NoteExceedsSchemaCeilingError(ValueError):
-    """Raised when a real note would violate dna_note_ref_max
-    (NOTE_MAX_CHARS) -- per this constant's derivation, real upstream
-    content can never actually reach this, so hitting this error means
-    sample_deep_analyze's own output_schema.yaml field caps changed without
-    this module being updated to match. Failing loudly here, before a real
-    paid API call, is deliberate -- the alternative (silently truncating)
-    is exactly what this module stopped doing per user instruction."""
-
-
 def _note_for_evidence_row(row: sqlite3.Row) -> str:
     """Builds the note from the full, untruncated real pattern fields --
     no character cap is applied here (2026-07-11, per explicit user
@@ -157,15 +131,7 @@ def _note_for_evidence_row(row: sqlite3.Row) -> str:
 
 
 def assemble_dna_note_refs(evidence_rows: list[sqlite3.Row]) -> list[str]:
-    notes = [_note_for_evidence_row(row) for row in evidence_rows]
-    for row, note in zip(evidence_rows, notes):
-        if len(note) > NOTE_MAX_CHARS:
-            raise NoteExceedsSchemaCeilingError(
-                f"note for analysis_id={row['analysis_id']!r} is {len(note)} chars, "
-                f"exceeding the schema ceiling of {NOTE_MAX_CHARS} -- see NOTE_MAX_CHARS's "
-                "derivation comment; this should be mathematically impossible with real data"
-            )
-    return notes
+    return [_note_for_evidence_row(row) for row in evidence_rows]
 
 
 def assemble_tactic_extract_input(
@@ -285,7 +251,7 @@ def build_real_harness(*, env_path: Path | None = None) -> tuple[FormalBusinessS
         model_name=model_name,
         config_version="tactic_extract.production.v1",
         config_hash=content_hash({"route": "business.reverse_pattern_reduce", "provider": "hermes", "model": model_name}),
-        parameters={"temperature": 0, "max_completion_tokens": 2800, "response_format": {"type": "json_object"}},
+        parameters={"temperature": 0, "response_format": {"type": "json_object"}},
         timeout_ms=90000,
     )
     harness = make_tactic_extract_harness(provider=adapter, route=route)  # type: ignore[arg-type]

@@ -12,11 +12,9 @@ properties:
   request_id:
     type: string
     minLength: 1
-    maxLength: 80
   correlation_id:
     type: string
     minLength: 1
-    maxLength: 80
   frozen_experience_versions:
     type: array
     minItems: 0
@@ -38,7 +36,6 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 160
   domain_label:
     type: string
     enum:

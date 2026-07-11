@@ -55,12 +55,12 @@ from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
 from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig  # noqa: E402
 from scripts.core.persistence.goal01_store import content_hash  # noqa: E402
 
-# SCRIPT_REVIEW_BUSINESS_CONTRACT.yaml input_length_limits.
-BRIEF_MAX_CHARS = 3000
+# 条数上限(数组长度,不是字符上限,这次不在用户要求取消的范围内)。
 EVIDENCE_ITEMS_MAX = 12
 # runtime_skills/script_review/input_schema.yaml human_reference_refs.
 HUMAN_REFERENCE_REFS_MAX = 8
-HUMAN_REFERENCE_REF_MAX_CHARS = 240
+# 字符上限(BRIEF_MAX_CHARS/HUMAN_REFERENCE_REF_MAX_CHARS 原来都在这里)
+# 2026-07-13 用户明确拍板彻底取消,真实内容一律原样完整发给模型。
 _SENTENCE_SPLIT = re.compile(r"[。！？.!?\n]+")
 
 
@@ -73,8 +73,8 @@ def _human_reference_refs_from_transcript(transcript_text: str) -> list[str]:
     if not transcript_text:
         return []
     sentences = [s.strip() for s in _SENTENCE_SPLIT.split(transcript_text) if s.strip()]
-    refs = [s[:HUMAN_REFERENCE_REF_MAX_CHARS] for s in sentences[:HUMAN_REFERENCE_REFS_MAX]]
-    return refs or [transcript_text[:HUMAN_REFERENCE_REF_MAX_CHARS]]
+    refs = sentences[:HUMAN_REFERENCE_REFS_MAX]
+    return refs or [transcript_text]
 
 
 def validate_script_review_execution_contract() -> dict[str, Any]:
@@ -135,7 +135,7 @@ def assemble_script_review_input(draft_row: sqlite3.Row, *, run_id: str) -> dict
         evidence_items = [{"type": "topic_angle", "text": draft_row["topic_angle"]}]
     evidence_items = evidence_items[:EVIDENCE_ITEMS_MAX]
 
-    brief = f"选题:{draft_row['candidate_topic']}。切入角度:{draft_row['topic_angle']}"[:BRIEF_MAX_CHARS]
+    brief = f"选题:{draft_row['candidate_topic']}。切入角度:{draft_row['topic_angle']}"
 
     human_reference_refs = _human_reference_refs_from_transcript(draft_row["transcript_text"] or "")
     if not human_reference_refs:
@@ -224,7 +224,7 @@ def build_real_harness(*, env_path: Path | None = None) -> tuple[FormalBusinessS
             model_name=model_name,
             config_version="script_review.production.v1",
             config_hash=content_hash({"route": route_name, "provider": "hermes", "model": model_name}),
-            parameters={"temperature": 0.3, "max_completion_tokens": 2500, "response_format": {"type": "json_object"}},
+            parameters={"temperature": 0.3, "response_format": {"type": "json_object"}},
             timeout_ms=60000,
         )
     harness = make_script_review_harness(provider=adapter, routes=routes)  # type: ignore[arg-type]

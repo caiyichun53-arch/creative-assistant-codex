@@ -12,18 +12,14 @@ properties:
   request_id:
     type: string
     minLength: 1
-    maxLength: 80
   correlation_id:
     type: string
     minLength: 1
-    maxLength: 80
   source_id:
     type: string
     minLength: 1
-    maxLength: 80
   source_content:
     type: string
-    maxLength: 1600
   source_evidence_items:
     type: array
     minItems: 1
@@ -31,7 +27,6 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 240
   domain_label:
     type: string
     enum:
@@ -42,7 +37,6 @@ properties:
       - unknown
   relation_summary:
     type: string
-    maxLength: 600
   schema_version:
     type: string
     const: source_to_topic.input.v1

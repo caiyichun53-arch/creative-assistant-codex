@@ -34,7 +34,7 @@ output_schema:
     confidence:
       type: string
       enum: [high, medium, low, none]
-    rationale: {type: string, minLength: 1, maxLength: 500}
+    rationale: {type: string, minLength: 1}
     evidence_used:
       type: array
       minItems: 0

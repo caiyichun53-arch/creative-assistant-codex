@@ -188,9 +188,10 @@ class CommentEvidenceItemsTests(unittest.TestCase):
     def test_empty_string_returns_empty_list(self) -> None:
         self.assertEqual(_comment_evidence_items(""), [])
 
-    def test_truncates_to_240_chars_per_item(self) -> None:
+    def test_a_long_comment_is_never_truncated(self) -> None:
+        # 2026-07-13 用户明确拍板取消字符上限:超长评论原样保留,不截断。
         items = _comment_evidence_items("字" * 500)
-        self.assertEqual(len(items[0]), 240)
+        self.assertEqual(len(items[0]), 500 + len("热门评论:"))
 
 
 class AssembleSourceToTopicInputTests(unittest.TestCase):
@@ -265,7 +266,8 @@ class AssembleSourceToTopicInputTests(unittest.TestCase):
         self.assertEqual(payload["domain_label"], "unknown")
         self.assertIn(payload["domain_label"], ALLOWED_DOMAIN_LABELS)
 
-    def test_evidence_items_respect_the_240_char_schema_limit(self) -> None:
+    def test_long_evidence_items_are_never_truncated(self) -> None:
+        # 2026-07-13 用户明确拍板取消字符上限:超长选题/开头/结构手法原样保留。
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
@@ -277,7 +279,7 @@ class AssembleSourceToTopicInputTests(unittest.TestCase):
             finally:
                 conn.close()
         for item in payload["source_evidence_items"]:
-            self.assertLessEqual(len(item), 240)
+            self.assertIn("字" * 500, item)
 
     def test_real_max_comment_count_fits_without_the_defensive_error(self) -> None:
         # 2026-07-11 regression: SOURCE_EVIDENCE_ITEMS_MAX(63) must actually

@@ -47,9 +47,9 @@ from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
 )
 from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig  # noqa: E402
 from scripts.core.persistence.goal01_store import content_hash  # noqa: E402
-# SCRIPT_GENERATE_BUSINESS_CONTRACT.yaml input_length_limits.
-BRIEF_MAX_CHARS = 3000
-RESEARCH_SUMMARY_MAX_CHARS = 1000
+# 条数上限(数组长度,不是字符上限,这次不在用户要求取消的范围内)。字符上限
+# (BRIEF_MAX_CHARS/RESEARCH_SUMMARY_MAX_CHARS)2026-07-13 用户明确拍板彻底
+# 取消,真实内容一律原样完整发给模型。
 EVIDENCE_ITEMS_MAX = 12
 NOT_A_REAL_RESEARCH_PASS_PREFIX = "(未经真实研究流程,仅汇总已有证据,不是 research_evidence_extract/production_research_plan 的产出)"
 
@@ -109,10 +109,10 @@ def assemble_script_generate_input(plan_row: sqlite3.Row, *, run_id: str) -> dic
         evidence_items = [{"type": "topic_angle", "text": plan_row["topic_angle"]}]
     evidence_items = evidence_items[:EVIDENCE_ITEMS_MAX]
 
-    brief = f"选题:{plan_row['candidate_topic']}。切入角度:{plan_row['topic_angle']}"[:BRIEF_MAX_CHARS]
+    brief = f"选题:{plan_row['candidate_topic']}。切入角度:{plan_row['topic_angle']}"
 
     evidence_summary = "; ".join(item["text"] for item in evidence_items)
-    research_summary = f"{NOT_A_REAL_RESEARCH_PASS_PREFIX} 已有证据:{evidence_summary}"[:RESEARCH_SUMMARY_MAX_CHARS]
+    research_summary = f"{NOT_A_REAL_RESEARCH_PASS_PREFIX} 已有证据:{evidence_summary}"
 
     return {
         "request_id": f"script_generate_{plan_row['plan_id']}",
@@ -187,7 +187,7 @@ def build_real_harness(*, env_path: Path | None = None) -> tuple[FormalBusinessS
         model_name=model_name,
         config_version="script_generate.production.v1",
         config_hash=content_hash({"route": "business.creation_draft", "provider": "hermes", "model": model_name}),
-        parameters={"temperature": 0.3, "max_completion_tokens": 2500, "response_format": {"type": "json_object"}},
+        parameters={"temperature": 0.3, "response_format": {"type": "json_object"}},
         timeout_ms=60000,
     )
     harness = make_script_generate_harness(provider=adapter, route=route)  # type: ignore[arg-type]

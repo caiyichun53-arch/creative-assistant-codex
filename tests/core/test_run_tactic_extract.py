@@ -8,8 +8,6 @@ from pathlib import Path
 from scripts.core.business_data.register_competitor_accounts import install_schema
 from scripts.core.experience.evidence_registry import register_hit_deep_analysis_evidence
 from scripts.core.experience.run_tactic_extract import (
-    NOTE_MAX_CHARS,
-    NoteExceedsSchemaCeilingError,
     assemble_dna_note_refs,
     assemble_tactic_extract_input,
     generate_one_tactic_candidate,
@@ -222,27 +220,10 @@ class AssembleDnaNoteRefsTests(unittest.TestCase):
             finally:
                 conn.close()
 
-    def test_a_note_within_the_true_schema_ceiling_does_not_raise(self) -> None:
-        # 3 fields at sample_deep_analyze's own real max (800 chars each) is
-        # the worst case real upstream data could ever produce -- must not
-        # raise NoteExceedsSchemaCeilingError.
-        with tempfile.TemporaryDirectory() as tmp:
-            conn = _connect(tmp)
-            try:
-                _insert_account(conn)
-                _insert_hit(conn, "h0")
-                _insert_analysis(conn, "a0", "h0", topic_pattern="选" * 800, hook_pattern="钩" * 800, structure_pattern="构" * 800)
-                register_hit_deep_analysis_evidence(conn, "a0")
-                rows = select_evidence_for_tactic_batch(conn, domain_label="fan_kepu_social_life", limit=10)
-                notes = assemble_dna_note_refs(rows)
-                self.assertLessEqual(len(notes[0]), NOTE_MAX_CHARS)
-            finally:
-                conn.close()
-
-    def test_a_note_exceeding_the_true_schema_ceiling_raises_instead_of_silently_truncating(self) -> None:
-        # Simulates data sample_deep_analyze's own schema should never
-        # actually produce (900 chars/field, past its 800 cap) -- proves the
-        # fail-loud safety net actually fires rather than silently cutting.
+    def test_a_very_long_note_is_never_truncated_or_rejected(self) -> None:
+        # 2026-07-13 用户明确拍板:彻底取消字符上限,连"超过就报错"的边界也
+        # 取消了 -- 即使远超 sample_deep_analyze 实际观测到的真实上限(800字/
+        # 字段),也必须原样完整保留,不截断、不报错。
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
@@ -251,8 +232,10 @@ class AssembleDnaNoteRefsTests(unittest.TestCase):
                 _insert_analysis(conn, "a0", "h0", topic_pattern="选" * 900, hook_pattern="钩" * 900, structure_pattern="构" * 900)
                 register_hit_deep_analysis_evidence(conn, "a0")
                 rows = select_evidence_for_tactic_batch(conn, domain_label="fan_kepu_social_life", limit=10)
-                with self.assertRaises(NoteExceedsSchemaCeilingError):
-                    assemble_dna_note_refs(rows)
+                notes = assemble_dna_note_refs(rows)
+                self.assertIn("选" * 900, notes[0])
+                self.assertIn("钩" * 900, notes[0])
+                self.assertIn("构" * 900, notes[0])
             finally:
                 conn.close()
 

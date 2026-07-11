@@ -78,21 +78,12 @@ from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
 )
 from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig  # noqa: E402
 from scripts.core.persistence.goal01_store import content_hash  # noqa: E402
-# 2026-07-09: matches SAMPLE_DEEP_ANALYZE_BUSINESS_CONTRACT.yaml's
-# input_length_limits.transcript_excerpt_max (also runtime_skills/
-# sample_deep_analyze/input_schema.yaml's maxLength) -- both raised the same
-# day from a hardcoded 2200 after real data proved it truncated ~24% of real
-# transcripts mid-content (one 4409-char real transcript got cut in half; the
-# model's structure_pattern output visibly fabricated an ending for content it
-# never saw). 7000 is derived from the contract's own
-# context_budget.max_input_tokens=12000: ~1500 tokens reserved for prompt
-# template + metrics + JSON overhead, ~10500 left for the transcript at a
-# conservative 1.5 chars/token for Chinese text. This constant and the two
-# schema copies must move together -- the Skill's own input validation will
-# reject a longer excerpt than its schema allows regardless of what this file
-# sends.
-TRANSCRIPT_EXCERPT_MAX_CHARS = 7000
-CANDIDATE_TOPIC_MAX_CHARS = 120
+# 2026-07-13 用户明确拍板:彻底取消 transcript_excerpt/candidate_topic 的字符
+# 截断。历史教训(不是删掉就当没发生过):2026-07-09 曾经把截断上限从2200字
+# 提到7000字,起因是真实数据证明2200字会切掉约24%真实转写文字稿的正文中段,
+# 模型在 structure_pattern 输出里编造了它从没见过的结尾——这正是"偷偷截断"
+# 最危险的地方:错误不会报出来,只会安静地污染产出。这次的决定是不再允许这种
+# 情况发生,风险(真实调用可能因为内容过长报错、或成本变高)由用户明确接受。
 
 
 def validate_sample_deep_analyze_execution_contract() -> dict[str, Any]:
@@ -192,13 +183,13 @@ def assemble_sample_deep_analyze_input(hit_row: sqlite3.Row, *, run_id: str) -> 
     if domain_label not in ALLOWED_DOMAIN_LABELS:
         domain_label = "unknown"
     transcript_text = hit_row["transcript_text"] or ""
-    candidate_topic = (hit_row["title"] or "").strip()[:CANDIDATE_TOPIC_MAX_CHARS] or "未命名选题"
+    candidate_topic = (hit_row["title"] or "").strip() or "未命名选题"
     return {
         "request_id": f"sample_deep_analyze_{hit_row['hit_id']}",
         "correlation_id": run_id,
         "sample_id": hit_row["hit_id"],
         "candidate_topic": candidate_topic,
-        "transcript_excerpt": transcript_text[:TRANSCRIPT_EXCERPT_MAX_CHARS],
+        "transcript_excerpt": transcript_text,
         "metrics": {
             "like_count": hit_row["like_count"],
             "comment_count": hit_row["comment_count"],
@@ -299,7 +290,7 @@ def build_real_harness(*, env_path: Path | None = None) -> tuple[FormalBusinessS
         model_name=model_name,
         config_version="sample_deep_analyze.production.v1",
         config_hash=content_hash({"route": "business.reverse_dna_analysis", "provider": "hermes", "model": model_name}),
-        parameters={"temperature": 0, "max_completion_tokens": 2500, "response_format": {"type": "json_object"}},
+        parameters={"temperature": 0, "response_format": {"type": "json_object"}},
         timeout_ms=90000,
     )
     harness = make_sample_deep_analyze_harness(provider=adapter, route=route)  # type: ignore[arg-type]

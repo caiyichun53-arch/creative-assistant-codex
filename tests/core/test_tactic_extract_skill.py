@@ -92,16 +92,13 @@ class TacticExtractBusinessContractTests(unittest.TestCase):
         with self.assertRaises(FormalSkillValidationError):
             validate_payload(sample_tactic_extract_input(dna_note_refs=[f"note-{i}" for i in range(21)]), contract.input_schema)
 
-    def test_dna_note_ref_max_length_is_2500_not_160(self) -> None:
-        # 2026-07-11: raised 160->320->450->2500 across three passes, the last
-        # one per explicit user instruction to remove all character-length
-        # caps on note packing -- 2500 is the true provable ceiling derived
-        # from sample_deep_analyze's own output_schema.yaml (3 fields x 800
-        # chars + overhead), not an empirical guess. Locks in both edges.
+    def test_dna_note_ref_is_never_length_rejected(self) -> None:
+        # 2026-07-11: raised 160->320->450->2500 across three passes. 2026-07-13
+        # 用户明确拍板:连"超过2500就报错"这道边界也一并取消了 -- 字符长度不再
+        # 是校验维度,即使远超2500也必须原样通过。
         contract = FormalSkillContract.from_yaml(TACTIC_EXTRACT_CONTRACT_PATH)
         validate_payload(sample_tactic_extract_input(dna_note_refs=["字" * 2500, "字" * 2500]), contract.input_schema)
-        with self.assertRaises(FormalSkillValidationError):
-            validate_payload(sample_tactic_extract_input(dna_note_refs=["字" * 2501, "字" * 2]), contract.input_schema)
+        validate_payload(sample_tactic_extract_input(dna_note_refs=["字" * 5000, "字" * 2]), contract.input_schema)
 
 
 class TacticExtractFixtureTests(TacticExtractHarnessMixin, unittest.TestCase):

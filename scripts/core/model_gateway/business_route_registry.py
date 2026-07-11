@@ -89,7 +89,6 @@ class NodeContract:
     output_schema: dict[str, Any]
     timeout_ms: int
     retry: dict[str, Any]
-    token_context_budget: dict[str, int]
 
 
 class FixtureModelProvider:
@@ -136,7 +135,6 @@ def node_contracts(registry: dict[str, Any]) -> list[NodeContract]:
             output_schema=dict(node["output_schema"]),
             timeout_ms=int(node["timeout_ms"]),
             retry=dict(node["retry"]),
-            token_context_budget=dict(node["token_context_budget"]),
         )
         for node in nodes
     ]
@@ -198,9 +196,6 @@ def validate_registry(registry: dict[str, Any]) -> dict[str, Any]:
             raise BusinessRouteRegistryError(f"{contract.node_id} timeout_ms must be positive")
         _validate_schema_shape(contract.input_schema, f"{contract.node_id}.input_schema")
         _validate_schema_shape(contract.output_schema, f"{contract.node_id}.output_schema")
-        budget = contract.token_context_budget
-        if int(budget.get("max_input_tokens", 0)) <= 0 or int(budget.get("max_output_tokens", 0)) <= 0:
-            raise BusinessRouteRegistryError(f"{contract.node_id} token budget must be positive")
     return {"node_count": len(contracts), "logical_routes": sorted(seen_routes)}
 
 
@@ -230,7 +225,7 @@ def run_fixture_route_tests(registry: dict[str, Any]) -> dict[str, Any]:
                 contract.route_id,
                 route_name=contract.logical_route,
                 config_version=f"{GOAL_ID}.registry.v1",
-                parameters={"temperature": 0, "max_completion_tokens": contract.token_context_budget["max_output_tokens"]},
+                parameters={"temperature": 0},
                 timeout_ms=contract.timeout_ms,
             )
             for contract in contracts

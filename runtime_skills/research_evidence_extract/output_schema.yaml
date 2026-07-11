@@ -17,7 +17,6 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 240
   schema_version:
     type: string
     const: research_evidence_extract.output.v1

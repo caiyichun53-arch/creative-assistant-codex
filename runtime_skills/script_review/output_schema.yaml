@@ -21,11 +21,9 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 240
   polished_text:
     type: string
     minLength: 50
-    maxLength: 6000
   revision_focus:
     type: array
     minItems: 1
@@ -33,7 +31,6 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 60
   ai_flavor_risk:
     type: string
     enum:
@@ -47,7 +44,6 @@ properties:
     items:
       type: string
       minLength: 1
-      maxLength: 240
   schema_version:
     type: string
     const: script_review.output.v1

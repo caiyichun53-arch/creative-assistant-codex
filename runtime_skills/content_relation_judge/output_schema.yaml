@@ -62,7 +62,6 @@ properties:
   rationale:
     type: string
     minLength: 1
-    maxLength: 600
   schema_version:
     type: string
     const: content_relation_judge.output.v1

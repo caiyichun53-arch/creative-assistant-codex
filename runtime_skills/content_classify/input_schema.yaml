@@ -11,16 +11,16 @@ input_schema:
     - language_hint
     - domain_hint
   properties:
-    request_id: {type: string, minLength: 1, maxLength: 80}
-    correlation_id: {type: string, minLength: 1, maxLength: 80}
-    content_id: {type: string, minLength: 1, maxLength: 80}
-    title: {type: string, maxLength: 120}
-    body: {type: string, maxLength: 1200}
+    request_id: {type: string, minLength: 1}
+    correlation_id: {type: string, minLength: 1}
+    content_id: {type: string, minLength: 1}
+    title: {type: string}
+    body: {type: string}
     evidence_items:
       type: array
       minItems: 1
       maxItems: 8
-      items: {type: string, minLength: 1, maxLength: 240}
+      items: {type: string, minLength: 1}
     language_hint:
       type: string
       enum: [zh, mixed, non_zh, unknown]
