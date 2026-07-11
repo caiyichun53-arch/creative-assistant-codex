@@ -68,7 +68,8 @@ class PPlusMetricInput:
     metric_name: str
     baseline_value: str | int | float | Decimal | None
     observed_value: str | int | float | Decimal | None
-    support_ratio: str | int | float | Decimal = Decimal("1.0")
+    support_ratio: str | int | float | Decimal = Decimal("1.5")
+    not_supported_ratio: str | int | float | Decimal = Decimal("0.8")
     checkpoint: str = "P+7d"
 
     def as_payload(self) -> dict[str, Any]:
@@ -77,6 +78,7 @@ class PPlusMetricInput:
             "baseline_value": _decimal_to_text(self.baseline_value),
             "observed_value": _decimal_to_text(self.observed_value),
             "support_ratio": _decimal_to_text(self.support_ratio),
+            "not_supported_ratio": _decimal_to_text(self.not_supported_ratio),
             "checkpoint": self.checkpoint,
         }
 
@@ -164,6 +166,13 @@ class ExperienceEvidence:
     evidence_id: str
     evidence_kind: str
     independence_key: str
+    # Caller-assigned monotonic chronological ordering key (real timestamp
+    # epoch, or a simple incrementing counter) -- required, no default,
+    # because the §7.2-7.7 recommendation-status rules are all defined in
+    # terms of "since the most recent formal P support" / "since the most
+    # recent failure", and guessing an ordering silently would be exactly the
+    # kind of invented business logic this project's constitution forbids.
+    sequence: int
     eligible: bool = True
     metric_signal: str | None = None
     primary_used: bool = False
@@ -175,6 +184,7 @@ class ExperienceEvidence:
             "evidence_id": self.evidence_id,
             "evidence_kind": self.evidence_kind,
             "independence_key": self.independence_key,
+            "sequence": self.sequence,
             "eligible": self.eligible,
             "metric_signal": self.metric_signal,
             "primary_used": self.primary_used,
@@ -750,18 +760,28 @@ def compute_metric_signal(command: ExperimentResultCommand) -> MetricSignal:
 
     baseline = _to_decimal(command.metric.baseline_value, "baseline_value")
     observed = _to_decimal(command.metric.observed_value, "observed_value")
-    threshold = _to_decimal(command.metric.support_ratio, "support_ratio")
+    support_threshold = _to_decimal(command.metric.support_ratio, "support_ratio")
+    not_supported_threshold = _to_decimal(command.metric.not_supported_ratio, "not_supported_ratio")
     if baseline is None or observed is None:
         return MetricSignal("inconclusive", True, "missing P+ metric input", None)
     if baseline <= 0:
         return MetricSignal("inconclusive", True, "baseline is zero or negative", None)
     if observed < 0:
         return MetricSignal("inconclusive", True, "observed value is negative", None)
-    if threshold <= 0:
+    if support_threshold <= 0:
         raise ExperimentError("support_ratio must be positive")
+    if not_supported_threshold <= 0:
+        raise ExperimentError("not_supported_ratio must be positive")
+    if not_supported_threshold >= support_threshold:
+        raise ExperimentError("not_supported_ratio must be lower than support_ratio")
 
     ratio = observed / baseline
-    signal = "supported" if ratio >= threshold else "not_supported"
+    if ratio >= support_threshold:
+        signal = "supported"
+    elif ratio <= not_supported_threshold:
+        signal = "not_supported"
+    else:
+        signal = "inconclusive"
     return MetricSignal(signal, True, f"{command.metric.metric_name} ratio evaluated", _decimal_to_text(ratio))
 
 
@@ -809,8 +829,7 @@ def recompute_experience_state(command: ExperienceStateInput) -> ExperienceState
     computed_status, status_reason = _recommendation_status(
         current_status=command.current_recommendation_status,
         manual_lock=command.manual_lock,
-        formal_failures=formal_failures,
-        external_counterexamples=external_counterexamples,
+        evidence=command.evidence,
     )
     triggers = _proposal_triggers(formal_failures, external_counterexamples, structural_signals, human_requests)
     return ExperienceStateResult(
@@ -949,25 +968,87 @@ def _maturity_level(formal_supports: tuple[ExperienceEvidence, ...], evidence: t
     return "L0"
 
 
+def _formal_signal_stream(
+    evidence: tuple[ExperienceEvidence, ...], metric_signal: str
+) -> tuple[ExperienceEvidence, ...]:
+    return tuple(
+        sorted(
+            (
+                item
+                for item in evidence
+                if item.evidence_kind == "formal_p_result"
+                and item.eligible
+                and item.primary_used
+                and item.metric_signal == metric_signal
+            ),
+            key=lambda item: item.sequence,
+        )
+    )
+
+
 def _recommendation_status(
     *,
     current_status: str,
     manual_lock: bool,
-    formal_failures: tuple[ExperienceEvidence, ...],
-    external_counterexamples: tuple[ExperienceEvidence, ...],
+    evidence: tuple[ExperienceEvidence, ...],
 ) -> tuple[str, str]:
+    """实现原文档"7 推荐状态状态机"(§7.2-7.7, BR-EXPERIENCE-004)。
+
+    active/watch 之间的互相流转用同一套"自最近一次正式P支持起算"的证据窗口
+    统一推导——不需要按 current_status 分别写 active->watch 和 watch->active
+    两套逻辑:一次新的正式P支持天然让窗口清零,watch_condition 自然变假,
+    结果就是 active。只有 paused->active 的恢复规则跟这套窗口不同(原文档
+    明确"重新计数,期间失败就重置",窗口锚点是"最近一次失败"而不是"最近一次
+    支持"),所以单独处理。deprecated 是唯一真正的终点,只能靠人工提案离开,
+    这个函数从不自动把状态改成/改出 deprecated。
+    """
     if current_status == "deprecated":
         return "deprecated", "deprecated requires formal restore proposal"
     if manual_lock:
         return current_status, "manual_lock blocks automatic recommendation transition"
-    failure_questions = {item.core_question_hash or item.independence_key for item in formal_failures}
-    if len(formal_failures) >= 3 and len(failure_questions) >= 3:
-        return "paused", "three independent formal failures"
-    if formal_failures:
-        return "watch", "formal failure observed"
-    if len(_independent(external_counterexamples)) >= 2:
-        return "watch", "two independent external counterexamples"
-    return "active", "no active risk signal"
+
+    supports = _formal_signal_stream(evidence, "supported")
+    failures = _formal_signal_stream(evidence, "not_supported")
+    last_support_seq = supports[-1].sequence if supports else None
+
+    failures_since_support = tuple(
+        item for item in failures if last_support_seq is None or item.sequence > last_support_seq
+    )
+    failure_questions_since_support = {
+        item.core_question_hash or item.independence_key for item in failures_since_support
+    }
+    counterexamples_since_support = _independent(
+        tuple(
+            item
+            for item in evidence
+            if item.evidence_kind == "external_counterexample"
+            and item.eligible
+            and (last_support_seq is None or item.sequence > last_support_seq)
+        )
+    )
+    paused_by_failures = len(failures_since_support) >= 3 and len(failure_questions_since_support) >= 3
+
+    if current_status == "paused":
+        if paused_by_failures:
+            return "paused", "three independent formal failures since last support"
+        last_failure_seq = failures[-1].sequence if failures else None
+        supports_since_last_failure = tuple(
+            item for item in supports if last_failure_seq is None or item.sequence > last_failure_seq
+        )
+        recovery_questions = {
+            item.core_question_hash or item.independence_key for item in supports_since_last_failure
+        }
+        if len(supports_since_last_failure) >= 2 and len(recovery_questions) >= 2:
+            return "active", "two independent formal supports across two questions since last failure"
+        return "paused", "paused recovery threshold not yet met"
+
+    if paused_by_failures:
+        return "paused", "three independent formal failures since last support"
+    if failures_since_support:
+        return "watch", "formal failure observed since last support"
+    if len(counterexamples_since_support) >= 2:
+        return "watch", "two independent external counterexamples since last support"
+    return "active", "no active risk signal since last support"
 
 
 def _proposal_triggers(

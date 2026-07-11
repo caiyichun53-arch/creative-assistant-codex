@@ -136,6 +136,13 @@ domain_search:
   consecutive_cycles_before_pause: 3
   daily_deep_processing_max_per_domain: 10
 
+# 2026-07-13 (BR-EXPERIENCE-004): 自营发布实验 P+ 指标三态判断的两个安全默认
+# 阈值,来自原文档29.1"安全默认阈值"。>=support_ratio 支持,<=not_supported_ratio
+# 不支持,中间存疑。
+own_publication_experiment:
+  support_ratio: 1.5
+  not_supported_ratio: 0.8
+
 reverse_engine:
   # Local model root. Keep real absolute paths in config/settings.yaml only.
   models_root: models

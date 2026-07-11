@@ -63,12 +63,21 @@ OBJECT_KIND_STATE_TABLE: dict[str, tuple[str, str]] = {
 # lookup already works for them) but calling create_state/transition_state
 # for them raises Goal02StateError until a real caller needs one and its
 # state ordering gets designed and added here, cited against a real
-# BUSINESS_RULE_CATALOG.yaml entry the way "tactic" is not yet either
-# (BR-DNA-004 describes the *what*, not this specific state ordering --
-# candidate/active/paused/deprecated is this module's own reading of
-# tactic_state's CHECK constraint column order, not a catalog citation).
+# BUSINESS_RULE_CATALOG.yaml entry the way "tactic" now is (BR-EXPERIENCE-004,
+# 原文档"7 推荐状态状态机", 2026-07-13).
+#
+# This is NOT a strictly-increasing "further along = higher number" ordering
+# the way the other 4 kinds' rank columns are meant to be read (their shared
+# *_state_one_way trigger literally rejects any UPDATE where state_rank
+# decreases). tactic_state deliberately does NOT use that trigger -- see
+# goal02_schema.sqlite.sql's tactic_state_terminal_and_no_candidate_reentry --
+# because the real design has active/watch/paused freely bidirectional; only
+# leaving "candidate" and entering "deprecated" are one-way. The numbers below
+# exist only to express the doc's tie-break priority when multiple automatic
+# conditions match at once (deprecated > paused > watch > active); callers
+# must not assume a transition from a higher rank to a lower one is invalid.
 STATE_RANK: dict[str, dict[str, int]] = {
-    "tactic": {"candidate": 0, "active": 1, "paused": 2, "deprecated": 3},
+    "tactic": {"candidate": 0, "active": 1, "watch": 2, "paused": 3, "deprecated": 4},
 }
 
 
@@ -287,7 +296,8 @@ class Goal02StateStore:
         except sqlite3.IntegrityError as exc:
             raise Goal02StateError(
                 f"transition rejected for {object_kind} {object_id!r}: {exc} "
-                "(most likely the *_state_one_way trigger blocking a backward state_rank move)"
+                "(most likely a state-guard trigger: backward state_rank move for the "
+                "4 strictly-ordered kinds, or deprecated/candidate re-entry for tactic)"
             ) from exc
         if cur.rowcount != 1:
             raise Goal02StateError(

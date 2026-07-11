@@ -874,23 +874,67 @@ traceability:
   current_implementation_status: 'partial: own_accounts/own_publications/
     own_publication_checks/own_publication_baselines/own_experiments schema +
     registration functions exist, real-data-tested
-    (tests/core/test_own_publications.py, 10 tests). The evaluation logic that
-    would actually USE this data to move a tactic from candidate to active
-    (wiring goal09_experiments.py''s ExperimentMaterializer/
-    recompute_experience_state) is not built yet -- separate, larger piece of
-    work. No real self-owned account has published anything yet, so this has
-    only ever been exercised against fixture data, never a real Day7 result.'
+    (tests/core/test_own_publications.py, 10 tests). 2026-07-13 update (B1): the
+    evaluation logic that actually USES this data (goal09_experiments.py''s
+    ExperimentMaterializer/recompute_experience_state, previously wired to
+    nothing anywhere in the repo) is now wired via
+    scripts/core/business_data/run_publication_experiment.py -- see
+    BR-EXPERIENCE-004 for the state-machine rule this wiring implements. No
+    real self-owned account has published anything yet, so this has only ever
+    been exercised against fixture data, never a real Day7 result.'
   alignment_status: naming_only
   difference_type: []
   migration_action: Preserve business semantics while moving state/external side effects
     to formal Core/Adapter boundaries.
   test_ids:
-  - tracking fixture later
+  - tests/core/test_own_publications.py
+  - tests/core/test_run_publication_experiment.py
   evidence:
     source_section: Day7长期盖章
     defaults:
       tracking_window: Day7
     thresholds: {}
+- requirement_id: BR-EXPERIENCE-004
+  legacy_files: []
+  legacy_functions: []
+  observed_legacy_behavior: none -- this is a newly-formalized rule, not a
+    migration from legacy code.
+  target_component: scripts/core/experience/goal09_experiments.py
+    (compute_metric_signal, recompute_experience_state, _recommendation_status)
+    + scripts/core/business_data/run_publication_experiment.py +
+    scripts/core/persistence/goal02_schema.sqlite.sql (tactic_state) +
+    scripts/core/persistence/goal02_store.py (STATE_RANK)
+  current_implementation_status: 'complete for the automatic-recompute half of
+    the rule: three-way compute_metric_signal (supported/not_supported/
+    inconclusive at 1.5/0.8), the active<->watch<->paused recommendation-status
+    state machine with the paused recovery''s distinct reset-on-failure rule,
+    and the tactic_state schema/trigger fix that makes those backward
+    transitions possible at the database level, are all real and tested
+    (tests/core/test_goal09_experiments.py 26 tests,
+    tests/core/test_run_publication_experiment.py 13 tests,
+    tests/core/test_goal02_store.py''s two new bidirectional-flow tests). NOT
+    implemented: the human-proposal path for entering/leaving deprecated
+    (ExperienceRevisionProposalPublishCommand exists in goal09_experiments.py
+    but nothing calls it against real tactic data yet); never exercised
+    against a real self-owned publication (no real account has published
+    anything, per BR-EXPERIENCE-002).'
+  alignment_status: naming_only
+  difference_type: []
+  migration_action: none -- newly implemented, not migrated from legacy.
+  test_ids:
+  - tests/core/test_goal09_experiments.py
+  - tests/core/test_run_publication_experiment.py
+  - tests/core/test_goal02_store.py
+  evidence:
+    source_section: 7 推荐状态状态机 + 29 自营实验与P基线
+    defaults:
+      support_ratio: '1.5'
+      not_supported_ratio: '0.8'
+    thresholds:
+      paused_min_failures_since_last_support: 3
+      paused_min_distinct_questions_since_last_support: 3
+      paused_recovery_min_supports_since_last_failure: 2
+      paused_recovery_min_distinct_questions_since_last_failure: 2
 - requirement_id: BR-EXPERIENCE-003
   legacy_files: []
   legacy_functions: []

@@ -2255,6 +2255,76 @@ rules:
   supersedes: []
   validation_required:
   - humanizer fixture later
+- requirement_id: BR-EXPERIENCE-004
+  source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.3_无损修订版.docx
+  source_section: 7 推荐状态状态机 + 29 自营实验与P基线
+  priority: P1
+  domain_scope: account/domain layer
+  status: '2026-07-13 new (置顶规则总表核对后, B1): this closes the gap
+    BR-EXPERIENCE-002''s traceability entry already flagged ("evaluation logic
+    ... not built yet -- separate, larger piece of work"). Also fixes a real
+    bug from an earlier session (c3f8e70): tactic_state''s CHECK constraint
+    and one-way trigger were built without this document, so it was missing
+    the ''watch'' state entirely and blocked all active<->watch<->paused
+    backward transitions the real design requires (only leaving ''candidate''
+    and entering ''deprecated'' are actually one-way).'
+  trigger: a self-owned publication''s Day7 P+ metric snapshot becomes
+    available for an experiment whose success_rule/failure_rule were frozen
+    before the result was known
+  inputs:
+  - own_experiments row (core_question, primary_metric, frozen success/failure
+    rule)
+  - own_publication_checks Day7 snapshot
+  - own_publication_baselines latest sample
+  - prior formal_p_result evidence for the same tactic
+  expected_behavior: 'compute_metric_signal() 三态判断:观测值/基线值的比率
+    >=support_ratio 记 supported,<=not_supported_ratio 记 not_supported,中间是
+    inconclusive(不计入任何自动状态转移)。recommendation-status 状态机对
+    active/watch 用统一的"自最近一次正式P支持起算"窗口(1次新失败或2个独立外部
+    反例=>watch;自该窗口起3次不支持覆盖3个不同核心问题=>paused;外部反例本身
+    永远不能导致paused;窗口内出现晚于所有风险证据的新支持=>active)。paused的
+    恢复规则不同,是原文档明确要求的"重新计数":自最近一次失败起算,至少2次
+    支持覆盖2个不同核心问题才回到active,期间任何新失败都会让这个计数重置。
+    多个条件同时满足时按 deprecated > paused > watch > active 的优先级只出一个
+    结果,不连续跳转。deprecated 是唯一真正的终点,只能靠人工提案离开,这条规则
+    描述的自动状态机永远不会自动进入或离开 deprecated。'
+  defaults:
+    support_ratio: '1.5'
+    not_supported_ratio: '0.8'
+  thresholds:
+    watch_from_active_min_failures: 1
+    watch_from_active_min_independent_counterexamples: 2
+    paused_min_failures_since_last_support: 3
+    paused_min_distinct_questions_since_last_support: 3
+    paused_recovery_min_supports_since_last_failure: 2
+    paused_recovery_min_distinct_questions_since_last_failure: 2
+  timing_semantics: Recomputed once per newly-evaluated formal experiment
+    result; never on a schedule, never speculatively.
+  state_effects:
+  - own_experiments.result/result_computed_at
+  - goal09_experiment_result trace_root/trace_version (content-addressed,
+    idempotent replay via command_receipt)
+  - tactic_state.state transition (only when the recomputed status actually
+    differs from the current one)
+  allowed_side_effects:
+  - real sqlite3 write via scripts/core/business_data/run_publication_experiment.py
+  forbidden_behavior:
+  - external_counterexample evidence alone causing a paused transition
+  - automatically transitioning into or out of deprecated
+  - re-entering candidate once a tactic has left it
+  - counting the same core_question''s repeated failures as more than one
+    toward the paused threshold
+  - guessing an evidence ordering instead of using a real chronological
+    sequence key
+  edge_cases:
+  - no formal support has ever happened yet (all windows treated as open-ended)
+  - a tactic with no tactic_state row yet (out of scope -- this rule only
+    governs tactics already past the initial candidate stage)
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - tests/core/test_goal09_experiments.py
+  - tests/core/test_run_publication_experiment.py
 - requirement_id: BR-ARCH-001
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
   source_section: Hermes生产Host职责

@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS experiment_state (
 
 CREATE TABLE IF NOT EXISTS tactic_state (
     tactic_id          uuid PRIMARY KEY REFERENCES trace_root(root_id) ON DELETE RESTRICT,
-    state              text NOT NULL CHECK(state IN ('candidate', 'active', 'paused', 'deprecated')),
+    state              text NOT NULL CHECK(state IN ('candidate', 'active', 'watch', 'paused', 'deprecated')),
     state_rank         integer NOT NULL,
     basis_version_id   uuid NOT NULL REFERENCES trace_version(version_id) ON DELETE RESTRICT,
     row_revision       bigint NOT NULL DEFAULT 0,
@@ -118,7 +118,21 @@ CREATE TRIGGER experiment_state_one_way
 BEFORE UPDATE ON experiment_state
 FOR EACH ROW EXECUTE FUNCTION reject_backward_state();
 
+-- tactic_state 不用通用的"只能递增" reject_backward_state():active/watch/paused
+-- 原设计是互相可以来回流转的,只有 candidate 和 deprecated 才是真正的单向边界
+-- (2026-07-13, BR-EXPERIENCE-004, 原文档"7 推荐状态状态机"; sqlite 版本
+-- goal02_schema.sqlite.sql 有更详细的说明)。
+CREATE OR REPLACE FUNCTION reject_tactic_state_reentry() RETURNS trigger AS $$
+BEGIN
+    IF OLD.state = 'deprecated' OR NEW.state = 'candidate' THEN
+        RAISE EXCEPTION 'tactic_state: deprecated is terminal and candidate cannot be re-entered';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 DROP TRIGGER IF EXISTS tactic_state_one_way ON tactic_state;
-CREATE TRIGGER tactic_state_one_way
+DROP TRIGGER IF EXISTS tactic_state_terminal_and_no_candidate_reentry ON tactic_state;
+CREATE TRIGGER tactic_state_terminal_and_no_candidate_reentry
 BEFORE UPDATE ON tactic_state
-FOR EACH ROW EXECUTE FUNCTION reject_backward_state();
+FOR EACH ROW EXECUTE FUNCTION reject_tactic_state_reentry();

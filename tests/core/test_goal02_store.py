@@ -241,6 +241,71 @@ class TransitionStateTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_active_watch_paused_can_flow_freely_in_both_directions(self) -> None:
+        # B1 (2026-07-13, BR-EXPERIENCE-004): the real design has
+        # active<->watch<->paused as a freely bidirectional cycle -- only
+        # leaving candidate and entering deprecated are one-way. An earlier
+        # session (c3f8e70) built tactic_state with the same strictly-
+        # increasing trigger the other 4 *_state tables use, which would
+        # have rejected every one of these real transitions.
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                goal02, tactic_id, version_id = self._create_candidate(conn)
+                sequence = [
+                    ("active", 0),
+                    ("watch", 1),
+                    ("active", 2),
+                    ("watch", 3),
+                    ("paused", 4),
+                    ("watch", 5),
+                    ("paused", 6),
+                    ("active", 7),
+                ]
+                for step, (new_state, expected_row_revision) in enumerate(sequence):
+                    with conn:
+                        result = goal02.transition_state(
+                            object_kind="tactic", object_id=tactic_id, new_state=new_state,
+                            basis_version_id=version_id, actor="test", idempotency_key=f"trans-{step}",
+                            expected_row_revision=expected_row_revision,
+                        )
+                    self.assertEqual(result.state, new_state)
+                row = conn.execute("SELECT * FROM tactic_state WHERE tactic_id=?", (tactic_id,)).fetchone()
+                self.assertEqual(row["state"], "active")
+                self.assertEqual(row["row_revision"], len(sequence))
+            finally:
+                conn.close()
+
+    def test_deprecated_is_a_true_terminal_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                goal02, tactic_id, version_id = self._create_candidate(conn)
+                with conn:
+                    goal02.transition_state(
+                        object_kind="tactic", object_id=tactic_id, new_state="active",
+                        basis_version_id=version_id, actor="test", idempotency_key="trans-active",
+                        expected_row_revision=0,
+                    )
+                with conn:
+                    goal02.transition_state(
+                        object_kind="tactic", object_id=tactic_id, new_state="deprecated",
+                        basis_version_id=version_id, actor="test", idempotency_key="trans-deprecated",
+                        expected_row_revision=1,
+                    )
+                with self.assertRaises(Goal02StateError):
+                    with conn:
+                        goal02.transition_state(
+                            object_kind="tactic", object_id=tactic_id, new_state="active",
+                            basis_version_id=version_id, actor="test", idempotency_key="trans-restore",
+                            expected_row_revision=2,
+                        )
+                row = conn.execute("SELECT * FROM tactic_state WHERE tactic_id=?", (tactic_id,)).fetchone()
+                self.assertEqual(row["state"], "deprecated")
+                self.assertEqual(row["row_revision"], 2)
+            finally:
+                conn.close()
+
     def test_rejects_stale_row_revision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)

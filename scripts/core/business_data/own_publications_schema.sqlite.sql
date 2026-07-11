@@ -91,10 +91,18 @@ ON own_publication_baselines(account_id, metric, computed_at);
 -- (result,由 goal09_experiments.py 已经写好的 compute_metric_signal() 算出,
 -- 这张表只负责存,不重新实现判断逻辑)。confounders 是 JSON 数组,原文档举例
 -- 的具体项:热点/画面/投流/人物/发布时间/账号异常等。
+-- core_question(2026-07-13, B1, BR-EXPERIENCE-004):原文档"7 推荐状态状态机"
+-- 的 paused/active 判断都要求"覆盖N个不同的核心问题"(同一个问题重复失败/支持
+-- 只算一次),但这从来不是"这条方法本身"(primary_hypothesis_tactic_id)天然
+-- 就有的维度——同一条方法可能被不同实验测试的是不同的子假设(比如"这个钩子
+-- 风格有效"和"这个结构有效"是同一条方法下两个不同的核心问题)。人工登记实验
+-- 时必须显式写清楚这次测的是哪个核心问题,不能系统自己猜或者拿 tactic_id 顶替
+-- (会导致同一条方法下明明是两个独立问题的失败,被错误去重成一次)。
 CREATE TABLE IF NOT EXISTS own_experiments (
     experiment_id TEXT PRIMARY KEY,
     publication_id TEXT NOT NULL REFERENCES own_publications(publication_id) ON DELETE RESTRICT,
     primary_hypothesis_tactic_id TEXT NOT NULL REFERENCES trace_root(root_id) ON DELETE RESTRICT,
+    core_question TEXT NOT NULL,
     supporting_tactic_ids TEXT NOT NULL DEFAULT '[]',
     primary_metric TEXT NOT NULL CHECK(primary_metric IN ('like_count', 'comment_count', 'collect_count', 'share_count')),
     success_rule TEXT NOT NULL,

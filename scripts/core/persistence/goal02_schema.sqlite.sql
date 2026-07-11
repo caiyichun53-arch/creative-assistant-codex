@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS experiment_state (
 
 CREATE TABLE IF NOT EXISTS tactic_state (
     tactic_id          TEXT PRIMARY KEY,
-    state              TEXT NOT NULL CHECK(state IN ('candidate', 'active', 'paused', 'deprecated')),
+    state              TEXT NOT NULL CHECK(state IN ('candidate', 'active', 'watch', 'paused', 'deprecated')),
     state_rank         INTEGER NOT NULL,
     basis_version_id   TEXT NOT NULL,
     row_revision       INTEGER NOT NULL DEFAULT 0,
@@ -136,9 +136,16 @@ BEGIN
     SELECT RAISE(ABORT, 'experiment_state cannot move backward');
 END;
 
-CREATE TRIGGER IF NOT EXISTS tactic_state_one_way
+-- tactic_state 不是单向的(2026-07-13, 置顶规则总表核对后, BR-EXPERIENCE-004,
+-- 原文档"7 推荐状态状态机"):active/watch/paused 三态原设计就是互相可以来回
+-- 流转的(active<->watch<->paused),只有 candidate(还没被正式纳入循环的初始态,
+-- 只能离开一次不能回去)和 deprecated(唯一真正的终点,只能靠人工提案离开)
+-- 这两种是真正的单向边界。上一轮(c3f8e70)把这张表跟其它四张 *_state 表
+-- 共用同一个"state_rank 只能递增"触发器,是没查到这份文档就建错的约束——
+-- watch<->paused/watch<->active 这些原本合法的流转全部会被那个触发器挡掉。
+CREATE TRIGGER IF NOT EXISTS tactic_state_terminal_and_no_candidate_reentry
 BEFORE UPDATE ON tactic_state
-WHEN NEW.state_rank < OLD.state_rank
+WHEN OLD.state = 'deprecated' OR NEW.state = 'candidate'
 BEGIN
-    SELECT RAISE(ABORT, 'tactic_state cannot move backward');
+    SELECT RAISE(ABORT, 'tactic_state: deprecated is terminal and candidate cannot be re-entered');
 END;

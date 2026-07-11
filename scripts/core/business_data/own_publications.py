@@ -13,6 +13,7 @@ Usage (as a library, no CLI yet -- see module docstring above):
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -107,6 +108,52 @@ def record_own_publication_check(
     )
     conn.commit()
     return check_id
+
+
+def record_own_experiment(
+    conn: sqlite3.Connection,
+    *,
+    experiment_id: str,
+    publication_id: str,
+    primary_hypothesis_tactic_id: str,
+    core_question: str,
+    primary_metric: str,
+    success_rule: str,
+    failure_rule: str,
+    evaluation_observation: str,
+    run_id: str,
+    supporting_tactic_ids: tuple[str, ...] = (),
+    expected_metrics: tuple[str, ...] = (),
+    confounders: tuple[str, ...] = (),
+) -> str:
+    """冻结一次实验的判断规则(原文档"29.3 确定性指标信号":success_rule/
+    failure_rule 必须在看到结果前先存好,不能先看结果再定规则)。result 留空,
+    由 run_publication_experiment.py 事后真正评估时才写回。core_question 必填
+    且没有默认值:原文档"7 推荐状态状态机"的3次失败/2次支持判断都要求"覆盖
+    N个不同的核心问题",这必须是人工登记时就想清楚的东西,系统不能替人猜。"""
+    if not core_question.strip():
+        raise ValueError("core_question is required -- see own_publications_schema.sqlite.sql's own_experiments comment")
+    if primary_metric not in {"like_count", "comment_count", "collect_count", "share_count"}:
+        raise ValueError(f"unsupported primary_metric: {primary_metric!r}")
+    if not success_rule.strip() or not failure_rule.strip():
+        raise ValueError("success_rule and failure_rule must be frozen before the result is known")
+    conn.execute(
+        """
+        INSERT INTO own_experiments(
+            experiment_id, publication_id, primary_hypothesis_tactic_id, core_question,
+            supporting_tactic_ids, primary_metric, success_rule, failure_rule,
+            evaluation_observation, expected_metrics, confounders, run_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            experiment_id, publication_id, primary_hypothesis_tactic_id, core_question,
+            json.dumps(list(supporting_tactic_ids), ensure_ascii=False), primary_metric, success_rule, failure_rule,
+            evaluation_observation, json.dumps(list(expected_metrics), ensure_ascii=False),
+            json.dumps(list(confounders), ensure_ascii=False), run_id,
+        ),
+    )
+    conn.commit()
+    return experiment_id
 
 
 def compute_own_publication_baseline(conn: sqlite3.Connection, *, account_id: str, metric: str, run_id: str) -> dict[str, Any]:
