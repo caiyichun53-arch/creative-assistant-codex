@@ -284,6 +284,44 @@ rules:
   supersedes: []
   validation_required:
   - static import scan for call_llm in collect
+- requirement_id: BR-COLLECT-008
+  source_document: 爆款口播内容经验库系统置顶规则总表.docx (V0.6.3 卷首, 条目43)
+  source_section: 网易云音乐独立适配器
+  priority: P2
+  domain_scope: music_entertainment
+  status: '2026-07-13 new (置顶规则总表核对后): this design decision was already
+    correctly implemented in code (scripts/core/external_adapters/
+    goal_phase4_external_adapters.py''s NetEaseMusicCollectorAdapter has its
+    own adapter_id="collector.netease_music"/capability="music.comment_collection",
+    entirely separate from LocalMediaCrawlerExecutor''s
+    adapter_id="collector.mediacrawler") but had no BR- catalog entry recording
+    the decision -- meaning the design had no citable rule and nothing would
+    have caught a future change silently folding it back into MediaCrawler.'
+  trigger: music_entertainment domain comment/song data collection
+  inputs:
+  - song_id
+  expected_behavior: NetEase Music comment collection goes through its own
+    adapter (collector.netease_music), never through
+    LocalMediaCrawlerExecutor/collector.mediacrawler -- MediaCrawler is a
+    video-platform tool (Douyin/XHS/Kuaishou/etc.), not a NetEase Music client,
+    and folding NetEase into it would misrepresent what actually fetched the
+    data.
+  defaults: {}
+  thresholds:
+    max_comments_per_song: 100
+  timing_semantics: n/a -- structural adapter boundary, not a timed process.
+  state_effects: []
+  allowed_side_effects:
+  - platform read
+  forbidden_behavior:
+  - route NetEase Music collection through collector.mediacrawler
+  - treat NetEase comments as if MediaCrawler fetched them
+  edge_cases:
+  - song with zero comments
+  user_confirmation_required: false
+  supersedes: []
+  validation_required:
+  - netease adapter uses a distinct adapter_id from mediacrawler fixture
 - requirement_id: BR-BASELINE-001
   source_document: 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.docx
   source_section: 账号正式基线

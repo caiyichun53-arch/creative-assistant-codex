@@ -218,6 +218,14 @@ class ExternalExecutorAdapterTests(unittest.TestCase):
         self.assertEqual(result.payload["comments"][0]["platform"], "netease_music")
         self.assertEqual(executor.commands[0].executable, "adapter.netease_music.comments")
 
+    def test_netease_adapter_id_is_distinct_from_mediacrawler(self) -> None:
+        # BR-COLLECT-008 (置顶规则总表条目43): NetEase Music collection must
+        # never be routed through MediaCrawler -- proven at the adapter_id
+        # level, the thing every ExternalAdapterCommand is validated against.
+        self.assertNotEqual(NetEaseMusicCollectorAdapter.adapter_id, MediaCrawlerCollectorAdapter.adapter_id)
+        self.assertEqual(NetEaseMusicCollectorAdapter.adapter_id, "collector.netease_music")
+        self.assertEqual(MediaCrawlerCollectorAdapter.adapter_id, "collector.mediacrawler")
+
 
 if __name__ == "__main__":
     unittest.main()

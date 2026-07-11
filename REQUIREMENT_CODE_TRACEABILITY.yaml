@@ -164,6 +164,26 @@ traceability:
     defaults:
       llm_allowed: false
     thresholds: {}
+- requirement_id: BR-COLLECT-008
+  observed_legacy_behavior: NetEase Music comment collection goes through its
+    own adapter, never through MediaCrawler.
+  target_component: scripts/core/external_adapters/goal_phase4_external_adapters.py's
+    NetEaseMusicCollectorAdapter
+  current_implementation_status: 'exact_match: already correctly implemented
+    (adapter_id="collector.netease_music", entirely separate from
+    LocalMediaCrawlerExecutor''s collector.mediacrawler) before this catalog
+    entry existed -- this entry just gives the existing decision a citable
+    rule, per tests/core/test_external_executor_adapters.py::test_netease_adapter_id_is_distinct_from_mediacrawler.'
+  alignment_status: exact_match
+  difference_type: []
+  migration_action: none -- already correct, no migration needed.
+  test_ids:
+  - netease adapter uses a distinct adapter_id from mediacrawler fixture
+  evidence:
+    source_section: 网易云音乐独立适配器
+    defaults: {}
+    thresholds:
+      max_comments_per_song: 100
 - requirement_id: BR-BASELINE-001
   observed_legacy_behavior: Baseline is account-relative and computed from settled
     videos, using median and P90 as threshold ingredients.

@@ -30,6 +30,14 @@ anything gets called done/completed/ENGINEERING_READY:
      have not regressed to claiming creation runs on Claude/is complete, and
      REQUIREMENT_CODE_TRACEABILITY.yaml has no ContentWorkflow/ContentGuard
      ghost reference
+  8. the production-activation control-package gate (scripts/validation/
+     production_activation_gate.py, 2026-07-13, 置顶规则总表条目22/23) still
+     holds: all five pipeline stages (topic/plan/draft/review/final) are
+     wired with a real human-review gate, 文案优化 runs before 审核 (not the
+     other way around), no auto-publish path exists, formal research still
+     has no video-platform import, the 对标 collection pipeline is intact,
+     no score/rank/weight topic-sorting config has crept back in, and every
+     pipeline-stage table still carries real traceability fields
 Until now these were separate manual steps someone had to remember to run,
 in order, every time -- exactly the kind of "remembering" this project's own
 incident history (see HANDOFF_STATE.md) shows doesn't hold up under
@@ -134,6 +142,24 @@ def check_dead_goal_chain() -> dict[str, Any]:
     }
 
 
+def check_production_activation() -> dict[str, Any]:
+    # 2026-07-13 (置顶规则总表核对后): the control-package Gate the pinned
+    # rules doc names (条目22/23, 附表七) -- pipeline-stage completeness,
+    # human review gates, no auto-publish, formal-research/对标 boundary,
+    # traceability fields. Internally re-runs dead_goal_chain_gate too, so
+    # this and check_dead_goal_chain() above overlap on that one piece --
+    # harmless (same underlying check, called from two aggregation points),
+    # not a re-implementation of its logic.
+    from scripts.validation.production_activation_gate import run_production_activation_gate
+
+    result = run_production_activation_gate()
+    return {
+        "name": "production_activation_gate",
+        "passed": result["status"] == "PASS",
+        "detail": "clean" if result["status"] == "PASS" else [c for c in result["checks"] if not c["passed"]],
+    }
+
+
 def run_all_checks(*, skip_tests: bool) -> dict[str, Any]:
     checks = [
         check_git_clean(),
@@ -143,6 +169,7 @@ def run_all_checks(*, skip_tests: bool) -> dict[str, Any]:
         check_production_data(),
         check_unsourced_constants(),
         check_dead_goal_chain(),
+        check_production_activation(),
     ]
     overall_passed = all(check["passed"] for check in checks)
     return {"status": "READY_TO_CHECKPOINT" if overall_passed else "NOT_READY", "checks": checks}
