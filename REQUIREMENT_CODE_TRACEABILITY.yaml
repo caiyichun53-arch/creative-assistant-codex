@@ -903,7 +903,9 @@ traceability:
     (compute_metric_signal, recompute_experience_state, _recommendation_status)
     + scripts/core/business_data/run_publication_experiment.py +
     scripts/core/persistence/goal02_schema.sqlite.sql (tactic_state) +
-    scripts/core/persistence/goal02_store.py (STATE_RANK)
+    scripts/core/persistence/goal02_store.py (STATE_RANK) +
+    scripts/core/experience/run_content_plan.py
+    (_load_real_tactic_candidates_for_domain, B2)
   current_implementation_status: 'complete for the automatic-recompute half of
     the rule: three-way compute_metric_signal (supported/not_supported/
     inconclusive at 1.5/0.8), the active<->watch<->paused recommendation-status
@@ -912,12 +914,20 @@ traceability:
     transitions possible at the database level, are all real and tested
     (tests/core/test_goal09_experiments.py 26 tests,
     tests/core/test_run_publication_experiment.py 13 tests,
-    tests/core/test_goal02_store.py''s two new bidirectional-flow tests). NOT
-    implemented: the human-proposal path for entering/leaving deprecated
+    tests/core/test_goal02_store.py''s two new bidirectional-flow tests).
+    2026-07-13 update (B2): content_plan''s tactic_candidates input now
+    prefers real active/watch tactics for the topic''s domain over the old
+    per-hit stand-in (tests/core/test_run_content_plan.py, 8 new tests) --
+    the consumer side of this rule''s output is now real, closing the loop
+    this rule''s state machine feeds into. NOT implemented: the
+    human-proposal path for entering/leaving deprecated
     (ExperienceRevisionProposalPublishCommand exists in goal09_experiments.py
     but nothing calls it against real tactic data yet); never exercised
     against a real self-owned publication (no real account has published
-    anything, per BR-EXPERIENCE-002).'
+    anything, per BR-EXPERIENCE-002); as of this writing every domain''s
+    tactics are still all in candidate (no promotion path exists yet -- see
+    TECHNICAL_MANUAL.md), so content_plan''s real-tactic path has never fired
+    on a real production call, only in tests.'
   alignment_status: naming_only
   difference_type: []
   migration_action: none -- newly implemented, not migrated from legacy.
@@ -925,6 +935,7 @@ traceability:
   - tests/core/test_goal09_experiments.py
   - tests/core/test_run_publication_experiment.py
   - tests/core/test_goal02_store.py
+  - tests/core/test_run_content_plan.py
   evidence:
     source_section: 7 推荐状态状态机 + 29 自营实验与P基线
     defaults:

@@ -9,6 +9,7 @@ from pathlib import Path
 from scripts.core.business_data.register_competitor_accounts import install_schema
 from scripts.core.experience.run_content_plan import (
     ALLOWED_DOMAIN_LABELS,
+    _load_real_tactic_candidates_for_domain,
     _style_examples_from_transcript,
     assemble_content_plan_input,
     generate_one_plan,
@@ -17,13 +18,48 @@ from scripts.core.experience.run_content_plan import (
     validate_content_plan_execution_contract,
 )
 from scripts.core.model_gateway.formal_skill_adapter import make_content_plan_harness
+from scripts.core.persistence.goal01_store import PersistenceStore
+from scripts.core.persistence.goal02_store import Goal02StateStore
+
+_GOAL02_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "scripts" / "core" / "persistence" / "goal02_schema.sqlite.sql"
 
 
 def _connect(tmp: str) -> sqlite3.Connection:
     conn = sqlite3.connect(Path(tmp) / "test.sqlite3")
     conn.row_factory = sqlite3.Row
     install_schema(conn)
+    PersistenceStore(conn).install_schema()
+    conn.executescript(_GOAL02_SCHEMA_PATH.read_text(encoding="utf-8"))
     return conn
+
+
+def _make_tactic(
+    conn: sqlite3.Connection, root_id: str, *, domain_label: str, common_patterns: list[str], state: str
+) -> None:
+    """Registers a real tactic_state row the way tactic_registry.py would --
+    trace_root/trace_version payload carrying domain_label/common_patterns,
+    promoted from candidate to `state` via Goal02StateStore (matching B1's
+    real transition mechanism, not a hand-rolled shortcut)."""
+    store = PersistenceStore(conn)
+    conn.execute("INSERT INTO trace_root(root_id, object_kind) VALUES (?, 'tactic')", (root_id,))
+    version_id = store.append_version(
+        root_id, {"domain_label": domain_label, "common_patterns": common_patterns, "example_candidates": ["x"]}
+    )
+    store.set_current_version(root_id, version_id)
+    conn.commit()
+    goal02 = Goal02StateStore(store)
+    with conn:
+        goal02.create_state(
+            object_kind="tactic", object_id=root_id, initial_state="candidate",
+            basis_version_id=version_id, actor="tester", idempotency_key=f"create-{root_id}",
+        )
+    if state != "candidate":
+        with conn:
+            goal02.transition_state(
+                object_kind="tactic", object_id=root_id, new_state=state,
+                basis_version_id=version_id, actor="tester", idempotency_key=f"promote-{root_id}",
+                expected_row_revision=0,
+            )
 
 
 def _insert_account(conn: sqlite3.Connection, account_id: str = "acc1", domain_label: str = "fan_kepu_social_life") -> None:
@@ -130,6 +166,72 @@ class StyleExamplesFromTranscriptTests(unittest.TestCase):
         self.assertLessEqual(len(examples), 6)
 
 
+class LoadRealTacticCandidatesForDomainTests(unittest.TestCase):
+    def test_no_active_or_watch_tactic_returns_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                candidates = _load_real_tactic_candidates_for_domain(conn, "fan_kepu_social_life")
+            finally:
+                conn.close()
+        self.assertEqual(candidates, [])
+
+    def test_candidate_state_tactic_is_excluded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _make_tactic(conn, "tac1", domain_label="fan_kepu_social_life", common_patterns=["x"], state="candidate")
+                candidates = _load_real_tactic_candidates_for_domain(conn, "fan_kepu_social_life")
+            finally:
+                conn.close()
+        self.assertEqual(candidates, [])
+
+    def test_paused_and_deprecated_tactics_are_excluded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _make_tactic(conn, "tac_paused", domain_label="fan_kepu_social_life", common_patterns=["paused打法"], state="paused")
+                _make_tactic(conn, "tac_deprecated", domain_label="fan_kepu_social_life", common_patterns=["deprecated打法"], state="deprecated")
+                candidates = _load_real_tactic_candidates_for_domain(conn, "fan_kepu_social_life")
+            finally:
+                conn.close()
+        self.assertEqual(candidates, [])
+
+    def test_active_tactic_in_a_different_domain_is_excluded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _make_tactic(conn, "tac1", domain_label="music_entertainment", common_patterns=["音乐领域打法"], state="active")
+                candidates = _load_real_tactic_candidates_for_domain(conn, "fan_kepu_social_life")
+            finally:
+                conn.close()
+        self.assertEqual(candidates, [])
+
+    def test_active_tactics_are_ordered_before_watch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _make_tactic(conn, "tac_watch", domain_label="fan_kepu_social_life", common_patterns=["watch打法"], state="watch")
+                _make_tactic(conn, "tac_active", domain_label="fan_kepu_social_life", common_patterns=["active打法"], state="active")
+                candidates = _load_real_tactic_candidates_for_domain(conn, "fan_kepu_social_life")
+            finally:
+                conn.close()
+        self.assertEqual(candidates, ["active打法", "watch打法"])
+
+    def test_capped_at_twelve_total_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _make_tactic(
+                    conn, "tac1", domain_label="fan_kepu_social_life",
+                    common_patterns=[f"打法{i}" for i in range(20)], state="active",
+                )
+                candidates = _load_real_tactic_candidates_for_domain(conn, "fan_kepu_social_life")
+            finally:
+                conn.close()
+        self.assertEqual(len(candidates), 12)
+
+
 class SelectTopicsPendingPlanTests(unittest.TestCase):
     def test_generated_topic_with_no_plan_yet_is_selected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -224,7 +326,7 @@ class AssembleContentPlanInputTests(unittest.TestCase):
             try:
                 _full_chain(conn)
                 row = select_topics_pending_plan(conn, limit=1)[0]
-                payload = assemble_content_plan_input(row, run_id="run_test")
+                payload = assemble_content_plan_input(conn, row, run_id="run_test")
             finally:
                 conn.close()
 
@@ -251,10 +353,43 @@ class AssembleContentPlanInputTests(unittest.TestCase):
                 _insert_analysis(conn, "a1", "h1")
                 _insert_topic(conn, "t1", "a1", supporting_evidence=[])
                 row = select_topics_pending_plan(conn, limit=1)[0]
-                payload = assemble_content_plan_input(row, run_id="run_test")
+                payload = assemble_content_plan_input(conn, row, run_id="run_test")
             finally:
                 conn.close()
         self.assertGreaterEqual(len(payload["evidence_items"]), 1)
+
+    def test_uses_real_active_tactic_common_patterns_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _full_chain(conn)
+                _make_tactic(
+                    conn, "tac1", domain_label="fan_kepu_social_life",
+                    common_patterns=["真实打法一", "真实打法二"], state="active",
+                )
+                row = select_topics_pending_plan(conn, limit=1)[0]
+                payload = assemble_content_plan_input(conn, row, run_id="run_test")
+            finally:
+                conn.close()
+        self.assertEqual(payload["tactic_candidates"], ["真实打法一", "真实打法二"])
+
+    def test_falls_back_to_per_hit_analysis_when_no_active_or_watch_tactic_exists(self) -> None:
+        # Reverse case: a candidate (never promoted) or paused/deprecated
+        # tactic must NOT be surfaced as a real recommendation.
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _full_chain(conn)
+                _make_tactic(
+                    conn, "tac_candidate", domain_label="fan_kepu_social_life",
+                    common_patterns=["不该出现的候选打法"], state="candidate",
+                )
+                row = select_topics_pending_plan(conn, limit=1)[0]
+                payload = assemble_content_plan_input(conn, row, run_id="run_test")
+            finally:
+                conn.close()
+        self.assertEqual(len(payload["tactic_candidates"]), 3)
+        self.assertNotIn("不该出现的候选打法", payload["tactic_candidates"])
 
     def test_unrecognized_domain_label_falls_back_to_unknown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -266,7 +401,7 @@ class AssembleContentPlanInputTests(unittest.TestCase):
                 _insert_analysis(conn, "a1", "h1")
                 _insert_topic(conn, "t1", "a1")
                 row = select_topics_pending_plan(conn, limit=1)[0]
-                payload = assemble_content_plan_input(row, run_id="run_test")
+                payload = assemble_content_plan_input(conn, row, run_id="run_test")
             finally:
                 conn.close()
         self.assertEqual(payload["domain_label"], "unknown")

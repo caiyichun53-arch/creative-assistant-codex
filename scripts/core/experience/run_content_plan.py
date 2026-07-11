@@ -8,33 +8,40 @@ Follows the division-of-responsibility pattern established by
 run_sample_deep_analyze.py/run_source_to_topic.py (see those files' module
 docstrings for the pattern in full).
 
-Two inputs content_plan's schema requires (tactic_candidates, style_examples)
-do not have a real, properly-produced data source yet -- tactic_extract
-(would produce real tactic_candidates by reducing >=2 sample_deep_analyze
-results) and a curated style-example library (physical location not even
-decided yet, per AGENTS.md "范例:少而厚") are both unbuilt. Rather than
-blocking this binding entirely on two separate, larger pieces of unbuilt
-work, or silently inventing fake-but-plausible values, this binding uses
-honestly-labeled real stand-ins and documents the substitution in the code
-and in TECHNICAL_MANUAL.md -- matching the precedent already set by
-run_sample_deep_analyze.py's candidate_topic (real video title, not real
-topic extraction):
-  - tactic_candidates: reuses the same hit_deep_analysis row's topic_pattern/
-    hook_pattern/structure_pattern (real analysis output, just not reduced
-    across multiple samples the way tactic_extract would).
+One input content_plan's schema requires (style_examples) does not have a
+real, properly-produced data source yet -- a curated style-example library
+(physical location not even decided yet, per AGENTS.md "范例:少而厚") is
+unbuilt. This binding uses an honestly-labeled real stand-in and documents
+the substitution in the code and in TECHNICAL_MANUAL.md -- matching the
+precedent already set by run_sample_deep_analyze.py's candidate_topic (real
+video title, not real topic extraction):
   - style_examples: real excerpts from the same hit's cleaned transcript
     (real competitor writing, not a curated "what we consider good style"
     library).
-2026-07-13 correction: the paragraph above used to say evidence_items and
-tactic_candidates were validated for shape but never actually read by either
-model call -- that was true when this binding was first written, but
+
+2026-07-13 (B2, 置顶规则总表核对后, BR-EXPERIENCE-004): tactic_candidates used
+to always reuse the same hit_deep_analysis row's topic_pattern/hook_pattern/
+structure_pattern -- an honest stand-in at the time, because no tactic had
+ever left the 'candidate' state (B1 just built the wiring that lets one).
+Now that a real active/watch tactic CAN exist for a domain, this binding
+prefers the real thing: _load_real_tactic_candidates_for_domain() queries
+tactic_state for active/watch tactics whose registered domain_label matches
+the topic's domain, and surfaces their real tactic_extract common_patterns
+(the actual "打法" a real, validated method produced -- not a single hit's
+unreduced analysis). The old per-hit stand-in is now only a fallback for
+domains where no tactic has been promoted past candidate yet, which as of
+this writing is every domain (see BR-EXPERIENCE-004's traceability entry --
+no real self-owned publication has ever driven a real promotion), so in
+practice this binding still exercises the fallback path on every real call
+today. The fallback itself is unchanged.
+
+2026-07-13 correction: an earlier paragraph here used to say evidence_items
+and tactic_candidates were validated for shape but never actually read by
+either model call -- that was true when this binding was first written, but
 formal_skill_adapter.py's _run_content_plan() was fixed on 2026-07-11 (see
 its own comment) to pass candidate_topic/evidence_items/tactic_candidates
 into both the hook and outline prompts. Both real model calls now do read
-this binding's honest stand-in values, which raises the stakes of the
-substitution above slightly (it now visibly steers output, not just passes
-a shape check) without changing whether the substitution itself is
-appropriate.
+this binding's real/stand-in values.
 
 Usage:
     python -m scripts.core.experience.run_content_plan --limit 1
@@ -68,6 +75,7 @@ from scripts.core.model_gateway.hermes_model_provider import HermesModelProvider
 BRIEF_MAX_CHARS = 3000
 EVIDENCE_ITEMS_MAX = 12
 TACTIC_CANDIDATE_MAX_CHARS = 240
+TACTIC_CANDIDATES_MAX = 12
 STYLE_EXAMPLE_MAX_CHARS = 400
 STYLE_EXAMPLES_MAX = 6
 _SENTENCE_SPLIT = re.compile(r"[。！？.!?\n]+")
@@ -117,6 +125,50 @@ def select_topics_pending_plan(conn: sqlite3.Connection, *, limit: int) -> list[
     ).fetchall()
 
 
+def _load_real_tactic_candidates_for_domain(conn: sqlite3.Connection, domain_label: str) -> list[str]:
+    """真实打法候选(B2, 2026-07-13, 置顶规则总表核对后, BR-EXPERIENCE-004):
+    查这个领域下真的处于 active/watch 的 tactic_state 行(candidate/paused/
+    deprecated 都不算——candidate 还没经过验证,paused/deprecated 是已知有问题
+    或已经废弃的方法,不该被推荐进新的创作),读它们各自 trace_version.
+    payload_json 里 tactic_extract 真实产出的 common_patterns(不是
+    example_candidates——那是范例库候选,是另一个概念)。active 排在 watch
+    前面(active 是当前更被信任的状态),再按 tactic_state.updated_at 从新到旧,
+    总数控制在 CONTENT_PLAN_BUSINESS_CONTRACT.yaml 的 tactic_candidates_max=12
+    以内。domain_label 匹配用 Python 侧比较(不用 SQLite JSON1 的
+    json_extract),因为这张表的真实行数极小,没必要为省一次 Python 端过滤去
+    依赖 JSON1 扩展是否编译进当前 SQLite 版本这种环境细节。"""
+    rows = conn.execute(
+        """
+        SELECT tactic_state.state AS state, tactic_state.updated_at AS updated_at,
+               trace_version.payload_json AS payload_json
+          FROM tactic_state
+          JOIN trace_root ON trace_root.root_id = tactic_state.tactic_id
+          JOIN trace_version ON trace_version.version_id = trace_root.current_version_id
+         WHERE tactic_state.state IN ('active', 'watch')
+        """
+    ).fetchall()
+    state_priority = {"active": 0, "watch": 1}
+    matched: list[tuple[int, str, list[str]]] = []
+    for row in rows:
+        payload = json.loads(row["payload_json"])
+        if payload.get("domain_label") != domain_label:
+            continue
+        matched.append((state_priority[row["state"]], row["updated_at"], payload.get("common_patterns") or []))
+    # Stable two-pass sort: newest-first within a state, then active before
+    # watch (Python's sort is stable, so the second pass preserves the first
+    # pass's ordering inside each state_priority group).
+    matched.sort(key=lambda item: item[1], reverse=True)
+    matched.sort(key=lambda item: item[0])
+
+    candidates: list[str] = []
+    for _, _, common_patterns in matched:
+        for pattern in common_patterns:
+            candidates.append(str(pattern)[:TACTIC_CANDIDATE_MAX_CHARS])
+            if len(candidates) >= TACTIC_CANDIDATES_MAX:
+                return candidates
+    return candidates
+
+
 def _style_examples_from_transcript(transcript_text: str) -> list[str]:
     """Real excerpts from the source hit's own transcript as an honest
     stand-in for a curated style-example library (see module docstring).
@@ -130,10 +182,13 @@ def _style_examples_from_transcript(transcript_text: str) -> list[str]:
     return examples or [transcript_text[:STYLE_EXAMPLE_MAX_CHARS]]
 
 
-def assemble_content_plan_input(topic_row: sqlite3.Row, *, run_id: str) -> dict[str, Any]:
-    """Pure function: a real topic_candidates row (joined with its source
-    analysis/hit/account/transcript) in, content_plan's exact public input
-    contract out."""
+def assemble_content_plan_input(conn: sqlite3.Connection, topic_row: sqlite3.Row, *, run_id: str) -> dict[str, Any]:
+    """A real topic_candidates row (joined with its source analysis/hit/
+    account/transcript) in, content_plan's exact public input contract out.
+    No longer a pure function as of B2 (2026-07-13): tactic_candidates now
+    needs `conn` to check for real active/watch tactics in this topic's
+    domain before falling back to the per-hit stand-in (see module
+    docstring)."""
     domain_label = topic_row["account_domain_label"]
     if domain_label not in ALLOWED_DOMAIN_LABELS:
         domain_label = "unknown"
@@ -155,11 +210,16 @@ def assemble_content_plan_input(topic_row: sqlite3.Row, *, run_id: str) -> dict[
 
     brief = f"选题:{topic_row['candidate_topic']}。切入角度:{topic_row['topic_angle']}"[:BRIEF_MAX_CHARS]
 
-    tactic_candidates = [
-        f"选题手法:{topic_row['topic_pattern']}"[:TACTIC_CANDIDATE_MAX_CHARS],
-        f"开头手法:{topic_row['hook_pattern']}"[:TACTIC_CANDIDATE_MAX_CHARS],
-        f"结构手法:{topic_row['structure_pattern']}"[:TACTIC_CANDIDATE_MAX_CHARS],
-    ]
+    tactic_candidates = _load_real_tactic_candidates_for_domain(conn, domain_label)
+    if not tactic_candidates:
+        # Fallback: no tactic has been promoted past 'candidate' for this
+        # domain yet (see module docstring's 2026-07-13/B2 note) -- reuse the
+        # same hit's own unreduced analysis, same as before B2.
+        tactic_candidates = [
+            f"选题手法:{topic_row['topic_pattern']}"[:TACTIC_CANDIDATE_MAX_CHARS],
+            f"开头手法:{topic_row['hook_pattern']}"[:TACTIC_CANDIDATE_MAX_CHARS],
+            f"结构手法:{topic_row['structure_pattern']}"[:TACTIC_CANDIDATE_MAX_CHARS],
+        ]
 
     return {
         "request_id": f"content_plan_{topic_row['topic_id']}",
@@ -195,7 +255,7 @@ def _persist_plan(conn: sqlite3.Connection, topic_id: str, input_payload: dict[s
 
 
 def generate_one_plan(conn: sqlite3.Connection, harness: FormalBusinessSkillHarness, topic_row: sqlite3.Row, *, run_id: str, model_name: str) -> dict[str, Any]:
-    input_payload = assemble_content_plan_input(topic_row, run_id=run_id)
+    input_payload = assemble_content_plan_input(conn, topic_row, run_id=run_id)
     created = harness.api.create_formal_skill_job(input_payload, max_attempts=1)
     step = harness.worker.run_once()
     if step.status != "succeeded":

@@ -37,6 +37,9 @@ from scripts.core.model_gateway.formal_skill_adapter import (
     make_script_review_harness,
     make_source_to_topic_harness,
 )
+from scripts.core.persistence.goal01_store import PersistenceStore
+
+_GOAL02_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "scripts" / "core" / "persistence" / "goal02_schema.sqlite.sql"
 
 
 class TopicToScriptChainIntegrationTests(unittest.TestCase):
@@ -45,6 +48,8 @@ class TopicToScriptChainIntegrationTests(unittest.TestCase):
             conn = sqlite3.connect(Path(tmp) / "test.sqlite3")
             conn.row_factory = sqlite3.Row
             install_schema(conn)
+            PersistenceStore(conn).install_schema()
+            conn.executescript(_GOAL02_SCHEMA_PATH.read_text(encoding="utf-8"))
             try:
                 conn.execute(
                     """
