@@ -33,6 +33,7 @@ if str(ROOT) not in sys.path:
 from scripts.core.business_data.register_competitor_accounts import DEFAULT_DB, install_schema  # noqa: E402
 from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.experience.run_sample_deep_analyze import _safe_db_path  # noqa: E402
+from scripts.core.production.stage0_content_core import reject_legacy_cli_production_write, require_legacy_test_identity  # noqa: E402
 
 
 def validate_final_draft_execution_contract() -> dict[str, Any]:
@@ -98,9 +99,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=1)
     parser.add_argument("--db", default=str(DEFAULT_DB))
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--data-identity", required=True, choices=("test", "fixture", "synthetic", "replay", "mock"))
     args = parser.parse_args(argv)
+    require_legacy_test_identity(args.data_identity)
 
     db_path = _safe_db_path(Path(args.db))
+    reject_legacy_cli_production_write(db_path, "run_final_draft.py")
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:

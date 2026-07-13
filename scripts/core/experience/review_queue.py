@@ -41,6 +41,7 @@ if str(ROOT) not in sys.path:
 from scripts.core.business_data.register_competitor_accounts import DEFAULT_DB, install_schema  # noqa: E402
 from scripts.core.business_data.run_domain_search import install_schema as install_domain_search_schema  # noqa: E402
 from scripts.core.experience.run_sample_deep_analyze import _safe_db_path  # noqa: E402
+from scripts.core.production.stage0_content_core import reject_legacy_cli_production_write, require_legacy_test_identity  # noqa: E402
 
 STAGES: dict[str, dict[str, Any]] = {
     "topic": {
@@ -141,9 +142,12 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--reject", nargs=2, metavar=("STAGE", "ID"))
     parser.add_argument("--note", default=None, help="optional note recorded with --approve/--reject")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--data-identity", required=True, choices=("test", "fixture", "synthetic", "replay", "mock"))
     args = parser.parse_args(argv)
+    require_legacy_test_identity(args.data_identity)
 
     db_path = _safe_db_path(Path(args.db))
+    reject_legacy_cli_production_write(db_path, "review_queue.py")
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:

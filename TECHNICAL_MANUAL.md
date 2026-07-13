@@ -10,7 +10,7 @@
 - 运行期模型路由唯一配置：`config/model_routes.yaml`。
 - 当前模型位点为 `dialogue_model`、`business_model`、`writing_model`；每个位点通过 `provider_ref` 显式绑定 provider。
 - `fallback` 必须为 `none`。`scripts/core/model_gateway/model_router.py` 会拒绝任何非 `none` 的配置。
-- 开发工具不属于运行期 Provider。运行入口通过 `ModelRouter` 和 `HermesModelProviderAdapter` 使用当前配置。
+- 开发工具不属于运行期 Provider。Stage 0 的正式模型请求只能由 `scripts/core/production/stage0_content_core.py` 经 `ModelRouter` 创建；配置中的模型引用不能解析为具体模型时，Core 会失败关闭。
 
 可执行的路由与直接模型调用检查：
 
@@ -35,6 +35,12 @@ python scripts/core/model_gateway/business_route_registry.py
 
 `scripts/core/persistence/` 保存版本、引用和状态机基础设施。状态迁移必须通过受控代码路径；数据库字段名和物理表结构不构成业务设计权威。
 
+Stage 0 第一条内容生产链的唯一正式写入入口是
+`Stage0ContentProductionCore`。它的 production 身份只允许连接
+`data/formal/production_activation.sqlite3`；`test`、`fixture`、`synthetic`、`replay`
+和 `mock` 身份必须使用独立库。该入口目前只提供状态、不可变版本、人工决定、
+Input Assembly、ModelGateway 运行记录和审计边界，不执行真实内容生成。
+
 ### 外部适配器
 
 `scripts/core/external_adapters/` 隔离采集、评论、研究和转写等外部能力。适配器只传递受控输入与结果，不能自行改变业务流程或作为模型调用入口。
@@ -50,8 +56,8 @@ python scripts/core/model_gateway/business_route_registry.py
 `scripts/core/experience/` 负责证据、候选打法、内容绑定和人工审核队列。候选或提案不等于正式经验，正式经验语义不得被自动改写。
 
 - 可移植原子 Skill 位于 `runtime_skills/`，只处理其 schema 定义的输入和输出，不自行读取业务数据库或串联其他 Skill。
-- 运行绑定位于 `scripts/core/experience/run_*.py` 与 `scripts/core/model_gateway/formal_skill_adapter.py`。
-- 需要人工确认的内容通过 `scripts/core/experience/review_queue.py` 管理；自动化代码不得把候选经验直接升级为正式经验。
+- `scripts/core/experience/run_source_to_topic.py`、`run_content_plan.py`、`run_script_generate.py`、`run_script_review.py`、`run_final_draft.py`、`review_queue.py` 与 `run_sample_deep_analyze.py` 保留为隔离测试/旧链辅助代码；必须显式给出非 production 数据身份，且当目标为正式库时会在建立连接前失败，不得推进正式状态。
+- `FormalBusinessSkillHarness` 使用内存 `PersistenceStore`，只能带非 production 测试身份；正式模型运行记录必须由 Stage 0 Core 的 `CoreModelRunMaterializer` 落入正式事实源。
 - `.agents/skills/` 是 Codex 的本地辅助 Skill 目录，不是运行期业务 Skill 加载路径，也不是业务设计来源。
 
 ## 5. 当前验证

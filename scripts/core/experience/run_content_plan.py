@@ -70,6 +70,7 @@ from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
     FormalBusinessSkillHarness,
     make_content_plan_harness,
 )
+from scripts.core.production.stage0_content_core import reject_legacy_cli_production_write, require_legacy_test_identity  # noqa: E402
 from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig  # noqa: E402
 # 条数上限(CONTENT_PLAN_BUSINESS_CONTRACT.yaml evidence_requirements,数组
 # 长度限制,不是字符上限,这次不在用户要求取消的范围内)。字符上限
@@ -310,6 +311,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=1)
     parser.add_argument("--db", default=str(DEFAULT_DB))
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--data-identity", required=True, choices=("test", "fixture", "synthetic", "replay", "mock"))
     parser.add_argument(
         "--env-file",
         default=None,
@@ -318,8 +320,10 @@ def main(argv: list[str] | None = None) -> int:
         "permanently copying those credentials into .env.",
     )
     args = parser.parse_args(argv)
+    require_legacy_test_identity(args.data_identity)
 
     db_path = _safe_db_path(Path(args.db))
+    reject_legacy_cli_production_write(db_path, "run_content_plan.py")
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     env_path = Path(args.env_file) if args.env_file else None

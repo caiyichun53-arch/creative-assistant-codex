@@ -3520,6 +3520,13 @@ class FormalBusinessSkillHarness:
     adapter: FormalBusinessSkillAdapter
     contract: FormalSkillContract
     provider: ModelProvider
+    data_identity: str = "test"
+
+    def __post_init__(self) -> None:
+        if self.data_identity not in {"test", "fixture", "synthetic", "replay", "mock"}:
+            raise FormalSkillValidationError(
+                "FormalBusinessSkillHarness uses an in-memory PersistenceStore and is test-only"
+            )
 
     def close(self) -> None:
         self.store.conn.close()

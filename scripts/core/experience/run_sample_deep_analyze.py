@@ -74,6 +74,7 @@ from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
     ModelRoute,
     make_sample_deep_analyze_harness,
 )
+from scripts.core.production.stage0_content_core import reject_legacy_cli_production_write, require_legacy_test_identity  # noqa: E402
 from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig  # noqa: E402
 from scripts.core.persistence.goal01_store import content_hash  # noqa: E402
 # 2026-07-13 用户明确拍板:彻底取消 transcript_excerpt/candidate_topic 的字符
@@ -313,6 +314,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=1)
     parser.add_argument("--db", default=str(DEFAULT_DB))
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--data-identity", required=True, choices=("test", "fixture", "synthetic", "replay", "mock"))
     parser.add_argument(
         "--env-file",
         default=None,
@@ -321,8 +323,10 @@ def main(argv: list[str] | None = None) -> int:
         "permanently copying those credentials into .env.",
     )
     args = parser.parse_args(argv)
+    require_legacy_test_identity(args.data_identity)
 
     db_path = _safe_db_path(Path(args.db))
+    reject_legacy_cli_production_write(db_path, "run_sample_deep_analyze.py")
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     env_path = Path(args.env_file) if args.env_file else None

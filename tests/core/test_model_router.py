@@ -56,6 +56,31 @@ class ModelRouterTests(unittest.TestCase):
         providers = {router.resolve(route_id).provider_ref for route_id in router.routes}
         self.assertEqual(providers, {"mimo_main"})
 
+    def test_three_positions_resolve_to_explicit_mimo_binding_without_network(self) -> None:
+        router = ModelRouter.from_file(DEFAULT_MODEL_ROUTES_PATH)
+        environment = {
+            "HERMES_BUSINESS_MODEL_NAME": "xiaomi/mimo-v2.5-pro",
+            "HERMES_BUSINESS_MODEL_CLASS": "mimo",
+        }
+        routes = {
+            position: router.resolve_bound_position(position, environment=environment, env_path=None)
+            for position in ("dialogue_model", "business_model", "writing_model")
+        }
+        self.assertEqual({route.provider_name for route in routes.values()}, {"hermes"})
+        self.assertEqual({route.provider_ref for route in routes.values()}, {"mimo_main"})
+        self.assertEqual({route.model_name for route in routes.values()}, {"xiaomi/mimo-v2.5-pro"})
+
+    def test_unresolved_model_reference_fails_closed(self) -> None:
+        router = ModelRouter.from_file(DEFAULT_MODEL_ROUTES_PATH)
+        with self.assertRaisesRegex(ModelRouterError, "configured environment reference is unresolved"):
+            router.resolve_bound_position("business_model", environment={}, env_path=None)
+
+    def test_unbound_model_position_fails_closed(self) -> None:
+        config = _active_config()
+        del config["model_positions"]["writing_model"]
+        with self.assertRaisesRegex(ModelRouterError, "missing required bindings"):
+            ModelRouter.from_config(config)
+
     def test_all_routes_can_point_to_one_provider(self) -> None:
         router = ModelRouter.from_file(ROOT / "config" / "model_routes.example.single_provider.yaml")
         providers = {router.resolve(route_id).provider_ref for route_id in router.routes}
@@ -161,6 +186,11 @@ class ModelRouterTests(unittest.TestCase):
 def _base_config() -> dict:
     return {
         "schema_version": "model_routes.v1",
+        "model_positions": {
+            "dialogue_model": "business_analysis",
+            "business_model": "business_analysis",
+            "writing_model": "business_analysis",
+        },
         "model_providers": {
             "mimo_main": {"type": "mimo", "enabled": True, "auth_ref": "MIMO_AUTH"},
             "gpt_subscription_codex": {
@@ -175,6 +205,30 @@ def _base_config() -> dict:
                 "fallback": "none",
                 "allowed_task_types": ["topic_screening"],
             }
+        },
+    }
+
+
+def _active_config() -> dict:
+    return {
+        "schema_version": "model_routes.v1",
+        "model_positions": {
+            "dialogue_model": "daily_chat",
+            "business_model": "business_analysis",
+            "writing_model": "writing_generation",
+        },
+        "model_providers": {
+            "mimo_main": {
+                "type": "mimo",
+                "enabled": True,
+                "provider_name": "hermes",
+                "model_ref": "HERMES_BUSINESS_MODEL_NAME",
+                "model_class_ref": "HERMES_BUSINESS_MODEL_CLASS",
+            }
+        },
+        "model_routes": {
+            route_id: {"provider_ref": "mimo_main", "fallback": "none", "allowed_task_types": ["test"]}
+            for route_id in ("daily_chat", "business_analysis", "writing_generation")
         },
     }
 

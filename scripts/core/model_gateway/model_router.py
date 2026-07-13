@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 
@@ -12,7 +13,9 @@ from scripts.core.persistence.goal01_store import content_hash
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_MODEL_ROUTES_PATH = ROOT / "config" / "model_routes.yaml"
+DEFAULT_MODEL_ENV_PATH = ROOT / ".env"
 WRITING_ROUTE_ID = "writing_generation"
+REQUIRED_MODEL_POSITIONS = frozenset({"dialogue_model", "business_model", "writing_model"})
 WRITING_TASK_TYPES = frozenset(
     {
         "title_generation",
@@ -59,9 +62,17 @@ class ModelRouteDefinition:
 
 
 class ModelRouter:
-    def __init__(self, *, providers: dict[str, ModelProviderDefinition], routes: dict[str, ModelRouteDefinition], config_hash: str):
+    def __init__(
+        self,
+        *,
+        providers: dict[str, ModelProviderDefinition],
+        routes: dict[str, ModelRouteDefinition],
+        model_positions: dict[str, str],
+        config_hash: str,
+    ):
         self.providers = dict(providers)
         self.routes = dict(routes)
+        self.model_positions = dict(model_positions)
         self.config_hash = config_hash
 
     @classmethod
@@ -75,10 +86,16 @@ class ModelRouter:
             raise ModelRouterError("unexpected model_routes schema_version")
         provider_data = data.get("model_providers") or {}
         route_data = data.get("model_routes") or {}
+        position_data = data.get("model_positions") or {}
         if not isinstance(provider_data, dict) or not provider_data:
             raise ModelRouterError("model_providers must be a non-empty object")
         if not isinstance(route_data, dict) or not route_data:
             raise ModelRouterError("model_routes must be a non-empty object")
+        if not isinstance(position_data, dict):
+            raise ModelRouterError("model_positions must be an object")
+        missing_positions = REQUIRED_MODEL_POSITIONS - set(position_data)
+        if missing_positions:
+            raise ModelRouterError(f"model_positions missing required bindings: {sorted(missing_positions)}")
 
         providers: dict[str, ModelProviderDefinition] = {}
         for provider_ref, payload in provider_data.items():
@@ -116,9 +133,18 @@ class ModelRouter:
                 allowed_task_types=tuple(task_types),
             )
 
+        model_positions: dict[str, str] = {}
+        for position, route_id in position_data.items():
+            if not isinstance(route_id, str) or not route_id:
+                raise ModelRouterError(f"model_positions.{position} must bind a non-empty route_id")
+            if route_id not in routes:
+                raise ModelRouterError(f"model_positions.{position} binds unknown route_id: {route_id}")
+            model_positions[str(position)] = route_id
+
         return cls(
             providers=providers,
             routes=routes,
+            model_positions=model_positions,
             config_hash=content_hash(data, "model_routes.config.v1"),
         )
 
@@ -162,6 +188,94 @@ class ModelRouter:
             provider_ref=route.provider_ref,
         )
 
+    def resolve_bound_position(
+        self,
+        position: str,
+        *,
+        environment: Mapping[str, str] | None = None,
+        env_path: Path | None = DEFAULT_MODEL_ENV_PATH,
+        route_name: str | None = None,
+        parameters: dict[str, Any] | None = None,
+        timeout_ms: int | None = None,
+        config_version: str = "model_routes.v1",
+    ) -> ModelRoute:
+        route_id = self.model_positions.get(position)
+        if route_id is None:
+            raise ModelRouterError(f"model position is not explicitly bound: {position}")
+        return self.resolve_bound_route(
+            route_id,
+            environment=environment,
+            env_path=env_path,
+            route_name=route_name or position,
+            parameters=parameters,
+            timeout_ms=timeout_ms,
+            config_version=config_version,
+        )
+
+    def resolve_bound_route(
+        self,
+        route_id: str,
+        *,
+        environment: Mapping[str, str] | None = None,
+        env_path: Path | None = DEFAULT_MODEL_ENV_PATH,
+        route_name: str | None = None,
+        parameters: dict[str, Any] | None = None,
+        timeout_ms: int | None = None,
+        config_version: str = "model_routes.v1",
+    ) -> ModelRoute:
+        """Resolve a configured environment reference without contacting a provider.
+
+        `model_ref` is an environment key, never a literal model name.  A
+        conflicting process value and dotenv value is deliberately rejected:
+        formal execution must not silently choose one model binding.
+        """
+        route = self.routes.get(route_id)
+        if route is None:
+            raise ModelRouterError(f"unknown route_id: {route_id}")
+        provider = self.providers.get(route.provider_ref)
+        if provider is None:
+            raise ModelRouterError(f"missing provider_ref for route_id {route_id}: {route.provider_ref}")
+        if not provider.enabled:
+            raise ModelRouterError(f"provider is disabled for route_id {route_id}: {route.provider_ref}")
+        if route.fallback != "none":
+            raise ModelRouterError(f"route_id {route_id} has non-none fallback")
+
+        model_ref = _required_environment_reference(provider.settings, "model_ref", route_id)
+        model_name = _resolve_environment_reference(model_ref, environment=environment, env_path=env_path)
+        class_ref = provider.settings.get("model_class_ref")
+        if class_ref:
+            model_class = _resolve_environment_reference(str(class_ref), environment=environment, env_path=env_path)
+            if model_class.casefold() != provider.provider_type.casefold():
+                raise ModelRouterError(
+                    f"provider class mismatch for route_id {route_id}: expected {provider.provider_type}, got {model_class}"
+                )
+        provider_name = str(provider.settings.get("provider_name") or "")
+        if not provider_name:
+            raise ModelRouterError(f"model_providers.{route.provider_ref}.provider_name is required for a bound route")
+
+        return ModelRoute(
+            route_name=route_name or route_id,
+            provider_name=provider_name,
+            model_name=model_name,
+            config_version=config_version,
+            config_hash=content_hash(
+                {
+                    "route_id": route.route_id,
+                    "provider_ref": route.provider_ref,
+                    "provider_name": provider_name,
+                    "provider_type": provider.provider_type,
+                    "model_ref": model_ref,
+                    "model_name": model_name,
+                    "config_hash": self.config_hash,
+                },
+                "model_routes.bound_route.v1",
+            ),
+            parameters=parameters,
+            timeout_ms=timeout_ms,
+            route_id=route.route_id,
+            provider_ref=route.provider_ref,
+        )
+
     def validate_workflow_node_bindings(self, nodes: list[dict[str, Any]]) -> None:
         for node in nodes:
             node_id = str(node.get("node_id") or node.get("logical_route") or "<unknown>")
@@ -177,3 +291,38 @@ class ModelRouter:
                 raise ModelRouterError(f"business_analysis node {node_id} must not bind writing task_type {task_type}")
             if task_type in WRITING_TASK_TYPES and node["route_id"] != WRITING_ROUTE_ID:
                 raise ModelRouterError(f"writing workflow node {node_id} must bind {WRITING_ROUTE_ID}")
+
+
+def _required_environment_reference(settings: Mapping[str, Any], setting: str, route_id: str) -> str:
+    reference = str(settings.get(setting) or "")
+    if not reference:
+        raise ModelRouterError(f"model route {route_id} has no {setting}")
+    if not reference.isupper() or not reference.replace("_", "").isalnum():
+        raise ModelRouterError(f"model route {route_id} {setting} must be an environment-variable reference")
+    return reference
+
+
+def _resolve_environment_reference(
+    reference: str,
+    *,
+    environment: Mapping[str, str] | None,
+    env_path: Path | None,
+) -> str:
+    process_values = environment if environment is not None else os.environ
+    process_value = str(process_values.get(reference) or "").strip()
+    dotenv_value = _dotenv_value(reference, env_path)
+    if process_value and dotenv_value and process_value != dotenv_value:
+        raise ModelRouterError(f"conflicting values for configured environment reference: {reference}")
+    value = process_value or dotenv_value
+    if not value:
+        raise ModelRouterError(f"configured environment reference is unresolved: {reference}")
+    return value
+
+
+def _dotenv_value(reference: str, env_path: Path | None) -> str:
+    if env_path is None or not env_path.exists():
+        return ""
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith(f"{reference}="):
+            return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return ""
