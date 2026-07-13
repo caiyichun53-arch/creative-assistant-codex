@@ -299,5 +299,5 @@ class ModelGateway:
             usage=usage,
             provider_request_id=provider_request_id,
             error=error,
-            metadata=metadata or request.metadata or {},
+            metadata={**(request.metadata or {}), **(metadata or {})},
         )

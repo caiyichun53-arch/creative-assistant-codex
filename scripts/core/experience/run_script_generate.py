@@ -43,15 +43,12 @@ from scripts.core.experience.run_sample_deep_analyze import _load_env_value, _sa
 from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
     FormalBusinessSkillHarness,
     ModelRoute,
+    load_script_generate_execution_configuration,
     make_script_generate_harness,
 )
 from scripts.core.production.stage0_content_core import reject_legacy_cli_production_write, require_legacy_test_identity  # noqa: E402
 from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig  # noqa: E402
 from scripts.core.persistence.goal01_store import content_hash  # noqa: E402
-# 条数上限(数组长度,不是字符上限,这次不在用户要求取消的范围内)。字符上限
-# (BRIEF_MAX_CHARS/RESEARCH_SUMMARY_MAX_CHARS)2026-07-13 用户明确拍板彻底
-# 取消,真实内容一律原样完整发给模型。
-EVIDENCE_ITEMS_MAX = 12
 NOT_A_REAL_RESEARCH_PASS_PREFIX = "(未经真实研究流程,仅汇总已有证据,不是 research_evidence_extract/production_research_plan 的产出)"
 
 
@@ -92,7 +89,12 @@ def select_plans_pending_script(conn: sqlite3.Connection, *, limit: int) -> list
     ).fetchall()
 
 
-def assemble_script_generate_input(plan_row: sqlite3.Row, *, run_id: str) -> dict[str, Any]:
+def assemble_script_generate_input(
+    plan_row: sqlite3.Row,
+    *,
+    run_id: str,
+    execution_configuration: dict[str, Any],
+) -> dict[str, Any]:
     """Pure function: a real content_plans row (joined with its source topic/
     hit/account) in, script_generate's exact public input contract out."""
     domain_label = plan_row["account_domain_label"]
@@ -108,7 +110,7 @@ def assemble_script_generate_input(plan_row: sqlite3.Row, *, run_id: str) -> dic
     ]
     if not evidence_items:
         evidence_items = [{"type": "topic_angle", "text": plan_row["topic_angle"]}]
-    evidence_items = evidence_items[:EVIDENCE_ITEMS_MAX]
+    evidence_items = evidence_items[:execution_configuration["evidence_items_max"]]
 
     brief = f"选题:{plan_row['candidate_topic']}。切入角度:{plan_row['topic_angle']}"
 
@@ -144,8 +146,20 @@ def _persist_draft(conn: sqlite3.Connection, plan_id: str, input_payload: dict[s
     return draft_id
 
 
-def generate_one_draft(conn: sqlite3.Connection, harness: FormalBusinessSkillHarness, plan_row: sqlite3.Row, *, run_id: str, model_name: str) -> dict[str, Any]:
-    input_payload = assemble_script_generate_input(plan_row, run_id=run_id)
+def generate_one_draft(
+    conn: sqlite3.Connection,
+    harness: FormalBusinessSkillHarness,
+    plan_row: sqlite3.Row,
+    *,
+    run_id: str,
+    model_name: str,
+    execution_configuration: dict[str, Any],
+) -> dict[str, Any]:
+    input_payload = assemble_script_generate_input(
+        plan_row,
+        run_id=run_id,
+        execution_configuration=execution_configuration,
+    )
     created = harness.api.create_formal_skill_job(input_payload, max_attempts=1)
     step = harness.worker.run_once()
     if step.status != "succeeded":
@@ -159,12 +173,26 @@ def generate_one_draft(conn: sqlite3.Connection, harness: FormalBusinessSkillHar
 
 def run_script_generate(conn: sqlite3.Connection, *, limit: int, harness: FormalBusinessSkillHarness, model_name: str) -> dict[str, Any]:
     validate_script_generate_execution_contract()
+    execution_configuration = load_script_generate_execution_configuration()
+    if harness.adapter.contract.execution_configuration != execution_configuration:
+        raise RuntimeError("script_generate harness configuration does not match the current versioned contract")
     run_id = "script_generate_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     pending = select_plans_pending_script(conn, limit=limit)
-    results = [generate_one_draft(conn, harness, row, run_id=run_id, model_name=model_name) for row in pending]
+    results = [
+        generate_one_draft(
+            conn,
+            harness,
+            row,
+            run_id=run_id,
+            model_name=model_name,
+            execution_configuration=execution_configuration,
+        )
+        for row in pending
+    ]
     return {
         "status": "succeeded",
         "run_id": run_id,
+        "execution_configuration": execution_configuration,
         "attempted": len(results),
         "completed": sum(1 for r in results if r["status"] == "completed"),
         "failed": sum(1 for r in results if r["status"] == "failed"),

@@ -431,13 +431,15 @@ class FormalSkillContract:
     model_output_schema: dict[str, Any]
     prompt_template: str
     materializer_contract: str
+    execution_configuration: dict[str, Any]
 
     @classmethod
     def from_yaml(cls, path: Path = CONTENT_CLASSIFY_CONTRACT_PATH) -> "FormalSkillContract":
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        formal_skill_id = str(data.get("formal_skill_id") or data["skill_id"])
         model_binding = data["model_binding"]
         return cls(
-            formal_skill_id=str(data.get("formal_skill_id") or data["skill_id"]),
+            formal_skill_id=formal_skill_id,
             version=str(data.get("version") or data["skill_version"]),
             input_schema=dict(data["input_schema"]),
             output_schema=dict(data["output_schema"]),
@@ -453,6 +455,11 @@ class FormalSkillContract:
             model_output_schema=dict(model_binding["model_output_schema"]),
             prompt_template=str(model_binding["prompt_template"]),
             materializer_contract=str(data["materializer_contract"]),
+            execution_configuration=(
+                script_generate_execution_configuration_from_contract(data)
+                if formal_skill_id == "script_generate"
+                else {}
+            ),
         )
 
     def validate_contract(self) -> None:
@@ -507,6 +514,7 @@ class FormalSkillContract:
                 "output_schema": self.output_schema,
                 "allowed_model_nodes": list(self.allowed_model_nodes),
                 "route_id": self.route_id,
+                "execution_configuration": self.execution_configuration,
             },
             "formal_business_skill.contract.v1",
         )
@@ -565,6 +573,9 @@ class FormalBusinessSkillAdapter:
         portable = self.contract.portable_skill()
         host_binding = self.contract.host_binding()
         prompt = portable.render_prompt(model_input)
+        request_metadata = {"formal_skill_id": self.contract.formal_skill_id}
+        if self.contract.execution_configuration:
+            request_metadata["execution_configuration"] = self.contract.execution_configuration
         model_run = self.gateway.complete(
             ModelRequest(
                 route_name=self.contract.route_name,
@@ -577,7 +588,7 @@ class FormalBusinessSkillAdapter:
                 binding_name=host_binding.binding_name,
                 binding_version=host_binding.binding_version,
                 binding_hash=self.contract.binding_hash,
-                metadata={"formal_skill_id": self.contract.formal_skill_id},
+                metadata=request_metadata,
             )
         )
         model_output = parse_model_json(model_run.output_text)
@@ -1065,6 +1076,37 @@ def load_content_plan_business_contract(path: Path = CONTENT_PLAN_CONTRACT_PATH)
 
 def load_script_generate_business_contract(path: Path = SCRIPT_GENERATE_CONTRACT_PATH) -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def script_generate_execution_configuration_from_contract(data: dict[str, Any]) -> dict[str, Any]:
+    """Extract the one approved input-limit configuration without defaults."""
+    schema_version = data.get("schema_version")
+    skill_version = data.get("skill_version")
+    if not isinstance(schema_version, str) or not schema_version:
+        raise FormalSkillValidationError("script_generate contract schema_version is required for execution configuration")
+    if not isinstance(skill_version, str) or not skill_version:
+        raise FormalSkillValidationError("script_generate contract skill_version is required for execution configuration")
+    try:
+        limits = (
+            data["evidence_requirements"]["evidence_items_max"],
+            data["input_schema"]["properties"]["evidence_items"]["maxItems"],
+            data["model_binding"]["model_input_schema"]["properties"]["evidence_items"]["maxItems"],
+        )
+    except (KeyError, TypeError) as exc:
+        raise FormalSkillValidationError("script_generate evidence_items_max must be declared in the versioned contract") from exc
+    if any(isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0 for limit in limits):
+        raise FormalSkillValidationError("script_generate evidence_items_max must be a positive integer")
+    if len(set(limits)) != 1:
+        raise FormalSkillValidationError("script_generate evidence_items_max declarations must match within the versioned contract")
+    return {
+        "evidence_items_max": limits[0],
+        "config_version": f"{schema_version}:{skill_version}",
+        "config_hash": content_hash(data, "script_generate.execution_configuration.v1"),
+    }
+
+
+def load_script_generate_execution_configuration(path: Path = SCRIPT_GENERATE_CONTRACT_PATH) -> dict[str, Any]:
+    return script_generate_execution_configuration_from_contract(load_script_generate_business_contract(path))
 
 
 def load_script_review_business_contract(path: Path = SCRIPT_REVIEW_CONTRACT_PATH) -> dict[str, Any]:

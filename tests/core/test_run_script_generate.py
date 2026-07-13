@@ -15,7 +15,10 @@ from scripts.core.experience.run_script_generate import (
     select_plans_pending_script,
     validate_script_generate_execution_contract,
 )
-from scripts.core.model_gateway.formal_skill_adapter import make_script_generate_harness
+from scripts.core.model_gateway.formal_skill_adapter import (
+    load_script_generate_execution_configuration,
+    make_script_generate_harness,
+)
 
 
 def _connect(tmp: str) -> sqlite3.Connection:
@@ -194,7 +197,11 @@ class AssembleScriptGenerateInputTests(unittest.TestCase):
             try:
                 _full_chain(conn)
                 row = select_plans_pending_script(conn, limit=1)[0]
-                payload = assemble_script_generate_input(row, run_id="run_test")
+                payload = assemble_script_generate_input(
+                    row,
+                    run_id="run_test",
+                    execution_configuration=load_script_generate_execution_configuration(),
+                )
             finally:
                 conn.close()
 
@@ -221,10 +228,34 @@ class AssembleScriptGenerateInputTests(unittest.TestCase):
                 _insert_topic(conn, "t1", "a1", supporting_evidence=[])
                 _insert_plan(conn, "p1", "t1")
                 row = select_plans_pending_script(conn, limit=1)[0]
-                payload = assemble_script_generate_input(row, run_id="run_test")
+                payload = assemble_script_generate_input(
+                    row,
+                    run_id="run_test",
+                    execution_configuration=load_script_generate_execution_configuration(),
+                )
             finally:
                 conn.close()
         self.assertGreaterEqual(len(payload["evidence_items"]), 1)
+
+    def test_evidence_items_are_limited_by_the_versioned_configuration(self) -> None:
+        configuration = load_script_generate_execution_configuration()
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn)
+                _insert_hit(conn, "h1")
+                _insert_analysis(conn, "a1", "h1")
+                _insert_topic(conn, "t1", "a1", supporting_evidence=[f"evidence-{index}" for index in range(20)])
+                _insert_plan(conn, "p1", "t1")
+                row = select_plans_pending_script(conn, limit=1)[0]
+                payload = assemble_script_generate_input(
+                    row,
+                    run_id="run_test",
+                    execution_configuration=configuration,
+                )
+            finally:
+                conn.close()
+        self.assertEqual(len(payload["evidence_items"]), configuration["evidence_items_max"])
 
     def test_unrecognized_domain_label_falls_back_to_unknown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -236,7 +267,11 @@ class AssembleScriptGenerateInputTests(unittest.TestCase):
                 _insert_topic(conn, "t1", "a1")
                 _insert_plan(conn, "p1", "t1")
                 row = select_plans_pending_script(conn, limit=1)[0]
-                payload = assemble_script_generate_input(row, run_id="run_test")
+                payload = assemble_script_generate_input(
+                    row,
+                    run_id="run_test",
+                    execution_configuration=load_script_generate_execution_configuration(),
+                )
             finally:
                 conn.close()
         self.assertEqual(payload["domain_label"], "unknown")
@@ -254,7 +289,14 @@ class GenerateOneDraftAndRunTests(unittest.TestCase):
                 _full_chain(conn)
                 row = select_plans_pending_script(conn, limit=1)[0]
 
-                result = generate_one_draft(conn, harness, row, run_id="run_test", model_name="deterministic-test")
+                result = generate_one_draft(
+                    conn,
+                    harness,
+                    row,
+                    run_id="run_test",
+                    model_name="deterministic-test",
+                    execution_configuration=load_script_generate_execution_configuration(),
+                )
 
                 self.assertEqual(result["status"], "completed")
                 draft_row = conn.execute("SELECT * FROM script_drafts WHERE source_plan_id='p1'").fetchone()
@@ -275,12 +317,26 @@ class GenerateOneDraftAndRunTests(unittest.TestCase):
                 row = select_plans_pending_script(conn, limit=1)[0]
                 harness_a = make_script_generate_harness()
                 try:
-                    generate_one_draft(conn, harness_a, row, run_id="run_a", model_name="m")
+                    generate_one_draft(
+                        conn,
+                        harness_a,
+                        row,
+                        run_id="run_a",
+                        model_name="m",
+                        execution_configuration=load_script_generate_execution_configuration(),
+                    )
                 finally:
                     harness_a.close()
                 harness_b = make_script_generate_harness()
                 try:
-                    generate_one_draft(conn, harness_b, row, run_id="run_b", model_name="m")
+                    generate_one_draft(
+                        conn,
+                        harness_b,
+                        row,
+                        run_id="run_b",
+                        model_name="m",
+                        execution_configuration=load_script_generate_execution_configuration(),
+                    )
                 finally:
                     harness_b.close()
 
@@ -301,6 +357,7 @@ class GenerateOneDraftAndRunTests(unittest.TestCase):
                 self.assertEqual(report["attempted"], 1)
                 self.assertEqual(report["completed"], 1)
                 self.assertEqual(report["failed"], 0)
+                self.assertEqual(report["execution_configuration"], load_script_generate_execution_configuration())
             finally:
                 conn.close()
                 harness.close()

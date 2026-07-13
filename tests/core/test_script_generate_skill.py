@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
+
+import yaml
 
 from scripts.core.model_gateway.formal_skill_adapter import (
     SCRIPT_GENERATE_CONTRACT_PATH,
@@ -9,6 +14,7 @@ from scripts.core.model_gateway.formal_skill_adapter import (
     FormalSkillValidationError,
     apply_binding,
     load_script_generate_business_contract,
+    load_script_generate_execution_configuration,
     load_script_generate_fixtures,
     make_script_generate_harness,
     preprocess_formal_skill_input,
@@ -60,6 +66,27 @@ class ScriptGenerateBusinessContractTests(unittest.TestCase):
         self.assertEqual(contract.formal_skill_id, "script_generate")
         self.assertEqual(contract.route_name, "business.creation_draft")
         self.assertEqual(contract.allowed_model_nodes, ("business.creation_draft",))
+
+    def test_execution_configuration_uses_the_versioned_contract_value(self) -> None:
+        configuration = load_script_generate_execution_configuration()
+        self.assertEqual(configuration["evidence_items_max"], 12)
+        self.assertEqual(configuration["config_version"], "script_generate.business_contract.v1:1.0.0")
+
+    def test_execution_configuration_fails_closed_when_missing_or_inconsistent(self) -> None:
+        original = load_script_generate_business_contract()
+        for mutation in (
+            lambda data: data.pop("evidence_requirements"),
+            lambda data: data["evidence_requirements"].update({"evidence_items_max": 0}),
+            lambda data: data["model_binding"]["model_input_schema"]["properties"]["evidence_items"].update({"maxItems": 11}),
+        ):
+            with self.subTest(mutation=mutation):
+                data = json.loads(json.dumps(original))
+                mutation(data)
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "script_generate_contract.yaml"
+                    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+                    with self.assertRaises(FormalSkillValidationError):
+                        load_script_generate_execution_configuration(path)
 
     def test_formal_input_schema_accepts_only_public_binding_shape(self) -> None:
         contract = FormalSkillContract.from_yaml(SCRIPT_GENERATE_CONTRACT_PATH)
@@ -122,6 +149,18 @@ class ScriptGenerateRuntimeTests(ScriptGenerateHarnessMixin, unittest.TestCase):
         self.assertGreaterEqual(len(result["output"]["draft_text"]), 50)
         self.assertEqual(len(outbox), 1)
         self.assertEqual(harness.provider.call_count, 1)
+
+    def test_model_run_record_includes_actual_execution_configuration(self) -> None:
+        harness = self.make_script_harness()
+        result = harness.adapter.run(sample_script_generate_input())
+        row = harness.store.conn.execute(
+            "SELECT payload_json FROM trace_version WHERE version_id=?",
+            (result.model_run_envelope_version_id,),
+        ).fetchone()
+        payload = json.loads(row["payload_json"])
+        configuration = payload["metadata"]["execution_configuration"]
+        self.assertEqual(configuration["evidence_items_max"], 12)
+        self.assertEqual(configuration["config_version"], "script_generate.business_contract.v1:1.0.0")
 
     def test_provider_failure_retries_then_succeeds_without_duplicate_outbox(self) -> None:
         harness = self.make_script_harness(provider=DeterministicScriptGenerateModelPort(behavior="fail_once"))
