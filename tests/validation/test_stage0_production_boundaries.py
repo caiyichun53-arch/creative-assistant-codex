@@ -30,6 +30,11 @@ class Stage0ProductionBoundaryTests(unittest.TestCase):
         self.assertEqual(source.count("class Stage0ContentProductionCore:"), 1)
         self.assertIn("FORMAL_DB_PATH = ROOT / \"data\" / \"formal\" / \"production_activation.sqlite3\"", source)
 
+    def test_stage1a_orchestration_has_no_direct_database_write(self) -> None:
+        source = (ROOT / "scripts/core/production/stage1a_research_plan.py").read_text(encoding="utf-8")
+        self.assertNotIn("sqlite3.connect", source)
+        self.assertNotIn("core.conn", source)
+
     def test_legacy_chain_cli_refuse_the_formal_database_before_connecting(self) -> None:
         with self.assertRaises(LegacyProductionEntryDisabledError):
             reject_legacy_cli_production_write(FORMAL_DB_PATH, "test legacy cli")

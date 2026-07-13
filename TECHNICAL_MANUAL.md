@@ -41,6 +41,16 @@ Stage 0 第一条内容生产链的唯一正式写入入口是
 和 `mock` 身份必须使用独立库。该入口目前只提供状态、不可变版本、人工决定、
 Input Assembly、ModelGateway 运行记录和审计边界，不执行真实内容生成。
 
+### Stage 1A：正式选题与研究方案待审核
+
+`scripts/core/production/stage1a_research_plan.py` 仅将用户提交的正式选题推进到研究方案待审核：
+`Stage1AResearchPlanService.submit_formal_topic` 创建不可变选题版本并停在待人工确认；
+`confirm_formal_topic` 后，`generate_research_plan` 才能通过 `ModelGateway` 的显式
+`stage0.research_plan` 路由调用模型。研究方案及其 Input Assembly、模型运行记录和版本均由
+`Stage0ContentProductionCore` 写入 `data/formal/production_activation.sqlite3`，生成成功仍停在
+`awaiting_human_review`。`view_artifact`、`approve_research_plan`、`return_research_plan` 与
+`cancel_task` 分别用于查看、人工通过、退回并以新版本重做、取消。Stage 1A 不执行深度研究。
+
 ### 外部适配器
 
 `scripts/core/external_adapters/` 隔离采集、评论、研究和转写等外部能力。适配器只传递受控输入与结果，不能自行改变业务流程或作为模型调用入口。

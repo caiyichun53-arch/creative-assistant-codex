@@ -325,12 +325,26 @@ class Stage0ContentProductionCore:
                 data_identity TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS stage1a_artifact_payload (
+                version_id TEXT PRIMARY KEY REFERENCES stage0_content_node_version(version_id),
+                artifact_kind TEXT NOT NULL CHECK(artifact_kind IN ('formal_topic', 'research_plan')),
+                payload_json TEXT NOT NULL,
+                integrity_hash TEXT NOT NULL,
+                data_identity TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             CREATE TRIGGER IF NOT EXISTS stage0_node_version_immutable_update
             BEFORE UPDATE ON stage0_content_node_version
             BEGIN SELECT RAISE(ABORT, 'stage0 node versions are immutable'); END;
             CREATE TRIGGER IF NOT EXISTS stage0_node_version_immutable_delete
             BEFORE DELETE ON stage0_content_node_version
             BEGIN SELECT RAISE(ABORT, 'stage0 node versions are immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS stage1a_artifact_payload_immutable_update
+            BEFORE UPDATE ON stage1a_artifact_payload
+            BEGIN SELECT RAISE(ABORT, 'stage1a artifact payloads are immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS stage1a_artifact_payload_immutable_delete
+            BEFORE DELETE ON stage1a_artifact_payload
+            BEGIN SELECT RAISE(ABORT, 'stage1a artifact payloads are immutable'); END;
             """
         )
         self.conn.commit()
@@ -344,6 +358,8 @@ class Stage0ContentProductionCore:
         reason: str,
         idempotency_key: str,
     ) -> dict[str, str]:
+        if self.data_identity == "production":
+            raise StateTransitionError("production formal topics must be submitted and explicitly confirmed separately")
         if actor_kind != "user":
             raise StateTransitionError("formal topic creation requires a user confirmation")
         request = {"topic_payload": topic_payload, "actor": actor, "actor_kind": actor_kind, "reason": reason}
@@ -365,6 +381,79 @@ class Stage0ContentProductionCore:
             result = {"task_id": task_id, "topic_version_id": topic_version_id}
             self._receipt("create_task", idempotency_key, request, result)
             self._audit(task_id, "task_created", result)
+        return result
+
+    def submit_formal_topic(
+        self,
+        *,
+        topic_payload: dict[str, Any],
+        actor: str,
+        actor_kind: str,
+        reason: str,
+        idempotency_key: str,
+    ) -> dict[str, str]:
+        """Create a user-supplied formal-topic version, awaiting confirmation."""
+        if actor_kind != "user":
+            raise StateTransitionError("formal topic submission requires a user actor")
+        request = {"topic_payload": topic_payload, "actor": actor, "actor_kind": actor_kind, "reason": reason}
+        replay = self._replay("submit_formal_topic", idempotency_key, request)
+        if replay:
+            return replay
+        task_id, topic_version_id = _id("task"), _id("version")
+        now = _now()
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage0_content_task VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, NULL)",
+                (task_id, topic_version_id, "formal_topic", topic_version_id, "awaiting_human_review", self.data_identity, actor, now),
+            )
+            self.conn.execute(
+                "INSERT INTO stage0_content_node_version VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    topic_version_id,
+                    task_id,
+                    "formal_topic",
+                    "awaiting_human_review",
+                    "formal_topic_payload",
+                    "topic_submitted",
+                    self.data_identity,
+                    actor,
+                    now,
+                    0,
+                ),
+            )
+            self._insert_artifact_payload(topic_version_id, "formal_topic", topic_payload)
+            result = {"task_id": task_id, "topic_version_id": topic_version_id, "task_revision": "0"}
+            self._receipt("submit_formal_topic", idempotency_key, request, result)
+            self._audit(task_id, "formal_topic_submitted", result)
+        return result
+
+    def confirm_formal_topic(
+        self,
+        *,
+        task_id: str,
+        topic_version_id: str,
+        actor: str,
+        actor_kind: str,
+        reason: str,
+        idempotency_key: str,
+    ) -> dict[str, str]:
+        if actor_kind != "user":
+            raise StateTransitionError("only a user may confirm a formal topic")
+        task, version = self._task(task_id), self._version(topic_version_id)
+        self._assert_current_node(task, "formal_topic", "awaiting_human_review", topic_version_id)
+        if version["node"] != "formal_topic":
+            raise StateTransitionError("version is not a formal topic")
+        request = {"task_id": task_id, "topic_version_id": topic_version_id, "actor": actor, "reason": reason}
+        replay = self._replay("confirm_formal_topic", idempotency_key, request)
+        if replay:
+            return replay
+        revision = int(task["task_revision"]) + 1
+        with self.conn:
+            self._decision(task_id, "formal_topic", topic_version_id, "approved", actor, actor_kind, reason)
+            self._set_task(task_id, node="research_plan", version_id=topic_version_id, status="not_started", revision=revision)
+            result = {"task_id": task_id, "current_node": "research_plan", "task_revision": str(revision)}
+            self._receipt("confirm_formal_topic", idempotency_key, request, result)
+            self._audit(task_id, "formal_topic_confirmed", result)
         return result
 
     def create_input_assembly(self, assembly: InputAssembly, *, idempotency_key: str) -> dict[str, str]:
@@ -477,6 +566,7 @@ class Stage0ContentProductionCore:
         actor: str,
         expected_task_revision: int,
         idempotency_key: str,
+        artifact_payload: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         if validation_status != "passed":
             raise StateTransitionError("only schema-validated model output may await human review")
@@ -499,6 +589,10 @@ class Stage0ContentProductionCore:
                 "INSERT INTO stage0_content_node_version VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (output_version_id, task_id, request_version["node"], node_version_id, request_version["upstream_version_id"], request_version["input_assembly_id"], "awaiting_human_review", output_ref, "passed", self.data_identity, actor, _now(), revision),
             )
+            if artifact_payload is not None:
+                if request_version["node"] not in {"research_plan"}:
+                    raise StateTransitionError("artifact payload persistence is only enabled for Stage 1A research plans")
+                self._insert_artifact_payload(output_version_id, request_version["node"], artifact_payload)
             self.conn.execute("UPDATE stage0_model_run SET output_version_id=? WHERE model_run_id=?", (output_version_id, model_run_id))
             self._set_task(task_id, node=request_version["node"], version_id=output_version_id, status="awaiting_human_review", revision=revision)
             result = {"node_version_id": output_version_id, "task_revision": str(revision)}
@@ -627,6 +721,80 @@ class Stage0ContentProductionCore:
         if row is None:
             raise ModelGatewayRequiredError("model run does not exist")
         return row
+
+    def get_task(self, task_id: str) -> dict[str, Any]:
+        row = self._task(task_id)
+        return {key: row[key] for key in row.keys()}
+
+    def get_node_version(self, version_id: str) -> dict[str, Any]:
+        row = self._version(version_id)
+        return {key: row[key] for key in row.keys()}
+
+    def get_input_assembly_payload(self, assembly_id: str) -> dict[str, Any]:
+        row = self._assembly(assembly_id)
+        return json.loads(row["payload_json"])
+
+    def find_command_replay(self, command: str, idempotency_key: str, request: dict[str, Any]) -> dict[str, str] | None:
+        return self._replay(command, idempotency_key, request)
+
+    def record_completed_command(
+        self,
+        *,
+        command: str,
+        idempotency_key: str,
+        request: dict[str, Any],
+        task_id: str,
+        event: str,
+        result: dict[str, str],
+    ) -> None:
+        """Persist an orchestration receipt and audit event through the Core boundary."""
+        with self.conn:
+            self._receipt(command, idempotency_key, request, result)
+            self._audit(task_id, event, result)
+
+    def record_model_validation_failure(
+        self,
+        *,
+        task_id: str,
+        node_version_id: str,
+        model_run_id: str,
+        reason: str,
+    ) -> None:
+        """Record a rejected structured output without creating a business artifact."""
+        task, version, model_run = self._task(task_id), self._version(node_version_id), self._model_run(model_run_id)
+        self._assert_current_node(task, version["node"], "processing", node_version_id)
+        if model_run["data_identity"] != self.data_identity or model_run["task_id"] != task_id or model_run["node_version_id"] != node_version_id:
+            raise ModelGatewayRequiredError("model run does not belong to the active node request")
+        with self.conn:
+            self.conn.execute(
+                "UPDATE stage0_model_run SET validation_status='failed', error_json=? WHERE model_run_id=?",
+                (_canonical({"validation_error": reason}), model_run_id),
+            )
+            self._audit(task_id, "model_output_validation_failed", {"model_run_id": model_run_id, "reason": reason})
+
+    def get_artifact_payload(self, version_id: str) -> dict[str, Any]:
+        version = self._version(version_id)
+        row = self.conn.execute(
+            "SELECT artifact_kind, payload_json, integrity_hash, created_at FROM stage1a_artifact_payload WHERE version_id=? AND data_identity=?",
+            (version_id, self.data_identity),
+        ).fetchone()
+        if row is None:
+            raise StateTransitionError("artifact payload does not exist for this version")
+        return {
+            "version_id": version_id,
+            "task_id": version["task_id"],
+            "node": version["node"],
+            "artifact_kind": row["artifact_kind"],
+            "payload": json.loads(row["payload_json"]),
+            "integrity_hash": row["integrity_hash"],
+            "created_at": row["created_at"],
+        }
+
+    def _insert_artifact_payload(self, version_id: str, artifact_kind: str, payload: dict[str, Any]) -> None:
+        self.conn.execute(
+            "INSERT INTO stage1a_artifact_payload VALUES (?, ?, ?, ?, ?, ?)",
+            (version_id, artifact_kind, _canonical(payload), _hash(payload), self.data_identity, _now()),
+        )
 
     def _approved_upstream(self, task: sqlite3.Row, node: str, upstream_version_id: str | None) -> str:
         expected_node = UPSTREAM_NODE[node]
