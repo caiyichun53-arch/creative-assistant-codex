@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 # 2026-07-08: within a single session, reading the raw master design document
-# directly (instead of BUSINESS_RULE_CATALOG.yaml, the only file CLAUDE.md/AGENTS.md
+# directly (instead of docs/EFFECTIVE_DESIGN_BASELINE.md, the sole current design baseline
 # name as "现行系统唯一算数的业务规则依据") caused real drift THREE separate times --
 # each time surfacing a stale number/mechanism the catalog had already superseded
 # (e.g. the document's literal ">=5" sample floor, already overridden to 20 and
@@ -55,7 +55,7 @@ class SourceDocumentNotTrackedTests(unittest.TestCase):
             "The master design source document must not be tracked in this repo -- "
             "it is local-machine-only reference material for deliberate, "
             "user-initiated reconciliation sessions, never a standing fallback for "
-            f"day-to-day implementation questions (see CLAUDE.md/AGENTS.md): {violations}",
+            f"day-to-day implementation questions (see docs/EFFECTIVE_DESIGN_BASELINE.md): {violations}",
         )
 
 

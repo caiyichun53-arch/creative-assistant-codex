@@ -1,5 +1,5 @@
 """One-time migration: rebuild competitor_videos/baselines/hits/video_checks
-under the 2026-07-07 master-doc-realignment schema (BUSINESS_RULE_CATALOG.yaml
+under the prior master-doc-realignment schema (now superseded by the effective baseline
 BR-HIT-001 amendment_2026_07_07_master_doc_realignment), reclassifying each
 existing video's raw crawl data into the new first_contact_category model
 instead of discarding it.

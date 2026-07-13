@@ -4,7 +4,7 @@ script_review/sample_deep_analyze/tactic_extract).
 
 2026-07-13 (置顶规则总表核对后): this exact frozenset used to be copy-pasted
 identically into 5 separate run_*.py files, discovered while auditing the
-pinned-rules doc against the real catalog. Not itself a BUSINESS_RULE_CATALOG.yaml
+pinned-rules document against the effective baseline. Not itself a design
 requirement -- domain_label's real values come from BR-DOMAIN config
 (config/domains/*.yaml sets formal_domain_label per domain) -- this module
 just stops the same literal set from drifting across 5+ copies.

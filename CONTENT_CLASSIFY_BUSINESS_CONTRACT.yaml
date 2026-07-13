@@ -1,12 +1,12 @@
 schema_version: content_classify.business_contract.v1
-goal: GOAL-BUSINESS-SKILL-CONTENT-CLASSIFY-01
+governance_basis: docs/EFFECTIVE_DESIGN_BASELINE.md
 skill_id: content_classify
 skill_version: 1.0.0
 source_documents:
-  - C:\Users\15891\.codex\attachments\3464f3ae-7795-498e-a0f4-cc0a2d1c2153\pasted-text-1.txt
-  - AGENTS.md
-  - BUILD_PLAN.md
-  - FORMAL_SKILL_ROUTE_MAPPING.yaml
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
 responsibility: Classify an isolated public content text into the formal domain taxonomy, or return a formal no-result/uncertain outcome when the evidence is insufficient or unsuitable.
 non_responsibilities:
   - content_relation_judge

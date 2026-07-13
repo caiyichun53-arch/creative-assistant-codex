@@ -2,8 +2,8 @@
 see run_source_to_topic.py) and the runtime_skills/content_plan atomic Skill
 (CONTENT_PLAN_BUSINESS_CONTRACT.yaml).
 
-2026-07-09: third of three planned bindings for the "选题 -> 大纲 -> 成稿"
-chain (see ROADMAP.md) -- source_to_topic -> content_plan -> script_generate.
+The content-production binding chain is source_to_topic -> content_plan ->
+script_generate.
 Follows the division-of-responsibility pattern established by
 run_sample_deep_analyze.py/run_source_to_topic.py (see those files' module
 docstrings for the pattern in full).
@@ -64,7 +64,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.core.business_data.domain_labels import ALLOWED_DOMAIN_LABELS  # noqa: E402
 from scripts.core.business_data.register_competitor_accounts import DEFAULT_DB, install_schema  # noqa: E402
-from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
+from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.experience.run_sample_deep_analyze import _load_env_value, _safe_db_path  # noqa: E402
 from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
     FormalBusinessSkillHarness,
@@ -82,7 +82,7 @@ _SENTENCE_SPLIT = re.compile(r"[。！？.!?\n]+")
 
 
 def validate_content_plan_execution_contract() -> dict[str, Any]:
-    return require_catalog_citations(["BR-DNA-001"])
+    return require_baseline_citations(["5", "10", "20"])
 
 
 def select_topics_pending_plan(conn: sqlite3.Connection, *, limit: int) -> list[sqlite3.Row]:

@@ -74,7 +74,7 @@ def _insert_hit(conn: sqlite3.Connection, hit_id: str, *, account_id: str = "acc
         INSERT INTO hits(
             hit_id, video_id, account_id, platform, platform_item_id, title, url,
             like_count, comment_count, share_count, collect_count,
-            hit_channel, judgment_confidence, run_id, reverse_status
+            hit_channel, judgment_confidence, run_id, preparation_status
         ) VALUES (?, ?, ?, 'douyin', ?, ?, 'https://x', 1000, 200, 10, 5, 'like_anomaly', 'formal', 'run1', 'completed')
         """,
         (hit_id, video_id, account_id, hit_id + "_item", title),
@@ -122,11 +122,9 @@ def _insert_hotspot(
 
 
 class ValidateExecutionContractTests(unittest.TestCase):
-    def test_cites_br_dna_001_and_topic_rules(self) -> None:
+    def test_cites_effective_baseline_topic_sections(self) -> None:
         contract = validate_source_to_topic_execution_contract()
-        self.assertIn("BR-DNA-001", contract)
-        self.assertIn("BR-TOPIC-001", contract)
-        self.assertIn("BR-TOPIC-006", contract)
+        self.assertTrue({"3", "4", "17", "20"}.issubset(contract))
 
 
 class SelectAnalysesPendingTopicTests(unittest.TestCase):

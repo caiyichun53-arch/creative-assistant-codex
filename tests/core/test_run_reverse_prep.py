@@ -24,7 +24,7 @@ from scripts.core.external_adapters import ExternalAdapterCommand, ExternalComma
 from scripts.core.external_adapters.local_mediacrawler_executor import LocalMediaCrawlerExecutor
 
 # This whole file is the test backing required for the exact_match claims this
-# session adds to REQUIREMENT_CODE_TRACEABILITY.yaml for BR-ASR-001, BR-ASR-002,
+# session added to historical traceability material for ASR-related behavior;
 # BR-COLLECT-005 and BR-COLLECT-006 -- see tests/validation/test_business_rule_
 # test_coverage.py, which fails if an exact_match claim has no test referencing
 # its id anywhere in tests/.
@@ -79,7 +79,7 @@ def _insert_video(
 
 def _insert_hit(
     conn: sqlite3.Connection, hit_id: str, *, url: str = "https://www.douyin.com/video/123",
-    reverse_status: str = "pending", promoted_at: str | None = None,
+    preparation_status: str = "pending", promoted_at: str | None = None,
     judgment_confidence: str = "formal", baseline_mode: str | None = None,
     first_contact_category: str | None = "historical_mature",
 ) -> None:
@@ -87,8 +87,8 @@ def _insert_hit(
     video_id = hit_id + "_vid"
     _insert_account(conn, account_id)
     _insert_video(conn, video_id, account_id, baseline_mode=baseline_mode, first_contact_category=first_contact_category)
-    columns = "hit_id, video_id, account_id, platform, platform_item_id, title, url, hit_channel, judgment_confidence, run_id, reverse_status"
-    values = [hit_id, video_id, account_id, "douyin", hit_id + "_hititem", "t", url, "like_anomaly", judgment_confidence, "run1", reverse_status]
+    columns = "hit_id, video_id, account_id, platform, platform_item_id, title, url, hit_channel, judgment_confidence, run_id, preparation_status"
+    values = [hit_id, video_id, account_id, "douyin", hit_id + "_hititem", "t", url, "like_anomaly", judgment_confidence, "run1", preparation_status]
     if promoted_at is not None:
         columns += ", promoted_at"
         values.append(promoted_at)
@@ -140,10 +140,9 @@ def _fake_subprocess_for_prep(transcript_text: str):
 
 
 class ValidateReversePrepContractTests(unittest.TestCase):
-    def test_valid_config_cites_all_four_rules(self) -> None:
+    def test_valid_config_cites_effective_baseline_audio_collection_sections(self) -> None:
         contract = validate_reverse_prep_execution_contract(REVERSE_CFG)
-        for rule_id in ("BR-ASR-001", "BR-ASR-002", "BR-COLLECT-005", "BR-COLLECT-006"):
-            self.assertIn(rule_id, contract)
+        self.assertTrue({"6", "16"}.issubset(contract))
 
     def test_missing_asr_model_rejected(self) -> None:
         bad = dict(REVERSE_CFG, asr_model="")
@@ -166,9 +165,9 @@ class SelectPendingHitsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
-                _insert_hit(conn, "h1", reverse_status="pending")
-                _insert_hit(conn, "h2", reverse_status="completed")
-                _insert_hit(conn, "h3", reverse_status="pending")
+                _insert_hit(conn, "h1", preparation_status="pending")
+                _insert_hit(conn, "h2", preparation_status="completed")
+                _insert_hit(conn, "h3", preparation_status="pending")
                 pending = select_pending_hits(conn, limit=10)
                 self.assertEqual({row["hit_id"] for row in pending}, {"h1", "h3"})
 
@@ -308,8 +307,8 @@ class PrepOneHitTests(unittest.TestCase):
                 comments = conn.execute("SELECT * FROM hit_comments WHERE hit_id='h1'").fetchall()
                 self.assertEqual(len(comments), 1)
                 self.assertEqual(comments[0]["sample_rank"], 0)
-                hit = conn.execute("SELECT reverse_status FROM hits WHERE hit_id='h1'").fetchone()
-                self.assertEqual(hit["reverse_status"], "completed")
+                hit = conn.execute("SELECT preparation_status FROM hits WHERE hit_id='h1'").fetchone()
+                self.assertEqual(hit["preparation_status"], "completed")
             finally:
                 conn.close()
 
@@ -573,8 +572,8 @@ class PrepOneHitTests(unittest.TestCase):
 
                 self.assertEqual(result["status"], "failed")
                 self.assertIsNone(conn.execute("SELECT * FROM hit_transcripts WHERE hit_id='h1'").fetchone())
-                hit = conn.execute("SELECT reverse_status FROM hits WHERE hit_id='h1'").fetchone()
-                self.assertEqual(hit["reverse_status"], "failed")
+                hit = conn.execute("SELECT preparation_status FROM hits WHERE hit_id='h1'").fetchone()
+                self.assertEqual(hit["preparation_status"], "failed")
             finally:
                 conn.close()
 
@@ -611,8 +610,8 @@ class RunReversePrepTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
-                _insert_hit(conn, "h1", reverse_status="pending")
-                _insert_hit(conn, "h2", reverse_status="completed")
+                _insert_hit(conn, "h1", preparation_status="pending")
+                _insert_hit(conn, "h2", preparation_status="completed")
                 executor = _FakeExecutor(_fake_detail_result(tmp))
 
                 with patch("scripts.core.business_data.run_reverse_prep.requests.get", return_value=_fake_response()), \

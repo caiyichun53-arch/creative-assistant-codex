@@ -30,7 +30,7 @@ class RenderedPromptReachesModelTests(unittest.TestCase):
     """Regression for the real 2026-07-11 bug: candidate_topic is required by
     the public input_schema but was dropped before reaching the model, and
     the prompt never specified an output language -- 2 of 22 real analyses
-    came back in English instead of Chinese as a result (see HANDOFF_STATE.md).
+    came back in English instead of Chinese as a result.
     Proves candidate_topic now reaches the rendered prompt and the prompt
     explicitly requires Chinese."""
 

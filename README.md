@@ -1,6 +1,6 @@
 # Creation Assistant Codex
 
-抖音内容创作助手的 Codex 工程。确定性任务由 Python 脚本执行，LLM 只用于选题判断、研究综合、创作、逆向 DNA 拆解和 AI 味判断。
+抖音内容创作助手的 Codex 工程。确定性任务由 Python 脚本执行；模型调用仅能通过当前原子 Skill 与显式模型路由发生。
 
 ## 本地配置
 
@@ -24,11 +24,13 @@ Copy-Item config/domains/example.yaml config/domains/example_domain.yaml
 ## 当前有效入口
 
 ```powershell
-python scripts/validation/production_startup_smoke.py --require-legacy-absent
-python scripts/core/staging/verify_goal_v062_phase8_readiness.py
-python -m unittest tests.core.test_phase5_business_workflow tests.core.test_phase6_hermes_whitelist_tool tests.core.test_phase7_synthetic_acceptance
+python -m pytest tests/core tests/validation -q
+python scripts/validation/live_gates.py dry-run
+python -m scripts.validation.preflight_checkpoint_check --skip-tests
 ```
 
-当前正式链路为: Feishu -> Hermes -> whitelist Tool -> Core API -> Job/Worker -> Input Assembly -> Workflow/Skill Dispatcher -> Portable Skill -> ModelGateway -> Materializer -> Outbox。
+当前可执行链路由受控业务数据入口、原子 Skill 绑定、人工审核闸门和显式模型路由组成；未重建的外部平台集成不属于当前运行入口。
 
-项目约束和构建路线见 `AGENTS.md` 与 `BUILD_PLAN.md`。
+当前唯一的业务设计与实施裁决入口是
+[`docs/EFFECTIVE_DESIGN_BASELINE.md`](docs/EFFECTIVE_DESIGN_BASELINE.md)。
+工程协作约束见 [`AGENTS.md`](AGENTS.md)；旧 Goal、迁移计划和历史报告不构成设计依据。

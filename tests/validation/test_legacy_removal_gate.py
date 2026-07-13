@@ -5,10 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import yaml
-
 from scripts.validation.legacy_removal_gate import (
-    INVENTORY_PATH,
     is_legacy_executable_path,
     reference_hits,
     run_gate,
@@ -22,7 +19,8 @@ class LegacyRemovalGateTests(unittest.TestCase):
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["production_legacy_executable_path_count"], 0)
         self.assertEqual(result["production_legacy_reference_count"], 0)
-        self.assertGreaterEqual(result["inventory"]["item_count"], 69)
+        self.assertEqual(result["inventory"]["item_count"], 0)
+        self.assertFalse(result["inventory"]["written"])
 
 
 class GateActuallyCatchesViolationsTests(unittest.TestCase):
@@ -66,29 +64,9 @@ class GateActuallyCatchesViolationsTests(unittest.TestCase):
         status = "PASS" if not legacy_paths and not active_refs else "FAIL"
         self.assertEqual(status, "FAIL")
 
-    def test_inventory_items_have_required_contract_fields(self) -> None:
-        required_fields = {
-            "path",
-            "type",
-            "original_purpose",
-            "current_reference_count",
-            "referenced_by",
-            "production_reachable",
-            "test_reachable",
-            "documentation_reachable",
-            "replacement",
-            "removal_decision",
-            "removal_reason",
-            "preservation_reason",
-            "risk",
-            "verification_method",
-        }
-        data = yaml.safe_load(Path(INVENTORY_PATH).read_text(encoding="utf-8"))
-
-        self.assertGreaterEqual(len(data["items"]), 69)
-        self.assertEqual(set(data["summary"]), {"legacy_executable_path_count", "production_legacy_reference_count", "historical_documentation_reference_count"})
-        for item in data["items"]:
-            self.assertLessEqual(required_fields, set(item))
+    def test_retired_inventory_is_not_required_or_recreated(self) -> None:
+        result = run_gate(write_inventory=True)
+        self.assertEqual(result["inventory"], {"path": None, "item_count": 0, "written": False})
 
 
 if __name__ == "__main__":

@@ -33,9 +33,9 @@ def _insert_active_tag(conn: sqlite3.Connection, tag: str, domain_label: str = "
 
 
 class ValidateExecutionContractTests(unittest.TestCase):
-    def test_cites_br_topic_006(self) -> None:
+    def test_cites_effective_baseline_topic_sections(self) -> None:
         contract = validate_hotspot_registration_execution_contract()
-        self.assertIn("BR-TOPIC-006", contract)
+        self.assertTrue({"3", "17"}.issubset(contract))
 
 
 class MatchDomainTagsTests(unittest.TestCase):

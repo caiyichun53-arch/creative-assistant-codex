@@ -1,4 +1,4 @@
-"""Formal ModelGateway primitives for GOAL-07."""
+"""Formal ModelGateway primitives for current runtime bindings."""
 
 from .goal07_model_gateway import (
     ModelGateway,

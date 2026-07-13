@@ -55,9 +55,9 @@ def _insert_discovered_video(
 
 
 class ValidateExecutionContractTests(unittest.TestCase):
-    def test_cites_br_collect_009(self) -> None:
+    def test_cites_effective_baseline_section_3(self) -> None:
         contract = validate_account_discovery_execution_contract()
-        self.assertIn("BR-COLLECT-009", contract)
+        self.assertIn("3", contract)
 
 
 class FindAccountsDueForReviewTests(unittest.TestCase):

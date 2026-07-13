@@ -40,7 +40,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
+from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 
 SCHEMA_CHAIN = (
     ROOT / "scripts" / "core" / "persistence" / "goal01_schema.sqlite.sql",
@@ -164,7 +164,7 @@ def backup_path_for(db_path: Path) -> Path:
 
 
 def install(db_path: Path, *, skip_backup: bool = False) -> dict[str, Any]:
-    require_catalog_citations(["BR-EXPERIENCE-001"])
+    require_baseline_citations(["7", "9", "18"])
     resolved = _safe_db_path(db_path)
     if not resolved.exists():
         raise FileNotFoundError(f"target business database does not exist: {resolved}")

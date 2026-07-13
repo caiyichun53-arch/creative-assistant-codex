@@ -42,7 +42,7 @@ def _insert_script_draft(conn: sqlite3.Connection, draft_id: str = "d1") -> None
     conn.execute(
         """
         INSERT INTO hits(hit_id, video_id, account_id, platform, platform_item_id, title, url,
-            like_count, comment_count, share_count, collect_count, hit_channel, judgment_confidence, run_id, reverse_status)
+            like_count, comment_count, share_count, collect_count, hit_channel, judgment_confidence, run_id, preparation_status)
         VALUES ('h1', 'v1', 'acc1', 'douyin', 'item1', 't', 'https://x', 1, 1, 1, 1, 'like_anomaly', 'formal', 'run1', 'completed')
         """
     )
@@ -283,7 +283,7 @@ def _insert_script_draft_variant(
     conn.execute(
         """
         INSERT INTO hits(hit_id, video_id, account_id, platform, platform_item_id, title, url,
-            like_count, comment_count, share_count, collect_count, hit_channel, judgment_confidence, run_id, reverse_status)
+            like_count, comment_count, share_count, collect_count, hit_channel, judgment_confidence, run_id, preparation_status)
         VALUES (?, ?, 'acc1', 'douyin', ?, 't', 'https://x', 1, 1, 1, 1, 'like_anomaly', 'formal', 'run1', 'completed')
         """,
         (hit_id, video_id, video_id + "_hititem"),

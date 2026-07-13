@@ -351,9 +351,9 @@ class RecordSearchCycleResultTests(unittest.TestCase):
 
 
 class ValidateExecutionContractTests(unittest.TestCase):
-    def test_cites_br_topic_005(self) -> None:
+    def test_cites_effective_baseline_topic_sections(self) -> None:
         contract = validate_domain_search_execution_contract({"live_enabled": True})
-        self.assertIn("BR-TOPIC-005", contract)
+        self.assertTrue({"3", "17"}.issubset(contract))
 
     def test_live_disabled_raises(self) -> None:
         with self.assertRaises(ValueError):

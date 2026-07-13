@@ -1,4 +1,4 @@
-"""Reverse-prep worker: turns a promoted hit (hits.reverse_status='pending')
+"""Reverse-prep worker: turns a promoted hit (hits.preparation_status='pending')
 into a stored local transcript (BR-ASR-001) plus filtered comments
 (BR-COLLECT-005/BR-COLLECT-006), fetched in ONE MediaCrawler detail call per
 the project constitution's "合并成一趟 detail 爬 -- 下载链接+评论一次拿"
@@ -45,7 +45,7 @@ Explicitly NOT implemented (documented limitations, not oversights):
 scripts/tools/compare_asr_providers.py is a different, narrower thing: a
 one-off BR-ASR-003 benchmark comparing local vs cloud ASR, explicitly not a
 production path (see its own docstring), and it never touches hit_transcripts/
-hit_comments or hits.reverse_status.
+hit_comments or hits.preparation_status.
 
 2026-07-08 (auto-trigger): run_full_registration()/run_rejudge_only()/
 run_daily_incremental() in run_competitor_registration_full.py each call
@@ -94,7 +94,7 @@ from scripts.core.business_data.register_competitor_accounts import (  # noqa: E
     DEFAULT_DB,
     install_schema,
 )
-from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
+from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.external_adapters import ExternalAdapterCommand  # noqa: E402
 from scripts.core.external_adapters.local_mediacrawler_executor import LocalMediaCrawlerExecutor  # noqa: E402
 
@@ -124,7 +124,7 @@ def validate_reverse_prep_execution_contract(reverse_cfg: dict[str, Any]) -> dic
     generation (BR-ASR-001), never persisting the signed download URL
     (BR-ASR-002), collecting comments in the same detail crawl (BR-COLLECT-005),
     and deterministic noise-filtered idempotent storage (BR-COLLECT-006)."""
-    contract = require_catalog_citations(["BR-ASR-001", "BR-ASR-002", "BR-COLLECT-005", "BR-COLLECT-006"])
+    contract = require_baseline_citations(["6", "16"])
     errors: list[str] = []
     for key in ("models_root", "asr_model", "vad_model"):
         if not str(reverse_cfg.get(key) or "").strip():
@@ -177,7 +177,7 @@ def select_pending_hits(conn: sqlite3.Connection, *, limit: int, judgement_run_i
                video.first_trigger_observation AS video_first_trigger_observation
         FROM hits
         JOIN competitor_videos AS video ON video.video_id = hits.video_id
-        WHERE hits.reverse_status='pending'
+        WHERE hits.preparation_status='pending'
     """
     params: tuple[Any, ...] = ()
     if judgement_run_id is not None:
@@ -353,7 +353,7 @@ def prep_one_hit(
     run_id: str,
 ) -> dict[str, Any]:
     hit_id = hit_row["hit_id"]
-    conn.execute("UPDATE hits SET reverse_status='running' WHERE hit_id=?", (hit_id,))
+    conn.execute("UPDATE hits SET preparation_status='running' WHERE hit_id=?", (hit_id,))
     conn.commit()
     try:
         detail = fetch_detail_with_comments(executor, platform=hit_row["platform"], video_url=hit_row["url"])
@@ -432,7 +432,7 @@ def prep_one_hit(
             )
 
         new_status = "completed" if processing_status == "completed" else "failed"
-        conn.execute("UPDATE hits SET reverse_status=? WHERE hit_id=?", (new_status, hit_id))
+        conn.execute("UPDATE hits SET preparation_status=? WHERE hit_id=?", (new_status, hit_id))
         conn.commit()
         return {
             "hit_id": hit_id,
@@ -442,7 +442,7 @@ def prep_one_hit(
             "comment_count": len(kept_comments),
         }
     except Exception as exc:  # noqa: BLE001 -- one hit's failure must not abort the batch
-        conn.execute("UPDATE hits SET reverse_status='failed' WHERE hit_id=?", (hit_id,))
+        conn.execute("UPDATE hits SET preparation_status='failed' WHERE hit_id=?", (hit_id,))
         conn.commit()
         return {"hit_id": hit_id, "status": "failed", "error": str(exc)}
 
@@ -486,7 +486,7 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Reverse-prep pending promoted hits: local transcript + comments.")
-    parser.add_argument("--limit", type=int, default=1, help="How many pending hits (reverse_status='pending') to prep in this run.")
+    parser.add_argument("--limit", type=int, default=1, help="How many pending hits (preparation_status='pending') to prep in this run.")
     parser.add_argument("--db", default=str(DEFAULT_DB))
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)

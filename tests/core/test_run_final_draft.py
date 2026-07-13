@@ -41,7 +41,7 @@ def _insert_full_chain_through_review(conn: sqlite3.Connection, *, review_status
     conn.execute(
         """
         INSERT INTO hits(hit_id, video_id, account_id, platform, platform_item_id, title, url,
-            like_count, comment_count, share_count, collect_count, hit_channel, judgment_confidence, run_id, reverse_status)
+            like_count, comment_count, share_count, collect_count, hit_channel, judgment_confidence, run_id, preparation_status)
         VALUES ('h1', 'v1', 'acc1', 'douyin', 'item1', 't', 'https://x', 1000, 200, 10, 5, 'like_anomaly', 'formal', 'run1', 'completed')
         """
     )
@@ -90,9 +90,9 @@ def _insert_full_chain_through_review(conn: sqlite3.Connection, *, review_status
 
 
 class ValidateExecutionContractTests(unittest.TestCase):
-    def test_cites_br_content_005(self) -> None:
+    def test_cites_effective_baseline_content_sections(self) -> None:
         contract = validate_final_draft_execution_contract()
-        self.assertIn("BR-CONTENT-005", contract)
+        self.assertTrue({"5", "10", "20"}.issubset(contract))
 
 
 class SelectReviewsPendingFinalTests(unittest.TestCase):

@@ -1,6 +1,5 @@
-"""Registers a real tactic_extract result as a persisted candidate tactic --
-the second half of production activation's阶段3 (see ROADMAP.md and the
-approved production-activation plan referenced there). Sibling to
+"""Registers a real tactic_extract result as a persisted candidate tactic.
+Sibling to
 scripts/core/experience/evidence_registry.py (阶段2), which registers a real
 hit_deep_analysis row as citable VersionRef evidence; this module is what a
 batch of that evidence becomes once tactic_extract has reduced it into
@@ -41,7 +40,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
+from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.persistence.goal01_store import IdempotencyConflict, PersistenceStore, content_hash  # noqa: E402
 from scripts.core.persistence.goal02_store import Goal02StateStore  # noqa: E402
 
@@ -139,7 +138,7 @@ def register_tactic_candidate(
     run_tactic_extract.py) -- this function takes a plain dict, not a live
     harness handle, since the harness's own internal bookkeeping is
     ephemeral and gone by the time persistence needs to happen for real."""
-    require_catalog_citations(["BR-EXPERIENCE-001"])
+    require_baseline_citations(["9", "18", "20"])
     if len(evidence_refs) < 2:
         raise ValueError("register_tactic_candidate requires at least 2 evidence_refs (matches tactic_extract's own dna_note_refs_min)")
 

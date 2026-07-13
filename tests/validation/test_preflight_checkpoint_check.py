@@ -9,7 +9,7 @@ from scripts.validation.preflight_checkpoint_check import (
     check_git_clean,
     check_ops_infra,
     check_production_data,
-    check_readiness_gate,
+    check_model_routing,
     check_tests,
     check_unsourced_constants,
     run_all_checks,
@@ -47,23 +47,23 @@ class CheckTestsTests(unittest.TestCase):
         self.assertFalse(result["passed"])
 
 
-class CheckReadinessGateTests(unittest.TestCase):
-    def test_passes_when_gate_reports_engineering_ready(self) -> None:
+class CheckModelRoutingTests(unittest.TestCase):
+    def test_passes_for_the_three_current_routes(self) -> None:
         with patch(
-            "scripts.core.staging.verify_goal_v062_phase8_readiness.verify_phase8_readiness",
-            return_value={"status": "ENGINEERING_READY", "failures": []},
+            "scripts.core.model_gateway.model_router.ModelRouter.from_file",
+            return_value=type("Router", (), {"routes": {"daily_chat": object(), "business_analysis": object(), "writing_generation": object()}})(),
         ):
-            result = check_readiness_gate()
+            result = check_model_routing()
         self.assertTrue(result["passed"])
 
-    def test_fails_and_reports_failure_names_when_gate_is_not_ready(self) -> None:
+    def test_fails_for_an_unexpected_route_set(self) -> None:
         with patch(
-            "scripts.core.staging.verify_goal_v062_phase8_readiness.verify_phase8_readiness",
-            return_value={"status": "ENGINEERING_NOT_READY", "failures": ["clean_room"]},
+            "scripts.core.model_gateway.model_router.ModelRouter.from_file",
+            return_value=type("Router", (), {"routes": {"daily_chat": object()}})(),
         ):
-            result = check_readiness_gate()
+            result = check_model_routing()
         self.assertFalse(result["passed"])
-        self.assertEqual(result["detail"], ["clean_room"])
+        self.assertEqual(result["detail"], ["daily_chat"])
 
 
 class CheckOpsInfraTests(unittest.TestCase):
@@ -139,7 +139,7 @@ class RunAllChecksTests(unittest.TestCase):
         defaults = {
             "check_git_clean": {"name": "git", "passed": True},
             "check_tests": {"name": "tests", "passed": True},
-            "check_readiness_gate": {"name": "gate", "passed": True},
+            "check_model_routing": {"name": "routing", "passed": True},
             "check_ops_infra": {"name": "ops", "passed": True},
             "check_production_data": {"name": "data", "passed": True},
             "check_unsourced_constants": {"name": "constants", "passed": True},

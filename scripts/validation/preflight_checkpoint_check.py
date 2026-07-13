@@ -6,14 +6,13 @@ anything gets called done/completed/ENGINEERING_READY:
   1. the working tree is committed cleanly (no uncommitted changes left
      behind for a reset/handoff to silently drop)
   2. the full test suite is green
-  3. the authoritative readiness gate (scripts/core/staging/
-     verify_goal_v062_phase8_readiness.py) reports ENGINEERING_READY
+  3. the current model-routing configuration parses and fails closed
   4. the operational-infrastructure checklist (scripts/validation/
      ops_infra_checklist.py) is clean -- no hardcoded machine paths,
      .gitignore still covers secrets, no real .env file committed
   5. the real production database (scripts/validation/
      production_data_sanity_check.py) has nothing visibly stuck (e.g. a
-     hit stuck in reverse_status='pending' for days -- the exact 2026-07-08
+     hit stuck in preparation_status='pending' for days -- the exact 2026-07-08
      bug this check exists to catch mechanically instead of by luck)
   6. no new business-logic constant in the real-data binding layer
      (scripts/validation/unsourced_constant_check.py) was added without
@@ -28,8 +27,7 @@ anything gets called done/completed/ENGINEERING_READY:
      are Mimo with fallback disabled, no engineering_execution route crept
      back in, .env.example has no dead model config, CLAUDE.md/AGENTS.md
      have not regressed to claiming creation runs on Claude/is complete, and
-     REQUIREMENT_CODE_TRACEABILITY.yaml has no ContentWorkflow/ContentGuard
-     ghost reference
+     no retired governance file is treated as a design source
   8. the production-activation control-package gate (scripts/validation/
      production_activation_gate.py, 2026-07-13, 置顶规则总表条目22/23) still
      holds: all five pipeline stages (topic/plan/draft/review/final) are
@@ -39,8 +37,8 @@ anything gets called done/completed/ENGINEERING_READY:
      no score/rank/weight topic-sorting config has crept back in, and every
      pipeline-stage table still carries real traceability fields
 Until now these were separate manual steps someone had to remember to run,
-in order, every time -- exactly the kind of "remembering" this project's own
-incident history (see HANDOFF_STATE.md) shows doesn't hold up under
+in order, every time -- exactly the kind of "remembering" that does not hold
+up under
 context-window/quota pressure at the end of a session. This script runs all
 of them and prints one PASS/FAIL verdict per check plus a combined status, so
 the check is "run one command", not "remember N things".
@@ -86,15 +84,14 @@ def check_tests(*, skip: bool) -> dict[str, Any]:
     return {"name": "test_suite_green", "passed": completed.returncode == 0, "detail": tail}
 
 
-def check_readiness_gate() -> dict[str, Any]:
-    sys.path.insert(0, str(ROOT))
-    from scripts.core.staging.verify_goal_v062_phase8_readiness import verify_phase8_readiness
+def check_model_routing() -> dict[str, Any]:
+    from scripts.core.model_gateway.model_router import ModelRouter
 
-    result = verify_phase8_readiness()
+    result = ModelRouter.from_file()
     return {
-        "name": "readiness_gate_engineering_ready",
-        "passed": result["status"] == "ENGINEERING_READY",
-        "detail": result["status"] if result["status"] == "ENGINEERING_READY" else result.get("failures"),
+        "name": "model_routing_fails_closed",
+        "passed": set(result.routes) == {"daily_chat", "business_analysis", "writing_generation"},
+        "detail": sorted(result.routes),
     }
 
 
@@ -164,7 +161,7 @@ def run_all_checks(*, skip_tests: bool) -> dict[str, Any]:
     checks = [
         check_git_clean(),
         check_tests(skip=skip_tests),
-        check_readiness_gate(),
+        check_model_routing(),
         check_ops_infra(),
         check_production_data(),
         check_unsourced_constants(),

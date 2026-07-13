@@ -1,5 +1,5 @@
 """Mechanical checks for the operational-infrastructure risk class that
-BUSINESS_RULE_CATALOG.yaml / REQUIREMENT_CODE_TRACEABILITY.yaml cannot see,
+the current design baseline cannot see,
 because it's not a business rule -- it's things like hardcoded machine paths,
 credential handling, and what's actually gitignored. The 2026-07-09 external
 audit found a real instance of this: config/reverse_engine's ffmpeg path and

@@ -53,7 +53,7 @@ def _insert_video(conn: sqlite3.Connection, video_id: str, account_id: str) -> N
 def _insert_hit(
     conn: sqlite3.Connection, hit_id: str, *, account_id: str = "acc1", title: str = "为什么电梯早高峰总堵",
     like_count: int = 1000, comment_count: int = 200, share_count: int = 10, collect_count: int = 5,
-    reverse_status: str = "completed", hit_channel: str = "like_anomaly",
+    preparation_status: str = "completed", hit_channel: str = "like_anomaly",
 ) -> None:
     video_id = hit_id + "_vid"
     _insert_video(conn, video_id, account_id)
@@ -62,10 +62,10 @@ def _insert_hit(
         INSERT INTO hits(
             hit_id, video_id, account_id, platform, platform_item_id, title, url,
             like_count, comment_count, share_count, collect_count,
-            hit_channel, judgment_confidence, run_id, reverse_status
+            hit_channel, judgment_confidence, run_id, preparation_status
         ) VALUES (?, ?, ?, 'douyin', ?, ?, 'https://x', ?, ?, ?, ?, ?, 'formal', 'run1', ?)
         """,
-        (hit_id, video_id, account_id, hit_id + "_item", title, like_count, comment_count, share_count, collect_count, hit_channel, reverse_status),
+        (hit_id, video_id, account_id, hit_id + "_item", title, like_count, comment_count, share_count, collect_count, hit_channel, preparation_status),
     )
 
 
@@ -82,21 +82,21 @@ def _insert_transcript(conn: sqlite3.Connection, hit_id: str, *, text: str = "�
 
 
 class ValidateExecutionContractTests(unittest.TestCase):
-    def test_cites_br_dna_001(self) -> None:
+    def test_cites_effective_baseline_analysis_sections(self) -> None:
         contract = validate_sample_deep_analyze_execution_contract()
-        self.assertIn("BR-DNA-001", contract)
+        self.assertTrue({"4", "17", "20"}.issubset(contract))
 
 
 class SelectHitsPendingAnalysisTests(unittest.TestCase):
-    def test_only_completed_reverse_status_with_completed_transcript_and_no_prior_analysis(self) -> None:
+    def test_only_completed_preparation_status_with_completed_transcript_and_no_prior_analysis(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
                 _insert_account(conn)
-                _insert_hit(conn, "h1", reverse_status="completed")
+                _insert_hit(conn, "h1", preparation_status="completed")
                 _insert_transcript(conn, "h1")
-                _insert_hit(conn, "h2", reverse_status="pending")  # no transcript, not eligible
-                _insert_hit(conn, "h3", reverse_status="completed")
+                _insert_hit(conn, "h2", preparation_status="pending")  # no transcript, not eligible
+                _insert_hit(conn, "h3", preparation_status="completed")
                 _insert_transcript(conn, "h3", processing_status="failed")  # failed transcript, not eligible
 
                 pending = select_hits_pending_analysis(conn, limit=10)
@@ -238,7 +238,7 @@ class SelectHitsPendingAnalysisByDeviationTests(unittest.TestCase):
             conn = _connect(tmp)
             try:
                 _insert_account(conn)
-                _insert_hit(conn, "h1", hit_channel="like_anomaly:9.0x", reverse_status="pending")
+                _insert_hit(conn, "h1", hit_channel="like_anomaly:9.0x", preparation_status="pending")
                 selected = select_hits_pending_analysis_by_deviation(conn, limit=10)
                 self.assertEqual(selected, [])
             finally:
@@ -401,7 +401,7 @@ class AnalyzeOneHitAndRunTests(unittest.TestCase):
                 _insert_account(conn)
                 _insert_hit(conn, "h1")
                 _insert_transcript(conn, "h1")
-                _insert_hit(conn, "h2", reverse_status="pending")  # no transcript, excluded
+                _insert_hit(conn, "h2", preparation_status="pending")  # no transcript, excluded
 
                 report = run_sample_deep_analyze(conn, limit=10, harness=harness, model_name="m")
 

@@ -60,7 +60,7 @@ def _insert_hit(conn: sqlite3.Connection, hit_id: str, *, account_id: str = "acc
         INSERT INTO hits(
             hit_id, video_id, account_id, platform, platform_item_id, title, url,
             like_count, comment_count, share_count, collect_count,
-            hit_channel, judgment_confidence, run_id, reverse_status
+            hit_channel, judgment_confidence, run_id, preparation_status
         ) VALUES (?, ?, ?, 'douyin', ?, '标题', 'https://x', 1000, 200, 10, 5, 'like_anomaly', 'formal', 'run1', 'completed')
         """,
         (hit_id, video_id, account_id, hit_id + "_item"),
@@ -95,9 +95,9 @@ def _seed_registered_evidence(conn: sqlite3.Connection, count: int, *, domain_la
 
 
 class ValidateExecutionContractTests(unittest.TestCase):
-    def test_cites_br_experience_001(self) -> None:
+    def test_cites_effective_baseline_experience_sections(self) -> None:
         contract = validate_run_tactic_extract_execution_contract()
-        self.assertIn("BR-EXPERIENCE-001", contract)
+        self.assertTrue({"9", "18", "20"}.issubset(contract))
 
 
 class SelectEvidenceForTacticBatchTests(unittest.TestCase):

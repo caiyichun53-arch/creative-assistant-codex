@@ -41,7 +41,7 @@ llm:
 hit_detection:
   # 2026-07-07: this whole block was rewritten from scratch after reconciling
   # against 爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.md (now
-  # committed to the repo root). See BUSINESS_RULE_CATALOG.yaml BR-HIT-001
+  # committed to the repo root). See docs/EFFECTIVE_DESIGN_BASELINE.md.
   # amendment_2026_07_07_master_doc_realignment for the full decision trail --
   # every value below traces to a specific line in that amendment, not to
   # guesswork. The prior excess_threshold/hit_floor_absolute_like_count/
@@ -114,7 +114,7 @@ hit_detection:
   # purely from the candidate video's own comment_count/like_count, no
   # baseline required. Verified against the real 28-account/1253-video
   # dataset before adoption (see the superseded amendment_2026_07_07 block in
-  # BUSINESS_RULE_CATALOG.yaml for the actual 15/18/20 percent comparison).
+  # docs/EFFECTIVE_DESIGN_BASELINE.md for the current comparison rule).
   comment_like_ratio_threshold: 0.2
   # How many videos the first crawl fetches. Not tied to any sample-count
   # target anymore (the mature history baseline is a rolling 90-day/50-cap

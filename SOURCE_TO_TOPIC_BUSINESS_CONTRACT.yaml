@@ -1,14 +1,11 @@
 schema_version: source_to_topic.business_contract.v1
-goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
+governance_basis: docs/EFFECTIVE_DESIGN_BASELINE.md
 status: active_formal_business_contract
 skill_id: source_to_topic
 skill_version: 1.0.0
 source_documents:
-  - C:\Users\15891\.codex\attachments\4ebd5a12-206f-401e-b0b6-0c3878e47996\pasted-text-1.txt
-  - AGENTS.md
-  - BUILD_PLAN.md
-  - FORMAL_SKILL_ROUTE_MAPPING.yaml
-  - REMAINING_FORMAL_SKILL_EXECUTION_GRAPH.yaml
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
+  - runtime_skills/source_to_topic/skill.yaml
 responsibility: Transform already supplied source evidence into one candidate topic for the formal production workflow.
 non_responsibilities:
   - content_classify
@@ -192,8 +189,7 @@ model_binding:
       relation_summary: string
     additional_properties: false
   # 2026-07-11: rewritten before this Skill's first real call, applying the
-  # same two fixes real data proved necessary for the other 5 rewritten
-  # Skills (see HANDOFF_STATE.md) rather than waiting to rediscover them:
+  # same two fixes real data proved necessary for other rewritten Skills:
   # explicit output-language guidance (sample_deep_analyze's real data
   # showed the model silently switches to English when never told), and an
   # explicit trailing reminder to include every required key including

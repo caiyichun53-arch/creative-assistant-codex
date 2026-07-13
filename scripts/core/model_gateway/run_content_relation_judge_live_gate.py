@@ -15,7 +15,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.core.model_gateway.formal_skill_adapter import (
     CONTENT_RELATION_JUDGE_CONTRACT_PATH,
-    CONTENT_RELATION_JUDGE_GOAL_ID,
+    CONTENT_RELATION_JUDGE_CONTRACT_ID,
     FormalSkillContract,
     make_content_relation_judge_harness,
     sample_content_relation_judge_input,
@@ -81,7 +81,7 @@ def build_live_route(config: LiveGateConfig, contract: FormalSkillContract) -> M
         config_version="goal-business-skill-content-relation-judge-01.live.v1",
         config_hash=content_hash(
             {
-                "goal": CONTENT_RELATION_JUDGE_GOAL_ID,
+                "contract_id": CONTENT_RELATION_JUDGE_CONTRACT_ID,
                 "route": contract.route_name,
                 "provider": "hermes",
                 "model": provider_settings.model_name,
@@ -160,7 +160,7 @@ def run_gate(config: LiveGateConfig, *, environment: str = "validation") -> dict
         metadata = envelope.get("metadata") or {}
         actual_call_count = live_port.actual_call_count
         status = {
-            "goal": CONTENT_RELATION_JUDGE_GOAL_ID,
+            "contract_id": CONTENT_RELATION_JUDGE_CONTRACT_ID,
             "status": "COMPLETED",
             "formal_skill_id": contract.formal_skill_id,
             "logical_route": route.route_name,
@@ -239,7 +239,7 @@ def write_report(status: dict[str, Any], path: Path = REPORT_PATH) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=f"{CONTENT_RELATION_JUDGE_GOAL_ID} content_relation_judge live gate")
+    parser = argparse.ArgumentParser(description="content_relation_judge live gate")
     parser.add_argument("--config", default=str(ROOT / "config" / "live_gates.yaml"))
     parser.add_argument("--env-file", default=str(ROOT / ".env.live-gates"))
     parser.add_argument("--environment", default="validation", choices=("validation", "test"))

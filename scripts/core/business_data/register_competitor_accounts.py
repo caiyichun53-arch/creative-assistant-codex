@@ -59,6 +59,7 @@ def install_schema(conn: sqlite3.Connection) -> None:
     # 2 verification rows, nothing else reads the old shape.
     _drop_table_if_old_shape(conn, "hit_transcripts", removed_column="transcript_text")
     _drop_table_if_old_shape(conn, "hit_comments", added_not_null_column="sample_rank")
+    _migrate_hits_preparation_status(conn)
     # 2026-07-13 (BR-HIT-007): hit_comments gained purpose/observation_point/
     # sampling_strategy and its PRIMARY KEY changed to include purpose -- a
     # real column + PK change, not something ALTER TABLE ADD COLUMN can do,
@@ -74,8 +75,15 @@ def install_schema(conn: sqlite3.Connection) -> None:
     # Source document section 13 vocabulary is pending/running/completed/
     # failed; the field was first introduced this session with none/done --
     # normalize any rows already written under the old vocabulary.
-    conn.execute("UPDATE hits SET reverse_status='pending' WHERE reverse_status='none'")
-    conn.execute("UPDATE hits SET reverse_status='completed' WHERE reverse_status='done'")
+    conn.execute("UPDATE hits SET preparation_status='pending' WHERE preparation_status='none'")
+    conn.execute("UPDATE hits SET preparation_status='completed' WHERE preparation_status='done'")
+
+
+def _migrate_hits_preparation_status(conn: sqlite3.Connection) -> None:
+    """Rename the retired queue field before any current writer uses it."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(hits)").fetchall()}
+    if "reverse_status" in columns and "preparation_status" not in columns:
+        conn.execute("ALTER TABLE hits RENAME COLUMN reverse_status TO preparation_status")
 
 
 def _drop_table_if_old_shape(

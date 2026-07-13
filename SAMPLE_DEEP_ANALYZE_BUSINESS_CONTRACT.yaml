@@ -1,14 +1,11 @@
 schema_version: sample_deep_analyze.business_contract.v1
-goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
+governance_basis: docs/EFFECTIVE_DESIGN_BASELINE.md
 status: active_formal_business_contract
 skill_id: sample_deep_analyze
 skill_version: 1.0.0
 source_documents:
-  - C:\Users\15891\.codex\attachments\4ebd5a12-206f-401e-b0b6-0c3878e47996\pasted-text-1.txt
-  - AGENTS.md
-  - BUILD_PLAN.md
-  - FORMAL_SKILL_ROUTE_MAPPING.yaml
-  - REMAINING_FORMAL_SKILL_EXECUTION_GRAPH.yaml
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
+  - runtime_skills/sample_deep_analyze/skill.yaml
 responsibility: Analyze one already prepared winner sample into reusable topic, hook, and structure patterns.
 non_responsibilities:
   - source_to_topic
@@ -154,8 +151,7 @@ model_binding:
       transcript_excerpt: string
       metrics: object
     additional_properties: false
-  # 2026-07-11: rewritten. Real production data review (2026-07-11, see
-  # HANDOFF_STATE.md) found that with the old bare "return this JSON shape"
+  # Rewritten after a real-output review found that the old bare "return this JSON shape"
   # prompt, 2 of 22 real analyses came back with English snake_case labels
   # instead of Chinese (e.g. "redefining_common_pest_as_beneficial_predator")
   # while the other 20 were Chinese -- the prompt never specified an output

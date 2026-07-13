@@ -1,6 +1,5 @@
 @echo off
-REM Invoked by the Windows Scheduled Task "CreationAssistant_Daily" (see
-REM scripts/scheduled/register_daily_task.ps1) -- runs the contract-gated
+REM Runs the contract-gated
 REM --daily-incremental entrypoint once a day and keeps a dated log so a
 REM failed unattended run is visible without digging through Task Scheduler.
 cd /d "%~dp0..\.."

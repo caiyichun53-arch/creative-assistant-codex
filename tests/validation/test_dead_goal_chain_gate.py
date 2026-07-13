@@ -14,7 +14,7 @@ from scripts.validation.dead_goal_chain_gate import (
     check_active_verify_scripts_dont_import_dead_chain,
     check_archive_not_reachable_from_real_entrypoints,
     check_claude_md_no_runtime_claude_claim,
-    check_creation_status_disclaimer_present,
+    check_effective_design_baseline_is_authoritative,
     check_dead_chain_not_reachable,
     check_env_example_no_dead_config,
     check_fallback_disabled,
@@ -28,14 +28,13 @@ from scripts.validation.dead_goal_chain_gate import (
 )
 
 
-class ArchiveExistsTests(unittest.TestCase):
-    def test_archive_directory_was_actually_created(self) -> None:
-        # Sanity check for the whole gate: if the archive were ever deleted or
-        # renamed, every other check in this file would trivially "pass" for
-        # the wrong reason (nothing to detect). This pins down that the thing
-        # being guarded actually exists on disk.
-        self.assertTrue(ARCHIVE_ROOT.is_dir())
-        self.assertTrue((ARCHIVE_ROOT / "README.md").is_file())
+class ArchiveOptionalTests(unittest.TestCase):
+    def test_archive_is_not_required_to_prove_active_code_is_clean(self) -> None:
+        # Historical materials may be moved outside the repository. The gate
+        # must keep rejecting imports into the archive path when it exists,
+        # without treating the archive itself as a runtime prerequisite.
+        result = check_archive_not_reachable_from_real_entrypoints()
+        self.assertTrue(result["passed"], result["detail"])
 
 
 class DeadChainNotReachableTests(unittest.TestCase):
@@ -262,9 +261,9 @@ class ContentWorkflowGhostReferenceTests(unittest.TestCase):
         self.assertTrue(result["passed"], result["detail"])
 
 
-class CreationStatusDisclaimerTests(unittest.TestCase):
-    def test_agents_md_states_creation_is_not_verified_complete(self) -> None:
-        result = check_creation_status_disclaimer_present()
+class EffectiveBaselineTests(unittest.TestCase):
+    def test_agents_md_names_the_effective_design_baseline(self) -> None:
+        result = check_effective_design_baseline_is_authoritative()
         self.assertTrue(result["passed"], result["detail"])
 
 

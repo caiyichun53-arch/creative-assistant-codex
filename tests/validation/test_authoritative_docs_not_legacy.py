@@ -4,9 +4,26 @@ import re
 import unittest
 from pathlib import Path
 
-from scripts.validation.clean_room_readiness import LEGACY_QUARANTINE_ROOTS
-
 ROOT = Path(__file__).resolve().parents[2]
+
+# Negative guard only: these retired prefixes must never re-enter the effective
+# design baseline as implementation guidance.
+LEGACY_QUARANTINE_ROOTS = (
+    "scripts/analyze/",
+    "scripts/collect/",
+    "scripts/content/",
+    "scripts/db/",
+    "scripts/feishu/",
+    "scripts/humanize/",
+    "scripts/language_fuel/",
+    "scripts/llm/",
+    "scripts/music/",
+    "scripts/research/",
+    "scripts/reverse/",
+    "scripts/setup/",
+    "scripts/topics/",
+    "tools/asr/",
+)
 
 # 2026-07-07: BUILD_PLAN.md was mistakenly cited this session as if it were current
 # design authority. It was actually the pre-clean-room MVP's build log -- every one
@@ -22,11 +39,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # fields were stripped from both files (see the same commit as this change) so the
 # exemption is no longer needed at all.
 AUTHORITATIVE_DESIGN_DOCS = (
-    "CLAUDE.md",
-    "AGENTS.md",
-    "BUSINESS_DECISION_TABLES.md",
-    "BUSINESS_RULE_CATALOG.yaml",
-    "REQUIREMENT_CODE_TRACEABILITY.yaml",
+    "docs/EFFECTIVE_DESIGN_BASELINE.md",
 )
 
 

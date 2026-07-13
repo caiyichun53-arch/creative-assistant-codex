@@ -36,6 +36,7 @@ REVIEW_QUEUE_PATH = ROOT / "scripts" / "core" / "experience" / "review_queue.py"
 FORMAL_SKILL_ADAPTER_PATH = ROOT / "scripts" / "core" / "model_gateway" / "formal_skill_adapter.py"
 SETTINGS_PATH = ROOT / "config" / "settings.yaml"
 SETTINGS_EXAMPLE_PATH = ROOT / "config" / "settings.example.yaml"
+EFFECTIVE_BASELINE_PATH = ROOT / "docs" / "EFFECTIVE_DESIGN_BASELINE.md"
 
 # The five real pipeline stages review_queue.py's STAGES dict must cover, and
 # the table each one is backed by. This is the mechanical proxy for "流程完整
@@ -194,19 +195,15 @@ def check_benchmark_collection_pipeline_intact() -> dict[str, Any]:
 
 def check_no_topic_scoring_config() -> dict[str, Any]:
     """置顶规则总表条目34/条目 硬禁项: 不恢复 score/rank/weight 选题排序. Proxy
-    (2026-07-13, after BR-TOPIC-002's decay/reheat scoring fields were
-    removed): config/settings.yaml and config/settings.example.yaml must not
-    have a candidate_pool scoring block, and BUSINESS_RULE_CATALOG.yaml's
-    BR-TOPIC-002 entry must not carry a live half_life_days/reheat_boost
-    default (a corrected, non-empty defaults block would mean the rule was
-    silently reintroduced)."""
+    config/settings.yaml and config/settings.example.yaml must not have a
+    candidate_pool scoring block.  The effective baseline is the governing
+    design source; no retired rule catalog is consulted here."""
     hits: list[str] = []
     for path in (SETTINGS_PATH, SETTINGS_EXAMPLE_PATH):
         if path.exists() and "candidate_pool:" in path.read_text(encoding="utf-8", errors="replace"):
             hits.append(f"{path.name}: candidate_pool scoring block present")
-    catalog_text = (ROOT / "BUSINESS_RULE_CATALOG.yaml").read_text(encoding="utf-8")
-    if "half_life_days:" in catalog_text or "reheat_boost:" in catalog_text:
-        hits.append("BUSINESS_RULE_CATALOG.yaml: half_life_days/reheat_boost still present")
+    if not EFFECTIVE_BASELINE_PATH.is_file():
+        hits.append("docs/EFFECTIVE_DESIGN_BASELINE.md: missing")
     return {
         "name": "no_topic_scoring_config",
         "passed": not hits,

@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
+from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 
 # 原文档7.1 的真实数字:30天窗口内至少3条不同视频。
 ACCOUNT_REVIEW_WINDOW_DAYS = 30
@@ -36,7 +36,7 @@ ACCOUNT_REVIEW_MIN_VIDEOS = 3
 
 
 def validate_account_discovery_execution_contract() -> dict[str, Any]:
-    return require_catalog_citations(["BR-COLLECT-009"])
+    return require_baseline_citations(["3"])
 
 
 def find_accounts_due_for_review(conn: sqlite3.Connection, *, domain_label: str, run_id: str, now: datetime | None = None) -> list[dict[str, Any]]:

@@ -38,7 +38,7 @@ class LiveGateHarnessTests(unittest.TestCase):
         source = yaml.safe_load((ROOT / "config" / "live_gates.example.yaml").read_text(encoding="utf-8"))
         source["evidence_root"] = str(tmp / "evidence")
         source["status_file"] = str(tmp / "status.yaml")
-        if live_model_gate or live_host_gate:
+        if live_model_gate:
             source["allow_live_calls"] = True
             for gate in source["gates"]:
                 if live_model_gate and gate["gate_id"] == "GATE-MODEL-PROVIDER":
@@ -82,35 +82,19 @@ class LiveGateHarnessTests(unittest.TestCase):
             code = command_preflight(config, None, status_path=tmp / "status.yaml")
             self.assertEqual(code, 0)
             status = yaml.safe_load((tmp / "status.yaml").read_text(encoding="utf-8"))
-            self.assertEqual(status["gates"]["GATE-FEISHU-THIN-BINDING"]["status"], "BLOCKED_MISSING_CREDENTIAL")
-
-    # Gates whose dry-run implementation imports the Goal01-12 Hermes/host/staging
-    # boundary modules that were archived to archive/dead_goal_chain_20260709/ on
-    # 2026-07-09 (DEAD_GOAL_CHAIN: zero real production entrypoint ever imported
-    # them). Feishu real-time integration is explicitly "未重建" per
-    # HANDOFF_STATE.md, so these gates now honestly report NOT_READY instead of a
-    # DRY_RUN_PASSED that was only ever exercising retired scaffolding.
-    RETIRED_DEPENDENCY_GATES = frozenset(
-        {"GATE-HERMES-REAL-HOST", "GATE-FEISHU-THIN-BINDING", "GATE-CONTINUOUS-FAULT-RECOVERY", "GATE-SHADOW-E2E"}
-    )
+            self.assertEqual(status["gates"]["GATE-MODEL-PROVIDER"]["status"], "BLOCKED_MISSING_CREDENTIAL")
 
     def test_dry_run_all_gates_passes_without_external_side_effects(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
             config = self.make_config(tmp)
             code = command_dry_run(config, None, status_path=tmp / "status.yaml")
-            # command_dry_run correctly fails closed (non-zero) once any gate is
-            # NOT_READY -- it must not silently report 0 while
-            # RETIRED_DEPENDENCY_GATES are broken.
-            self.assertNotEqual(code, 0)
+            self.assertEqual(code, 0)
             status = yaml.safe_load((tmp / "status.yaml").read_text(encoding="utf-8"))
             for gate_id in GATE_IDS:
                 latest = status["gates"][gate_id]["latest_result"]
-                if gate_id in self.RETIRED_DEPENDENCY_GATES:
-                    self.assertEqual(status["gates"][gate_id]["status"], "NOT_READY")
-                else:
-                    self.assertEqual(status["gates"][gate_id]["status"], "DRY_RUN_PASSED")
-                    self.assertFalse(latest["external_side_effect"])
+                self.assertEqual(status["gates"][gate_id]["status"], "DRY_RUN_PASSED")
+                self.assertFalse(latest["external_side_effect"])
 
     def test_single_gate_isolation(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -402,100 +386,13 @@ class LiveGateHarnessTests(unittest.TestCase):
             self.assertEqual(result.status, "LIVE_FAILED")
             self.assertIn("must report subscription billing", result.failure_reason)
 
-    def test_hermes_host_gate_dry_run_unchanged(self) -> None:
-        # GATE-HERMES-REAL-HOST's dry-run path imports scripts.core.hermes,
-        # archived to archive/dead_goal_chain_20260709/ on 2026-07-09 (zero real
-        # production entrypoint ever imported it). The live path (see
-        # test_hermes_host_live_path_calls_authenticated_api_server below) does
-        # not depend on that module and is unaffected.
-        with tempfile.TemporaryDirectory() as td:
-            tmp = Path(td)
-            config = self.make_config(tmp)
-            result = run_gate_mode(
-                config=config,
-                gate_id="GATE-HERMES-REAL-HOST",
-                mode="dry-run",
-                status_path=tmp / "status.yaml",
-            )
-            self.assertEqual(result.status, "NOT_READY")
-
-    def test_hermes_host_live_path_calls_authenticated_api_server(self) -> None:
-        class FakeResponse:
-            def __init__(self, status: int, payload: dict):
-                self.status = status
-                self.payload = payload
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-            def read(self) -> bytes:
-                import json
-
-                return json.dumps(self.payload).encode("utf-8")
-
-        calls = []
-
-        def fake_urlopen(request, timeout=0):
-            calls.append((request.full_url, dict(request.header_items()), timeout))
-            if request.full_url.endswith("/health"):
-                return FakeResponse(200, {"status": "ok"})
-            if request.full_url.endswith("/health/detailed"):
-                return FakeResponse(200, {"gateway_state": "running"})
-            if request.full_url.endswith("/v1/models"):
-                return FakeResponse(200, {"data": [{"id": "hermes-agent"}]})
-            if request.full_url.endswith("/v1/chat/completions"):
-                return FakeResponse(
-                    200,
-                    {
-                        "id": "chatcmpl-test",
-                        "choices": [{"message": {"content": "HERMES_HOST_GATE_OK"}}],
-                        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-                    },
-                )
-            raise AssertionError(request.full_url)
-
-        with tempfile.TemporaryDirectory() as td:
-            tmp = Path(td)
-            config = self.make_config(
-                tmp,
-                live_host_gate=True,
-                env_values={
-                    "HERMES_TEST_HOST_URL": "http://127.0.0.1:8642",
-                    "HERMES_TEST_TOKEN": "test-host-token",
-                    "HERMES_TEST_ACTOR_ID": "gate-test-local",
-                },
-            )
-            with mock.patch("scripts.validation.live_gates.urlopen", fake_urlopen):
-                result = run_gate_mode(
-                    config=config,
-                    gate_id="GATE-HERMES-REAL-HOST",
-                    mode="run",
-                    live_confirm=True,
-                    status_path=tmp / "status.yaml",
-                )
-            self.assertEqual(result.status, "LIVE_PASSED")
-            manifest = yaml.safe_load((self.manifest_path(result) / "run_manifest.yaml").read_text(encoding="utf-8"))
-            self.assertEqual(manifest["response"]["interface_type"], "openai-compatible-api-server")
-            self.assertEqual(manifest["response"]["host"], "http://127.0.0.1:8642")
-            self.assertTrue(manifest["response"]["expected_output_match"])
-            self.assertEqual(manifest["response"]["actual_call_count"], 1)
-            self.assertFalse(manifest["response"]["dry_run_fallback"])
-            self.assertNotIn("test-host-token", (self.manifest_path(result) / "run_manifest.yaml").read_text(encoding="utf-8"))
-            self.assertTrue(any(url.endswith("/v1/chat/completions") for url, _, _ in calls))
-            auth_calls = [headers for url, headers, _ in calls if "/v1/" in url]
-            self.assertTrue(all(headers.get("Authorization") == "Bearer test-host-token" for headers in auth_calls))
-            self.assertTrue(all(headers.get("X-hermes-session-key") == "gate-test-local" for headers in auth_calls))
-
     def test_live_run_requires_explicit_authorization(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
             config = self.make_config(tmp)
             result = run_gate_mode(
                 config=config,
-                gate_id="GATE-SHADOW-E2E",
+                gate_id="GATE-MODEL-PROVIDER",
                 mode="run",
                 live_confirm=False,
                 status_path=tmp / "status.yaml",
@@ -507,7 +404,6 @@ class LiveGateHarnessTests(unittest.TestCase):
         candidate_files = [
             ROOT / ".env.live-gates.example",
             ROOT / "config" / "live_gates.example.yaml",
-            ROOT / "EXTERNAL_LIVE_GATE_RUNBOOK.md",
             ROOT / "scripts" / "validation" / "live_gates.py",
         ]
         forbidden_fragments = ("sk-", "xoxb-", "tenant_access_token=", "sessionid=", "cookie=")

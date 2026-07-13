@@ -51,7 +51,7 @@ def _insert_script_draft(conn: sqlite3.Connection, draft_id: str) -> None:
     conn.execute(
         """
         INSERT INTO hits(hit_id, video_id, account_id, platform, platform_item_id, title, url,
-            like_count, comment_count, share_count, collect_count, hit_channel, judgment_confidence, run_id, reverse_status)
+            like_count, comment_count, share_count, collect_count, hit_channel, judgment_confidence, run_id, preparation_status)
         VALUES (?, ?, 'acc1', 'douyin', ?, 't', 'https://x', 1, 1, 1, 1, 'like_anomaly', 'formal', 'run1', 'completed')
         """,
         (f"h_{suffix}", f"v_{suffix}", f"hititem_{suffix}"),
@@ -165,9 +165,9 @@ def _make_publication_with_experiment(
 
 
 class ValidateExecutionContractTests(unittest.TestCase):
-    def test_cites_br_experience_004(self) -> None:
+    def test_cites_effective_baseline_experience_sections(self) -> None:
         contract = validate_publication_experiment_execution_contract()
-        self.assertIn("BR-EXPERIENCE-004", contract)
+        self.assertTrue({"9", "18"}.issubset(contract))
 
 
 class EvaluateAndRecordExperimentTests(unittest.TestCase):

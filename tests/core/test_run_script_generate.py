@@ -53,7 +53,7 @@ def _insert_hit(conn: sqlite3.Connection, hit_id: str, *, account_id: str = "acc
         INSERT INTO hits(
             hit_id, video_id, account_id, platform, platform_item_id, title, url,
             like_count, comment_count, share_count, collect_count,
-            hit_channel, judgment_confidence, run_id, reverse_status
+            hit_channel, judgment_confidence, run_id, preparation_status
         ) VALUES (?, ?, ?, 'douyin', ?, '为什么电梯早高峰总堵', 'https://x', 1000, 200, 10, 5, 'like_anomaly', 'formal', 'run1', 'completed')
         """,
         (hit_id, video_id, account_id, hit_id + "_item"),
@@ -106,9 +106,9 @@ def _full_chain(conn: sqlite3.Connection) -> None:
 
 
 class ValidateExecutionContractTests(unittest.TestCase):
-    def test_cites_br_dna_001(self) -> None:
+    def test_cites_effective_baseline_content_sections(self) -> None:
         contract = validate_script_generate_execution_contract()
-        self.assertIn("BR-DNA-001", contract)
+        self.assertTrue({"5", "10", "20"}.issubset(contract))
 
 
 class SelectPlansPendingScriptTests(unittest.TestCase):

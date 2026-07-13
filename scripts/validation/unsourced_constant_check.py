@@ -9,7 +9,7 @@ the same failure mode as the historical baseline_min_samples=10 fabrication
 (BR-BASELINE-003), reproduced in the same session that was fixing exactly
 this class of problem elsewhere. Existing gates (test_business_rule_
 traceability.py) only check numbers that are ALREADY registered in
-BUSINESS_RULE_CATALOG.yaml against the catalog -- they cannot catch a new
+the effective design baseline -- they cannot catch a new
 number that was never registered anywhere in the first place. This closes
 that specific gap: it does not require every constant to be "correct", only
 that its provenance is stated one way or the other.

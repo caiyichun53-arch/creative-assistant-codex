@@ -65,7 +65,7 @@ def _insert_hit(conn: sqlite3.Connection, hit_id: str, *, account_id: str = "acc
         INSERT INTO hits(
             hit_id, video_id, account_id, platform, platform_item_id, title, url,
             like_count, comment_count, share_count, collect_count,
-            hit_channel, judgment_confidence, run_id, reverse_status
+            hit_channel, judgment_confidence, run_id, preparation_status
         ) VALUES (?, ?, ?, 'douyin', ?, '标题', 'https://x', 1000, 200, 10, 5, 'like_anomaly', 'formal', 'run1', 'completed')
         """,
         (hit_id, video_id, account_id, hit_id + "_item"),

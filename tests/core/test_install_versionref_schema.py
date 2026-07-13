@@ -71,7 +71,7 @@ def _seed_real_business_db(path: Path) -> sqlite3.Connection:
         INSERT INTO hits(
             hit_id, video_id, account_id, platform, platform_item_id, title, url,
             like_count, comment_count, share_count, collect_count,
-            hit_channel, judgment_confidence, run_id, reverse_status
+            hit_channel, judgment_confidence, run_id, preparation_status
         ) VALUES ('hit1', 'vid1', 'acc1', 'douyin', 'item1', '标题', 'https://x/1',
                   100, 10, 5, 2, 'like_anomaly', 'formal', 'run1', 'completed')
         """
@@ -313,15 +313,15 @@ class InstallTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 install(db_path, skip_backup=True)
 
-    def test_install_requires_a_br_experience_001_citation_and_is_gated(self) -> None:
-        # The install() function itself always cites BR-EXPERIENCE-001 via
-        # execution_contract.require_catalog_citations() -- this proves that
+    def test_install_requires_an_effective_baseline_citation_and_is_gated(self) -> None:
+        # The install() function itself cites the effective design baseline via
+        # execution_contract.require_baseline_citations() -- this proves that
         # gate call is real by breaking it and confirming the whole install
         # fails closed, not by mocking the gate to always pass.
         db_path = _scratch_db_path(self, "_scratch_test_citation_gate.sqlite3")
         _seed_real_business_db(db_path).close()
         with mock.patch(
-            "scripts.core.persistence.install_versionref_schema_into_business_db.require_catalog_citations",
+            "scripts.core.persistence.install_versionref_schema_into_business_db.require_baseline_citations",
             side_effect=RuntimeError("no citation"),
         ):
             with self.assertRaises(RuntimeError):

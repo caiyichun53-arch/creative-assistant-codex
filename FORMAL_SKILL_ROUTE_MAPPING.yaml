@@ -1,15 +1,12 @@
 schema_version: formal_skill_route_mapping.v1
-goal: GOAL-RUNTIME-BUSINESS-SKILL-ADAPTER-01
+governance_basis: docs/EFFECTIVE_DESIGN_BASELINE.md
 source_policy:
-  primary_sources:
-    - C:\Users\15891\.codex\attachments\655209ca-4f74-4a46-b971-d0ae32beb2df\pasted-text-1.txt
-    - AGENTS.md
-    - BUILD_PLAN.md
+  design_authority:
+    - docs/EFFECTIVE_DESIGN_BASELINE.md
+  runtime_configuration:
+    - config/model_routes.yaml
     - BUSINESS_MODEL_ROUTE_REGISTRY.yaml
-  unavailable_sources:
-    - target-architecture.md
-    - rebuild-direction.md
-  note: The repo and Codex memory search did not find target-architecture.md or rebuild-direction.md; BUILD_PLAN.md, AGENTS.md and the pasted goal remain the available governing sources.
+  note: This mapping records current executable Skill-to-route bindings. It does not inherit authority from goals, attachments, chat history, or historical plans.
 mapping_policy:
   formal_skills_are_business_capabilities: true
   existing_business_nodes_are_model_routes: true
@@ -32,7 +29,7 @@ formal_skills:
     materializer_contract: formal_business_skill_result.v1
     status: active_formal_business_skill
     evidence:
-      - Active formal content_classify Skill for GOAL-BUSINESS-SKILL-CONTENT-CLASSIFY-01.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
       - Uses business.topic_judgement only through ModelGateway with formal fixtures and live Provider validation.
       - Scope excludes relation judgement, viral judgement, research, creation, review, DB reads, file reads, Feishu messaging, and other Skill invocation.
 
@@ -50,7 +47,7 @@ formal_skills:
     materializer_contract: formal_business_skill_result.v1
     status: active_formal_business_skill
     evidence:
-      - Formal relation taxonomy and directionality supplied by the GOAL-BUSINESS-SKILL-CONTENT-RELATION-JUDGE-01 semantic ruling.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
       - Uses business.content_relation_judgement only through ModelGateway with formal fixtures and live Provider validation.
       - Kept separate from content_classify so business.topic_judgement does not silently absorb relation judgement.
 
@@ -70,7 +67,7 @@ formal_skills:
     evidence:
       - Not mapped to business.topic_judgement because generation from source is not classification.
       - Uses dedicated business.source_to_topic route through ModelGateway.
-      - Formal source_to_topic Skill package implemented for GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
 
   - formal_skill_id: sample_deep_analyze
     version: 1.0.0
@@ -86,8 +83,8 @@ formal_skills:
     materializer_contract: formal_business_skill_result.v1
     status: active_formal_business_skill
     evidence:
-      - AGENTS.md separates deterministic prep from LLM reverse DNA analysis.
-      - Formal sample_deep_analyze Skill package implemented for GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
 
   - formal_skill_id: tactic_extract
     version: 1.0.0
@@ -103,8 +100,8 @@ formal_skills:
     materializer_contract: formal_business_skill_result.v1
     status: active_formal_business_skill
     evidence:
-      - BUILD_PLAN.md uses reduce for common patterns and example candidates.
-      - Formal tactic_extract Skill package implemented for GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
 
   - formal_skill_id: research_evidence_extract
     version: 1.0.0
@@ -122,7 +119,7 @@ formal_skills:
     evidence:
       - Kept separate from production_research_plan; extraction and planning should not share one route silently.
       - Uses dedicated business.research_evidence_extract route through ModelGateway.
-      - Formal research_evidence_extract Skill package implemented for GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
 
   - formal_skill_id: production_research_plan
     version: 1.0.0
@@ -139,7 +136,7 @@ formal_skills:
     status: active_formal_business_skill
     evidence:
       - BUSINESS_MODEL_ROUTE_REGISTRY.yaml defines business.research_synthesis as the formal research route.
-      - Formal production_research_plan Skill package implemented for GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
 
   - formal_skill_id: content_plan
     version: 1.0.0
@@ -157,7 +154,7 @@ formal_skills:
     status: active_formal_business_skill
     evidence:
       - Hook and outline are adjacent subnodes of one content planning Skill, not separate formal Skills.
-      - Formal content_plan Skill package implemented for GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
 
   - formal_skill_id: script_generate
     version: 1.0.0
@@ -173,8 +170,8 @@ formal_skills:
     materializer_contract: formal_business_skill_result.v1
     status: active_formal_business_skill
     evidence:
-      - AGENTS.md allows LLM for creation only inside the fixed route.
-      - Formal script_generate Skill package implemented for GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
 
   - formal_skill_id: script_review
     version: 1.0.0
@@ -193,7 +190,7 @@ formal_skills:
     status: active_formal_business_skill
     evidence:
       - These nodes are critique/revision subnodes in one script review Skill, followed by code-based banned checks.
-      - Formal script_review Skill package implemented for GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
 
   - formal_skill_id: experiment_review
     version: 1.0.0
@@ -209,7 +206,7 @@ formal_skills:
     materializer_contract: formal_business_skill_result.v1
     status: active_formal_business_skill
     evidence:
-      - GOAL-V0.6.2-PRODUCTION-COMPLETION-01 explicitly approves business.experiment_review for Phase 2.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
       - The Skill only reviews supplied experiment packets and does not publish or modify formal experience.
 
   - formal_skill_id: experience_revision_propose
@@ -226,7 +223,7 @@ formal_skills:
     materializer_contract: formal_business_skill_result.v1
     status: active_formal_business_skill
     evidence:
-      - GOAL-V0.6.2-PRODUCTION-COMPLETION-01 explicitly approves business.experience_revision_propose for Phase 2.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
       - The Skill only returns candidate/no-change proposal semantics and cannot publish formal experience.
 business_model_nodes:
   - node_id: business.content_relation_judgement

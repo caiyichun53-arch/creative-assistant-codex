@@ -29,11 +29,11 @@ from scripts.core.persistence.goal01_store import PersistenceStore, content_hash
 from scripts.validation.clean_room_empty_db import health_check
 
 
-GOAL_ID = "GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01"
+REGISTRY_ID = "current-model-route-registry"
 REGISTRY_PATH = ROOT / "BUSINESS_MODEL_ROUTE_REGISTRY.yaml"
-STATUS_PATH = ROOT / "BUSINESS_MODEL_ROUTE_CUTOVER_STATUS.yaml"
-REPORT_PATH = ROOT / "GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01_VALIDATION_REPORT.md"
-PROGRESS_PATH = ROOT / "implementation_progress" / "GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01.md"
+STATUS_PATH = ROOT / "validation_evidence" / "model_route_registry_status.yaml"
+REPORT_PATH = ROOT / "validation_evidence" / "model_route_registry_report.md"
+PROGRESS_PATH = ROOT / "validation_evidence" / "model_route_registry_progress.md"
 
 FORMAL_PRODUCTION_ROOTS = (
     ROOT / "scripts" / "core",
@@ -224,7 +224,7 @@ def run_fixture_route_tests(registry: dict[str, Any]) -> dict[str, Any]:
             contract.logical_route: router.resolve(
                 contract.route_id,
                 route_name=contract.logical_route,
-                config_version=f"{GOAL_ID}.registry.v1",
+                config_version=f"{REGISTRY_ID}.v1",
                 parameters={"temperature": 0},
                 timeout_ms=contract.timeout_ms,
             )
@@ -248,9 +248,9 @@ def run_fixture_route_tests(registry: dict[str, Any]) -> dict[str, Any]:
                 prompt_template="Synthetic route fixture for {fixture_id}. Return only the contracted JSON object.",
                 required_input_keys=tuple(contract.input_schema["required"]),
                 output_contract=contract.output_schema,
-                metadata={"goal": GOAL_ID, "node_id": contract.node_id},
+                metadata={"registry_id": REGISTRY_ID, "node_id": contract.node_id},
             )
-            result = runner.run(skill=skill, input_payload=input_payload, correlation_id=f"{GOAL_ID}.{contract.node_id}")
+            result = runner.run(skill=skill, input_payload=input_payload, correlation_id=f"{REGISTRY_ID}.{contract.node_id}")
             output_payload = json.loads(result.output_text)
             validate_schema_subset(output_payload, contract.output_schema)
             tested.append(
@@ -418,7 +418,7 @@ def run_verification(registry_path: Path = REGISTRY_PATH) -> dict[str, Any]:
     hermes_isolation = verify_hermes_isolation(registry)
     clean_room = clean_room_status()
     status = {
-        "goal": GOAL_ID,
+        "registry_id": REGISTRY_ID,
         "status": "COMPLETED",
         "registry": registry_result,
         "fixture_route_tests": fixture_result,
@@ -443,7 +443,7 @@ def write_report(status: dict[str, Any], path: Path = REPORT_PATH) -> None:
     routes = status["registry"]["logical_routes"]
     direct = status["direct_model_call_scan"]
     lines = [
-        f"# {GOAL_ID} Validation Report",
+        "# Current model route registry validation",
         "",
         f"status: `{status['status']}`",
         "",
@@ -484,8 +484,8 @@ def write_report(status: dict[str, Any], path: Path = REPORT_PATH) -> None:
         "- `python -m unittest tests.core.test_business_route_registry tests.validation.test_live_gates tests.core.test_runtime_vertical_slice`",
         "- `python -m py_compile scripts\\core\\model_gateway\\business_route_registry.py scripts\\core\\model_gateway\\hermes_model_provider.py tests\\core\\test_business_route_registry.py`",
         "",
-        "## Next Goal",
-        "- Recommended: `GOAL-RUNTIME-BUSINESS-SKILL-ADAPTER-01`, scoped to wiring selected business Skill adapters to these registered routes with synthetic fixtures only.",
+        "## Scope",
+        "- This verifier checks current route declarations, fixture routing, direct-call isolation, and clean-room state. It does not define business rules.",
         "",
     ]
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -494,14 +494,14 @@ def write_report(status: dict[str, Any], path: Path = REPORT_PATH) -> None:
 def write_progress(status: dict[str, Any], path: Path = PROGRESS_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        f"# {GOAL_ID} Progress",
+        "# Current model route registry verification",
         "",
         f"status: {status['status']}",
-        "branch: validation/goal-runtime-business-route-cutover-01-v0.6.2",
+        "scope: current model routing",
         "",
         "## Checkpoints",
-        "- [x] Restore baseline from the previous live ModelGateway gate.",
-        "- [x] Define formal business LLM nodes from AGENTS.md, BUILD_PLAN.md and the active Goal only.",
+        "- [x] Load the current route registry and model-routing configuration.",
+        "- [x] Check route declarations against docs/EFFECTIVE_DESIGN_BASELINE.md.",
         "- [x] Create BUSINESS_MODEL_ROUTE_REGISTRY.yaml.",
         "- [x] Validate route/schema fixtures through ModelGateway with no business workflow execution.",
         "- [x] Verify formal production roots have no direct CLI/legacy model calls.",
@@ -513,7 +513,7 @@ def write_progress(status: dict[str, Any], path: Path = PROGRESS_PATH) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=f"{GOAL_ID} registry verifier")
+    parser = argparse.ArgumentParser(description="current model-route registry verifier")
     parser.add_argument("--registry", default=str(REGISTRY_PATH))
     parser.add_argument("--status-output", default=str(STATUS_PATH))
     parser.add_argument("--report-output", default=str(REPORT_PATH))

@@ -56,7 +56,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.core.business_data.domain_labels import ALLOWED_DOMAIN_LABELS  # noqa: E402
 from scripts.core.business_data.register_competitor_accounts import DEFAULT_DB, install_schema  # noqa: E402
-from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
+from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.experience.run_sample_deep_analyze import _load_env_value, _safe_db_path  # noqa: E402
 from scripts.core.experience.tactic_registry import TacticEvidenceRef, register_tactic_candidate  # noqa: E402
 from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
@@ -76,7 +76,7 @@ BATCH_MAX = 20
 
 
 def validate_run_tactic_extract_execution_contract() -> dict[str, Any]:
-    return require_catalog_citations(["BR-EXPERIENCE-001"])
+    return require_baseline_citations(["9", "18", "20"])
 
 
 def select_evidence_for_tactic_batch(conn: sqlite3.Connection, *, domain_label: str, limit: int) -> list[sqlite3.Row]:
@@ -235,8 +235,8 @@ def run_tactic_extract(
 def build_real_harness(*, env_path: Path | None = None) -> tuple[FormalBusinessSkillHarness, str]:
     """Same credential shape as run_sample_deep_analyze.py/run_source_to_topic.py's
     build_real_harness(): HERMES_BUSINESS_MODEL_* must be in the real .env
-    (2026-07-11: confirmed real, copied in from .env.live-gates by explicit
-    user decision -- see HANDOFF_STATE.md)."""
+    (2026-07-11: confirmed real and copied in from .env.live-gates by an
+    explicit user decision)."""
     token = _load_env_value("HERMES_BUSINESS_MODEL_TOKEN", env_path=env_path)
     base_url = _load_env_value("HERMES_BUSINESS_MODEL_BASE_URL", env_path=env_path)
     model_name = _load_env_value("HERMES_BUSINESS_MODEL_NAME", env_path=env_path)

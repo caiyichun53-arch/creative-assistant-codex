@@ -44,7 +44,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
+from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.experience.goal09_experiments import (  # noqa: E402
     ExperienceEvidence,
     ExperienceStateInput,
@@ -61,7 +61,7 @@ _METRIC_COLUMNS = frozenset({"like_count", "comment_count", "collect_count", "sh
 
 
 def validate_publication_experiment_execution_contract() -> dict[str, Any]:
-    return require_catalog_citations(["BR-EXPERIENCE-004"])
+    return require_baseline_citations(["9", "18"])
 
 
 class PublicationExperimentError(RuntimeError):

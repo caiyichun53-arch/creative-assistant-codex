@@ -2,7 +2,7 @@ schema_version: runtime_probe.skill.v1
 skill_name: runtime_probe
 skill_version: 0.1.0
 route_name: runtime_probe.test
-description: Synthetic runtime-only probe for GOAL-RUNTIME-VERTICAL-SLICE-01.
+description: Synthetic runtime-only probe for adapter contract testing.
 input_schema:
   required:
   - request_id

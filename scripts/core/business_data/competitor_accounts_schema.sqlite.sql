@@ -177,7 +177,7 @@ CREATE TABLE IF NOT EXISTS hits (
     -- not a business judgement field. No CHECK constraint (would need a full
     -- table rebuild on an existing production table); enforced in Python by
     -- run_reverse_prep.py, which is the only writer.
-    reverse_status TEXT NOT NULL DEFAULT 'pending',
+    preparation_status TEXT NOT NULL DEFAULT 'pending',
     promoted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(account_id, platform_item_id)
 );
@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS hit_transcripts (
     -- Deterministic (no LLM) anomaly checks section 13.1 requires: comma-
     -- joined subset of empty/too_short/high_repetition.
     quality_flags TEXT NOT NULL DEFAULT '',
-    -- Per-attempt lifecycle, same 4-value vocabulary as hits.reverse_status
+    -- Per-attempt lifecycle, same 4-value vocabulary as hits.preparation_status
     -- (source document section 13).
     processing_status TEXT NOT NULL CHECK(processing_status IN ('pending', 'running', 'completed', 'failed')),
     run_id TEXT NOT NULL,

@@ -36,7 +36,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.core.business_data.domain_labels import ALLOWED_DOMAIN_LABELS  # noqa: E402
-from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
+from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.external_adapters import ExternalAdapterCommand  # noqa: E402
 from scripts.core.external_adapters.local_mediacrawler_executor import LocalMediaCrawlerExecutor  # noqa: E402
 
@@ -58,7 +58,7 @@ def validate_domain_search_execution_contract(domain_search_cfg: dict[str, Any])
     (domain_search.live_enabled: true in config/settings.yaml), same
     discipline as BR-RESEARCH-003 -- default is dry-run/blocked, not
     silently allowed."""
-    contract = require_catalog_citations(["BR-TOPIC-005"])
+    contract = require_baseline_citations(["3", "17"])
     if not bool(domain_search_cfg.get("live_enabled", False)):
         raise ValueError(
             "domain_search.live_enabled is false (or unset) in config/settings.yaml -- "

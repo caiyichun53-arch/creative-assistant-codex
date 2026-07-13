@@ -24,12 +24,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.core.business_data.domain_labels import ALLOWED_DOMAIN_LABELS  # noqa: E402
-from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
+from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.persistence.goal01_store import uuid7  # noqa: E402
 
 
 def validate_hotspot_registration_execution_contract() -> dict[str, Any]:
-    return require_catalog_citations(["BR-TOPIC-006"])
+    return require_baseline_citations(["3", "17"])
 
 
 def match_domain_tags(conn: sqlite3.Connection, *, domain_label: str, raw_text: str) -> list[str]:

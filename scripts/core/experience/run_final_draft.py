@@ -31,12 +31,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.core.business_data.register_competitor_accounts import DEFAULT_DB, install_schema  # noqa: E402
-from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
+from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.experience.run_sample_deep_analyze import _safe_db_path  # noqa: E402
 
 
 def validate_final_draft_execution_contract() -> dict[str, Any]:
-    return require_catalog_citations(["BR-CONTENT-005"])
+    return require_baseline_citations(["5", "10", "20"])
 
 
 def select_reviews_pending_final(conn: sqlite3.Connection, *, limit: int) -> list[sqlite3.Row]:

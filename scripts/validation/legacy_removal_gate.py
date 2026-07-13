@@ -11,8 +11,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
-GOAL_ID = "GOAL-V0.6.2-LEGACY-REMOVAL-01"
-INVENTORY_PATH = ROOT / "LEGACY_REMOVAL_INVENTORY.yaml"
+GATE_ID = "legacy-removal-gate"
 
 LEGACY_PATH_PREFIXES = (
     "scripts/analyze/",
@@ -58,7 +57,6 @@ ACTIVE_CONFIG_PREFIXES = (
 )
 ALLOWED_GUARD_REFERENCE_FILES = {
     "scripts/validation/clean_room_empty_db.py",
-    "scripts/validation/clean_room_readiness.py",
     "scripts/validation/legacy_removal_gate.py",
     "scripts/validation/live_gates.py",
     "scripts/validation/production_startup_smoke.py",
@@ -69,7 +67,6 @@ ALLOWED_GUARD_REFERENCE_FILES = {
     "scripts/core/persistence/install_versionref_schema_into_business_db.py",
     "scripts/core/business_data/README.md",
     "tests/core/test_phase5_business_workflow.py",
-    "tests/validation/test_clean_room_readiness.py",
     "tests/validation/test_authoritative_docs_not_legacy.py",
     "tests/validation/test_legacy_removal_gate.py",
 }
@@ -163,17 +160,7 @@ def staged_deleted_files() -> list[str]:
 
 
 def existing_inventory_paths() -> list[str]:
-    if not INVENTORY_PATH.exists():
-        return []
-    try:
-        data = yaml.safe_load(INVENTORY_PATH.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError:
-        return []
-    return [
-        str(item["path"]).replace("\\", "/")
-        for item in data.get("items", [])
-        if isinstance(item, dict) and item.get("path")
-    ]
+    return []
 
 
 def is_legacy_executable_path(path: str) -> bool:
@@ -263,8 +250,8 @@ def build_inventory(files: list[str], active_refs: list[dict[str, Any]], histori
         )
     return {
         "schema_version": "legacy_removal_inventory.v1",
-        "goal": GOAL_ID,
-        "baseline_tag": "v0.6.2-engineering-ready",
+        "gate_id": GATE_ID,
+        "baseline": "docs/EFFECTIVE_DESIGN_BASELINE.md",
         "items": items,
         "summary": {
             "legacy_executable_path_count": len(items),
@@ -281,11 +268,9 @@ def run_gate(*, write_inventory: bool = False) -> dict[str, Any]:
     active_refs, historical_refs = reference_hits(files)
     inventory_removed_paths = sorted(set(deleted_files + existing_inventory_paths()))
     inventory = build_inventory(files, active_refs, historical_refs, inventory_removed_paths)
-    if write_inventory:
-        INVENTORY_PATH.write_text(yaml.safe_dump(inventory, allow_unicode=True, sort_keys=False), encoding="utf-8")
     result = {
         "schema_version": "legacy_removal_gate.v1",
-        "goal": GOAL_ID,
+        "gate_id": GATE_ID,
         "production_legacy_executable_paths": legacy_paths,
         "production_legacy_executable_path_count": len(legacy_paths),
         "production_legacy_references": active_refs,
@@ -293,9 +278,9 @@ def run_gate(*, write_inventory: bool = False) -> dict[str, Any]:
         "historical_documentation_references": historical_refs,
         "historical_documentation_reference_count": len(historical_refs),
         "inventory": {
-            "path": INVENTORY_PATH.relative_to(ROOT).as_posix(),
+            "path": None,
             "item_count": len(inventory["items"]),
-            "written": write_inventory,
+            "written": False,
         },
     }
     result["status"] = "PASS" if not legacy_paths and not active_refs else "FAIL"

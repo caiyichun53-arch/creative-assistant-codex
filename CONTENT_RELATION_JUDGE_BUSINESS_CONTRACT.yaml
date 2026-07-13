@@ -1,22 +1,13 @@
 schema_version: content_relation_judge.business_contract.v1
-goal: GOAL-BUSINESS-SKILL-CONTENT-RELATION-JUDGE-01
+governance_basis: docs/EFFECTIVE_DESIGN_BASELINE.md
 status: active_formal_business_contract
 skill_id: content_relation_judge
 skill_version: 1.0.0
 source_documents:
-  - C:\Users\15891\.codex\attachments\dfa88726-2b0d-46c7-9442-9b2d3d1597f6\pasted-text-1.txt
-  - C:\Users\15891\.codex\attachments\8bc14600-1b16-4784-9233-ca0761ef57c1\pasted-text-1.txt
-  - AGENTS.md
-  - BUILD_PLAN.md
-  - FORMAL_SKILL_ROUTE_MAPPING.yaml
-  - BUSINESS_RULE_CATALOG.yaml
-  - REQUIREMENT_CODE_TRACEABILITY.yaml
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
+  - runtime_skills/content_relation_judge/skill.yaml
 source_sections:
-  - original pasted goal: sections 2-20
-  - semantic ruling pasted goal: sections 1-8
-  - FORMAL_SKILL_ROUTE_MAPPING.yaml: formal_skills.content_relation_judge
-  - BUSINESS_RULE_CATALOG.yaml: BR-REL-001
-  - REQUIREMENT_CODE_TRACEABILITY.yaml: BR-REL-001
+  - current relation-judgement boundary in the effective design baseline
 responsibility: Judge the formal content relation between two already provided public content objects or evidence units.
 non_responsibilities:
   - content_classify

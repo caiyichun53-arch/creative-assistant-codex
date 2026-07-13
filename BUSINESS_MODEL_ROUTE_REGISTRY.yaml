@@ -1,17 +1,17 @@
-﻿schema_version: business_model_route_registry.v1
-goal: GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01
+schema_version: business_model_route_registry.v1
+governance_basis: docs/EFFECTIVE_DESIGN_BASELINE.md
 status: formal_registry
 source_policy:
-  allowed_sources:
-    - AGENTS.md
-    - BUILD_PLAN.md
-    - GOAL-RUNTIME-BUSINESS-ROUTE-CUTOVER-01 objective
+  design_authority:
+    - docs/EFFECTIVE_DESIGN_BASELINE.md
+  runtime_configuration:
+    - config/model_routes.yaml
   excluded_sources:
     - scripts/llm/call.py
     - config/settings.yaml
     - config/settings.example.yaml
     - README files
-  note: Node inventory is derived from formal docs and the active goal, not from old aliases or legacy scripts.
+  note: Node inventory is checked against the effective design baseline and current routing configuration, never against historical plans or goals.
 model_routing:
   config_path: config/model_routes.yaml
   workflow_nodes_bind_route_id_only: true
@@ -35,8 +35,8 @@ nodes:
     task_type: topic_screening
     capability_tier: fast_reasoning
     source_evidence:
-      - AGENTS.md: LLM allowed for 閫夐鍒ゆ柇.
-      - BUILD_PLAN.md: 姣忔棩閫夐娴?later connects LLM judgement after examples grow.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
     timeout_ms: 30000
     retry:
       max_attempts: 1
@@ -68,8 +68,8 @@ nodes:
     task_type: benchmark_analysis
     capability_tier: fast_reasoning
     source_evidence:
-      - GOAL-BUSINESS-SKILL-CONTENT-RELATION-JUDGE-01 semantic ruling: content_relation_judge v1 formal relation taxonomy and directionality.
-      - AGENTS.md: LLM allowed only in generated judgement nodes inside fixed routes.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
     timeout_ms: 30000
     retry:
       max_attempts: 1
@@ -107,8 +107,8 @@ nodes:
     task_type: topic_screening
     capability_tier: creative_generation
     source_evidence:
-      - GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2: source evidence to candidate topic is a remaining formal Skill.
-      - AGENTS.md: LLM allowed for topic judgement/generation inside fixed routes only.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
       - FORMAL_SKILL_ROUTE_MAPPING.yaml: source_to_topic must not reuse business.topic_judgement silently.
     timeout_ms: 60000
     retry:
@@ -148,8 +148,8 @@ nodes:
     task_type: material_summary
     capability_tier: deep_reasoning
     source_evidence:
-      - AGENTS.md: LLM allowed for 鐮旂┒缁煎悎.
-      - BUILD_PLAN.md: 閫変腑涓€涓€夐鍚庤繘琛岀爺绌跺苟缁勮鏉愭枡鍖?
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
     timeout_ms: 60000
     retry:
       max_attempts: 1
@@ -181,8 +181,8 @@ nodes:
     task_type: benchmark_analysis
     capability_tier: deep_reasoning
     source_evidence:
-      - AGENTS.md: LLM allowed for 閫嗗悜 DNA 鎷嗚В.
-      - BUILD_PLAN.md: LLM 鎷?DNA consumes transcript and data.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
     timeout_ms: 90000
     retry:
       max_attempts: 1
@@ -215,7 +215,7 @@ nodes:
     task_type: experience_matching
     capability_tier: deep_reasoning
     source_evidence:
-      - BUILD_PLAN.md: reduce finds common patterns from multiple DNA notes into domain examples and methods.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
     timeout_ms: 90000
     retry:
       max_attempts: 1
@@ -246,9 +246,9 @@ nodes:
     task_type: material_summary
     capability_tier: deep_reasoning
     source_evidence:
-      - GOAL-V0.6.2-PRODUCTION-COMPLETION-01 Phase 2: research evidence extraction is a remaining formal Skill.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
       - FORMAL_SKILL_ROUTE_MAPPING.yaml: research_evidence_extract must remain separate from production_research_plan.
-      - AGENTS.md: LLM allowed for research work inside fixed routes only.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
     timeout_ms: 60000
     retry:
       max_attempts: 1
@@ -281,7 +281,7 @@ nodes:
     task_type: hook_generation
     capability_tier: creative_generation
     source_evidence:
-      - BUILD_PLAN.md: 鍒涗綔瀵硅瘽 includes 閽╁瓙.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
     timeout_ms: 60000
     retry:
       max_attempts: 1
@@ -312,7 +312,7 @@ nodes:
     task_type: content_structure
     capability_tier: creative_generation
     source_evidence:
-      - BUILD_PLAN.md: 鍒涗綔瀵硅瘽 includes 澶х翰.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
     timeout_ms: 60000
     retry:
       max_attempts: 1
@@ -343,8 +343,8 @@ nodes:
     task_type: rough_draft
     capability_tier: creative_generation
     source_evidence:
-      - AGENTS.md: LLM allowed for 鍒涗綔.
-      - BUILD_PLAN.md: 鍒涗綔瀵硅瘽 includes 鎴愮.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
     timeout_ms: 120000
     retry:
       max_attempts: 1
@@ -375,7 +375,7 @@ nodes:
     task_type: final_copy_review
     capability_tier: critique_reasoning
     source_evidence:
-      - BUILD_PLAN.md: 瀹＄/浼樺寲 occurs before deterministic banned-word gate.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
     timeout_ms: 60000
     retry:
       max_attempts: 1
@@ -407,7 +407,7 @@ nodes:
     task_type: polishing
     capability_tier: creative_generation
     source_evidence:
-      - BUILD_PLAN.md: 瀹＄/浼樺寲 and 绮句慨 happen before final checks.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
     timeout_ms: 90000
     retry:
       max_attempts: 1
@@ -438,8 +438,8 @@ nodes:
     task_type: de_ai_style
     capability_tier: critique_reasoning
     source_evidence:
-      - AGENTS.md: LLM allowed for AI 鍛冲垽瀹?
-      - BUILD_PLAN.md: AI 鍛冲垽瀹?checks draft after writing.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
     timeout_ms: 60000
     retry:
       max_attempts: 1
@@ -471,8 +471,8 @@ nodes:
     task_type: workflow_execution_summary
     capability_tier: critique_reasoning
     source_evidence:
-      - GOAL-V0.6.2-PRODUCTION-COMPLETION-01 explicitly approves business.experiment_review.
-      - AGENTS.md: LLM allowed only inside fixed generated judgement routes.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
     timeout_ms: 60000
     retry:
       max_attempts: 1
@@ -512,8 +512,8 @@ nodes:
     task_type: experience_applicability_judgement
     capability_tier: critique_reasoning
     source_evidence:
-      - GOAL-V0.6.2-PRODUCTION-COMPLETION-01 explicitly approves business.experience_revision_propose.
-      - AGENTS.md: experience evolution creates candidates; formal publication is outside the Skill.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
+      - docs/EFFECTIVE_DESIGN_BASELINE.md: current design boundary.
     timeout_ms: 60000
     retry:
       max_attempts: 1

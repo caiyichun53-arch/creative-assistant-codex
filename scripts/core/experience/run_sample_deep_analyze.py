@@ -1,14 +1,12 @@
 """Core-side wiring between scripts/core/business_data's real hits and the
-runtime_skills/sample_deep_analyze atomic Skill (BR-DNA-001; source document
-calls this "单条DNA拆解" -- per explicit user decision 2026-07-08 this module
-and its output are described as "深度分析"/sample_deep_analyze, not "DNA", the
-retired legacy system's name for the same step).
+runtime_skills/sample_deep_analyze atomic Skill. This module and its output
+are described as "深度分析"/sample_deep_analyze; it is a current analysis
+binding rather than an old standalone DNA workflow.
 
 This is exactly the "组装层" that was missing: the Skill itself
 (runtime_skills/sample_deep_analyze, contract SAMPLE_DEEP_ANALYZE_BUSINESS_
 CONTRACT.yaml) was already built, contract-complete, and validated against a
-real model call (SAMPLE_DEEP_ANALYZE_STATUS.yaml/PHASE_3_LIVE_PROVIDER_MATRIX_
-STATUS.yaml) -- but nothing read a real hit's transcript out of
+real model call evidence -- but nothing read a real hit's transcript out of
 production_activation.sqlite3, assembled it into the Skill's public input
 contract, invoked it, and wrote the result back. That is everything in this
 file, and only this file -- the Skill itself is untouched, gains no dependency
@@ -70,7 +68,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.core.business_data.domain_labels import ALLOWED_DOMAIN_LABELS  # noqa: E402
 from scripts.core.business_data.register_competitor_accounts import DEFAULT_DB, install_schema  # noqa: E402
-from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
+from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
     FormalBusinessSkillHarness,
     ModelRoute,
@@ -91,7 +89,7 @@ def validate_sample_deep_analyze_execution_contract() -> dict[str, Any]:
     analysis); the freeze that used to block it (BR-DNA-003) was explicitly
     lifted by the user 2026-07-08 now that the Skill/ModelGateway boundaries
     it was waiting on exist."""
-    return require_catalog_citations(["BR-DNA-001"])
+    return require_baseline_citations(["4", "17", "20"])
 
 
 def select_hits_pending_analysis(conn: sqlite3.Connection, *, limit: int) -> list[sqlite3.Row]:
@@ -105,7 +103,7 @@ def select_hits_pending_analysis(conn: sqlite3.Connection, *, limit: int) -> lis
           FROM hits
           JOIN competitor_accounts AS account ON account.account_id = hits.account_id
           JOIN hit_transcripts AS t ON t.hit_id = hits.hit_id
-         WHERE hits.reverse_status = 'completed'
+         WHERE hits.preparation_status = 'completed'
            AND t.processing_status = 'completed'
            AND t.version = (
                SELECT MAX(version) FROM hit_transcripts
@@ -160,7 +158,7 @@ def select_hits_pending_analysis_by_deviation(conn: sqlite3.Connection, *, limit
           FROM hits
           JOIN competitor_accounts AS account ON account.account_id = hits.account_id
           JOIN hit_transcripts AS t ON t.hit_id = hits.hit_id
-         WHERE hits.reverse_status = 'completed'
+         WHERE hits.preparation_status = 'completed'
            AND t.processing_status = 'completed'
            AND t.version = (
                SELECT MAX(version) FROM hit_transcripts

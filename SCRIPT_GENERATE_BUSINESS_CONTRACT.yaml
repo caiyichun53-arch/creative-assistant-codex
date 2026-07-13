@@ -1,14 +1,11 @@
 schema_version: script_generate.business_contract.v1
-goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
+governance_basis: docs/EFFECTIVE_DESIGN_BASELINE.md
 status: active_formal_business_contract
 skill_id: script_generate
 skill_version: 1.0.0
 source_documents:
-  - C:\Users\15891\.codex\attachments\4ebd5a12-206f-401e-b0b6-0c3878e47996\pasted-text-1.txt
-  - AGENTS.md
-  - BUILD_PLAN.md
-  - FORMAL_SKILL_ROUTE_MAPPING.yaml
-  - REMAINING_FORMAL_SKILL_EXECUTION_GRAPH.yaml
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
+  - runtime_skills/script_generate/skill.yaml
 responsibility: Generate one draft script from supplied content plan, brief, and research summary.
 non_responsibilities:
   - content_plan
@@ -178,8 +175,7 @@ model_binding:
   # 2026-07-11: rewritten from a one-line "return JSON, don't do X" template.
   # Real production data review found the old prompt gave the model zero
   # guidance on output language, register, or how to use the (previously
-  # missing) selected_hook/evidence_items -- see HANDOFF_STATE.md for the
-  # real-data findings that prompted this. This is a Douyin spoken-narration
+  # missing) selected_hook/evidence_items. This is a Douyin spoken-narration
   # script generator; the prompt now says so explicitly, requires Simplified
   # Chinese conversational register (not written/formal Chinese), requires
   # the exact supplied hook as the opening beat, requires following the

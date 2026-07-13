@@ -1,34 +1,13 @@
-# Model Routing
+# 模型路由说明
 
-The runtime uses a two-layer model configuration:
+业务设计依据为 [`EFFECTIVE_DESIGN_BASELINE.md`](EFFECTIVE_DESIGN_BASELINE.md)。本文件只说明当前配置如何被读取。
 
-- `model_routes` defines purpose routes such as `daily_chat`, `business_analysis`, `engineering_execution`, and `writing_generation`.
-- `model_providers` defines provider entries such as Mimo, GPT subscription via Codex CLI, or an OpenAI-compatible API gateway.
+运行期模型路由唯一入口是 [`../config/model_routes.yaml`](../config/model_routes.yaml)。
 
-Workflow nodes bind only `route_id`. The `route_id` maps to `provider_ref` through `config/model_routes.yaml`, and the provider entry supplies only provider type plus auth/address references.
+- 三个模型位点：`dialogue_model`、`business_model`、`writing_model`。
+- 每个位点映射到一个路由，再由 `provider_ref` 显式选择 provider。
+- 当前 provider 定义为 `mimo_main`；密钥、地址和模型名从环境变量引用，不写入仓库。
+- 每条路由必须使用 `fallback: none`；加载器会拒绝自动降级或隐式 provider 切换。
+- 工作流节点只绑定 `route_id`，不得在节点中写入 provider、模型名或开发工具名称。
 
-The current production-readiness mapping is Mimo-only:
-
-- `daily_chat` -> Mimo
-- `business_analysis` -> Mimo
-- `engineering_execution` -> Mimo
-- `writing_generation` -> Mimo
-
-This preserves the current Phase 8 engineering handoff state: no GPT call, no
-DeepSeek call, no fallback, and no automatic provider switch.
-
-A future user-initiated GPT switch can use the multi-provider pattern in
-`config/model_routes.example.multi_provider.yaml`:
-
-- `daily_chat` -> Mimo
-- `business_analysis` -> GPT subscription Codex CLI
-- `engineering_execution` -> GPT subscription Codex CLI
-- `writing_generation` -> GPT API gateway
-
-This is configuration, not a hardcoded rule. All routes can be pointed to the
-same provider by changing the config; see
-`config/model_routes.example.single_provider.yaml`.
-
-Writing-related workflow nodes use `writing_generation`, including title, hook, structure, draft, rewrite, polish, de-AI-style, platform copy, cover copy, publishing copy, and final copy review.
-
-All route fallback values must be `none`. Provider failure must fail explicitly and must not switch to another provider automatically.
+配置解析与 fail-closed 校验由 `scripts/core/model_gateway/model_router.py` 完成。

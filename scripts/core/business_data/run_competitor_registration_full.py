@@ -22,19 +22,14 @@ from scripts.core.business_data.register_competitor_accounts import (  # noqa: E
     stable_account_id,
 )
 from scripts.core.business_data.run_reverse_prep import run_reverse_prep  # noqa: E402
-from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
+from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.external_adapters import ExternalAdapterCommand  # noqa: E402
 from scripts.core.external_adapters.local_mediacrawler_executor import LocalMediaCrawlerExecutor  # noqa: E402
 
 
 DEFAULT_SETTINGS = ROOT / "config" / "settings.yaml"
 FALLBACK_SETTINGS = ROOT / "config" / "settings.example.yaml"
-EXECUTION_GUARDRAIL_DOC = "docs/production_execution_guardrails.md"
-# 2026-07-07: the single design authority for everything in this file. See
-# BUSINESS_RULE_CATALOG.yaml BR-HIT-001 amendment_2026_07_07_master_doc_realignment
-# for the full decision trail -- this module was rewritten from scratch against it,
-# not incrementally patched.
-MASTER_DESIGN_DOC = "爆款口播内容经验库系统_最终完整执行总控文档_V0.6.2_无损汇编版.md"
+EFFECTIVE_DESIGN_BASELINE = "docs/EFFECTIVE_DESIGN_BASELINE.md"
 
 # BR-HIT-001 section D: the four metrics every single-metric and multi-indicator
 # channel is evaluated over, and the rule name each one fires under.
@@ -131,7 +126,7 @@ def _auto_reverse_prep(conn: sqlite3.Connection, *, judgement_run_id: str, rever
     promoted hits before returning. Scoped to judgement_run_id so this stays
     bounded by what THIS run promoted, not the whole historical backlog."""
     pending_count = conn.execute(
-        "SELECT COUNT(*) FROM hits WHERE reverse_status='pending' AND run_id=?", (judgement_run_id,)
+        "SELECT COUNT(*) FROM hits WHERE preparation_status='pending' AND run_id=?", (judgement_run_id,)
     ).fetchone()[0]
     if pending_count == 0:
         return {"status": "succeeded", "attempted": 0, "completed": 0, "failed": 0, "results": []}
@@ -193,8 +188,7 @@ def run_full_registration(
         "domain_label": domain_label,
         "platform": domain["platform"],
         "policy": {
-            "execution_guardrail": EXECUTION_GUARDRAIL_DOC,
-            "design_authority": MASTER_DESIGN_DOC,
+            "design_authority": EFFECTIVE_DESIGN_BASELINE,
             "first_crawl": domain["collector_policy"]["first_crawl"],
             "comments_collected": False,
             "llm_used": False,
@@ -247,8 +241,7 @@ def run_rejudge_only(
         "domain_label": domain_label,
         "platform": domain["platform"],
         "policy": {
-            "execution_guardrail": EXECUTION_GUARDRAIL_DOC,
-            "design_authority": MASTER_DESIGN_DOC,
+            "design_authority": EFFECTIVE_DESIGN_BASELINE,
             "contract": execution_contract,
         },
         "registration": None,
@@ -702,8 +695,7 @@ def run_daily_incremental(
         "domain_label": domain_label,
         "platform": domain["platform"],
         "policy": {
-            "execution_guardrail": EXECUTION_GUARDRAIL_DOC,
-            "design_authority": MASTER_DESIGN_DOC,
+            "design_authority": EFFECTIVE_DESIGN_BASELINE,
             "comments_collected": False,
             "llm_used": False,
             "contract": execution_contract,
@@ -1217,7 +1209,7 @@ def _record_trigger(
             INSERT INTO hits(
                 hit_id, video_id, account_id, platform, platform_item_id, title, url,
                 publish_time, like_count, comment_count, share_count, collect_count,
-                hit_channel, judgment_confidence, baseline_id, run_id, reverse_status
+                hit_channel, judgment_confidence, baseline_id, run_id, preparation_status
             )
             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
             ON CONFLICT(account_id, platform_item_id) DO NOTHING
@@ -1443,11 +1435,9 @@ def resolve_max_notes(cli_value: int | None, settings: dict[str, Any]) -> tuple[
 
 
 def validate_registration_execution_contract(domain: dict[str, Any], hit_cfg: dict[str, Any]) -> dict[str, Any]:
-    # 2026-07-08: every threshold checked below is governed by BR-HIT-001 (see
-    # BUSINESS_RULE_CATALOG.yaml) -- require_catalog_citations() raises if that
-    # requirement_id does not actually exist in the catalog, so this function
-    # cannot silently keep gating against a rule that has been deleted/renamed.
-    require_catalog_citations(["BR-HIT-001"])
+    # The effective-baseline gate fails closed if §16 is missing, while this
+    # function enforces the concrete collection and judgement invariants below.
+    require_baseline_citations(["16"])
     policy = domain.get("collector_policy") or {}
     errors: list[str] = []
     if policy.get("first_crawl") != "stock_snapshot_archived":
@@ -1484,7 +1474,7 @@ def validate_registration_execution_contract(domain: dict[str, Any], hit_cfg: di
     if errors:
         raise ValueError("registration execution contract mismatch: " + "; ".join(errors))
     return {
-        "design_sources": [MASTER_DESIGN_DOC, "BUSINESS_RULE_CATALOG.yaml", EXECUTION_GUARDRAIL_DOC],
+        "design_sources": [EFFECTIVE_DESIGN_BASELINE],
         "first_crawl_stock_archived": True,
         "comments_deferred": True,
         "observe_days": 7,

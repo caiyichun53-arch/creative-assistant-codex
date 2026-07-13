@@ -1,14 +1,11 @@
 schema_version: tactic_extract.business_contract.v1
-goal: GOAL-V0.6.2-PRODUCTION-COMPLETION-01
+governance_basis: docs/EFFECTIVE_DESIGN_BASELINE.md
 status: active_formal_business_contract
 skill_id: tactic_extract
 skill_version: 1.0.0
 source_documents:
-  - C:\Users\15891\.codex\attachments\4ebd5a12-206f-401e-b0b6-0c3878e47996\pasted-text-1.txt
-  - AGENTS.md
-  - BUILD_PLAN.md
-  - FORMAL_SKILL_ROUTE_MAPPING.yaml
-  - REMAINING_FORMAL_SKILL_EXECUTION_GRAPH.yaml
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
+  - runtime_skills/tactic_extract/skill.yaml
 responsibility: Reduce multiple prepared sample analyses into reusable tactic candidates.
 non_responsibilities:
   - sample_deep_analyze
@@ -52,8 +49,7 @@ reduction_policy:
   must_not_call_sample_deep_analyze: true
   must_preserve_domain_boundary: true
 # 2026-07-11: dna_note_refs_max raised 12->20 by explicit user decision, so a
-# single real batch of 20 sample_deep_analyze results (see
-# production_activation_deviation_top20 in HANDOFF_STATE.md) can be reduced in
+# single real batch of 20 sample_deep_analyze results can be reduced in
 # one tactic_extract call instead of being arbitrarily split.
 # 2026-07-13 用户明确拍板:这份契约曾经声明的 dna_note_ref_max(单条note的字符
 # 上限,历史上从160一路加宽到2500)、context_budget.max_input_tokens 这些字符/
@@ -64,9 +60,8 @@ reduction_policy:
 # 平白无故删掉一道护栏。风险(真实调用可能因为内容过长报错、或成本变高)由
 # 用户明确接受。
 # 2026-07-11: output_arrays_max raised 12->200 (effectively uncapped for a
-# diagnostic run). The prior 12 had zero BUSINESS_RULE_CATALOG.yaml backing
-# -- BR-DNA-004 (the catalog entry for this exact step) records a real
-# threshold, max_per_play: 3, but it was never connected to this schema
+# diagnostic run). The prior 12 was not connected to a current documented
+# threshold and was never connected to this schema
 # field, and its own provenance is itself unverified (no amendment/
 # real-data-check trail the way e.g. BR-HIT-001's thresholds have). A real
 # batch of 20 sample_deep_analyze notes produced more than 12 real
@@ -159,8 +154,7 @@ model_binding:
       dna_note_refs: array
       domain_label: string
     additional_properties: false
-  # 2026-07-11: rewritten after a real call against 20 real notes (see
-  # HANDOFF_STATE.md) with the old bare prompt returned 60 common_patterns
+  # Rewritten after a real call against 20 notes showed the old bare prompt returned 60 common_patterns
   # that were mostly just individual phrases lifted from single notes (not
   # genuine cross-note commonality) and 0 example_candidates -- the old
   # prompt never explained what "common" means (recurring across multiple

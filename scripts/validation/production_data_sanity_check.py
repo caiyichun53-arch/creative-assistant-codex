@@ -3,8 +3,8 @@
 correctness tests (which run against synthetic fixtures, not real data).
 
 Why this exists: this project's own incident history has a real example of
-exactly what this guards against -- 2026-07-08's "reverse_status stuck at the
-table's old default" bug (see CHANGELOG.md) meant newly-promoted hits sat
+exactly what this guards against -- 2026-07-08's "preparation_status stuck at the
+table's old default" bug meant newly-promoted hits sat
 forever in a stuck state and nothing noticed until a human manually checked
 the real database days later. This script makes "is anything stuck" a
 5-second mechanical check instead of something only a human curiosity-check
@@ -52,17 +52,17 @@ def check_no_stuck_reverse_prep(conn: sqlite3.Connection) -> dict[str, Any]:
     if "hits" not in tables:
         return {"name": "no_stuck_reverse_prep_hits", "passed": True, "detail": "hits table absent, nothing to check"}
     columns = {row[1] for row in conn.execute("PRAGMA table_info(hits)")}
-    if "reverse_status" not in columns or "promoted_at" not in columns:
-        return {"name": "no_stuck_reverse_prep_hits", "passed": True, "detail": "reverse_status/promoted_at column absent, nothing to check"}
+    if "preparation_status" not in columns or "promoted_at" not in columns:
+        return {"name": "no_stuck_reverse_prep_hits", "passed": True, "detail": "preparation_status/promoted_at column absent, nothing to check"}
     stuck = conn.execute(
-        "SELECT hit_id, reverse_status, promoted_at FROM hits "
-        "WHERE reverse_status IN ('pending', 'running') "
+        "SELECT hit_id, preparation_status, promoted_at FROM hits "
+        "WHERE preparation_status IN ('pending', 'running') "
         f"AND promoted_at <= datetime('now', '-{STUCK_REVERSE_STATUS_DAYS} days')"
     ).fetchall()
     return {
         "name": "no_stuck_reverse_prep_hits",
         "passed": not stuck,
-        "detail": [dict(zip(("hit_id", "reverse_status", "promoted_at"), row)) for row in stuck] if stuck else "none stuck",
+        "detail": [dict(zip(("hit_id", "preparation_status", "promoted_at"), row)) for row in stuck] if stuck else "none stuck",
     }
 
 

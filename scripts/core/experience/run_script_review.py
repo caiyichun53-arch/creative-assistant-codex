@@ -45,7 +45,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.core.business_data.domain_labels import ALLOWED_DOMAIN_LABELS  # noqa: E402
 from scripts.core.business_data.register_competitor_accounts import DEFAULT_DB, install_schema  # noqa: E402
-from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
+from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.experience.run_sample_deep_analyze import _load_env_value, _safe_db_path  # noqa: E402
 from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
     FormalBusinessSkillHarness,
@@ -78,7 +78,7 @@ def _human_reference_refs_from_transcript(transcript_text: str) -> list[str]:
 
 
 def validate_script_review_execution_contract() -> dict[str, Any]:
-    return require_catalog_citations(["BR-CONTENT-004"])
+    return require_baseline_citations(["5", "10", "20"])
 
 
 def select_drafts_pending_review(conn: sqlite3.Connection, *, limit: int) -> list[sqlite3.Row]:

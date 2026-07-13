@@ -12,7 +12,7 @@ happen to touch that exact area.
 Deliberately fast (a few seconds), NOT the full pytest suite -- a hook that
 makes every commit take 50+ seconds would get disabled out of friction, which
 defeats the point. Runs:
-  - the authoritative readiness gate
+  - the current model-routing configuration
   - the ops-infrastructure checklist
   - the production-data sanity check
 Does not touch git working tree state and never blocks the commit itself
@@ -35,17 +35,17 @@ if str(ROOT) not in sys.path:
 
 
 def main() -> int:
-    from scripts.core.staging.verify_goal_v062_phase8_readiness import verify_phase8_readiness
+    from scripts.core.model_gateway.model_router import ModelRouter
     from scripts.validation.ops_infra_checklist import run_checklist as run_ops_checklist
     from scripts.validation.production_data_sanity_check import run_checklist as run_data_checklist
 
-    readiness = verify_phase8_readiness()
+    routing = ModelRouter.from_file()
     ops = run_ops_checklist()
     data = run_data_checklist()
 
     problems = []
-    if readiness["status"] != "ENGINEERING_READY":
-        problems.append(f"readiness gate: {readiness['status']} (failures: {readiness.get('failures')})")
+    if set(routing.routes) != {"daily_chat", "business_analysis", "writing_generation"}:
+        problems.append(f"unexpected model routes: {sorted(routing.routes)}")
     if ops["status"] != "PASS":
         problems.append(f"ops infra checklist: {[c for c in ops['checks'] if not c['passed']]}")
     if data["status"] == "FAIL":

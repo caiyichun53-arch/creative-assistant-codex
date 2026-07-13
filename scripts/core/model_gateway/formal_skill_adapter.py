@@ -40,9 +40,8 @@ from scripts.core.scheduler.goal03_scheduler import Goal03Scheduler, NoClaimable
 from scripts.validation.clean_room_empty_db import health_check
 
 
-GOAL_ID = "GOAL-BUSINESS-SKILL-CONTENT-CLASSIFY-01"
+ADAPTER_ID = "formal-business-skill-adapter"
 FORMAL_MAPPING_PATH = ROOT / "FORMAL_SKILL_ROUTE_MAPPING.yaml"
-FIRST_CONTRACT_PATH = ROOT / "FIRST_FORMAL_SKILL_CONTRACT.yaml"
 CONTENT_CLASSIFY_CONTRACT_PATH = ROOT / "CONTENT_CLASSIFY_BUSINESS_CONTRACT.yaml"
 CONTENT_CLASSIFY_FIXTURES_PATH = ROOT / "runtime_skills" / "content_classify" / "fixtures.yaml"
 CONTENT_RELATION_JUDGE_CONTRACT_PATH = ROOT / "CONTENT_RELATION_JUDGE_BUSINESS_CONTRACT.yaml"
@@ -69,18 +68,18 @@ EXPERIENCE_REVISION_PROPOSE_CONTRACT_PATH = ROOT / "EXPERIENCE_REVISION_PROPOSE_
 EXPERIENCE_REVISION_PROPOSE_FIXTURES_PATH = (
     ROOT / "runtime_skills" / "experience_revision_propose" / "fixtures.yaml"
 )
-STATUS_PATH = ROOT / "CONTENT_CLASSIFY_STATUS.yaml"
-REPORT_PATH = ROOT / f"{GOAL_ID}_VALIDATION_REPORT.md"
-PROGRESS_PATH = ROOT / "implementation_progress" / f"{GOAL_ID}.md"
-LIVE_GATE_STATUS_PATH = ROOT / "CONTENT_CLASSIFY_LIVE_GATE_STATUS.yaml"
-POSTGRES_EVIDENCE_PATH = ROOT / "validation_evidence" / f"{GOAL_ID}_POSTGRES.md"
+STATUS_PATH = ROOT / "validation_evidence" / "formal_skill_adapter_status.yaml"
+REPORT_PATH = ROOT / "validation_evidence" / "formal_skill_adapter_report.md"
+PROGRESS_PATH = ROOT / "validation_evidence" / "formal_skill_adapter_progress.md"
+LIVE_GATE_STATUS_PATH = ROOT / "validation_evidence" / "formal_skill_adapter_live_gate_status.yaml"
+POSTGRES_EVIDENCE_PATH = ROOT / "validation_evidence" / f"{ADAPTER_ID}_POSTGRES.md"
 SCHEMA_PATH = Path(__file__).with_name("formal_skill_adapter_schema.sqlite.sql")
 FORMAL_SKILL_JOB_KIND = "formal_skill.execute"
 FORMAL_SKILL_RESULT_SCHEMA_VERSION = "formal_business_skill_result.v1"
 CONTENT_CLASSIFY_OUTPUT_SCHEMA_VERSION = "content_classify.output.v1"
-CONTENT_RELATION_JUDGE_GOAL_ID = "GOAL-BUSINESS-SKILL-CONTENT-RELATION-JUDGE-01"
+CONTENT_RELATION_JUDGE_CONTRACT_ID = "content-relation-judge"
 CONTENT_RELATION_JUDGE_OUTPUT_SCHEMA_VERSION = "content_relation_judge.output.v1"
-SOURCE_TO_TOPIC_GOAL_ID = "GOAL-V0.6.2-PRODUCTION-COMPLETION-01"
+SOURCE_TO_TOPIC_CONTRACT_ID = "source-to-topic-and-content-binding"
 SOURCE_TO_TOPIC_OUTPUT_SCHEMA_VERSION = "source_to_topic.output.v1"
 SAMPLE_DEEP_ANALYZE_OUTPUT_SCHEMA_VERSION = "sample_deep_analyze.output.v1"
 TACTIC_EXTRACT_OUTPUT_SCHEMA_VERSION = "tactic_extract.output.v1"
@@ -3528,10 +3527,10 @@ class FormalBusinessSkillHarness:
 
 def goal_for_formal_skill(formal_skill_id: str) -> str:
     if formal_skill_id == "content_relation_judge":
-        return CONTENT_RELATION_JUDGE_GOAL_ID
+        return CONTENT_RELATION_JUDGE_CONTRACT_ID
     if formal_skill_id == "source_to_topic":
-        return SOURCE_TO_TOPIC_GOAL_ID
-    return GOAL_ID
+        return SOURCE_TO_TOPIC_CONTRACT_ID
+    return ADAPTER_ID
 
 
 def make_content_classify_harness(
@@ -3552,7 +3551,7 @@ def make_content_classify_harness(
             route_name=contract.route_name,
             provider_name=provider.provider_name,
             model_name="deterministic-content-classify",
-            config_version=f"{GOAL_ID}.test.v1",
+            config_version=f"{ADAPTER_ID}.test.v1",
             config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
             timeout_ms=1000,
         )
@@ -3602,7 +3601,7 @@ def make_content_relation_judge_harness(
             route_name=contract.route_name,
             provider_name=provider.provider_name,
             model_name="deterministic-content-relation-judge",
-            config_version=f"{CONTENT_RELATION_JUDGE_GOAL_ID}.test.v1",
+            config_version=f"{CONTENT_RELATION_JUDGE_CONTRACT_ID}.test.v1",
             config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
             timeout_ms=1000,
         )
@@ -3652,7 +3651,7 @@ def make_source_to_topic_harness(
             route_name=contract.route_name,
             provider_name=provider.provider_name,
             model_name="deterministic-source-to-topic",
-            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+            config_version=f"{SOURCE_TO_TOPIC_CONTRACT_ID}.test.v1",
             config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
             timeout_ms=1000,
         )
@@ -3702,7 +3701,7 @@ def make_sample_deep_analyze_harness(
             route_name=contract.route_name,
             provider_name=provider.provider_name,
             model_name="deterministic-sample-deep-analyze",
-            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+            config_version=f"{SOURCE_TO_TOPIC_CONTRACT_ID}.test.v1",
             config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
             timeout_ms=1000,
         )
@@ -3752,7 +3751,7 @@ def make_tactic_extract_harness(
             route_name=contract.route_name,
             provider_name=provider.provider_name,
             model_name="deterministic-tactic-extract",
-            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+            config_version=f"{SOURCE_TO_TOPIC_CONTRACT_ID}.test.v1",
             config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
             timeout_ms=1000,
         )
@@ -3802,7 +3801,7 @@ def make_research_evidence_extract_harness(
             route_name=contract.route_name,
             provider_name=provider.provider_name,
             model_name="deterministic-research-evidence-extract",
-            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+            config_version=f"{SOURCE_TO_TOPIC_CONTRACT_ID}.test.v1",
             config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
             timeout_ms=1000,
         )
@@ -3852,7 +3851,7 @@ def make_production_research_plan_harness(
             route_name=contract.route_name,
             provider_name=provider.provider_name,
             model_name="deterministic-production-research-plan",
-            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+            config_version=f"{SOURCE_TO_TOPIC_CONTRACT_ID}.test.v1",
             config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
             timeout_ms=1000,
         )
@@ -3900,7 +3899,7 @@ def make_content_plan_harness(
         route_name="business.creation_hook",
         provider_name=provider.provider_name,
         model_name="deterministic-content-plan-hook",
-        config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+        config_version=f"{SOURCE_TO_TOPIC_CONTRACT_ID}.test.v1",
         config_hash=content_hash({"route": "business.creation_hook", "formal_skill_id": contract.formal_skill_id}),
         timeout_ms=1000,
     )
@@ -3908,7 +3907,7 @@ def make_content_plan_harness(
         route_name="business.creation_outline",
         provider_name=provider.provider_name,
         model_name="deterministic-content-plan-outline",
-        config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+        config_version=f"{SOURCE_TO_TOPIC_CONTRACT_ID}.test.v1",
         config_hash=content_hash({"route": "business.creation_outline", "formal_skill_id": contract.formal_skill_id}),
         timeout_ms=1000,
     )
@@ -3958,7 +3957,7 @@ def make_script_generate_harness(
             route_name=contract.route_name,
             provider_name=provider.provider_name,
             model_name="deterministic-script-generate",
-            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+            config_version=f"{SOURCE_TO_TOPIC_CONTRACT_ID}.test.v1",
             config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
             timeout_ms=1000,
         )
@@ -4014,7 +4013,7 @@ def make_script_review_harness(
                 route_name=route_name,
                 provider_name=provider.provider_name,
                 model_name=f"deterministic-{route_name.replace('.', '-')}",
-                config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+                config_version=f"{SOURCE_TO_TOPIC_CONTRACT_ID}.test.v1",
                 config_hash=content_hash({"route": route_name, "formal_skill_id": contract.formal_skill_id}),
                 timeout_ms=1000,
             )
@@ -4067,7 +4066,7 @@ def make_experiment_review_harness(
             route_name=contract.route_name,
             provider_name=provider.provider_name,
             model_name="deterministic-experiment-review",
-            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+            config_version=f"{SOURCE_TO_TOPIC_CONTRACT_ID}.test.v1",
             config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
             timeout_ms=1000,
         )
@@ -4117,7 +4116,7 @@ def make_experience_revision_propose_harness(
             route_name=contract.route_name,
             provider_name=provider.provider_name,
             model_name="deterministic-experience-revision-propose",
-            config_version=f"{SOURCE_TO_TOPIC_GOAL_ID}.test.v1",
+            config_version=f"{SOURCE_TO_TOPIC_CONTRACT_ID}.test.v1",
             config_hash=content_hash({"route": contract.route_name, "formal_skill_id": contract.formal_skill_id}),
             timeout_ms=1000,
         )
@@ -4532,7 +4531,7 @@ def run_verification() -> dict[str, Any]:
     live_gate = load_live_gate_status()
     postgres_gate = load_postgres_evidence()
     status = {
-        "goal": GOAL_ID,
+        "adapter_id": ADAPTER_ID,
         "status": "COMPLETED",
         "business_contract": business_contract_result,
         "mapping": mapping_result,
@@ -4588,7 +4587,7 @@ def write_report(status: dict[str, Any], path: Path = REPORT_PATH) -> None:
     live = status["live_provider_gate"]
     postgres = status["postgres_e2e_gate"]
     lines = [
-        f"# {GOAL_ID} Validation Report",
+        f"# {ADAPTER_ID} Validation Report",
         "",
         f"status: `{status['status']}`",
         "",
@@ -4691,7 +4690,7 @@ def write_report(status: dict[str, Any], path: Path = REPORT_PATH) -> None:
 def write_progress(status: dict[str, Any], path: Path = PROGRESS_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        f"# {GOAL_ID} Progress",
+        f"# {ADAPTER_ID} Progress",
         "",
         f"status: {status['status']}",
         "branch: implementation/goal-business-skill-content-classify-01-v0.6.2",
@@ -4712,7 +4711,7 @@ def write_progress(status: dict[str, Any], path: Path = PROGRESS_PATH) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=f"{GOAL_ID} verifier")
+    parser = argparse.ArgumentParser(description=f"{ADAPTER_ID} verifier")
     parser.add_argument("--status-output", default=str(STATUS_PATH))
     parser.add_argument("--report-output", default=str(REPORT_PATH))
     parser.add_argument("--progress-output", default=str(PROGRESS_PATH))

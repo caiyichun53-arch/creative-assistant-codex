@@ -45,7 +45,7 @@ class StuckReversePrepTests(unittest.TestCase):
         # Regression guard for the real 2026-07-08 bug: a hit that landed on
         # a stale 'none'/'pending' default and never got picked up.
         sql = """
-        CREATE TABLE hits (hit_id TEXT, reverse_status TEXT, promoted_at TEXT);
+        CREATE TABLE hits (hit_id TEXT, preparation_status TEXT, promoted_at TEXT);
         INSERT INTO hits VALUES ('h1', 'pending', datetime('now', '-10 days'));
         """
         with tempfile.TemporaryDirectory() as tmp:
@@ -57,7 +57,7 @@ class StuckReversePrepTests(unittest.TestCase):
 
     def test_recently_promoted_pending_hit_is_not_flagged(self) -> None:
         sql = """
-        CREATE TABLE hits (hit_id TEXT, reverse_status TEXT, promoted_at TEXT);
+        CREATE TABLE hits (hit_id TEXT, preparation_status TEXT, promoted_at TEXT);
         INSERT INTO hits VALUES ('h1', 'pending', datetime('now', '-1 hours'));
         """
         with tempfile.TemporaryDirectory() as tmp:
@@ -68,7 +68,7 @@ class StuckReversePrepTests(unittest.TestCase):
 
     def test_completed_hit_is_never_flagged_regardless_of_age(self) -> None:
         sql = """
-        CREATE TABLE hits (hit_id TEXT, reverse_status TEXT, promoted_at TEXT);
+        CREATE TABLE hits (hit_id TEXT, preparation_status TEXT, promoted_at TEXT);
         INSERT INTO hits VALUES ('h1', 'completed', datetime('now', '-30 days'));
         """
         with tempfile.TemporaryDirectory() as tmp:

@@ -9,7 +9,7 @@ Why this exists: this schema was installed into the real business database
 (install_versionref_schema_into_business_db.py) but, as of 2026-07-11, had
 never had a single line of Python written against it anywhere in this
 codebase -- confirmed by a full-repo grep for "core_command_envelope" that
-matched only a schema-collision test. BUSINESS_RULE_CATALOG.yaml's BR-DNA-004
+matched only a schema-collision test. The current design baseline
 traceability entry already says "target formalization pending" for the step
 that needs this (turning a batch of sample analyses into a persisted
 candidate tactic) -- this module is that formalization's foundation.
@@ -20,7 +20,7 @@ one identical trigger shape. Refusing to mirror that in Python would just
 mean re-deriving the same command-envelope-plus-state-row logic by hand
 later, once, for each of the other 4 kinds. STATE_RANK is deliberately only
 populated for "tactic" right now -- the other 4 kinds' real state orderings
-are not specified anywhere in BUSINESS_RULE_CATALOG.yaml, and guessing them
+are not specified in the effective design baseline, and guessing them
 here would be exactly the kind of unreviewed business logic this project's
 constitution forbids inventing silently. Calling create_state/transition_state
 for an object_kind without a STATE_RANK entry raises a clear, documented
@@ -63,7 +63,7 @@ OBJECT_KIND_STATE_TABLE: dict[str, tuple[str, str]] = {
 # lookup already works for them) but calling create_state/transition_state
 # for them raises Goal02StateError until a real caller needs one and its
 # state ordering gets designed and added here, cited against a real
-# BUSINESS_RULE_CATALOG.yaml entry the way "tactic" now is (BR-EXPERIENCE-004,
+# effective design baseline entry the way "tactic" now is,
 # 原文档"7 推荐状态状态机", 2026-07-13).
 #
 # This is NOT a strictly-increasing "further along = higher number" ordering

@@ -34,13 +34,13 @@ from scripts.core.business_data.run_competitor_registration_full import (
 )
 
 # 2026-07-07: this whole file was rewritten from scratch for the master-doc
-# realignment design (BUSINESS_RULE_CATALOG.yaml BR-HIT-001
+# realignment design (now superseded by docs/EFFECTIVE_DESIGN_BASELINE.md)
 # amendment_2026_07_07_master_doc_realignment). It replaces the prior test suite,
 # which tested a design this rewrite explicitly retired: pinned-detection, the
 # watching/archived/promoted status machine + retraction/graduation, the
 # median*excess_threshold/P90/floor formula, and baseline_min_samples 30/10. None
-# of those concepts exist anymore -- see the module itself and BUSINESS_RULE_
-# CATALOG.yaml BR-HIT-001/002/003/005 for the current design.
+# of those concepts exist anymore -- see the module itself and the effective
+# design baseline for the current design.
 
 DOMAIN_LABEL = "fan_kepu_social_life"
 DOMAIN = {
@@ -607,7 +607,7 @@ class TriggerChannelTests(unittest.TestCase):
             finally:
                 conn.close()
 
-    def test_new_hit_gets_pending_reverse_status_even_on_a_table_with_a_stale_default(self) -> None:
+    def test_new_hit_gets_pending_preparation_status_even_on_a_table_with_a_stale_default(self) -> None:
         # 2026-07-08: real bug found on the actual production database. SQLite
         # bakes a column's DEFAULT into the table at CREATE TABLE time -- it does
         # NOT retroactively pick up a later change to the schema file's DEFAULT
@@ -616,9 +616,9 @@ class TriggerChannelTests(unittest.TestCase):
         # pre-existing 'none' rows to 'pending' once at startup, but any hit
         # created AFTER that migration (i.e. every hit judge_domain() promotes
         # during the same run) still fell back to the table's real, stale
-        # default ('none') because the INSERT never named reverse_status
+        # default ('none') because the INSERT never named preparation_status
         # explicitly. Fixed by having _record_trigger()'s INSERT set
-        # reverse_status='pending' itself, instead of relying on the table's
+        # preparation_status='pending' itself, instead of relying on the table's
         # default at all.
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
@@ -645,7 +645,7 @@ class TriggerChannelTests(unittest.TestCase):
                         judgment_confidence TEXT NOT NULL CHECK(judgment_confidence IN ('rough', 'formal')),
                         baseline_id TEXT,
                         run_id TEXT NOT NULL,
-                        reverse_status TEXT NOT NULL DEFAULT 'none',
+                        preparation_status TEXT NOT NULL DEFAULT 'none',
                         promoted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         UNIQUE(account_id, platform_item_id)
                     )
@@ -664,7 +664,7 @@ class TriggerChannelTests(unittest.TestCase):
                 judge_account(conn, account, hit_cfg=HIT_CFG, run_id="run1")
 
                 hit = conn.execute("SELECT * FROM hits WHERE video_id=?", (candidate_id,)).fetchone()
-                self.assertEqual(hit["reverse_status"], "pending")
+                self.assertEqual(hit["preparation_status"], "pending")
             finally:
                 conn.close()
 
@@ -1085,15 +1085,15 @@ class ResolveMaxNotesTests(unittest.TestCase):
         self.assertEqual((max_notes, source), (20, "cli"))
 
 
-def _insert_hit(conn: sqlite3.Connection, hit_id: str, *, video_id: str, account_id: str, run_id: str, reverse_status: str = "pending") -> None:
+def _insert_hit(conn: sqlite3.Connection, hit_id: str, *, video_id: str, account_id: str, run_id: str, preparation_status: str = "pending") -> None:
     conn.execute(
         """
         INSERT INTO hits(
             hit_id, video_id, account_id, platform, platform_item_id, title, url,
-            hit_channel, judgment_confidence, run_id, reverse_status
+            hit_channel, judgment_confidence, run_id, preparation_status
         ) VALUES (?, ?, ?, 'douyin', ?, 't', 'https://x', 'like_anomaly', 'formal', ?, ?)
         """,
-        (hit_id, video_id, account_id, hit_id + "_item", run_id, reverse_status),
+        (hit_id, video_id, account_id, hit_id + "_item", run_id, preparation_status),
     )
 
 

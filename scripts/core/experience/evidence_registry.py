@@ -1,6 +1,5 @@
 """Registers a real hit_deep_analysis row as a VersionRef evidence
-version -- production activation阶段2 (see ROADMAP.md, plan
-warm-orbiting-kahn.md's阶段2). This is the first thing written into the
+version. This is the first thing written into the
 trace_root/trace_version tables that阶段1 (install_versionref_schema_
 into_business_db.py) installed into the real business database but left
 completely empty.
@@ -50,7 +49,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
+from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.persistence.goal01_store import PersistenceStore, content_hash  # noqa: E402
 
 EVIDENCE_ROOT_OBJECT_KIND = "hit_deep_analysis_evidence"
@@ -116,7 +115,7 @@ def register_hit_deep_analysis_evidence(conn: sqlite3.Connection, analysis_id: s
     """Registers one real hit_deep_analysis row as a VersionRef evidence
     version. Idempotent: calling this twice for the same analysis_id
     results in exactly one trace_version row, not two (see module docstring)."""
-    require_catalog_citations(["BR-EXPERIENCE-001"])
+    require_baseline_citations(["9", "18"])
 
     row = _load_hit_deep_analysis_row(conn, analysis_id)
     if row is None:

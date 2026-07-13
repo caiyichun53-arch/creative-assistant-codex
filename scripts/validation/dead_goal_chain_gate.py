@@ -150,8 +150,6 @@ def check_archive_not_reachable_from_real_entrypoints() -> dict[str, Any]:
     up to date -- if a future entrypoint somehow re-imported archived code
     under a path DEAD_MODULE_DOTTED_PREFIXES does not cover, this still
     catches it, because it asks "is this path under archive/" directly."""
-    if not ARCHIVE_ROOT.exists():
-        return {"name": "archive_unreachable_from_real_entrypoints", "passed": True, "detail": "archive directory absent"}
     reachable = compute_real_reachable_modules()
     violations = [
         path.relative_to(ROOT).as_posix()
@@ -210,11 +208,9 @@ def check_goal05_workflow_orchestrator_has_independent_coverage() -> dict[str, A
 def check_no_active_reference_into_archive() -> dict[str, Any]:
     """Checks for actual Python `import`/`from ... import` statements that
     reach into archive/, not mere textual mentions of the archive's name --
-    docs (this gate's own docstring, the archive README, HANDOFF_STATE.md)
+    docs (this gate's own docstring and the archive README)
     are expected to name it in prose; only a real import back into archived
     code would be the regression this guards against."""
-    if not ARCHIVE_ROOT.exists():
-        return {"name": "no_active_reference_into_archive", "passed": True, "detail": "archive directory absent"}
     violations = []
     scan_roots = (ROOT / "scripts", ROOT / "runtime_skills", ROOT / "tests")
     for scan_root in scan_roots:
@@ -335,7 +331,7 @@ def check_claude_md_no_runtime_claude_claim() -> dict[str, Any]:
         re.compile(r"创作走用户的\s*Claude(?:\s*Code)?\s*订阅"),
     )
     hits = [pattern.pattern for pattern in stale_patterns if pattern.search(text)]
-    tool_not_provider_present = "不是系统运行期的业务 provider" in text
+    tool_not_provider_present = "不是运行期业务 Provider" in text
     return {
         "name": "claude_md_does_not_claim_creation_runs_on_claude",
         "passed": not hits and tool_not_provider_present,
@@ -347,21 +343,32 @@ def check_claude_md_no_runtime_claude_claim() -> dict[str, Any]:
 
 
 def check_no_content_workflow_ghost_reference() -> dict[str, Any]:
-    text = (ROOT / "REQUIREMENT_CODE_TRACEABILITY.yaml").read_text(encoding="utf-8")
-    present = "target_component: ContentWorkflow/ContentGuard" in text
+    present = False
+    for directory in (ROOT / "scripts" / "core", ROOT / "runtime_skills"):
+        if not directory.exists():
+            continue
+        for path in directory.rglob("*.py"):
+            if "ContentWorkflow/ContentGuard" in path.read_text(encoding="utf-8", errors="replace"):
+                present = True
+                break
+        if present:
+            break
     return {
         "name": "no_content_workflow_ghost_reference",
         "passed": not present,
-        "detail": "ContentWorkflow/ContentGuard cited as a real target_component but no such class exists in the codebase" if present else "clean",
+        "detail": "ContentWorkflow/ContentGuard appears in active source but no such component exists" if present else "clean",
     }
 
 
-def check_creation_status_disclaimer_present() -> dict[str, Any]:
+def check_effective_design_baseline_is_authoritative() -> dict[str, Any]:
     text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    required_phrases = ("状态机已验证", "真实大模型生成未验证", "不得")
+    required_phrases = (
+        "docs/EFFECTIVE_DESIGN_BASELINE.md",
+        "唯一的业务设计与实施裁决入口",
+    )
     missing = [phrase for phrase in required_phrases if phrase not in text]
     return {
-        "name": "creation_chain_status_disclaimer_present",
+        "name": "effective_design_baseline_is_authoritative",
         "passed": not missing,
         "detail": missing or "clean",
     }
@@ -380,7 +387,7 @@ def run_checklist() -> dict[str, Any]:
         check_env_example_no_dead_config(),
         check_claude_md_no_runtime_claude_claim(),
         check_no_content_workflow_ghost_reference(),
-        check_creation_status_disclaimer_present(),
+        check_effective_design_baseline_is_authoritative(),
     ]
     status = "PASS" if all(check["passed"] for check in checks) else "FAIL"
     return {"status": status, "checks": checks}

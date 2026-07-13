@@ -1,7 +1,7 @@
 """One-off ASR provider comparison: local SenseVoice vs MiMo cloud ASR, on the
 same real promoted hit's audio.
 
-Governed by BUSINESS_RULE_CATALOG.yaml BR-ASR-003 (see that entry for the full
+Governed by docs/EFFECTIVE_DESIGN_BASELINE.md (see the current baseline for the full
 reasoning) -- this is a bounded, user-initiated benchmark, not a change to the
 production reverse-prep path. It exists so the two providers can actually be
 compared with a real Chinese 口播 sample before BR-ASR-001's default (local
@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
+from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.external_adapters import ExternalAdapterCommand  # noqa: E402
 from scripts.core.external_adapters.local_mediacrawler_executor import LocalMediaCrawlerExecutor  # noqa: E402
 
@@ -171,7 +171,7 @@ def _run_mimo_asr(mp3_path: Path) -> str:
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    require_catalog_citations(["BR-ASR-003"])
+    require_baseline_citations(["16"])
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--video-id", default=None)

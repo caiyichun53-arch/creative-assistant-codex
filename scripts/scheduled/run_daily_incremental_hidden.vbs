@@ -6,8 +6,7 @@
 ' Interactive logon type runs the action inside the user's desktop session, so
 ' any console program shows a window there regardless of what the .bat itself
 ' does -- WScript.Shell.Run's windowStyle argument is what actually suppresses
-' it, independent of logon type. See register_daily_task.ps1 for the S4U
-' logon-type fix (needs an elevated re-registration; this wrapper does not).
+' it, independent of logon type.
 Dim fso, shell, scriptDir, batPath
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")

@@ -14,7 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.core.model_gateway.formal_skill_adapter import (
-    GOAL_ID,
+    ADAPTER_ID,
     FormalSkillContract,
     make_content_classify_harness,
     sample_content_classify_input,
@@ -80,7 +80,7 @@ def build_live_route(config: LiveGateConfig, contract: FormalSkillContract) -> M
         config_version="goal-business-skill-content-classify-01.live.v1",
         config_hash=content_hash(
             {
-                "goal": GOAL_ID,
+                "adapter_id": ADAPTER_ID,
                 "route": contract.route_name,
                 "provider": "hermes",
                 "model": provider_settings.model_name,
@@ -160,7 +160,7 @@ def run_gate(config: LiveGateConfig, *, environment: str = "validation") -> dict
         metadata = envelope.get("metadata") or {}
         actual_call_count = live_port.actual_call_count
         status = {
-            "goal": GOAL_ID,
+            "adapter_id": ADAPTER_ID,
             "status": "COMPLETED",
             "formal_skill_id": contract.formal_skill_id,
             "logical_route": route.route_name,
@@ -236,7 +236,7 @@ def write_report(status: dict[str, Any], path: Path = REPORT_PATH) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=f"{GOAL_ID} content_classify live gate")
+    parser = argparse.ArgumentParser(description="content_classify live gate")
     parser.add_argument("--config", default=str(ROOT / "config" / "live_gates.yaml"))
     parser.add_argument("--env-file", default=str(ROOT / ".env.live-gates"))
     parser.add_argument("--environment", default="validation", choices=("validation", "test"))

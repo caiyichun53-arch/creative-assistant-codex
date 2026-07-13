@@ -2,8 +2,8 @@
 output, see run_sample_deep_analyze.py) and the runtime_skills/source_to_topic
 atomic Skill (SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml).
 
-2026-07-09: this is the second of three planned bindings for the "选题 ->
-大纲 -> 成稿" chain (see ROADMAP.md) -- source_to_topic -> content_plan ->
+This binding participates in the "选题 -> 大纲 -> 成稿" chain:
+source_to_topic -> content_plan ->
 script_generate. Follows the exact division-of-responsibility pattern
 established by run_sample_deep_analyze.py (that file's module docstring
 explains the pattern in full; not repeated here).
@@ -68,7 +68,7 @@ if str(ROOT) not in sys.path:
 from scripts.core.business_data.domain_labels import ALLOWED_DOMAIN_LABELS  # noqa: E402
 from scripts.core.business_data.register_competitor_accounts import DEFAULT_DB, install_schema  # noqa: E402
 from scripts.core.business_data.run_domain_search import install_schema as install_domain_search_schema  # noqa: E402
-from scripts.core.execution_contract import require_catalog_citations  # noqa: E402
+from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.experience.run_sample_deep_analyze import _load_env_value, _safe_db_path  # noqa: E402
 from scripts.core.model_gateway.formal_skill_adapter import (  # noqa: E402
     FormalBusinessSkillHarness,
@@ -86,8 +86,8 @@ NO_RELATION_JUDGEMENT_YET = (
     "本次候选选题只依据下面列出的证据本身生成,不代表已经和现有内容/选题库比对过是否重复或冲突。"
 )
 # 2026-07-10: comments are the second of four evidence sources the project's
-# own 选题 methodology (the topic-selection session skill's writeup, see
-# ROADMAP.md for the exact reference) calls for -- "评论区（最值钱）：来源爆款
+# The current topic-selection implementation uses comments as source evidence:
+# "评论区（最值钱）：来源爆款
 # 评论里观众反复追问/争论/喊你该讲讲X的 → 直接立题" -- real hit_comments data
 # already existed (collected during reverse-prep) but was never used here
 # before. \x1e (record separator) cannot appear in real crawled text, unlike
@@ -123,7 +123,7 @@ DUPLICATE_RELATION_TYPES = frozenset({"same_item", "equivalent", "contains", "co
 
 
 def validate_source_to_topic_execution_contract() -> dict[str, Any]:
-    return require_catalog_citations(["BR-DNA-001", "BR-TOPIC-001", "BR-TOPIC-006"])
+    return require_baseline_citations(["3", "4", "17", "20"])
 
 
 def select_analyses_pending_topic(conn: sqlite3.Connection, *, limit: int) -> list[sqlite3.Row]:
