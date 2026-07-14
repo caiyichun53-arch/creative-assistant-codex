@@ -1,18 +1,18 @@
 mode: implementation
 stage: stage_1_daily_discovery
 design_complete: true
-implementation_authorized: false
-external_calls_authorized: false
+implementation_authorized: true
+external_calls_authorized: true
 environment_changes_authorized: false
-formal_data_writes_authorized: false
+formal_data_writes_authorized: true
 production_authorized: false
-completion_status: SOURCE_TO_TOPIC_SKILL_CONTRACT_REVISED_PENDING_USER_REVIEW
-stage_status: SKILL_CONTRACT_REVISED_PENDING_USER_REVIEW
+completion_status: SOURCE_TO_TOPIC_HOTSPOT_LIVE_VALIDATION_AUTHORIZED
+stage_status: VALIDATION_LIVE_AUTHORIZED
 source_evidence_level: LIVE_RUN_REJECTED
 claimed_source_level: NONE
-next_action: user_review_revised_source_to_topic_skill_contract
+next_action: run_one_source_to_topic_hotspot_validation_live
 baseline_sha256: 6822f5e121073f321b2a7d5a2ae1043d1bb46c001ca72edc8263371f2d2b70e8
-base_commit: 2855f57290d226a8b7054b32f41dfad565592dab
+base_commit: 1b6447e832f7336d246f49f1f62357d1e598acc6
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
 execution_state_sources:
@@ -29,7 +29,7 @@ prohibited_design_sources:
   - old code comments business rules
 requirements:
   - id: STAGE1-HOTSPOT-DESIGN-CORRECTION-001
-    description: "source_to_topic was revised into an atomic good-topic discovery Skill; user review is required before any live validation."
+    description: "User confirmed the revised source_to_topic Skill contract; one controlled Stage 1 hotspot validation_live run is authorized with external calls, model calls, and formal validation writes."
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3.1 热点转选题的受控搜索与 Skill 审核
       - docs/EFFECTIVE_DESIGN_BASELINE.md#20.1 来源与选题 Skill
