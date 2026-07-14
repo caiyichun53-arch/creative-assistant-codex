@@ -1286,7 +1286,7 @@ def validate_source_to_topic_business_contract(data: dict[str, Any]) -> dict[str
     if data.get("skill_id") != "source_to_topic":
         raise FormalSkillValidationError("source_to_topic business contract skill_id mismatch")
     statuses = set(data.get("topic_status_values") or [])
-    if statuses != {"generated", "needs_review", "no_result"}:
+    if statuses != {"generated", "generated_good_candidate", "valid_but_weak", "needs_review", "no_result"}:
         raise FormalSkillValidationError("source_to_topic topic_status_values mismatch")
     allowed_nodes = data.get("allowed_model_nodes") or []
     if allowed_nodes != ["business.source_to_topic"]:
@@ -1604,30 +1604,51 @@ def validate_source_to_topic_output_semantics(input_payload: dict[str, Any], out
     status = output_payload["topic_status"]
     topic = output_payload["candidate_topic"]
     angle = output_payload["topic_angle"]
+    core_question = output_payload["core_question"]
     evidence = output_payload["supporting_evidence"]
     constraints = output_payload["source_constraints"]
     no_result_reason = output_payload["no_result_reason"]
     confidence = output_payload["confidence"]
+    execution_review = output_payload["execution_review"]
     input_evidence = set(input_payload["source_evidence_items"])
     if not set(evidence).issubset(input_evidence):
         raise FormalSkillValidationError("supporting_evidence must be selected from source_evidence_items")
+    required_execution_flags = (
+        "used_only_supplied_material",
+        "did_not_search_by_itself",
+        "did_not_invent_facts",
+        "respected_domain_boundary",
+        "respected_risk_boundary",
+        "did_not_force_candidate",
+        "no_score_rank_weight",
+    )
+    if any(execution_review.get(flag) is not True for flag in required_execution_flags):
+        raise FormalSkillValidationError("source_to_topic execution_review must confirm all anti-drift checks")
     if status == "no_result":
-        if topic != "" or angle != "" or evidence:
-            raise FormalSkillValidationError("no_result source_to_topic output must not include topic, angle or evidence")
+        if topic != "" or angle != "" or core_question != "" or evidence:
+            raise FormalSkillValidationError("no_result source_to_topic output must not include topic, angle, core_question or evidence")
         if no_result_reason == "none" or confidence != "none":
             raise FormalSkillValidationError("no_result source_to_topic output must include concrete reason and confidence none")
+        if output_payload["candidate_selection"]["selected_direction"] != "":
+            raise FormalSkillValidationError("no_result source_to_topic output must not select a direction")
         return
     if no_result_reason != "none":
         raise FormalSkillValidationError("generated source_to_topic output must use no_result_reason none")
-    if not topic or not angle:
-        raise FormalSkillValidationError("generated source_to_topic output requires candidate_topic and topic_angle")
+    if not topic or not angle or not core_question:
+        raise FormalSkillValidationError("generated source_to_topic output requires candidate_topic, topic_angle and core_question")
     if confidence not in {"high", "medium", "low"}:
         raise FormalSkillValidationError("generated source_to_topic output requires concrete confidence")
     if not evidence:
         raise FormalSkillValidationError("generated source_to_topic output requires supporting_evidence")
     if status == "needs_review" and not constraints:
         raise FormalSkillValidationError("needs_review source_to_topic output must include source_constraints")
-    if status not in {"generated", "needs_review"}:
+    if status in {"needs_review", "valid_but_weak"} and not output_payload["user_review_required"]:
+        raise FormalSkillValidationError("review or weak source_to_topic output must require user review")
+    if output_payload["user_review_required"] and not output_payload["user_review_reasons"]:
+        raise FormalSkillValidationError("user_review_required requires user_review_reasons")
+    if not output_payload["candidate_selection"]["selected_direction"]:
+        raise FormalSkillValidationError("generated source_to_topic output must select a discovered direction")
+    if status not in {"generated", "generated_good_candidate", "valid_but_weak", "needs_review"}:
         raise FormalSkillValidationError(f"unsupported topic_status: {status}")
 
 
@@ -2024,6 +2045,10 @@ def _validate_value(key: str, value: Any, spec: dict[str, Any]) -> None:
         if not isinstance(value, dict):
             raise FormalSkillValidationError(f"{key} must be object")
         return
+    if typ == "boolean":
+        if not isinstance(value, bool):
+            raise FormalSkillValidationError(f"{key} must be boolean")
+        return
     raise FormalSkillValidationError(f"unsupported schema type for {key}: {typ}")
 
 
@@ -2417,7 +2442,7 @@ class DeterministicSourceToTopicModelPort:
             return self._result(json.dumps({"topic_status": "generated"}), request)
         if behavior == "evidence_not_in_input":
             payload = self._payload(
-                "generated",
+                "generated_good_candidate",
                 "陌生证据为什么突然爆火",
                 "from_source_gap",
                 ["unseen evidence"],
@@ -2453,7 +2478,7 @@ class DeterministicSourceToTopicModelPort:
             )
         elif "电梯" in source or "通勤" in source:
             payload = self._payload(
-                "generated",
+                "generated_good_candidate",
                 "为什么小区电梯总在早高峰堵住",
                 "生活现象解释",
                 evidence[:2],
@@ -2463,7 +2488,7 @@ class DeterministicSourceToTopicModelPort:
             )
         elif "歌" in source or "音乐" in source or "演唱会" in source:
             payload = self._payload(
-                "generated",
+                "generated_good_candidate",
                 "一首老歌为什么会重新被年轻人翻出来",
                 "音乐记忆与当下情绪",
                 evidence[:2],
@@ -2473,7 +2498,7 @@ class DeterministicSourceToTopicModelPort:
             )
         else:
             payload = self._payload(
-                "generated",
+                "generated_good_candidate",
                 f"{evidence[0]}为什么值得重新讲一遍",
                 "source_evidence_reframing",
                 evidence[:2],
@@ -2497,10 +2522,45 @@ class DeterministicSourceToTopicModelPort:
             "topic_status": topic_status,
             "candidate_topic": candidate_topic,
             "topic_angle": topic_angle,
+            "core_question": candidate_topic,
+            "audience_relation": "与目标受众的生活经验或内容兴趣存在明确关系" if candidate_topic else "",
+            "content_increment": "从输入材料中寻找解释、提醒或机制拆解，而不是复述来源" if candidate_topic else "",
             "supporting_evidence": supporting_evidence,
             "source_constraints": source_constraints,
             "no_result_reason": no_result_reason,
             "confidence": confidence,
+            "angle_discovery": {
+                "problem_angle": {"found": bool(candidate_topic), "direction": candidate_topic, "reason": "输入材料可形成具体问题" if candidate_topic else "材料不足"},
+                "audience_relevance_angle": {"found": bool(candidate_topic), "direction": "受众自相关切口" if candidate_topic else "", "reason": "材料包含受众关系" if candidate_topic else "缺少受众关系"},
+                "content_increment_angle": {"found": bool(candidate_topic), "direction": topic_angle, "reason": "材料可形成增量解释" if candidate_topic else "缺少内容增量"},
+                "tension_angle": {"found": bool(candidate_topic), "direction": "表面现象与背后机制", "reason": "可从现象进入机制拆解" if candidate_topic else "无可用张力"},
+                "distinct_angle": {"found": bool(candidate_topic), "direction": topic_angle, "reason": "不只复述来源标题" if candidate_topic else "无差异化角度"},
+                "producible_angle": {"found": bool(candidate_topic), "direction": "可制作为单条短视频", "reason": "有核心问题和支撑证据" if candidate_topic else "无法制作"},
+                "durable_value_angle": {"found": bool(candidate_topic), "direction": "热点后仍有解释价值", "reason": "问题不只依赖热度" if candidate_topic else "无持久价值"},
+            },
+            "candidate_selection": {
+                "selected_direction": candidate_topic,
+                "why_selected": "在发现切口中材料支撑和受众关系最清楚" if candidate_topic else "",
+                "rejected_directions": [],
+            },
+            "risks": source_constraints,
+            "material_gaps": [] if candidate_topic else ["material_insufficient"],
+            "user_review_required": topic_status in {"needs_review", "valid_but_weak"},
+            "user_review_reasons": source_constraints if topic_status in {"needs_review", "valid_but_weak"} else [],
+            "execution_review": {
+                "used_only_supplied_material": True,
+                "did_not_search_by_itself": True,
+                "did_not_invent_facts": True,
+                "respected_domain_boundary": True,
+                "respected_risk_boundary": True,
+                "did_not_force_candidate": topic_status != "no_result" or not candidate_topic,
+                "no_score_rank_weight": True,
+            },
+            "experience_usage": {
+                "used_experience_ids": [],
+                "unused_experience_ids": [],
+                "rationale": "测试端口不读取经验库，只使用输入中已提供的经验短卡。",
+            },
             "schema_version": SOURCE_TO_TOPIC_OUTPUT_SCHEMA_VERSION,
         }
 
@@ -4221,6 +4281,44 @@ def sample_source_to_topic_input(**overrides: Any) -> dict[str, Any]:
         "source_evidence_items": ["社区电梯早高峰拥堵", "通勤集中", "楼层分布不均", "维保停梯"],
         "domain_label": "fan_kepu_social_life",
         "relation_summary": "source is related_distinct to prior social-life evidence",
+        "source_kind": "hotspot_event_cluster",
+        "event_cluster_summary": {
+            "cluster_id": "cluster-elevator-rush",
+            "representative_source": "社区电梯早高峰拥堵",
+            "merged_sources": ["同小区电梯排队"],
+            "dedupe_reason": "same everyday event cluster",
+        },
+        "deterministic_prefilter": {
+            "passed": True,
+            "reasons": ["traceable_source", "ordinary_life_relation"],
+            "risk_flags": [],
+            "domain_precheck": "fan_kepu_social_life",
+        },
+        "material_packet": {
+            "fact_summary": "早高峰电梯拥堵与集中通勤、楼层分布和维保停梯有关。",
+            "key_source_refs": ["社区电梯早高峰拥堵", "通勤集中"],
+            "audience_relation": "关系到普通住户的通勤等待和小区管理理解。",
+            "domain_fit": "属于社会生活中的日常机制解释。",
+            "possible_questions": ["为什么小区电梯总在早高峰堵住"],
+            "uncertainty": "缺少具体小区统计，不能声称普遍比例。",
+            "material_gaps": [],
+            "risks": [],
+            "stop_reason": "none",
+        },
+        "duplicate_cooling_status": {
+            "duplicate_status": "clear",
+            "cooling_status": "clear",
+            "related_refs": [],
+        },
+        "domain_rule_summary": "社会生活领域优先普通人生活机制，排除饭圈八卦。",
+        "experience_cards": [
+            {
+                "experience_id": "exp-ordinary-life-mechanism",
+                "summary": "从普通生活场景拆出背后的机制，比复述现象更适合泛科普。",
+                "usage_boundary": "只能作为切口启发，不能替代材料事实。",
+            }
+        ],
+        "user_direction": "",
         "schema_version": "source_to_topic.input.v1",
     }
     payload.update(overrides)

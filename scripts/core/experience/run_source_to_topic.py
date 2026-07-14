@@ -238,6 +238,7 @@ def assemble_source_to_topic_input(conn: sqlite3.Connection, analysis_row: sqlit
             "BR-COLLECT-005/006's real top_comments limit changed, or whether this domain has an "
             "unusually large number of real hotspot_events registered within the window"
         )
+    possible_question = hit_title or "对标来源中的可转化问题"
     return {
         "request_id": f"source_to_topic_{analysis_row['analysis_id']}",
         "correlation_id": run_id,
@@ -246,6 +247,38 @@ def assemble_source_to_topic_input(conn: sqlite3.Connection, analysis_row: sqlit
         "source_evidence_items": evidence_items,
         "domain_label": domain_label,
         "relation_summary": NO_RELATION_JUDGEMENT_YET,
+        "source_kind": "benchmark_daily",
+        "event_cluster_summary": {
+            "cluster_id": f"benchmark-{analysis_row['analysis_id']}",
+            "representative_source": hit_title,
+            "merged_sources": [],
+            "dedupe_reason": "single benchmark analysis source",
+        },
+        "deterministic_prefilter": {
+            "passed": True,
+            "reasons": ["benchmark_analysis_available", "source_evidence_items_present"],
+            "risk_flags": [],
+            "domain_precheck": domain_label,
+        },
+        "material_packet": {
+            "fact_summary": source_content,
+            "key_source_refs": evidence_items[: min(8, len(evidence_items))],
+            "audience_relation": "由对标爆款分析和真实评论提供受众关系线索。",
+            "domain_fit": f"账号领域标签为 {domain_label}。",
+            "possible_questions": [possible_question],
+            "uncertainty": "该材料包来自对标分析，不包含正式深度研究结论。",
+            "material_gaps": [],
+            "risks": [],
+            "stop_reason": "none",
+        },
+        "duplicate_cooling_status": {
+            "duplicate_status": "clear",
+            "cooling_status": "clear",
+            "related_refs": [],
+        },
+        "domain_rule_summary": "来源转选题只基于已组装材料和当前领域标签，不自行搜索或改判领域。",
+        "experience_cards": [],
+        "user_direction": "",
         "schema_version": "source_to_topic.input.v1",
     }
 
@@ -283,7 +316,7 @@ def _apply_domain_constraint(input_payload: dict[str, Any], output: dict[str, An
     ALLOWED_DOMAIN_LABELS 之外(assemble_source_to_topic_input 里已经把这种
     情况标成 "unknown")。skill 自己判定 no_result/needs_review 的情况不覆盖,
     只在 skill 判定 generated 时才强制拉回 needs_review,不能悄悄流到下一步。"""
-    if input_payload["domain_label"] != "unknown" or output["topic_status"] != "generated":
+    if input_payload["domain_label"] != "unknown" or output["topic_status"] not in {"generated", "generated_good_candidate", "valid_but_weak"}:
         return output
     output = dict(output)
     output["topic_status"] = "needs_review"

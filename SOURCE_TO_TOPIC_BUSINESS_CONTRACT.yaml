@@ -2,11 +2,11 @@ schema_version: source_to_topic.business_contract.v1
 governance_basis: docs/EFFECTIVE_DESIGN_BASELINE.md
 status: active_formal_business_contract
 skill_id: source_to_topic
-skill_version: 1.0.0
+skill_version: 1.1.0
 source_documents:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
   - runtime_skills/source_to_topic/skill.yaml
-responsibility: Transform already supplied source evidence into one candidate topic for the formal production workflow.
+responsibility: Discover good topic angles from already supplied, pre-frozen source material and return one auditable candidate or a no-conversion reason for the formal production workflow.
 non_responsibilities:
   - content_classify
   - content_relation_judge
@@ -15,6 +15,8 @@ non_responsibilities:
   - deep_sample_analysis
   - tactic_extract
   - research_fetching
+  - controlled_search
+  - material_packet_building
   - research_evidence_extract
   - content_plan
   - script_generate
@@ -34,6 +36,14 @@ allowed_inputs:
     - source_evidence_items
     - domain_label
     - relation_summary
+    - source_kind
+    - event_cluster_summary
+    - deterministic_prefilter
+    - material_packet
+    - duplicate_cooling_status
+    - domain_rule_summary
+    - experience_cards
+    - user_direction
     - schema_version
 forbidden_inputs:
   - database_connection
@@ -49,12 +59,16 @@ forbidden_inputs:
   - cold_backup_reference
 topic_status_values:
   - generated
+  - generated_good_candidate
+  - valid_but_weak
   - needs_review
   - no_result
 topic_generation_policy:
   one_topic_per_run: true
   must_stay_inside_supplied_evidence: true
   must_not_fetch_or_infer_missing_context: true
+  must_discover_angles_before_candidate_selection: true
+  must_not_use_good_topic_criteria_only_as_post_filter: true
   must_not_classify_domain: true
   must_not_judge_content_relation: true
   must_not_write_experience_memory: true
@@ -77,6 +91,34 @@ evidence_requirements:
   source_evidence_items_max: 63
   output_supporting_evidence_must_reference_input: true
   rationale_or_angle_must_not_add_unseen_facts: true
+material_packet_requirements:
+  required_before_skill: true
+  search_is_external_to_skill: true
+  minimum_fields:
+    - fact_summary
+    - key_source_refs
+    - audience_relation
+    - domain_fit
+    - possible_questions
+    - uncertainty
+    - material_gaps
+    - risks
+    - stop_reason
+angle_discovery_requirements:
+  required_angles:
+    - problem_angle
+    - audience_relevance_angle
+    - content_increment_angle
+    - tension_angle
+    - distinct_angle
+    - producible_angle
+    - durable_value_angle
+  each_angle_may_be_empty: true
+  selection_must_explain_rejections: true
+experience_policy:
+  skill_must_not_query_experience_store: true
+  allowed_only_from_input_experience_cards: true
+  must_report_used_and_unused_experience_ids: true
 confidence_policy:
   allowed_values:
     - high
@@ -173,6 +215,30 @@ model_binding:
     relation_summary:
       source: preprocessed
       key: relation_text
+    source_kind:
+      source: input
+      key: source_kind
+    event_cluster_summary:
+      source: input
+      key: event_cluster_summary
+    deterministic_prefilter:
+      source: input
+      key: deterministic_prefilter
+    material_packet:
+      source: input
+      key: material_packet
+    duplicate_cooling_status:
+      source: input
+      key: duplicate_cooling_status
+    domain_rule_summary:
+      source: input
+      key: domain_rule_summary
+    experience_cards:
+      source: input
+      key: experience_cards
+    user_direction:
+      source: input
+      key: user_direction
   model_input_schema:
     type: object
     required:
@@ -181,12 +247,35 @@ model_binding:
       - source_evidence_refs
       - domain_label
       - relation_summary
+      - source_kind
+      - event_cluster_summary
+      - deterministic_prefilter
+      - material_packet
+      - duplicate_cooling_status
+      - domain_rule_summary
+      - experience_cards
+      - user_direction
     properties:
       fixture_id: string
       source_content: string
       source_evidence_refs: array
       domain_label: string
       relation_summary: string
+      source_kind: string
+      event_cluster_summary:
+        type: object
+      deterministic_prefilter:
+        type: object
+      material_packet:
+        type: object
+      duplicate_cooling_status:
+        type: object
+      domain_rule_summary: string
+      experience_cards:
+        type: array
+        items:
+          type: object
+      user_direction: string
     additional_properties: false
   # 2026-07-11: rewritten before this Skill's first real call, applying the
   # same two fixes real data proved necessary for other rewritten Skills:
@@ -208,59 +297,90 @@ model_binding:
   # topic_angle grounded in real evidence including real comments); this
   # pass only tightens format compliance.
   prompt_template: >-
-    Return only JSON with keys topic_status, candidate_topic, topic_angle,
-    supporting_evidence, source_constraints, no_result_reason, confidence,
-    schema_version. Transform the supplied source evidence into one candidate
-    topic for a Chinese short-video (抖音) content team. Do not classify the
-    domain, judge relations, fetch more context, research facts, write
-    scripts, or call other Skills. supporting_evidence must contain only
-    items from source_evidence_refs. Use schema_version
-    source_to_topic.output.v1. source_content={source_content};
+    Return only JSON. Transform already supplied and frozen source material
+    into at most one good topic candidate for a Chinese short-video (抖音)
+    content team. Do not search, fetch URLs, research facts, classify the
+    domain, judge source relation, query databases, read or write files, call
+    other Skills, invent facts, or add evidence outside the input.
+    supporting_evidence must contain only items from source_evidence_refs.
+    Use only supplied experience_cards; do not claim experience that was not
+    supplied. Do not output score, rank, weight, numeric ratings, or automatic
+    final selection. source_content={source_content};
     source_evidence_refs={source_evidence_refs}; domain_label={domain_label};
-    relation_summary={relation_summary}
+    relation_summary={relation_summary}; source_kind={source_kind};
+    event_cluster_summary={event_cluster_summary};
+    deterministic_prefilter={deterministic_prefilter};
+    material_packet={material_packet};
+    duplicate_cooling_status={duplicate_cooling_status};
+    domain_rule_summary={domain_rule_summary};
+    experience_cards={experience_cards}; user_direction={user_direction}
 
-    Write candidate_topic, topic_angle, and every item in supporting_evidence
-    and source_constraints in Simplified Chinese. topic_angle must be a
-    genuinely distinct angle or lens on the topic, not a restatement of
-    candidate_topic in different words.
+    First discover possible angles from the supplied material. Treat these as
+    topic-finding paths, not after-the-fact checks: problem_angle,
+    audience_relevance_angle, content_increment_angle, tension_angle,
+    distinct_angle, producible_angle, durable_value_angle. Then converge the
+    discovered angles. Remove directions with insufficient material,
+    uncontrolled risk, duplicate/cooling conflict, pure hotspot repetition,
+    weak domain fit, or no short-video path. Keep one selected direction and
+    optionally record rejected directions. If no direction is usable, return
+    topic_status "no_result" and do not force a candidate.
 
-    Field formats -- follow these exactly, do not substitute a different
-    value or type: topic_status must be EXACTLY one of the strings
-    "generated", "needs_review", or "no_result" (never any other word).
-    confidence must be EXACTLY one of the strings "high", "medium", "low",
-    or "none" -- a string from this list, never a number. no_result_reason
-    must be EXACTLY one of the strings "none", "empty_source",
-    "insufficient_source_evidence", or "unsupported_source" -- use "none"
-    when there is a real result, never an empty string. source_constraints
-    must be a JSON array of short strings (like supporting_evidence), never
-    one paragraph.
+    Required output keys: topic_status, candidate_topic, topic_angle,
+    core_question, audience_relation, content_increment, supporting_evidence,
+    source_constraints, no_result_reason, confidence, angle_discovery,
+    candidate_selection, risks, material_gaps, user_review_required,
+    user_review_reasons, execution_review, experience_usage, schema_version.
 
-    Before answering, double check your JSON includes all eight required
-    keys -- topic_status, candidate_topic, topic_angle, supporting_evidence,
-    source_constraints, no_result_reason, confidence, and schema_version set
-    exactly to source_to_topic.output.v1 -- and that every enum field above
-    uses one of its exact allowed values. Do not omit schema_version.
+    Write all human-readable values in Simplified Chinese. topic_status is
+    exactly one of "generated", "generated_good_candidate", "valid_but_weak",
+    "needs_review", or "no_result". confidence is exactly "high", "medium",
+    "low", or "none", never a number. no_result_reason is exactly "none",
+    "empty_source", "insufficient_source_evidence", or "unsupported_source".
+    Use schema_version source_to_topic.output.v1.
+
+    Before answering, double check every required key is present, every enum
+    uses an allowed string, every execution_review item is boolean, and
+    schema_version is present. Do not omit schema_version.
   model_output_schema:
     type: object
     required:
       - topic_status
       - candidate_topic
       - topic_angle
+      - core_question
+      - audience_relation
+      - content_increment
       - supporting_evidence
       - source_constraints
       - no_result_reason
       - confidence
+      - angle_discovery
+      - candidate_selection
+      - risks
+      - material_gaps
+      - user_review_required
+      - user_review_reasons
+      - execution_review
+      - experience_usage
       - schema_version
     properties:
       topic_status:
         type: string
         enum:
           - generated
+          - generated_good_candidate
+          - valid_but_weak
           - needs_review
           - no_result
       candidate_topic:
         type: string
       topic_angle:
+        type: string
+      core_question:
+        type: string
+      audience_relation:
+        type: string
+      content_increment:
         type: string
       supporting_evidence:
         type: array
@@ -288,6 +408,31 @@ model_binding:
           - medium
           - low
           - none
+      angle_discovery:
+        type: object
+      candidate_selection:
+        type: object
+      risks:
+        type: array
+        maxItems: 8
+        items:
+          type: string
+      material_gaps:
+        type: array
+        maxItems: 8
+        items:
+          type: string
+      user_review_required:
+        type: boolean
+      user_review_reasons:
+        type: array
+        maxItems: 8
+        items:
+          type: string
+      execution_review:
+        type: object
+      experience_usage:
+        type: object
       schema_version:
         type: string
         const: source_to_topic.output.v1
@@ -302,6 +447,15 @@ model_binding:
     topic_angle:
       source: model_output
       key: topic_angle
+    core_question:
+      source: model_output
+      key: core_question
+    audience_relation:
+      source: model_output
+      key: audience_relation
+    content_increment:
+      source: model_output
+      key: content_increment
     supporting_evidence:
       source: model_output
       key: supporting_evidence
@@ -314,6 +468,30 @@ model_binding:
     confidence:
       source: model_output
       key: confidence
+    angle_discovery:
+      source: model_output
+      key: angle_discovery
+    candidate_selection:
+      source: model_output
+      key: candidate_selection
+    risks:
+      source: model_output
+      key: risks
+    material_gaps:
+      source: model_output
+      key: material_gaps
+    user_review_required:
+      source: model_output
+      key: user_review_required
+    user_review_reasons:
+      source: model_output
+      key: user_review_reasons
+    execution_review:
+      source: model_output
+      key: execution_review
+    experience_usage:
+      source: model_output
+      key: experience_usage
     schema_version:
       source: model_output
       key: schema_version
@@ -327,6 +505,14 @@ input_schema:
     - source_evidence_items
     - domain_label
     - relation_summary
+    - source_kind
+    - event_cluster_summary
+    - deterministic_prefilter
+    - material_packet
+    - duplicate_cooling_status
+    - domain_rule_summary
+    - experience_cards
+    - user_direction
     - schema_version
   properties:
     request_id:
@@ -357,6 +543,119 @@ input_schema:
         - unknown
     relation_summary:
       type: string
+    source_kind:
+      type: string
+      enum:
+        - hotspot_event_cluster
+        - benchmark_daily
+        - benchmark_historical
+        - tag_search
+        - question_expansion
+        - user_direction
+    event_cluster_summary:
+      type: object
+      required: [cluster_id, representative_source, merged_sources, dedupe_reason]
+      properties:
+        cluster_id:
+          type: string
+          minLength: 1
+        representative_source:
+          type: string
+        merged_sources:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+        dedupe_reason:
+          type: string
+      additional_properties: false
+    deterministic_prefilter:
+      type: object
+      required: [passed, reasons, risk_flags, domain_precheck]
+      properties:
+        passed:
+          type: boolean
+        reasons:
+          type: array
+          items:
+            type: string
+        risk_flags:
+          type: array
+          items:
+            type: string
+        domain_precheck:
+          type: string
+      additional_properties: false
+    material_packet:
+      type: object
+      required: [fact_summary, key_source_refs, audience_relation, domain_fit, possible_questions, uncertainty, material_gaps, risks, stop_reason]
+      properties:
+        fact_summary:
+          type: string
+        key_source_refs:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            type: string
+        audience_relation:
+          type: string
+        domain_fit:
+          type: string
+        possible_questions:
+          type: array
+          maxItems: 8
+          items:
+            type: string
+        uncertainty:
+          type: string
+        material_gaps:
+          type: array
+          maxItems: 8
+          items:
+            type: string
+        risks:
+          type: array
+          maxItems: 8
+          items:
+            type: string
+        stop_reason:
+          type: string
+      additional_properties: false
+    duplicate_cooling_status:
+      type: object
+      required: [duplicate_status, cooling_status, related_refs]
+      properties:
+        duplicate_status:
+          type: string
+          enum: [clear, possible_duplicate, duplicate]
+        cooling_status:
+          type: string
+          enum: [clear, cooling]
+        related_refs:
+          type: array
+          maxItems: 8
+          items:
+            type: string
+      additional_properties: false
+    domain_rule_summary:
+      type: string
+    experience_cards:
+      type: array
+      maxItems: 5
+      items:
+        type: object
+        required: [experience_id, summary, usage_boundary]
+        properties:
+          experience_id:
+            type: string
+          summary:
+            type: string
+          usage_boundary:
+            type: string
+        additional_properties: false
+    user_direction:
+      type: string
     schema_version:
       type: string
       const: source_to_topic.input.v1
@@ -367,21 +666,40 @@ output_schema:
     - topic_status
     - candidate_topic
     - topic_angle
+    - core_question
+    - audience_relation
+    - content_increment
     - supporting_evidence
     - source_constraints
     - no_result_reason
     - confidence
+    - angle_discovery
+    - candidate_selection
+    - risks
+    - material_gaps
+    - user_review_required
+    - user_review_reasons
+    - execution_review
+    - experience_usage
     - schema_version
   properties:
     topic_status:
       type: string
       enum:
         - generated
+        - generated_good_candidate
+        - valid_but_weak
         - needs_review
         - no_result
     candidate_topic:
       type: string
     topic_angle:
+      type: string
+    core_question:
+      type: string
+    audience_relation:
+      type: string
+    content_increment:
       type: string
     supporting_evidence:
       type: array
@@ -409,6 +727,31 @@ output_schema:
         - medium
         - low
         - none
+    angle_discovery:
+      type: object
+    candidate_selection:
+      type: object
+    risks:
+      type: array
+      maxItems: 8
+      items:
+        type: string
+    material_gaps:
+      type: array
+      maxItems: 8
+      items:
+        type: string
+    user_review_required:
+      type: boolean
+    user_review_reasons:
+      type: array
+      maxItems: 8
+      items:
+        type: string
+    execution_review:
+      type: object
+    experience_usage:
+      type: object
     schema_version:
       type: string
       const: source_to_topic.output.v1

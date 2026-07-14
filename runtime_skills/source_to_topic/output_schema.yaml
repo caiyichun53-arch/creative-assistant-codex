@@ -3,21 +3,40 @@ required:
   - topic_status
   - candidate_topic
   - topic_angle
+  - core_question
+  - audience_relation
+  - content_increment
   - supporting_evidence
   - source_constraints
   - no_result_reason
   - confidence
+  - angle_discovery
+  - candidate_selection
+  - risks
+  - material_gaps
+  - user_review_required
+  - user_review_reasons
+  - execution_review
+  - experience_usage
   - schema_version
 properties:
   topic_status:
     type: string
     enum:
       - generated
+      - generated_good_candidate
+      - valid_but_weak
       - needs_review
       - no_result
   candidate_topic:
     type: string
   topic_angle:
+    type: string
+  core_question:
+    type: string
+  audience_relation:
+    type: string
+  content_increment:
     type: string
   supporting_evidence:
     type: array
@@ -45,6 +64,127 @@ properties:
       - medium
       - low
       - none
+  angle_discovery:
+    type: object
+    required:
+      - problem_angle
+      - audience_relevance_angle
+      - content_increment_angle
+      - tension_angle
+      - distinct_angle
+      - producible_angle
+      - durable_value_angle
+    properties:
+      problem_angle: &angle_item
+        type: object
+        required:
+          - found
+          - direction
+          - reason
+        properties:
+          found:
+            type: boolean
+          direction:
+            type: string
+          reason:
+            type: string
+        additional_properties: false
+      audience_relevance_angle: *angle_item
+      content_increment_angle: *angle_item
+      tension_angle: *angle_item
+      distinct_angle: *angle_item
+      producible_angle: *angle_item
+      durable_value_angle: *angle_item
+    additional_properties: false
+  candidate_selection:
+    type: object
+    required:
+      - selected_direction
+      - why_selected
+      - rejected_directions
+    properties:
+      selected_direction:
+        type: string
+      why_selected:
+        type: string
+      rejected_directions:
+        type: array
+        maxItems: 7
+        items:
+          type: object
+          required:
+            - direction
+            - reason
+          properties:
+            direction:
+              type: string
+            reason:
+              type: string
+          additional_properties: false
+    additional_properties: false
+  risks:
+    type: array
+    maxItems: 8
+    items:
+      type: string
+  material_gaps:
+    type: array
+    maxItems: 8
+    items:
+      type: string
+  user_review_required:
+    type: boolean
+  user_review_reasons:
+    type: array
+    maxItems: 8
+    items:
+      type: string
+  execution_review:
+    type: object
+    required:
+      - used_only_supplied_material
+      - did_not_search_by_itself
+      - did_not_invent_facts
+      - respected_domain_boundary
+      - respected_risk_boundary
+      - did_not_force_candidate
+      - no_score_rank_weight
+    properties:
+      used_only_supplied_material:
+        type: boolean
+      did_not_search_by_itself:
+        type: boolean
+      did_not_invent_facts:
+        type: boolean
+      respected_domain_boundary:
+        type: boolean
+      respected_risk_boundary:
+        type: boolean
+      did_not_force_candidate:
+        type: boolean
+      no_score_rank_weight:
+        type: boolean
+    additional_properties: false
+  experience_usage:
+    type: object
+    required:
+      - used_experience_ids
+      - unused_experience_ids
+      - rationale
+    properties:
+      used_experience_ids:
+        type: array
+        maxItems: 5
+        items:
+          type: string
+      unused_experience_ids:
+        type: array
+        maxItems: 5
+        items:
+          type: string
+      rationale:
+        type: string
+    additional_properties: false
   schema_version:
     type: string
     const: source_to_topic.output.v1

@@ -7,6 +7,14 @@ required:
   - source_evidence_items
   - domain_label
   - relation_summary
+  - source_kind
+  - event_cluster_summary
+  - deterministic_prefilter
+  - material_packet
+  - duplicate_cooling_status
+  - domain_rule_summary
+  - experience_cards
+  - user_direction
   - schema_version
 properties:
   request_id:
@@ -36,6 +44,147 @@ properties:
       - cross_domain
       - unknown
   relation_summary:
+    type: string
+  source_kind:
+    type: string
+    enum:
+      - hotspot_event_cluster
+      - benchmark_daily
+      - benchmark_historical
+      - tag_search
+      - question_expansion
+      - user_direction
+  event_cluster_summary:
+    type: object
+    required:
+      - cluster_id
+      - representative_source
+      - merged_sources
+      - dedupe_reason
+    properties:
+      cluster_id:
+        type: string
+        minLength: 1
+      representative_source:
+        type: string
+      merged_sources:
+        type: array
+        maxItems: 16
+        items:
+          type: string
+      dedupe_reason:
+        type: string
+    additional_properties: false
+  deterministic_prefilter:
+    type: object
+    required:
+      - passed
+      - reasons
+      - risk_flags
+      - domain_precheck
+    properties:
+      passed:
+        type: boolean
+      reasons:
+        type: array
+        items:
+          type: string
+      risk_flags:
+        type: array
+        items:
+          type: string
+      domain_precheck:
+        type: string
+    additional_properties: false
+  material_packet:
+    type: object
+    required:
+      - fact_summary
+      - key_source_refs
+      - audience_relation
+      - domain_fit
+      - possible_questions
+      - uncertainty
+      - material_gaps
+      - risks
+      - stop_reason
+    properties:
+      fact_summary:
+        type: string
+      key_source_refs:
+        type: array
+        minItems: 1
+        maxItems: 8
+        items:
+          type: string
+      audience_relation:
+        type: string
+      domain_fit:
+        type: string
+      possible_questions:
+        type: array
+        maxItems: 8
+        items:
+          type: string
+      uncertainty:
+        type: string
+      material_gaps:
+        type: array
+        maxItems: 8
+        items:
+          type: string
+      risks:
+        type: array
+        maxItems: 8
+        items:
+          type: string
+      stop_reason:
+        type: string
+    additional_properties: false
+  duplicate_cooling_status:
+    type: object
+    required:
+      - duplicate_status
+      - cooling_status
+      - related_refs
+    properties:
+      duplicate_status:
+        type: string
+        enum:
+          - clear
+          - possible_duplicate
+          - duplicate
+      cooling_status:
+        type: string
+        enum:
+          - clear
+          - cooling
+      related_refs:
+        type: array
+        maxItems: 8
+        items:
+          type: string
+    additional_properties: false
+  domain_rule_summary:
+    type: string
+  experience_cards:
+    type: array
+    maxItems: 5
+    items:
+      type: object
+      required:
+        - experience_id
+        - summary
+        - usage_boundary
+      properties:
+        experience_id:
+          type: string
+        summary:
+          type: string
+        usage_boundary:
+          type: string
+      additional_properties: false
+  user_direction:
     type: string
   schema_version:
     type: string

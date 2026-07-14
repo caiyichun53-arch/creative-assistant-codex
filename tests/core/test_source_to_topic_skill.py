@@ -49,14 +49,14 @@ class SourceToTopicBusinessContractTests(unittest.TestCase):
     def test_business_contract_has_required_sections_and_no_missing_requirements(self) -> None:
         result = validate_source_to_topic_business_contract(load_source_to_topic_business_contract())
         self.assertEqual(result["skill_id"], "source_to_topic")
-        self.assertEqual(result["skill_version"], "1.0.0")
+        self.assertEqual(result["skill_version"], "1.1.0")
         self.assertEqual(result["missing_requirement_count"], 0)
 
     def test_contract_loads_source_to_topic_route(self) -> None:
         contract = FormalSkillContract.from_yaml(SOURCE_TO_TOPIC_CONTRACT_PATH)
         contract.validate_contract()
         self.assertEqual(contract.formal_skill_id, "source_to_topic")
-        self.assertEqual(contract.version, "1.0.0")
+        self.assertEqual(contract.version, "1.1.0")
         self.assertEqual(contract.route_name, "business.source_to_topic")
         self.assertEqual(contract.allowed_model_nodes, ("business.source_to_topic",))
 
@@ -71,6 +71,14 @@ class SourceToTopicBusinessContractTests(unittest.TestCase):
             "source_evidence_items",
             "domain_label",
             "relation_summary",
+            "source_kind",
+            "event_cluster_summary",
+            "deterministic_prefilter",
+            "material_packet",
+            "duplicate_cooling_status",
+            "domain_rule_summary",
+            "experience_cards",
+            "user_direction",
             "schema_version",
         ):
             with self.subTest(missing=key):
@@ -88,23 +96,60 @@ class SourceToTopicBusinessContractTests(unittest.TestCase):
     def test_formal_output_schema_and_semantics_reject_bad_results(self) -> None:
         contract = FormalSkillContract.from_yaml(SOURCE_TO_TOPIC_CONTRACT_PATH)
         good = {
-            "topic_status": "generated",
+            "topic_status": "generated_good_candidate",
             "candidate_topic": "为什么小区电梯总在早高峰堵住",
             "topic_angle": "生活现象解释",
+            "core_question": "为什么小区电梯总在早高峰堵住",
+            "audience_relation": "关系到普通住户的通勤等待和小区管理理解",
+            "content_increment": "把早高峰电梯拥堵解释为集中通勤、楼层分布和维保停梯叠加的问题",
             "supporting_evidence": ["社区电梯早高峰拥堵"],
             "source_constraints": ["must_not_claim_platform_metrics_without_evidence"],
             "no_result_reason": "none",
             "confidence": "high",
+            "angle_discovery": {
+                "problem_angle": {"found": True, "direction": "为什么小区电梯总在早高峰堵住", "reason": "材料能形成具体问题"},
+                "audience_relevance_angle": {"found": True, "direction": "通勤等待", "reason": "普通住户有自相关"},
+                "content_increment_angle": {"found": True, "direction": "机制解释", "reason": "不只是复述拥堵"},
+                "tension_angle": {"found": True, "direction": "运气差与系统叠加", "reason": "有表面和深层差异"},
+                "distinct_angle": {"found": True, "direction": "小区管理机制", "reason": "区别于吐槽"},
+                "producible_angle": {"found": True, "direction": "单条短视频", "reason": "有核心问题和证据"},
+                "durable_value_angle": {"found": True, "direction": "热点后仍可讲", "reason": "日常机制长期存在"},
+            },
+            "candidate_selection": {
+                "selected_direction": "为什么小区电梯总在早高峰堵住",
+                "why_selected": "问题感和受众关系最清楚",
+                "rejected_directions": [],
+            },
+            "risks": ["must_not_claim_platform_metrics_without_evidence"],
+            "material_gaps": [],
+            "user_review_required": False,
+            "user_review_reasons": [],
+            "execution_review": {
+                "used_only_supplied_material": True,
+                "did_not_search_by_itself": True,
+                "did_not_invent_facts": True,
+                "respected_domain_boundary": True,
+                "respected_risk_boundary": True,
+                "did_not_force_candidate": True,
+                "no_score_rank_weight": True,
+            },
+            "experience_usage": {
+                "used_experience_ids": ["exp-ordinary-life-mechanism"],
+                "unused_experience_ids": [],
+                "rationale": "经验只作为切口启发，不替代材料事实。",
+            },
             "schema_version": "source_to_topic.output.v1",
         }
         validate_payload(good, contract.output_schema)
         validate_source_to_topic_output_semantics(sample_source_to_topic_input(), good)
         for bad in (
             good | {"supporting_evidence": ["unseen evidence"]},
-            good | {"topic_status": "generated", "candidate_topic": ""},
+            good | {"topic_status": "generated_good_candidate", "candidate_topic": ""},
             good | {"topic_status": "needs_review", "source_constraints": []},
             good | {"topic_status": "no_result", "candidate_topic": "still has topic"},
-            good | {"topic_status": "no_result", "candidate_topic": "", "topic_angle": "", "supporting_evidence": [], "no_result_reason": "none"},
+            good | {"execution_review": good["execution_review"] | {"did_not_search_by_itself": False}},
+            good | {"topic_status": "valid_but_weak", "user_review_required": False},
+            good | {"topic_status": "no_result", "candidate_topic": "", "topic_angle": "", "core_question": "", "supporting_evidence": [], "no_result_reason": "none"},
         ):
             with self.subTest(bad=bad):
                 with self.assertRaises(FormalSkillValidationError):
@@ -143,7 +188,9 @@ class SourceToTopicRuntimeTests(SourceToTopicHarnessMixin, unittest.TestCase):
         outbox = harness.api.list_outbox()
         self.assertEqual(step.status, "succeeded")
         self.assertIsNotNone(result)
-        self.assertEqual(result["output"]["topic_status"], "generated")
+        self.assertIn(result["output"]["topic_status"], {"generated", "generated_good_candidate"})
+        self.assertIn("angle_discovery", result["output"])
+        self.assertIn("execution_review", result["output"])
         self.assertEqual(result["model_route"], "business.source_to_topic")
         self.assertEqual(len(outbox), 1)
         self.assertEqual(harness.provider.call_count, 1)

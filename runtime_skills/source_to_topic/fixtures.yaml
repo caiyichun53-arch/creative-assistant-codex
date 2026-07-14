@@ -13,6 +13,43 @@ fixtures:
         - 维保停梯
       domain_label: fan_kepu_social_life
       relation_summary: source is related_distinct to prior social-life evidence
+      source_kind: hotspot_event_cluster
+      event_cluster_summary:
+        cluster_id: cluster-elevator-rush
+        representative_source: 社区电梯早高峰拥堵
+        merged_sources:
+          - 同小区电梯排队
+        dedupe_reason: same everyday event cluster
+      deterministic_prefilter:
+        passed: true
+        reasons:
+          - traceable_source
+          - ordinary_life_relation
+        risk_flags: []
+        domain_precheck: fan_kepu_social_life
+      material_packet:
+        fact_summary: 早高峰电梯拥堵与集中通勤、楼层分布和维保停梯有关。
+        key_source_refs:
+          - 社区电梯早高峰拥堵
+          - 通勤集中
+        audience_relation: 关系到普通住户的通勤等待和小区管理理解。
+        domain_fit: 属于社会生活中的日常机制解释。
+        possible_questions:
+          - 为什么小区电梯总在早高峰堵住
+        uncertainty: 缺少具体小区统计，不能声称普遍比例。
+        material_gaps: []
+        risks: []
+        stop_reason: none
+      duplicate_cooling_status:
+        duplicate_status: clear
+        cooling_status: clear
+        related_refs: []
+      domain_rule_summary: 社会生活领域优先普通人生活机制，排除饭圈八卦。
+      experience_cards:
+        - experience_id: exp-ordinary-life-mechanism
+          summary: 从普通生活场景拆出背后的机制，比复述现象更适合泛科普。
+          usage_boundary: 只能作为切口启发，不能替代材料事实。
+      user_direction: ""
       schema_version: source_to_topic.input.v1
   - fixture_id: music_entertainment
     input:
@@ -26,6 +63,40 @@ fixtures:
         - 演唱会后重新传播
       domain_label: music_entertainment
       relation_summary: source is complementary to prior music-entertainment evidence
+      source_kind: benchmark_daily
+      event_cluster_summary:
+        cluster_id: cluster-old-song-revival
+        representative_source: 老歌被年轻观众翻唱
+        merged_sources: []
+        dedupe_reason: single source
+      deterministic_prefilter:
+        passed: true
+        reasons:
+          - public_music_discussion
+          - no_private_gossip
+        risk_flags: []
+        domain_precheck: music_entertainment
+      material_packet:
+        fact_summary: 老歌在演唱会后被年轻观众重新翻唱，评论集中在记忆和情绪。
+        key_source_refs:
+          - 老歌被年轻观众翻唱
+          - 演唱会后重新传播
+        audience_relation: 关系到代际记忆、歌曲再传播和听众情绪。
+        domain_fit: 属于音乐娱乐中的歌曲传播与听众关系。
+        possible_questions:
+          - 一首老歌为什么会重新被年轻人翻出来
+        uncertainty: 缺少完整传播路径，不能声称全网趋势。
+        material_gaps: []
+        risks:
+          - avoid_fan_speculation
+        stop_reason: none
+      duplicate_cooling_status:
+        duplicate_status: clear
+        cooling_status: clear
+        related_refs: []
+      domain_rule_summary: 音乐娱乐领域可谈作品、传播和审美，不做饭圈输赢判断。
+      experience_cards: []
+      user_direction: ""
       schema_version: source_to_topic.input.v1
   - fixture_id: third_domain_neutral
     input:
@@ -38,6 +109,37 @@ fixtures:
         - 保存方式
       domain_label: third_domain_neutral
       relation_summary: source belongs to a neutral third-domain fixture
+      source_kind: tag_search
+      event_cluster_summary:
+        cluster_id: cluster-frozen-bread
+        representative_source: 冷冻面包复烤
+        merged_sources: []
+        dedupe_reason: single source
+      deterministic_prefilter:
+        passed: true
+        reasons:
+          - neutral_domain_fixture
+        risk_flags: []
+        domain_precheck: third_domain_neutral
+      material_packet:
+        fact_summary: 冷冻面包复烤后口感变化，评论关注保存方式。
+        key_source_refs:
+          - 冷冻面包复烤
+        audience_relation: 关系到家庭食品保存和复烤体验。
+        domain_fit: 第三领域中性 fixture，仅证明多领域扩展形状。
+        possible_questions:
+          - 冷冻面包复烤后口感为什么变化
+        uncertainty: 领域不是当前命名生产领域。
+        material_gaps: []
+        risks: []
+        stop_reason: none
+      duplicate_cooling_status:
+        duplicate_status: clear
+        cooling_status: clear
+        related_refs: []
+      domain_rule_summary: 第三领域只作为扩展 fixture，不证明该领域质量。
+      experience_cards: []
+      user_direction: ""
       schema_version: source_to_topic.input.v1
   - fixture_id: needs_review_unknown_domain
     input:
@@ -49,4 +151,35 @@ fixtures:
         - 领域边界不清
       domain_label: unknown
       relation_summary: insufficient relation boundary
+      source_kind: hotspot_event_cluster
+      event_cluster_summary:
+        cluster_id: cluster-unknown
+        representative_source: 领域边界不清
+        merged_sources: []
+        dedupe_reason: single source
+      deterministic_prefilter:
+        passed: false
+        reasons:
+          - domain_boundary_unclear
+        risk_flags: []
+        domain_precheck: unknown
+      material_packet:
+        fact_summary: 输入材料只有现象，没有稳定领域边界。
+        key_source_refs:
+          - 领域边界不清
+        audience_relation: 无法确认目标受众关系。
+        domain_fit: unknown
+        possible_questions: []
+        uncertainty: 领域和关系均不清。
+        material_gaps:
+          - missing_domain_boundary
+        risks: []
+        stop_reason: insufficient_source_evidence
+      duplicate_cooling_status:
+        duplicate_status: clear
+        cooling_status: clear
+        related_refs: []
+      domain_rule_summary: 领域不清时不得强行转化。
+      experience_cards: []
+      user_direction: ""
       schema_version: source_to_topic.input.v1

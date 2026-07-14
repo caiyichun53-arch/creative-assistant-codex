@@ -19,6 +19,30 @@ input_map:
   relation_summary:
     source: preprocessed
     key: relation_text
+  source_kind:
+    source: input
+    key: source_kind
+  event_cluster_summary:
+    source: input
+    key: event_cluster_summary
+  deterministic_prefilter:
+    source: input
+    key: deterministic_prefilter
+  material_packet:
+    source: input
+    key: material_packet
+  duplicate_cooling_status:
+    source: input
+    key: duplicate_cooling_status
+  domain_rule_summary:
+    source: input
+    key: domain_rule_summary
+  experience_cards:
+    source: input
+    key: experience_cards
+  user_direction:
+    source: input
+    key: user_direction
 output_map:
   topic_status:
     source: model_output
@@ -29,6 +53,15 @@ output_map:
   topic_angle:
     source: model_output
     key: topic_angle
+  core_question:
+    source: model_output
+    key: core_question
+  audience_relation:
+    source: model_output
+    key: audience_relation
+  content_increment:
+    source: model_output
+    key: content_increment
   supporting_evidence:
     source: model_output
     key: supporting_evidence
@@ -41,6 +74,30 @@ output_map:
   confidence:
     source: model_output
     key: confidence
+  angle_discovery:
+    source: model_output
+    key: angle_discovery
+  candidate_selection:
+    source: model_output
+    key: candidate_selection
+  risks:
+    source: model_output
+    key: risks
+  material_gaps:
+    source: model_output
+    key: material_gaps
+  user_review_required:
+    source: model_output
+    key: user_review_required
+  user_review_reasons:
+    source: model_output
+    key: user_review_reasons
+  execution_review:
+    source: model_output
+    key: execution_review
+  experience_usage:
+    source: model_output
+    key: experience_usage
   schema_version:
     source: model_output
     key: schema_version
