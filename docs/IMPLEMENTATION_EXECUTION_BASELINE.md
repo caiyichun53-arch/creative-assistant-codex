@@ -1,18 +1,16 @@
 ---
-mode: VALIDATION_LIVE
-stage: STAGE_1_HOTSPOT_SOURCE_VALIDATION
+mode: TECHNICAL_REPAIR
+stage: STAGE_1_HOTSPOT_RUNTIME_REPAIR
 design_complete: true
 baseline_sha256: fbc903a2e8aabdcf4d4558c4e7fe5f017941a85d9cec11154035d3c55b32d216
-base_commit: cb3675360a5d5c3e0ee98b25e2d4027afdc8a72d
+base_commit: 6ccf8f769e2809360439ffc59003201b947dfd62
 requirements:
-  - id: STAGE1-HOTSPOT-LIVE-001
-    description: 只在泛科普—社会生活领域执行一次热点来源 validation_live，完成真实热点采集、标准来源对象转换、领域过滤、热点转具体问题和当前配置候选判断模型验收；允许零候选。
+  - id: STAGE1-HOTSPOT-REPAIR-001
+    description: TrendRadar 正式运行产生的本地输出不得在下一批启动前被误判为上游源码篡改；真正的上游源码改动仍须失败关闭。
     baseline_refs:
-      - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3 好选题、线索与热点
       - docs/EFFECTIVE_DESIGN_BASELINE.md#16.7 每日发现、产能、日报与冷却
-      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#Stage 1 热点源单次真实验收授权
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#本次热点 validation_live 阻断与修复边界
     tests:
-      - [python, -m, pytest, tests/core/test_stage1b_daily_discovery.py, -q]
       - [python, -m, pytest, tests/core/test_local_trendradar_executor.py, -q]
   - id: WF-GUARD-001
     description: 安装、实现、测试、finish、提交和真实调用仍必须经过仓库工作流门禁。
@@ -23,14 +21,19 @@ requirements:
       - [python, -m, pytest, tests/test_workflow_guard.py, -q]
 allowed_paths:
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
+  - TECHNICAL_MANUAL.md
+  - scripts/integrations/trendradar_runtime.py
+  - tests/core/test_local_trendradar_executor.py
 forbidden_actions:
-  - business_code_change
+  - any_external_source_call
+  - any_model_call
+  - candidate_generation
   - production_daily
   - stage1a_handoff
   - research_stage_entry
   - automatic_retry
   - workflow_guard_bypass
-external_call_authorized: true
+external_call_authorized: false
 ---
 
 # V1.3 实施执行基线
@@ -62,6 +65,12 @@ external_call_authorized: true
 本次允许项目 Runtime 手动执行一次真实 TrendRadar 热点采集，并只把该次采集形成的合格热点来源送入当前显式配置的候选判断模型。运行身份必须是 `validation_live`；可以形成零候选。领域只允许“泛科普—社会生活”，送入候选判断的合格来源最多 6 条。不得同时验证对标日常、对标历史、标签搜索、问题拓展或人工任务，不得运行 `production_daily`，不得选择候选、进入 Stage 1A、研究、经验或日产能。真实调用只允许一次，不确定请求、超时或部分失败不得自动重试。
 
 执行前必须核实本机 TrendRadar、规范化导出、当前配置候选判断模型的显式路由、凭证和受控入口均已配置；任一缺失即记录阻断并停止，不得用临时脚本、其他热点源、其他模型、旧结果、fixture 或手工数据替代。运行结束后必须核对采集运行、热点原始观察、领域过滤、模型运行、候选/零候选和 `validation_live` 隔离审计，然后立即把 `external_call_authorized` 恢复为 `false`、模式恢复为 `VALIDATION_AUTHORIZATION_WAIT`，提交执行基线并停止；设计基线仍保持完整，后续来源必须逐项重新获得真实调用授权。
+
+### 本次热点 validation_live 阻断与修复边界
+
+2026-07-14 以 `source_type=hotspot`、`domain=fan_kepu_social_life`、`mode=validation_live` 启动的批次 `discovery_run_cf43d61dd5024db393c21d2e65e19100` 在 TrendRadar 桥接预检阶段确定性失败。桥接把上一次受控真实运行自己生成的 `vendor/TrendRadar/output/news/2026-07-14.db` 误判为未经批准的上游源码改动，因此在创建新证据目录、启动 TrendRadar 上游命令和调用候选判断模型之前以退出码 2 结束。该批次状态为 `completed_with_failures`，热点原始观察、来源版本、模型运行、候选和快照均为零；不得把它认定为一次真实热点业务验收，也不得提升 TrendRadar 的六级状态。
+
+当前外部调用授权已关闭。只允许修复项目桥接的安装完整性判定：保留对上游已跟踪源码改动的失败关闭，同时允许明确限定在 `output/` 下的 TrendRadar 自身运行产物以及 `__pycache__/`；补充回归测试和操作说明。修复期间不得调用真实来源或模型。由于原批次已写入完成回执，同一幂等键只会重放失败结果；在现行设计要求使用同一冻结输入、配置和幂等键恢复的前提下，修复完成后不得擅自改用新幂等键重跑，必须先解决该设计与现有幂等实现的冲突。
 
 ### 上一次单次验收授权的阻断结果
 
@@ -97,9 +106,9 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 
 | 项目 | 当前事实 |
 | --- | --- |
-| 当前阶段 | Stage 1——TrendRadar 热点来源单次真实业务验收 |
-| 当前状态 | 用户已批准一次真实热点采集和当前配置候选判断模型调用；其他五个来源仍未授权，当前仍没有来源达到 `LIVE_VALIDATED` |
-| 当前动作 | 只通过项目 Runtime 执行一次 `source_type=hotspot`、`domain=fan_kepu_social_life`、`mode=validation_live` 的受控批次；最多 6 条合格热点进入候选判断，允许零候选，不自动重试 |
+| 当前阶段 | Stage 1——TrendRadar 热点 Runtime 确定性缺陷修复 |
+| 当前状态 | 已启动的单次热点验收在上游请求前因本地输出误判而失败；没有热点原始观察、模型运行或候选，TrendRadar 仍为 `ENV_READY` |
+| 当前动作 | 只修复 TrendRadar 桥接对自身 `output/` 运行产物的完整性判定，补回归测试和操作说明；外部调用保持关闭 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `6693d3acab913a6845ad1c7665ff15cc4da6aefa` |
@@ -109,8 +118,8 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 | Stage 1B | 不联网六来源修复已提交：`d13e870a26945f9c5f4024d4e691e9f6eed5202a`；错误验证结果已物理删除且全库残留为零；stash 已清空，不需要恢复 |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
 | 真实来源状态 | 见 Stage 1 六级状态表；只有 `LIVE_VALIDATED` 以上才有资格在后续另行授权后进入真实候选发现 |
-| 当前阻断 | 无；本次只授权热点单来源，其他五类来源、`production_daily` 和后续阶段仍被禁止 |
-| 下一唯一动作 | 完成一次热点单来源 `validation_live`，核对原始采集、领域过滤、热点转具体问题、模型结果、候选/零候选与隔离性；无论成功、失败或状态不确定都不得自动重试，随后关闭外部调用授权并提交结果 |
+| 当前阻断 | 原批次已完成失败回执；同一幂等键只能重放，而改用新幂等键会偏离现行恢复规则，修复完成后必须先裁决恢复机制 |
+| 下一唯一动作 | 完成本地桥接修复、测试和提交；不发出任何真实请求。随后停止在恢复机制冲突处，不擅自创建第二次外部批次 |
 
 ### 创建本文件时的 Git 事实
 
