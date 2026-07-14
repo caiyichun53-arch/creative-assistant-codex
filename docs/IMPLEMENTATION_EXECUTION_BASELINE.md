@@ -1,17 +1,19 @@
 ---
-mode: VALIDATION_AUTHORIZATION_WAIT
-stage: STAGE_1_SOURCE_LIVE_VALIDATION
+mode: VALIDATION_LIVE
+stage: STAGE_1_HOTSPOT_SOURCE_VALIDATION
 design_complete: true
 baseline_sha256: fbc903a2e8aabdcf4d4558c4e7fe5f017941a85d9cec11154035d3c55b32d216
-base_commit: d13e870a26945f9c5f4024d4e691e9f6eed5202a
+base_commit: cb3675360a5d5c3e0ee98b25e2d4027afdc8a72d
 requirements:
-  - id: STAGE1-CLEANUP-CLOSE-001
-    description: 已授权的旧错误验证结果必须全部物理删除，正式库不得残留目标结果，非目标来源和数据库完整性必须保持正常。
+  - id: STAGE1-HOTSPOT-LIVE-001
+    description: 只在泛科普—社会生活领域执行一次热点来源 validation_live，完成真实热点采集、标准来源对象转换、领域过滤、热点转具体问题和当前配置候选判断模型验收；允许零候选。
     baseline_refs:
-      - docs/EFFECTIVE_DESIGN_BASELINE.md#4.1 选题生命周期
-      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#当前执行指针
+      - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3 好选题、线索与热点
+      - docs/EFFECTIVE_DESIGN_BASELINE.md#16.7 每日发现、产能、日报与冷却
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#Stage 1 热点源单次真实验收授权
     tests:
       - [python, -m, pytest, tests/core/test_stage1b_daily_discovery.py, -q]
+      - [python, -m, pytest, tests/core/test_local_trendradar_executor.py, -q]
   - id: WF-GUARD-001
     description: 安装、实现、测试、finish、提交和真实调用仍必须经过仓库工作流门禁。
     baseline_refs:
@@ -23,15 +25,12 @@ allowed_paths:
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
 forbidden_actions:
   - business_code_change
-  - any_external_source_call
-  - any_model_call
-  - candidate_generation
   - production_daily
   - stage1a_handoff
   - research_stage_entry
   - automatic_retry
   - workflow_guard_bypass
-external_call_authorized: false
+external_call_authorized: true
 ---
 
 # V1.3 实施执行基线
@@ -60,9 +59,9 @@ external_call_authorized: false
 
 用户已明确确认：“恢复 Stage 1 热点选题测试，并允许这一次真实热点和模型调用。”本次只恢复 `STAGE_1_HOTSPOT_SOURCE_VALIDATION` 这一条窄边界，视为该单次验收的设计已完整，不代表 Stage 1 其他来源、正式日产或后续阶段设计已恢复。
 
-本次允许项目 Runtime 手动执行一次真实 TrendRadar 热点采集，并只把该次采集形成的合格热点来源送入显式 Mimo/ModelGateway 候选判断。运行身份必须是 `validation_live`；可以形成零候选。不得同时验证对标日常、对标历史、标签搜索、问题拓展或人工任务，不得运行 `production_daily`，不得选择候选、进入 Stage 1A、研究、经验或日产能。真实调用只允许一次，不确定请求、超时或部分失败不得自动重试。
+本次允许项目 Runtime 手动执行一次真实 TrendRadar 热点采集，并只把该次采集形成的合格热点来源送入当前显式配置的候选判断模型。运行身份必须是 `validation_live`；可以形成零候选。领域只允许“泛科普—社会生活”，送入候选判断的合格来源最多 6 条。不得同时验证对标日常、对标历史、标签搜索、问题拓展或人工任务，不得运行 `production_daily`，不得选择候选、进入 Stage 1A、研究、经验或日产能。真实调用只允许一次，不确定请求、超时或部分失败不得自动重试。
 
-执行前必须核实本机 TrendRadar、规范化导出、Mimo 路由、凭证和受控入口均已配置；任一缺失即记录阻断并停止，不得用临时脚本、其他热点源、其他模型、旧结果、fixture 或手工数据替代。运行结束后必须核对采集运行、热点原始观察、领域过滤、模型运行、候选/零候选和 `validation_live` 隔离审计，然后立即把 `external_call_authorized` 恢复为 `false`、`design_complete` 恢复为 `false`、模式恢复为 `DESIGN_RECOVERY`，提交执行基线并停止。
+执行前必须核实本机 TrendRadar、规范化导出、当前配置候选判断模型的显式路由、凭证和受控入口均已配置；任一缺失即记录阻断并停止，不得用临时脚本、其他热点源、其他模型、旧结果、fixture 或手工数据替代。运行结束后必须核对采集运行、热点原始观察、领域过滤、模型运行、候选/零候选和 `validation_live` 隔离审计，然后立即把 `external_call_authorized` 恢复为 `false`、模式恢复为 `VALIDATION_AUTHORIZATION_WAIT`，提交执行基线并停止；设计基线仍保持完整，后续来源必须逐项重新获得真实调用授权。
 
 ### 上一次单次验收授权的阻断结果
 
@@ -98,9 +97,9 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 
 | 项目 | 当前事实 |
 | --- | --- |
-| 当前阶段 | Stage 1——六来源真实链路已完成不联网修复，等待逐来源真实验收授权 |
-| 当前状态 | 不联网实现和错误结果物理清理均已完成；正式库没有任何 Stage 1B 运行、候选或旧结果残留，当前仍没有来源达到 `LIVE_VALIDATED` |
-| 当前动作 | 停止业务修改和外部调用，等待首次单来源 `validation_live` 授权；首次按既定顺序验收 TrendRadar 热点，只运行泛科普—社会生活 |
+| 当前阶段 | Stage 1——TrendRadar 热点来源单次真实业务验收 |
+| 当前状态 | 用户已批准一次真实热点采集和当前配置候选判断模型调用；其他五个来源仍未授权，当前仍没有来源达到 `LIVE_VALIDATED` |
+| 当前动作 | 只通过项目 Runtime 执行一次 `source_type=hotspot`、`domain=fan_kepu_social_life`、`mode=validation_live` 的受控批次；最多 6 条合格热点进入候选判断，允许零候选，不自动重试 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `6693d3acab913a6845ad1c7665ff15cc4da6aefa` |
@@ -110,8 +109,8 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 | Stage 1B | 不联网六来源修复已提交：`d13e870a26945f9c5f4024d4e691e9f6eed5202a`；错误验证结果已物理删除且全库残留为零；stash 已清空，不需要恢复 |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
 | 真实来源状态 | 见 Stage 1 六级状态表；只有 `LIVE_VALIDATED` 以上才有资格在后续另行授权后进入真实候选发现 |
-| 当前阻断 | 六类来源均尚未进行本轮泛科普—社会生活真实业务验收；外部调用授权已关闭 |
-| 下一唯一动作 | 获得一次 TrendRadar 热点来源及当前配置候选判断模型的明确授权后，只运行 `source_type=hotspot` 的单来源 `validation_live`；不得同时运行其他来源或 `production_daily` |
+| 当前阻断 | 无；本次只授权热点单来源，其他五类来源、`production_daily` 和后续阶段仍被禁止 |
+| 下一唯一动作 | 完成一次热点单来源 `validation_live`，核对原始采集、领域过滤、热点转具体问题、模型结果、候选/零候选与隔离性；无论成功、失败或状态不确定都不得自动重试，随后关闭外部调用授权并提交结果 |
 
 ### 创建本文件时的 Git 事实
 
