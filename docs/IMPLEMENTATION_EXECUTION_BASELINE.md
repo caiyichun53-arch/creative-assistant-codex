@@ -7,9 +7,11 @@ external_calls_authorized: false
 environment_changes_authorized: false
 formal_data_writes_authorized: false
 production_authorized: false
-completion_status: TECH_TESTED
-stage_status: TECH_TESTED
-next_action: request_controlled_validation_live_authorization
+completion_status: HOTSPOT_LIVE_VALIDATED_ZERO_CANDIDATE
+stage_status: PARTIAL_LIVE_VALIDATED
+source_evidence_level: LIVE_VALIDATED
+claimed_source_level: LIVE_VALIDATED
+next_action: validate_remaining_daily_discovery_sources_before_production_daily
 baseline_sha256: 08d38a9ed9c674104f9d416a816203e80e387115fd2b7199c49c63616a9ff1ab
 base_commit: 870f1c798e2e3be049095678c066a74b674603bb
 allowed_design_sources:
@@ -53,11 +55,11 @@ frozen_contracts:
   - runtime_skills/**
 forbidden_actions:
   - stage1_acceptance_test_bypass
-  - any_external_source_call
-  - any_model_call
+  - any_external_source_call_without_new_authorization
+  - any_model_call_without_new_authorization
   - environment_install_or_change
   - production_daily
-  - validation_live
+  - validation_live_without_new_authorization
   - stage1a_handoff
   - research_stage_entry
   - automatic_retry
@@ -106,6 +108,16 @@ forbidden_actions:
 
 本次不联网修复已把版本化领域包的排除词和热点匹配词放入候选判断冻结输入，并在模型返回后由 Core 再做一次确定性领域检查；社会生活领域新增粉丝、偶像、艺人、爱豆和网红排除词，娱乐内容不得通过改写社会角度建立候选。模型自述“材料严重不足”“事实无法确认”等阻断缺口时改记为确定性零候选，不算技术失败。输出解析只额外兼容一个完整 JSON 代码块，代码块外说明、多个对象或其他自由文本仍失败关闭。`tests/core/test_stage1b_daily_discovery.py` 27 项通过，TrendRadar、来源采集与领域标签相关测试 48 项通过；修复期间没有真实来源或模型调用。
 
+### 本次热点 validation_live 真实验收结果
+
+用户在对话中明确说明“验收”指真实执行后，本轮只授权并执行一次热点来源 `validation_live`。运行命令为 `python -m scripts.core.production.stage1b_daily_discovery --domain fan_kepu_social_life --source-type hotspot --actor codex_user_authorized_validation --idempotency-key stage1-hotspot-validation-live-20260714-user-acceptance-01 --mode validation_live --discovery-date 2026-07-14 --batch-timeout-seconds 600`；没有执行 `production_daily`、Stage 1A 交接、研究、经验、日产能或自动重试。
+
+批次 `discovery_run_cde00cb53c994439b2a37111e5223a3f` 于 `2026-07-14T10:42:21.302942+00:00` 创建，`2026-07-14T10:45:15.919981+00:00` 完成，运行身份为 `validation_live`，生命周期为 `completed`。TrendRadar 采集批次 `trendradar_run_4c39b21e03819130d537` 成功，11 个平台全部成功，取得 255 条真实热点观察；证据目录为 `validation_evidence/stage1/trendradar/20260714T104221.505572Z/`，规范化输出 `outputs/stage1/trendradar/latest.json` 的 SHA-256 为 `a79867f757d250d1f8e407227d14376a8cbb355e12f1d768d7e3e31be1015896`。
+
+本次领域匹配后进入 Stage 1B 候选判断的热点来源版本为 3 条；3 次模型调用均经 `business_analysis` 显式路由、`hermes` Provider、`xiaomi/mimo-v2.5-pro` 模型、`retry_status=not_retried`、`validation_status=passed`。3 条结果全部记录为 `model_returned_no_candidate`，候选数为 0，并生成 1 条 `candidate_version_id=NULL` 的 `validation_live` 快照。正式库 `data/formal/production_activation.sqlite3` 检查结果为 `PRAGMA integrity_check=ok`，外键违规为 0；命令回执和 `stage0_audit_event` 已记录运行开始、来源记录、过滤、输入组装、模型网关、零候选、快照完成和批次完成事件。
+
+因此，热点来源在当前版本下可标记为 `LIVE_VALIDATED`，结果是确定性零候选；这不表示 Stage 1B 整体完成，也不授权 `production_daily`。真实调用授权已关闭，后续来源和整日日常发现仍必须逐项重新授权和验收。
+
 ### 上一次单次验收授权的阻断结果
 
 本次只完成了受控运行前检查，没有发出任何真实热点或模型请求，也没有创建发现运行。检查结果：Mimo 的 `business_analysis` 路由可解析为显式 Hermes 适配器，模型引用已配置且 `fallback: none`；但 `config/settings.yaml` 中 `hotspot_collection.live_enabled` 仍为 `false`，`project_dir`、`executable` 和 `normalized_json_path` 均为空，本机未发现 TrendRadar 命令、项目目录或 Docker 容器。因此命中“任一真实运行配置缺失即停止”的规则，未使用其他热点源、旧数据、fixture 或临时脚本替代。一次性外部调用授权未被消耗为真实请求，现已关闭。
@@ -141,19 +153,19 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 | 项目 | 当前事实 |
 | --- | --- |
 | 当前阶段 | Stage 1B / `stage_1_daily_discovery` |
-| 当前状态 | `TECH_TESTED`；Stage 1 设计已按用户确认口径写入有效基线，当前仅证明隔离技术验收通过 |
-| 当前动作 | 暂停真实运行、外部来源、真实模型和正式数据写入；下一步只能请求受控 `validation_live` 授权或继续处理明确的技术验收缺口 |
+| 当前状态 | `HOTSPOT_LIVE_VALIDATED_ZERO_CANDIDATE`；热点来源已完成一次受控真实 `validation_live`，结果为零候选 |
+| 当前动作 | 关闭本次真实调用授权；继续推进剩余日常发现来源的真实验收，不得直接运行 `production_daily` |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `6693d3acab913a6845ad1c7665ff15cc4da6aefa` |
 | Stage 0 | 已完成并提交：`e88c86a` |
 | 参数治理 | 已完成并提交：`d766a51` |
 | Stage 1A | 已完成并提交：`6693d3a`；尚未经过真实日常候选上游接入 |
-| Stage 1B | 当前标记为 `TECH_TESTED`；不得将其冒充 `LIVE_VALIDATED`、`PRODUCTION_READY` 或真实日常完成 |
+| Stage 1B | 当前标记为 `PARTIAL_LIVE_VALIDATED`；仅热点来源达到 `LIVE_VALIDATED`，Stage 1B 整体不得冒充 `PRODUCTION_READY` 或真实日常完成 |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
-| 真实来源状态 | 全部暂停；当前不允许安装、外部来源、真实模型调用、真实数据库写入或真实运行 |
-| 当前阻断 | 未获真实来源、真实模型、正式数据写入和生产授权；`external_calls_authorized: false`、`formal_data_writes_authorized: false`、`production_authorized: false` |
-| 下一唯一动作 | 请求并等待用户明确授权受控 `validation_live`；未授权前不得运行真实热点、真实模型、正式数据写入或 `production_daily` |
+| 真实来源状态 | 热点来源本轮已验收；真实调用授权已关闭，后续来源必须重新获得明确授权 |
+| 当前阻断 | 剩余日常发现来源尚未逐项真实验收；`external_calls_authorized: false`、`formal_data_writes_authorized: false`、`environment_changes_authorized: false`、`production_authorized: false` |
+| 下一唯一动作 | 逐项验证剩余日常发现来源；未完成前不得运行 `production_daily` |
 
 ### 创建本文件时的 Git 事实
 
@@ -239,20 +251,20 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 
 1. **阶段目标和真实业务价值**：由真实来源自然形成可追溯候选和日报快照，等待用户选择；发现不自动立项、不占用正式日产能。
 2. **对应 V1.3 章节**：3.1—3.5、4.1、16.6—16.9、17.1—17.3、19、20.1、21、22、24.2。
-3. **当前代码和数据事实**：错误验证及其派生结果已经物理删除，正式库的 Stage 1B 运行、来源版本、模型记录、候选、零候选、快照、冷却和决定均为零。领域包、热点独立匹配、标签证据分类、六来源读取、单来源验收模式和项目 Runtime 入口已提交并通过技术测试；当前只根据真实安装、配置、正式库记录和运行证据采用下表等级。
+3. **当前代码和数据事实**：错误验证及其派生结果已经物理删除；正式库已存在本轮热点 `validation_live` 的运行、来源版本、输入组装、模型记录、零候选、快照、命令回执和审计记录，候选、冷却和用户决定仍为零。领域包、热点独立匹配、标签证据分类、六来源读取、单来源验收模式和项目 Runtime 入口已提交并通过技术测试；当前只根据真实安装、配置、正式库记录和运行证据采用下表等级。
 
 ### Stage 1 来源六级状态
 
 | 来源能力 | 当前等级 | 当前证据 | 未达到下一等级的缺口 |
 | --- | --- | --- | --- |
-| TrendRadar 热点 | `ENV_READY` | 官方 V6.10.0/`1f178da` 安装在 `vendor/TrendRadar`；单次真实运行 57.871 秒，11 平台全成功并取得 255 条原始热榜条目，运行环境和原始转换可用 | 未经过当前领域过滤、热点转具体问题、候选判断或确定性零候选审计，不能算正常业务运行 |
+| TrendRadar 热点 | `LIVE_VALIDATED` | 本轮 `discovery_run_cde00cb53c994439b2a37111e5223a3f` 以 `validation_live` 完成：TrendRadar 11 平台采集成功，255 条真实热点观察，3 条社会生活热点进入当前领域过滤、输入组装和显式模型判断，3 条均审计为 `model_returned_no_candidate`，候选数为 0，正式库完整性 `ok`、外键违规 0 | 尚未进入独立 `production_daily`；热点来源通过不代表其他四类日报来源或 Stage 1B 整体完成 |
 | 对标账号日常内容 | `ENV_READY` | 正式库有 1,525 条真实抖音对标视频，MediaCrawler 原始归档仍在，真实环境可用 | 唯一真实候选链验收暴露了火箭、硬核工程和音乐娱乐等领域过滤错误；修复后未重新真实验收 |
 | 历史高信号 | `ENV_READY` | 正式库有 121 条 formal 与 323 条 rough hit，真实来源数据可用 | 唯一真实候选链验收使用了修复前过滤逻辑；当前版本未重新真实验收 |
 | 领域标签搜索 | `TECH_TESTED` | 标签轮换、每标签第 1 页、返回多少保存多少、科普/知识保留、活动词待复核、活动证据精确排除及 MediaCrawler 参数路径均有测试 | 正式搜索开关仍关闭，尚无真实搜索运行证据 |
 | 有限问题拓展 | `TECH_TESTED` | 已有 Core 正式来源表、受控登记、精确来源版本、统一过滤/模型输入和回归测试 | 尚无泛科普—社会生活真实完成拓展输入及真实候选/零候选运行证据 |
 | 保存的用户方向 | `TECH_TESTED` | 已有 Core 正式来源表、受控登记、精确来源版本、统一过滤/模型输入和回归测试 | 尚无本轮用户真实方向输入及真实候选/零候选运行证据 |
 
-以上状态不因代码、Mock、fixture、fake provider、pytest 通过或上游采集器成功返回原始数据而自动升级。只有完整经过当前业务过滤和候选/零候选审计的 `LIVE_VALIDATED` 或 `PRODUCTION_READY` 来源，才允许进入后续真实候选发现。当前没有任何来源满足该条件。
+以上状态不因代码、Mock、fixture、fake provider、pytest 通过或上游采集器成功返回原始数据而自动升级。只有完整经过当前业务过滤和候选/零候选审计的 `LIVE_VALIDATED` 或 `PRODUCTION_READY` 来源，才允许进入后续真实候选发现。当前只有 TrendRadar 热点来源达到 `LIVE_VALIDATED`，Stage 1B 整体仍未完成。
 4. **前置条件**：Stage 0、明确领域、来源资格、来源精确版本/时间、显式运行模式和显式模型路由；只有 `production_daily` 可形成正式日产候选，音乐娱乐须先有用户提供并受控登记的真实输入。
 5. **允许修改模块**：唯一 Core 内的来源记录、候选版本、过滤/冷却、日快照、用户决定、模型判断、Stage 1A 衔接和直接测试。
 6. **禁止修改/本阶段不做**：不自动选题、不做深度研究、D0—D7/P0—P7、音频、飞书、完整工作台、第二事实源或人工编造候选。

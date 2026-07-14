@@ -6,9 +6,11 @@ external_calls_authorized: false
 environment_changes_authorized: false
 formal_data_writes_authorized: false
 production_authorized: false
-completion_status: TECH_TESTED
-stage_status: TECH_TESTED
-next_action: request_controlled_validation_live_authorization
+completion_status: HOTSPOT_LIVE_VALIDATED_ZERO_CANDIDATE
+stage_status: PARTIAL_LIVE_VALIDATED
+source_evidence_level: LIVE_VALIDATED
+claimed_source_level: LIVE_VALIDATED
+next_action: validate_remaining_daily_discovery_sources_before_production_daily
 baseline_sha256: 08d38a9ed9c674104f9d416a816203e80e387115fd2b7199c49c63616a9ff1ab
 base_commit: 870f1c798e2e3be049095678c066a74b674603bb
 allowed_design_sources:
@@ -52,11 +54,11 @@ frozen_contracts:
   - runtime_skills/**
 forbidden_actions:
   - stage1_acceptance_test_bypass
-  - any_external_source_call
-  - any_model_call
+  - any_external_source_call_without_new_authorization
+  - any_model_call_without_new_authorization
   - environment_install_or_change
   - production_daily
-  - validation_live
+  - validation_live_without_new_authorization
   - stage1a_handoff
   - research_stage_entry
   - automatic_retry
