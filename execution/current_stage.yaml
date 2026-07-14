@@ -1,18 +1,18 @@
 mode: implementation
 stage: stage_1_daily_discovery
 design_complete: true
-implementation_authorized: true
+implementation_authorized: false
 external_calls_authorized: false
 environment_changes_authorized: false
 formal_data_writes_authorized: false
 production_authorized: false
-completion_status: SOURCE_TO_TOPIC_SKILL_CONTRACT_REVISION_AUTHORIZED
-stage_status: DESIGN_CONFIRMED_PENDING_SKILL_CONTRACT
+completion_status: SOURCE_TO_TOPIC_SKILL_CONTRACT_REVISED_PENDING_USER_REVIEW
+stage_status: SKILL_CONTRACT_REVISED_PENDING_USER_REVIEW
 source_evidence_level: LIVE_RUN_REJECTED
 claimed_source_level: NONE
-next_action: revise_source_to_topic_skill_contract_without_external_calls
+next_action: user_review_revised_source_to_topic_skill_contract
 baseline_sha256: 6822f5e121073f321b2a7d5a2ae1043d1bb46c001ca72edc8263371f2d2b70e8
-base_commit: 5c942f03c7335cdfe3cf3463b016bfbd28e652e5
+base_commit: 2855f57290d226a8b7054b32f41dfad565592dab
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
 execution_state_sources:
@@ -29,7 +29,7 @@ prohibited_design_sources:
   - old code comments business rules
 requirements:
   - id: STAGE1-HOTSPOT-DESIGN-CORRECTION-001
-    description: "User confirmed Stage 1 hotspot-to-topic design split: controlled material packet before source_to_topic, and source_to_topic must be revised into an atomic good-topic discovery Skill before live validation."
+    description: "source_to_topic was revised into an atomic good-topic discovery Skill; user review is required before any live validation."
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3.1 热点转选题的受控搜索与 Skill 审核
       - docs/EFFECTIVE_DESIGN_BASELINE.md#20.1 来源与选题 Skill
@@ -37,15 +37,8 @@ requirements:
     tests:
       - [python, -m, pytest, tests/test_workflow_guard.py, tests/core/test_stage1b_daily_discovery.py, tests/core/test_source_to_topic_skill.py, tests/core/test_run_source_to_topic.py, -q]
 allowed_paths:
-  - docs/EFFECTIVE_DESIGN_BASELINE.md
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
   - execution/current_stage.yaml
-  - runtime_skills/source_to_topic/**
-  - SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml
-  - scripts/core/experience/run_source_to_topic.py
-  - scripts/core/model_gateway/formal_skill_adapter.py
-  - tests/core/test_source_to_topic_skill.py
-  - tests/core/test_run_source_to_topic.py
 frozen_acceptance_tests:
   - tests/core/test_local_trendradar_executor.py
 frozen_contracts:
