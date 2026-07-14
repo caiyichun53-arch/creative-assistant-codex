@@ -75,22 +75,22 @@ external_call_authorized: false
 
 完成后必须记录官方来源版本、本机安装位置、真实运行命令、规范化输出、原始数据库、标准输出、标准错误、开始/结束时间和耗时。随后立即关闭外部调用授权并恢复 `DESIGN_RECOVERY`；任何实际无法完成的环节必须标记 `ENV_NOT_READY` 并停止，不得再次把接口、测试或安装文件存在称为“已接通”。
 
-Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`TECH_TESTED`、`ENV_READY`、`LIVE_VALIDATED`、`PRODUCTION_READY`。等级必须逐级满足；Mock、fixture、fake provider、文件存在或 pytest 通过最高只能达到 `TECH_TESTED`。`ENV_READY` 必须有项目内安装、依赖、正式本机配置和可执行命令；`LIVE_VALIDATED` 必须有本轮真实来源输入、原始输出、转换结果、错误和耗时证据；`PRODUCTION_READY` 还必须通过进入受控日常发现链路的独立验收。只有 `LIVE_VALIDATED` 或 `PRODUCTION_READY` 的来源才能用于之后另行授权的真实候选发现。
+Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`TECH_TESTED`、`ENV_READY`、`LIVE_VALIDATED`、`PRODUCTION_READY`。等级必须逐级满足；Mock、fixture、fake provider、文件存在或 pytest 通过最高只能达到 `TECH_TESTED`。`ENV_READY` 必须有项目内安装、依赖、正式本机配置和可执行命令。上游采集器真实启动并取得原始数据，只能证明运行环境和原始转换可用，仍只到 `ENV_READY`。`LIVE_VALIDATED` 必须让本次真实来源经过当前版本的标准来源对象转换、领域匹配、领域排除规则、时效/风险/重复过滤和热点转具体问题，并形成可审计的合格候选或确定性零候选原因；需要模型判断的节点还必须经过显式模型路由且无技术失败。`PRODUCTION_READY` 还必须通过进入受控日常发现链路的独立验收。只有 `LIVE_VALIDATED` 或 `PRODUCTION_READY` 的来源才能用于之后另行授权的真实候选发现。
 
-### TrendRadar 本轮真实来源验收结果
+### TrendRadar 本轮运行时真实测试结果（不构成 Stage 1 业务验收）
 
 项目内受控入口已由提交 `a6306535c7cea56babd31541723eaf9288c1ea83` 固定。本轮只执行一次 `vendor/TrendRadar/.venv/Scripts/python.exe -m trendradar`，没有自动重试、模型调用、候选生成或正式库写入。官方来源为 `https://github.com/sansan0/TrendRadar.git`，版本 V6.10.0，提交 `1f178da10e6680e5b652b0dec781e675fe73cf31`，安装位置为 `vendor/TrendRadar`。
 
-运行从 `2026-07-14T06:13:46.033845+00:00` 到 `2026-07-14T06:14:43.939924+00:00`，耗时 `57.871` 秒，退出码 0。11 个配置平台全部成功，失败来源 0；真实原始库为 `vendor/TrendRadar/output/news/2026-07-14.db`，抓取批次 `14-14`。项目转换得到 255 条标准对象，255 条标题、URL 和 ID 均非空且 ID 唯一，输出 SHA-256 为 `ec8d524ee72d6be176e28d92622a8a181d9bb421c96df674499f3307a9552069`。
+运行从 `2026-07-14T06:13:46.033845+00:00` 到 `2026-07-14T06:14:43.939924+00:00`，耗时 `57.871` 秒，退出码 0。11 个配置平台全部成功，失败来源 0；真实原始库为 `vendor/TrendRadar/output/news/2026-07-14.db`，抓取批次 `14-14`。项目转换得到 255 条原始热榜条目；其中的标题是热榜条目名称，URL 是该条目的原始落地链接，不表示视频，也不是选题。255 条标题、URL 和 ID 均非空且 ID 唯一，输出 SHA-256 为 `ec8d524ee72d6be176e28d92622a8a181d9bb421c96df674499f3307a9552069`。
 
-本机审计证据保存在 `validation_evidence/stage1/trendradar/20260714T061346.033845Z/`：`manifest.json` 记录命令、安装身份、开始/结束时间、耗时、原始库、平台状态和输出路径；`stdout.log` 为 3,038 字节；`stderr.log` 为 0 字节。规范化输出保存在 `outputs/stage1/trendradar/latest.json`。正式库文件最后修改时间仍为 `2026-07-14 11:53:29`，其中发现运行 1、Stage 1B 模型运行 12、候选 9、来源版本 12，均未因本轮来源验收增加。TrendRadar 因此只升级到 `LIVE_VALIDATED`，不升级为 `PRODUCTION_READY`。
+本机审计证据保存在 `validation_evidence/stage1/trendradar/20260714T061346.033845Z/`：`manifest.json` 记录命令、安装身份、开始/结束时间、耗时、原始库、平台状态和输出路径；`stdout.log` 为 3,038 字节；`stderr.log` 为 0 字节。规范化原始来源输出保存在 `outputs/stage1/trendradar/latest.json`。正式库文件最后修改时间仍为 `2026-07-14 11:53:29`，其中发现运行 1、Stage 1B 模型运行 12、候选 9、来源版本 12，均未因本轮运行增加。本轮没有执行领域匹配、社会生活排除规则、热点转具体问题、候选判断或确定性零候选审计，因此 TrendRadar 只保持 `ENV_READY`，不是 `LIVE_VALIDATED`，更不是 `PRODUCTION_READY`。
 
 ## 当前执行指针
 
 | 项目 | 当前事实 |
 | --- | --- |
-| 当前阶段 | Stage 1——来源六级状态复核完成，等待下一来源真实验收授权 |
-| 当前状态 | TrendRadar 来源已完成一次真实采集和标准转换，等级为 `LIVE_VALIDATED`；Stage 1 整体仍未完成，外部调用授权已关闭 |
+| 当前阶段 | Stage 1——来源六级状态纠正完成，等待真实业务链路验收授权 |
+| 当前状态 | TrendRadar、对标日常和历史高信号均只到 `ENV_READY`；当前没有任何 Stage 1 来源达到 `LIVE_VALIDATED`，外部调用授权已关闭 |
 | 当前动作 | 停止业务实现和外部调用，等待用户确认下一项来源环境补齐或真实验收；不得生成候选、调用模型或进入后续阶段 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
@@ -101,8 +101,8 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 | Stage 1B | 定向修正已提交：`be42e27e1909bb97afa14cfe25beb1f32a82b169`；单领域受控入口已提交：`e85b1e61e85973042c9aca9a4e4bda6cd5de0313`；本次真实链路验收修正已由当前 HEAD `fix: separate live validation from daily production discovery` 记录：既有真实社会生活运行及 9 个候选认定为 `validation_live`，只保留审计且不可进入正式日常生产；stash `wip-stage1b-before-execution-baseline` 已完成比较，未含当前提交之外仍需保留的独有有效内容，已安全删除；当前 `git stash list` 为空，不需要恢复或重新创建该 stash |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
 | 真实来源状态 | 见 Stage 1 六级状态表；只有 `LIVE_VALIDATED` 以上才有资格在后续另行授权后进入真实候选发现 |
-| 当前阻断 | 标签搜索仅 `TECH_TESTED`；有限问题拓展与保存的用户方向仅 `SCAFFOLDED`；没有用户对下一来源的单次外部调用授权 |
-| 下一唯一动作 | 只能补齐一个未达 `LIVE_VALIDATED` 来源的真实环境或运行该来源的单次真实验收；须先获得用户明确授权并更新门禁 |
+| 当前阻断 | TrendRadar 尚未经过领域过滤、热点转具体问题及候选/零候选审计；对标日常和历史高信号的唯一真实验收暴露了领域过滤错误，修复后未重验；标签搜索仅 `TECH_TESTED`；问题拓展和保存的用户方向仅 `SCAFFOLDED` |
+| 下一唯一动作 | 只能选择一个 `ENV_READY` 来源，用当前版本完整经过领域过滤与候选/零候选审计的单次 `validation_live`；须先获得用户明确授权并更新门禁 |
 
 ### 创建本文件时的 Git 事实
 
@@ -194,14 +194,14 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 
 | 来源能力 | 当前等级 | 当前证据 | 未达到下一等级的缺口 |
 | --- | --- | --- | --- |
-| TrendRadar 热点 | `LIVE_VALIDATED` | 官方 V6.10.0/`1f178da` 安装在 `vendor/TrendRadar`；单次真实运行 57.871 秒，11 平台全成功、255 条标准对象、stderr 为空，完整证据与原始 SQLite 已保存 | 未进入受控 `production_daily`，因此不是 `PRODUCTION_READY` |
-| 对标账号日常内容 | `LIVE_VALIDATED` | 正式库有 1,525 条真实抖音对标视频；既有 `validation_live` 运行实际读取 6 条 `daily_competitor_content`，形成 6 条隔离候选；原始 MediaCrawler 归档仍在 | 未在新的 `production_daily` 中验收，因此不是 `PRODUCTION_READY` |
-| 历史高信号 | `LIVE_VALIDATED` | 正式库有 121 条 formal 与 323 条 rough hit；既有 `validation_live` 运行实际读取 6 条 formal `historical_high_signal`，其中 3 条形成隔离候选 | 未在新的 `production_daily` 中验收，因此不是 `PRODUCTION_READY` |
+| TrendRadar 热点 | `ENV_READY` | 官方 V6.10.0/`1f178da` 安装在 `vendor/TrendRadar`；单次真实运行 57.871 秒，11 平台全成功并取得 255 条原始热榜条目，运行环境和原始转换可用 | 未经过当前领域过滤、热点转具体问题、候选判断或确定性零候选审计，不能算正常业务运行 |
+| 对标账号日常内容 | `ENV_READY` | 正式库有 1,525 条真实抖音对标视频，MediaCrawler 原始归档仍在，真实环境可用 | 唯一真实候选链验收暴露了火箭、硬核工程和音乐娱乐等领域过滤错误；修复后未重新真实验收 |
+| 历史高信号 | `ENV_READY` | 正式库有 121 条 formal 与 323 条 rough hit，真实来源数据可用 | 唯一真实候选链验收使用了修复前过滤逻辑；当前版本未重新真实验收 |
 | 领域标签搜索 | `TECH_TESTED` | 标签轮换、每标签第 1 页、返回多少保存多少及 MediaCrawler 参数路径有测试 | 正式搜索开关仍关闭，正式库没有话题标签/搜索页/发现视频表和真实搜索运行证据 |
 | 有限问题拓展 | `SCAFFOLDED` | Core Schema 预留 `question_expansion` 来源类型 | 当前 Stage 1B 过滤器不接受该类型，无受控加载入口、真实输入或运行证据 |
 | 保存的用户方向 | `SCAFFOLDED` | Core Schema 预留 `saved_user_direction` 来源类型 | 当前 Stage 1B 过滤器不接受该类型，无受控加载入口、真实输入或运行证据 |
 
-以上状态不因代码、Mock、fixture、fake provider 或 pytest 通过自动升级。只有 `LIVE_VALIDATED` 和 `PRODUCTION_READY` 的来源才允许进入后续另行授权的真实候选发现。
+以上状态不因代码、Mock、fixture、fake provider、pytest 通过或上游采集器成功返回原始数据而自动升级。只有完整经过当前业务过滤和候选/零候选审计的 `LIVE_VALIDATED` 或 `PRODUCTION_READY` 来源，才允许进入后续真实候选发现。当前没有任何来源满足该条件。
 4. **前置条件**：Stage 0、明确领域、来源资格、来源精确版本/时间、显式运行模式和显式模型路由；只有 `production_daily` 可形成正式日产候选，音乐娱乐须先有用户提供并受控登记的真实输入。
 5. **允许修改模块**：唯一 Core 内的来源记录、候选版本、过滤/冷却、日快照、用户决定、模型判断、Stage 1A 衔接和直接测试。
 6. **禁止修改/本阶段不做**：不自动选题、不做深度研究、D0—D7/P0—P7、音频、飞书、完整工作台、第二事实源或人工编造候选。
@@ -218,7 +218,7 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 17. **异常恢复**：保留关闭原因、失败运行和来源级审计；明确未发出的暂态失败才可按相同冻结输入、路由、Provider、模型、配置和 Prompt 受控重试。请求状态不确定、可能已消耗 token 或已离开明确失败状态时禁止自动重试，须由用户重新提交、取消或创建新运行。
 18. **Git 分支和提交检查点**：当前分支 `implementation/v1.3-stage1b-daily-discovery`；前序 `fix: separate live validation from daily production discovery` 只记录运行模式隔离和技术实现，不能证明 TrendRadar 或标签搜索已真实可用。本轮先提交项目内 TrendRadar 安装约定、确定性转换入口、技术测试和状态纠正；真实来源运行证据产生后再关闭授权提交。
 19. **下一阶段进入条件**：新建完整 `production_daily` 运行中，用户选择一个精确候选版本，来源链、领域、日产能、运行模式和版本均通过。
-20. **当前状态和缺口**：Stage 1 不是整体完成。既有 9 个候选仍停在 `validation_live`，没有任何候选可进入 Stage 1A。TrendRadar、对标日常和历史高信号达到 `LIVE_VALIDATED`；标签搜索仅 `TECH_TESTED`；问题拓展和保存的用户方向仅 `SCAFFOLDED`。所有来源分别达到 `LIVE_VALIDATED` 前不得宣称 Stage 1 真实来源完成，也不运行 `production_daily`。
+20. **当前状态和缺口**：Stage 1 不是整体完成。既有 9 个候选仍停在修复前的 `validation_live`，只能保留问题审计，没有任何候选可进入 Stage 1A。TrendRadar、对标日常和历史高信号仅 `ENV_READY`；标签搜索仅 `TECH_TESTED`；问题拓展和保存的用户方向仅 `SCAFFOLDED`。当前没有任何来源达到 `LIVE_VALIDATED`，不得运行真实候选发现或 `production_daily`。
 
 ### Stage 1B 真实运行恢复边界与验收条件
 
