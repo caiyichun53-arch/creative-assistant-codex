@@ -84,6 +84,8 @@ external_call_authorized: false
 
 恢复批次 `discovery_run_039ffe6217834d3d933f49631461ffc1` 已按新恢复编号执行且没有自动重试。TrendRadar 在 50.749 秒内完成 11 平台采集，得到 255 条真实热点观察；当前社会生活匹配读取 4 条，4 次模型调用均经显式路由且 `retry_status=not_retried`。其中 1 条返回确定性无候选，2 条返回文本无法按 JSON 解析并记为 `model_output_invalid`，1 条把“安宥真住房申购”娱乐人物线索包装为社会公平候选，同时自述“材料严重不足、无法确认事实”。批次因此为 `completed_with_failures`，只形成 1 条 `formal_candidate_pool=false` 的隔离候选、3 条隔离无候选记录和 1 条隔离快照；没有用户决定、Stage 1A、研究、经验或正式日产写入。数据库完整性为 `ok`、外键违规为零。该结果不得认定为 `LIVE_VALIDATED`。
 
+本次不联网修复已把版本化领域包的排除词和热点匹配词放入候选判断冻结输入，并在模型返回后由 Core 再做一次确定性领域检查；社会生活领域新增粉丝、偶像、艺人、爱豆和网红排除词，娱乐内容不得通过改写社会角度建立候选。模型自述“材料严重不足”“事实无法确认”等阻断缺口时改记为确定性零候选，不算技术失败。输出解析只额外兼容一个完整 JSON 代码块，代码块外说明、多个对象或其他自由文本仍失败关闭。`tests/core/test_stage1b_daily_discovery.py` 27 项通过，TrendRadar、来源采集与领域标签相关测试 48 项通过；修复期间没有真实来源或模型调用。
+
 ### 上一次单次验收授权的阻断结果
 
 本次只完成了受控运行前检查，没有发出任何真实热点或模型请求，也没有创建发现运行。检查结果：Mimo 的 `business_analysis` 路由可解析为显式 Hermes 适配器，模型引用已配置且 `fallback: none`；但 `config/settings.yaml` 中 `hotspot_collection.live_enabled` 仍为 `false`，`project_dir`、`executable` 和 `normalized_json_path` 均为空，本机未发现 TrendRadar 命令、项目目录或 Docker 容器。因此命中“任一真实运行配置缺失即停止”的规则，未使用其他热点源、旧数据、fixture 或临时脚本替代。一次性外部调用授权未被消耗为真实请求，现已关闭。
@@ -118,9 +120,9 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 
 | 项目 | 当前事实 |
 | --- | --- |
-| 当前阶段 | Stage 1——热点领域与候选输出技术修复 |
-| 当前状态 | 恢复批次真实采集成功，但因 2 条模型格式失败及 1 条娱乐人物/严重缺料候选而未通过业务验收；TrendRadar 仍为 `ENV_READY` |
-| 当前动作 | 外部调用保持关闭；只修复候选 JSON 严格归一化、社会生活领域候选二次硬过滤和严重缺料零候选处理，并补测试与操作说明 |
+| 当前阶段 | Stage 1——热点候选链技术修复已完成，等待下一次单来源验收授权 |
+| 当前状态 | 恢复批次未通过，TrendRadar 仍为 `ENV_READY`；对应领域包装、严重缺料和严格 JSON 处理已完成不联网修复并通过回归 |
+| 当前动作 | 外部调用保持关闭；不再运行真实热点或模型，等待下一次热点单来源 `validation_live` 明确授权 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `6693d3acab913a6845ad1c7665ff15cc4da6aefa` |
@@ -130,8 +132,8 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 | Stage 1B | 不联网六来源修复已提交：`d13e870a26945f9c5f4024d4e691e9f6eed5202a`；错误验证结果已物理删除且全库残留为零；stash 已清空，不需要恢复 |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
 | 真实来源状态 | 见 Stage 1 六级状态表；只有 `LIVE_VALIDATED` 以上才有资格在后续另行授权后进入真实候选发现 |
-| 当前阻断 | 热点候选链尚不能稳定拒绝娱乐人物换角度包装，且模型单一 JSON 代码块会被当作技术失败；外部调用授权已关闭 |
-| 下一唯一动作 | 完成上述不联网修复、相关回归、执行基线更新和提交；不得重新运行真实热点或模型，修复后等待新的单次验收授权 |
+| 当前阻断 | 修复只有测试证据，尚未经过新的真实热点和当前配置模型验收；外部调用授权已关闭 |
+| 下一唯一动作 | 获得新的单次明确授权后，只运行一次 `fan_kepu_social_life`、`source_type=hotspot`、`mode=validation_live`；不得复用或删除前两次失败审计，不得运行其他来源或 `production_daily` |
 
 ### 创建本文件时的 Git 事实
 

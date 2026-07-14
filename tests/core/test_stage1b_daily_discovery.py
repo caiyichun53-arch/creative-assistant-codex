@@ -18,7 +18,11 @@ from scripts.core.production.stage0_content_core import (
     StateTransitionError,
     StaleResultError,
 )
-from scripts.core.production.stage1b_daily_discovery import Stage1BDailyDiscoveryService, validate_candidate_judgement
+from scripts.core.production.stage1b_daily_discovery import (
+    Stage1BDailyDiscoveryService,
+    parse_candidate_judgement_output,
+    validate_candidate_judgement,
+)
 
 
 VALID_JUDGEMENT = {
@@ -408,6 +412,54 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         result = self._run("zero-candidate")
         self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 0)
         self.assertEqual(self.core.conn.execute("SELECT reason_code FROM stage1b_candidate_absence").fetchone()[0], "model_returned_no_candidate")
+
+    def test_single_json_code_fence_is_normalized_but_extra_text_is_rejected(self) -> None:
+        fenced = f"```json\n{json.dumps(VALID_JUDGEMENT, ensure_ascii=False)}\n```"
+        self.assertEqual(parse_candidate_judgement_output(fenced), validate_candidate_judgement(VALID_JUDGEMENT))
+        with self.assertRaises(json.JSONDecodeError):
+            parse_candidate_judgement_output(f"下面是结果：\n{json.dumps(VALID_JUDGEMENT, ensure_ascii=False)}")
+
+    def test_fenced_json_can_complete_without_becoming_a_format_failure(self) -> None:
+        self._insert_video()
+        self.provider.output = f"```json\n{json.dumps(VALID_JUDGEMENT, ensure_ascii=False)}\n```"
+        result = self._run("fenced-json")
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 1)
+        self.assertEqual(self.core.conn.execute("SELECT validation_status FROM stage1b_model_run").fetchone()[0], "passed")
+
+    def test_entertainment_angle_cannot_be_repackaged_as_social_life_candidate(self) -> None:
+        self._insert_video(title="住房申购为什么引发公众讨论")
+        self.provider.output = {
+            **VALID_JUDGEMENT,
+            "title": "住房申购争议背后的社会讨论",
+            "new_angle": "从偶像粉丝社群反应切入讨论公众情绪。",
+        }
+        result = self._run("entertainment-angle")
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 0)
+        self.assertEqual(result["summary"]["filtered"]["fan_kepu_social_life"]["candidate_outside_domain_policy"], 1)
+        absence = self.core.conn.execute("SELECT reason_code FROM stage1b_candidate_absence").fetchone()[0]
+        self.assertEqual(absence, "candidate_outside_domain_policy")
+        self.assertEqual(self.core.conn.execute("SELECT validation_status FROM stage1b_model_run").fetchone()[0], "passed")
+
+    def test_self_declared_severe_material_gap_becomes_zero_candidate(self) -> None:
+        self._insert_video(title="养老服务为什么引发普通家庭讨论")
+        self.provider.output = {
+            **VALID_JUDGEMENT,
+            "material_readiness": "材料严重不足，仅有标题线索，无法确认事实准确性。",
+        }
+        result = self._run("severe-material-gap")
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 0)
+        self.assertEqual(result["summary"]["filtered"]["fan_kepu_social_life"]["candidate_material_insufficient"], 1)
+        self.assertEqual(self.core.conn.execute("SELECT reason_code FROM stage1b_candidate_absence").fetchone()[0], "candidate_material_insufficient")
+
+    def test_candidate_input_contains_the_versioned_domain_policy(self) -> None:
+        self._insert_video()
+        self._run("domain-policy-input")
+        payload = json.loads(self.core.conn.execute("SELECT payload_json FROM stage1b_input_assembly").fetchone()[0])
+        self.assertIn("粉丝", payload["domain_policy"]["exclude_terms"])
+        self.assertIn("住房", payload["domain_policy"]["hotspot_match_terms"])
 
     def test_test_isolated_candidate_is_never_a_formal_candidate_pool_entry(self) -> None:
         self._insert_video()

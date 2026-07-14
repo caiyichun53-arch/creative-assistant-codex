@@ -1635,7 +1635,12 @@ class Stage0ContentProductionCore:
                 (absence_id, run_id, source_version_id, model_run_id, reason_code, _canonical(detail), self.data_identity, _now()),
             )
             if model_run_id is not None:
-                validation_status = "passed" if reason_code == "model_returned_no_candidate" else "failed"
+                valid_business_absences = {
+                    "model_returned_no_candidate",
+                    "candidate_outside_domain_policy",
+                    "candidate_material_insufficient",
+                }
+                validation_status = "passed" if reason_code in valid_business_absences else "failed"
                 self.conn.execute("UPDATE stage1b_model_run SET validation_status=? WHERE model_run_id=?", (validation_status, model_run_id))
             result = {"absence_id": absence_id, "reason_code": reason_code}
             self._receipt("stage1b_record_candidate_absence", idempotency_key, request, result)

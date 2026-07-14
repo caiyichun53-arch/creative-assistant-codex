@@ -119,14 +119,46 @@ def validate_candidate_judgement(payload: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def parse_candidate_judgement_output(output_text: str) -> dict[str, Any]:
+    """Parse one JSON object, tolerating only a single exact JSON code fence."""
+    text = output_text.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(\{.*\})\s*```", text, flags=re.IGNORECASE | re.DOTALL)
+    if fenced:
+        text = fenced.group(1)
+    return validate_candidate_judgement(json.loads(text))
+
+
+def candidate_rejection(domain_label: str, judgement: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    """Apply deterministic post-model domain and material gates before candidate storage."""
+    if judgement.get("outcome") != "candidate":
+        return None
+    policy = get_discovery_policy(domain_label)
+    candidate_text = "\n".join(
+        str(judgement.get(key) or "")
+        for key in ("title", "core_question", "why_attention", "new_angle")
+    ).casefold()
+    exclude_terms = tuple(str(term) for term in policy.get("exclude_terms", []))
+    matched_terms = sorted({term for term in exclude_terms if term.casefold() in candidate_text})
+    if matched_terms:
+        return "candidate_outside_domain_policy", {"matched_terms": matched_terms}
+    material_readiness = str(judgement.get("material_readiness") or "")
+    insufficient_markers = ("材料严重不足", "事实无法确认", "无法确认事实", "无法核实事实")
+    matched_markers = [marker for marker in insufficient_markers if marker in material_readiness]
+    if matched_markers:
+        return "candidate_material_insufficient", {"matched_markers": matched_markers}
+    return None
+
+
 def daily_discovery_prompt(input_payload: dict[str, Any]) -> str:
     return (
         "你只能根据一条已通过确定性筛选的受控来源，作有限的候选判断。不得搜索、抓取、下载、转写、分析视频，"
         "也不得声称受控输入之外的事实。来源仅是发现线索，绝不是研究证据；不得创建正式选题。"
-        "只返回一个 JSON 对象。若不足以形成候选，只返回 outcome=no_candidate 和非空中文 reason。"
+        "只返回一个裸 JSON 对象，不要使用 Markdown 代码块或附加说明。若不足以形成候选，只返回 outcome=no_candidate 和非空中文 reason。"
         "若形成候选，必须返回 outcome=candidate 以及 title、core_question、why_attention、new_angle、"
         "material_readiness、risk_limits、originality_relation。面向用户的 title（标题）、core_question（核心问题）、"
         "why_attention（价值）和 risk_limits（风险）必须是自然中文；原始来源标题可保留原语言。"
+        "必须遵守受控输入中的 domain_policy；若来源或拟议角度属于其排除类型，必须返回 no_candidate，"
+        "不得通过改写成社会公平、公众情绪或警示价值来包装。若材料严重不足或事实无法确认，也必须返回 no_candidate。"
         "originality_relation 只能是 same_topic_original_reconstruction、problem_expansion、independent_research。"
         "不得返回 score、rank、weight、recommendation_score 或 quality_rank。必须说明不确定性和材料缺口。\n\n"
         f"受控输入：{_canonical(input_payload)}"
@@ -393,7 +425,7 @@ class Stage1BDailyDiscoveryService:
                     )
                     try:
                         model_result = self.gateway.complete(model_request)
-                        judgement = validate_candidate_judgement(json.loads(model_result.output_text))
+                        judgement = parse_candidate_judgement_output(model_result.output_text)
                     except ModelGatewayError as exc:
                         self.core.record_discovery_no_candidate(
                             run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=None,
@@ -419,6 +451,16 @@ class Stage1BDailyDiscoveryService:
                             idempotency_key=f"{idempotency_key}:{domain_label}:absence:{index}",
                         )
                         filtered["model_returned_no_candidate"] = filtered.get("model_returned_no_candidate", 0) + 1
+                        continue
+                    rejection = candidate_rejection(domain_label, judgement)
+                    if rejection is not None:
+                        reason_code, detail = rejection
+                        self.core.record_discovery_no_candidate(
+                            run_id=run["run_id"], source_version_id=source_result["source_version_id"],
+                            model_run_id=model_result.envelope_version_id, reason_code=reason_code, detail=detail,
+                            idempotency_key=f"{idempotency_key}:{domain_label}:absence:{index}",
+                        )
+                        filtered[reason_code] = filtered.get(reason_code, 0) + 1
                         continue
                     candidate_payload = {
                         **judgement,
@@ -529,10 +571,15 @@ class Stage1BDailyDiscoveryService:
     @staticmethod
     def _assembly_payload(*, domain_label: str, source: dict[str, Any], source_version_id: str) -> dict[str, Any]:
         payload = source["payload"]
+        policy = get_discovery_policy(domain_label)
         return {
             "domain": domain_label,
             "source_version_id": source_version_id,
             "source_type": source["source_type"],
+            "domain_policy": {
+                "exclude_terms": list(policy.get("exclude_terms", [])),
+                "hotspot_match_terms": list(policy.get("hotspot_match_terms", [])),
+            },
             "source_object": {"id": source["source_object_id"], "version": source["source_object_version"], "time": source["source_time"], "title": payload["title"], "url": payload.get("url", ""), "account_name": payload.get("account_name", "")},
             "user_requirements": "daily discovery only; do not create a formal topic",
             "materials_and_facts": [{"kind": "source_clue", "reference": source_version_id}],
