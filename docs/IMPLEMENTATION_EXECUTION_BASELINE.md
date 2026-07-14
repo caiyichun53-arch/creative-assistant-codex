@@ -1,17 +1,17 @@
 ---
-mode: VALIDATION_RECOVERY_DECISION
-stage: STAGE_1_HOTSPOT_SOURCE_VALIDATION
-design_complete: true
+mode: DESIGN_RECOVERY
+stage: STAGE_1_HOTSPOT_VALIDATION_RECOVERY_RULE
+design_complete: false
 baseline_sha256: fbc903a2e8aabdcf4d4558c4e7fe5f017941a85d9cec11154035d3c55b32d216
-base_commit: d9438db02ca21599312bdcca717ad18576aec2a0
+base_commit: b211be7b8d35cd67468d8bc08cca5b18e30c83ba
 requirements:
-  - id: STAGE1-HOTSPOT-RECOVERY-001
-    description: 已失败的 validation_live 必须保留隔离审计；在幂等恢复规则获得裁决前，不得以新幂等键伪装成原批次恢复或再次调用外部来源和模型。
+  - id: STAGE1-HOTSPOT-RECOVERY-DESIGN-001
+    description: 用户已批准保留原失败审计并使用明确关联原批次的新恢复编号；必须先把这一恢复例外写入唯一有效设计基线，再开放真实调用。
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#16.7 每日发现、产能、日报与冷却
       - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#本次热点 validation_live 阻断与修复边界
     tests:
-      - [python, -m, pytest, tests/core/test_stage1b_daily_discovery.py, -q]
+      - [python, -m, pytest, tests/test_workflow_guard.py, -q]
   - id: WF-GUARD-001
     description: 安装、实现、测试、finish、提交和真实调用仍必须经过仓库工作流门禁。
     baseline_refs:
@@ -20,6 +20,7 @@ requirements:
     tests:
       - [python, -m, pytest, tests/test_workflow_guard.py, -q]
 allowed_paths:
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
 forbidden_actions:
   - business_code_change
@@ -104,9 +105,9 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 
 | 项目 | 当前事实 |
 | --- | --- |
-| 当前阶段 | Stage 1——TrendRadar 热点 Runtime 缺陷已修复，等待验证恢复机制裁决 |
-| 当前状态 | 已启动的单次热点验收在上游请求前因本地输出误判而失败；缺陷回归已通过，但没有热点原始观察、模型运行或候选，TrendRadar 仍为 `ENV_READY` |
-| 当前动作 | 外部调用保持关闭，不创建第二批次；等待用户裁决失败批次应如何在不破坏幂等语义的前提下恢复 |
+| 当前阶段 | Stage 1——热点验证恢复规则设计收口 |
+| 当前状态 | 用户已批准保留原失败记录，并用明确关联原批次的新恢复编号重新执行一次相同热点验收；外部调用仍关闭 |
+| 当前动作 | 只修改有效设计基线和实施执行基线，冻结恢复条件、审计关联和一次性边界；不得运行来源或模型 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `6693d3acab913a6845ad1c7665ff15cc4da6aefa` |
@@ -116,8 +117,8 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 | Stage 1B | 不联网六来源修复已提交：`d13e870a26945f9c5f4024d4e691e9f6eed5202a`；错误验证结果已物理删除且全库残留为零；stash 已清空，不需要恢复 |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
 | 真实来源状态 | 见 Stage 1 六级状态表；只有 `LIVE_VALIDATED` 以上才有资格在后续另行授权后进入真实候选发现 |
-| 当前阻断 | 原批次已完成失败回执；同一幂等键只能重放，而改用新幂等键会偏离现行恢复规则，修复完成后必须先裁决恢复机制 |
-| 下一唯一动作 | 修复提交后停止在恢复机制冲突处：同一幂等键会重放失败结果，而新幂等键会形成第二批次；在用户裁决前不发出真实请求 |
+| 当前阻断 | 有效设计基线尚未写入用户刚批准的新恢复编号例外；写入并提交前禁止真实调用 |
+| 下一唯一动作 | 把已批准的恢复规则写入唯一有效设计基线并提交；随后再以单独门禁开放一次真实热点恢复批次 |
 
 ### 创建本文件时的 Git 事实
 
