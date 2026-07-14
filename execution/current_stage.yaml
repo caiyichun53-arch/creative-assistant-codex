@@ -1,18 +1,18 @@
 mode: implementation
 stage: stage_1_daily_discovery
 design_complete: true
-implementation_authorized: true
+implementation_authorized: false
 external_calls_authorized: false
 environment_changes_authorized: false
 formal_data_writes_authorized: false
 production_authorized: false
-completion_status: SOURCE_TO_TOPIC_STAGE1B_ENTRYPOINT_FIX_IMPLEMENTED
-stage_status: TECH_TESTED_PENDING_LIVE_VALIDATION_AUTHORIZATION
+completion_status: SOURCE_TO_TOPIC_STAGE1B_ENTRYPOINT_FIX_TECH_TESTED_WAITING_LIVE_VALIDATION_AUTHORIZATION
+stage_status: TECH_TESTED_PENDING_USER_LIVE_VALIDATION_AUTHORIZATION
 source_evidence_level: LIVE_RUN_REJECTED
 claimed_source_level: NONE
-next_action: close_entrypoint_fix_authorization_after_commit_and_wait_for_user_live_validation_decision
+next_action: user_review_and_optionally_authorize_next_source_to_topic_live_validation
 baseline_sha256: 6822f5e121073f321b2a7d5a2ae1043d1bb46c001ca72edc8263371f2d2b70e8
-base_commit: 0dff7265d5ca424339b1a0db397dc88461634bc9
+base_commit: 761c345f70ccc6da415c90840d0dd2304adb6170
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
 execution_state_sources:
@@ -29,7 +29,7 @@ prohibited_design_sources:
   - old code comments business rules
 requirements:
   - id: STAGE1-HOTSPOT-DESIGN-CORRECTION-001
-    description: "Stage 1B now wires eligible discovery sources through the confirmed source_to_topic atomic Skill contract in code and direct tests. Real sources, model calls, formal data writes, production_daily, and validation_live remain unauthorized."
+    description: "Stage 1B source_to_topic entrypoint repair is committed and tech-tested. Implementation authorization is closed; real sources, model calls, formal data writes, production_daily, and validation_live remain unauthorized pending user review."
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3.1 热点转选题的受控搜索与 Skill 审核
       - docs/EFFECTIVE_DESIGN_BASELINE.md#20.1 来源与选题 Skill
@@ -39,10 +39,6 @@ requirements:
 allowed_paths:
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
   - execution/current_stage.yaml
-  - scripts/core/production/stage1b_daily_discovery.py
-  - scripts/core/production/stage0_content_core.py
-  - tests/core/test_stage1b_daily_discovery.py
-  - TECHNICAL_MANUAL.md
 frozen_acceptance_tests:
   - tests/core/test_local_trendradar_executor.py
 frozen_contracts:
