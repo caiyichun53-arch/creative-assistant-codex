@@ -1,18 +1,25 @@
 ---
-mode: VALIDATION_LIVE
-stage: STAGE_1_HOTSPOT_SOURCE_VALIDATION_RECOVERY
+mode: TECHNICAL_REPAIR
+stage: STAGE_1_HOTSPOT_CANDIDATE_CHAIN_REPAIR
 design_complete: true
 baseline_sha256: 24e4312ea025708e3d01ec2940868a3ee0efc89a9370835b77167cf0a06c5a22
-base_commit: e2740491537d9c50ae27c9e07534dc8a00b107b4
+base_commit: 64946526364b8067fcad04d85a540e0984322636
 requirements:
-  - id: STAGE1-HOTSPOT-RECOVERY-LIVE-001
-    description: 保留原失败批次，使用直接包含原批次编号的新恢复编号，只执行一次相同冻结范围的泛科普—社会生活热点 validation_live；无论结果如何均不得再次自动恢复。
+  - id: STAGE1-HOTSPOT-CANDIDATE-REPAIR-001
+    description: 泛科普—社会生活候选不得把娱乐人物或粉丝内容换成社会角度后混入；模型自认材料严重不足或事实无法确认时必须形成确定性零候选。
+    baseline_refs:
+      - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3 好选题、线索与热点
+      - docs/EFFECTIVE_DESIGN_BASELINE.md#16.7 每日发现、产能、日报与冷却
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#本次热点 validation_live 阻断与修复边界
+    tests:
+      - [python, -m, pytest, tests/core/test_stage1b_daily_discovery.py, -q]
+  - id: STAGE1-HOTSPOT-MODEL-FORMAT-001
+    description: 候选判断只接受裸 JSON 或单一 JSON 代码块；格式归一化不得接受额外自由文本，真正无效输出仍须失败关闭且不得重试。
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#16.7 每日发现、产能、日报与冷却
       - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#本次热点 validation_live 阻断与修复边界
     tests:
       - [python, -m, pytest, tests/core/test_stage1b_daily_discovery.py, -q]
-      - [python, -m, pytest, tests/core/test_local_trendradar_executor.py, -q]
   - id: WF-GUARD-001
     description: 安装、实现、测试、finish、提交和真实调用仍必须经过仓库工作流门禁。
     baseline_refs:
@@ -21,16 +28,22 @@ requirements:
     tests:
       - [python, -m, pytest, tests/test_workflow_guard.py, -q]
 allowed_paths:
-  - docs/EFFECTIVE_DESIGN_BASELINE.md
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
+  - TECHNICAL_MANUAL.md
+  - config/domain_packs/fan_kepu_social_life.yaml
+  - scripts/core/production/stage0_content_core.py
+  - scripts/core/production/stage1b_daily_discovery.py
+  - tests/core/test_stage1b_daily_discovery.py
 forbidden_actions:
-  - business_code_change
+  - any_external_source_call
+  - any_model_call
+  - candidate_generation
   - production_daily
   - stage1a_handoff
   - research_stage_entry
   - automatic_retry
   - workflow_guard_bypass
-external_call_authorized: true
+external_call_authorized: false
 ---
 
 # V1.3 实施执行基线
@@ -69,6 +82,8 @@ external_call_authorized: true
 
 项目桥接的安装完整性判定已修复：继续拒绝 TrendRadar 上游源码和其他陌生文件的改动，仅允许项目批准的 `config/config.yaml`、明确限定在 `output/` 下的 TrendRadar 自身运行产物以及 Python `__pycache__/`。`tests/core/test_local_trendradar_executor.py` 8 项和 `tests/core/test_stage1b_daily_discovery.py` 22 项通过；修复期间没有调用真实来源或模型。用户现已明确批准保留原失败批次 `discovery_run_cf43d61dd5024db393c21d2e65e19100`，并使用直接包含原批次编号的新恢复编号执行一次相同范围的热点验收。恢复必须继续使用 `fan_kepu_social_life`、`source_type=hotspot`、`mode=validation_live`、600 秒批次上限及当前显式候选判断路由；不得自动重试或再次恢复。
 
+恢复批次 `discovery_run_039ffe6217834d3d933f49631461ffc1` 已按新恢复编号执行且没有自动重试。TrendRadar 在 50.749 秒内完成 11 平台采集，得到 255 条真实热点观察；当前社会生活匹配读取 4 条，4 次模型调用均经显式路由且 `retry_status=not_retried`。其中 1 条返回确定性无候选，2 条返回文本无法按 JSON 解析并记为 `model_output_invalid`，1 条把“安宥真住房申购”娱乐人物线索包装为社会公平候选，同时自述“材料严重不足、无法确认事实”。批次因此为 `completed_with_failures`，只形成 1 条 `formal_candidate_pool=false` 的隔离候选、3 条隔离无候选记录和 1 条隔离快照；没有用户决定、Stage 1A、研究、经验或正式日产写入。数据库完整性为 `ok`、外键违规为零。该结果不得认定为 `LIVE_VALIDATED`。
+
 ### 上一次单次验收授权的阻断结果
 
 本次只完成了受控运行前检查，没有发出任何真实热点或模型请求，也没有创建发现运行。检查结果：Mimo 的 `business_analysis` 路由可解析为显式 Hermes 适配器，模型引用已配置且 `fallback: none`；但 `config/settings.yaml` 中 `hotspot_collection.live_enabled` 仍为 `false`，`project_dir`、`executable` 和 `normalized_json_path` 均为空，本机未发现 TrendRadar 命令、项目目录或 Docker 容器。因此命中“任一真实运行配置缺失即停止”的规则，未使用其他热点源、旧数据、fixture 或临时脚本替代。一次性外部调用授权未被消耗为真实请求，现已关闭。
@@ -103,9 +118,9 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 
 | 项目 | 当前事实 |
 | --- | --- |
-| 当前阶段 | Stage 1——TrendRadar 热点单次真实验收恢复 |
-| 当前状态 | 恢复规则已写入有效设计基线；用户已批准保留原失败记录，并用直接包含原批次编号的新恢复编号执行一次相同热点验收 |
-| 当前动作 | 只通过项目 Runtime 执行一次 `fan_kepu_social_life`、`source_type=hotspot`、`mode=validation_live` 的恢复批次；使用当前显式候选判断路由，600 秒上限，不自动重试 |
+| 当前阶段 | Stage 1——热点领域与候选输出技术修复 |
+| 当前状态 | 恢复批次真实采集成功，但因 2 条模型格式失败及 1 条娱乐人物/严重缺料候选而未通过业务验收；TrendRadar 仍为 `ENV_READY` |
+| 当前动作 | 外部调用保持关闭；只修复候选 JSON 严格归一化、社会生活领域候选二次硬过滤和严重缺料零候选处理，并补测试与操作说明 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `6693d3acab913a6845ad1c7665ff15cc4da6aefa` |
@@ -115,8 +130,8 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 | Stage 1B | 不联网六来源修复已提交：`d13e870a26945f9c5f4024d4e691e9f6eed5202a`；错误验证结果已物理删除且全库残留为零；stash 已清空，不需要恢复 |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
 | 真实来源状态 | 见 Stage 1 六级状态表；只有 `LIVE_VALIDATED` 以上才有资格在后续另行授权后进入真实候选发现 |
-| 当前阻断 | 无；只允许本次热点恢复，其他五来源、`production_daily` 和后续阶段继续禁止 |
-| 下一唯一动作 | 提交恢复规则和单次授权后，以新恢复编号 `stage1-hotspot-validation-live-recovery-discovery_run_cf43d61dd5024db393c21d2e65e19100-01` 执行一次相同热点验收；无论结果如何立即关闭外部调用授权 |
+| 当前阻断 | 热点候选链尚不能稳定拒绝娱乐人物换角度包装，且模型单一 JSON 代码块会被当作技术失败；外部调用授权已关闭 |
+| 下一唯一动作 | 完成上述不联网修复、相关回归、执行基线更新和提交；不得重新运行真实热点或模型，修复后等待新的单次验收授权 |
 
 ### 创建本文件时的 Git 事实
 
