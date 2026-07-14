@@ -129,11 +129,20 @@ hit_detection:
 hotspot_collection:
   provider: trendradar
   live_enabled: false
-  project_dir: "C:/path/to/TrendRadar"
-  executable: "C:/path/to/python.exe"
-  args: ["main.py"]
-  normalized_json_path: "C:/path/to/TrendRadar/output/codex_hotspots.json"
-  timeout_seconds: 180
+  project_dir: "C:/path/to/Creation_assistant-codex"
+  executable: "C:/path/to/project/python.exe"
+  args:
+    - "scripts/integrations/trendradar_runtime.py"
+    - "--trendradar-dir"
+    - "vendor/TrendRadar"
+    - "--output"
+    - "outputs/stage1/trendradar/latest.json"
+    - "--evidence-root"
+    - "validation_evidence/stage1/trendradar"
+    - "--timeout-seconds"
+    - "300"
+  normalized_json_path: "outputs/stage1/trendradar/latest.json"
+  timeout_seconds: 330
   max_items: 500
 
 domain_search:

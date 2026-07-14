@@ -18,8 +18,8 @@ class LocalTrendRadarExecutor:
     """Run an explicitly configured TrendRadar command and read its normalized JSON export.
 
     The command is an argument vector, never a shell expression.  The configured export
-    must be an object containing an ``items`` list; this adapter does not guess a
-    TrendRadar database schema or scrape its rendered reports.
+    must be an object containing an ``items`` list and provenance produced by the
+    repository runtime bridge.  Upstream SQLite conversion stays in that bridge.
     """
 
     project_dir: Path
@@ -83,9 +83,17 @@ class LocalTrendRadarExecutor:
                 payload={"error": "normalized TrendRadar export must contain an items list"},
                 external_side_effect=True,
             )
+        provenance = payload.get("provenance")
+        if not isinstance(provenance, dict) or not str(provenance.get("raw_database") or "").strip():
+            return ExternalCommandResult(
+                status="failed_output_invalid",
+                payload={"error": "normalized TrendRadar export must include real raw_database provenance"},
+                external_side_effect=True,
+            )
+        raw_archive_ref = str(provenance.get("evidence_dir") or export_path)
         return ExternalCommandResult(
             status="succeeded",
             payload=payload,
-            raw_archive_ref=str(export_path),
+            raw_archive_ref=raw_archive_ref,
             external_side_effect=True,
         )

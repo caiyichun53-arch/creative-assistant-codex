@@ -57,7 +57,9 @@ Input Assembly、ModelGateway 运行记录和审计边界，不执行真实内�
 
 新批次的固定顺序是：TrendRadar 热点采集→热点领域转化→对标日常来源→对标历史高信号→领域标签搜索→标签来源转化。标签搜索每天按最久未搜索优先轮换最多 3 个活跃标签，每个标签只请求第 1 页；该页返回多少条就在 `domain_search_page_observation` 留存多少条，不翻页补量、不按互动量另截固定条数。通过确定性过滤的记录才进入 `discovered_external_videos`，之后仍只是来源，不是候选。热点原始观察写入 `trendradar_hotspot_observation`，只有命中本领域活跃标签并通过后续过滤才进入热点转化。
 
-真实采集默认关闭。启用前须在 `config/settings.yaml` 同时明确配置 `hotspot_collection` 与 `domain_search` 的 `live_enabled: true`。TrendRadar 适配器只执行参数数组，不执行 shell 表达式；它读取配置指定的规范化 JSON 导出，格式为 `{"items": [...]}`，每项至少含稳定 `id`、`title` 和 `url`。项目不猜测 TrendRadar 内部数据库结构。任一采集超时、中断、输出缺失或部分失败都会保留批次状态，禁止自动重试。采集和来源处理完成后，只有合格少量对象才通过显式 `business_analysis` Mimo 路由判断候选，并将来源、过滤、模型运行、候选和快照写入 `data/formal/production_activation.sqlite3`。入口不自动选择候选、不创建正式生产任务、不进入研究；没有真实来源或没有合格候选时保留零候选，不得补位。
+真实采集默认关闭。启用前分别核实所运行来源的 `live_enabled: true`；单独验收热点不要求同时启用标签搜索。官方 TrendRadar 固定安装在仓库内 `vendor/TrendRadar`，使用其锁定环境的命令为 `vendor/TrendRadar/.venv/Scripts/python.exe -m trendradar`。项目 Runtime 直接入口为 `python scripts/integrations/trendradar_runtime.py --trendradar-dir vendor/TrendRadar --output outputs/stage1/trendradar/latest.json --evidence-root validation_evidence/stage1/trendradar --timeout-seconds 300`。入口只运行一次官方命令，从本次更新的 `output/news/YYYY-MM-DD.db` 转换标准对象，并保存 stdout、stderr、命令、官方提交、原始数据库、输出、错误和耗时；不调用模型、不自动重试、不补造 URL 或数量。
+
+Stage 1 来源完成度统一使用 `DESIGNED → SCAFFOLDED → TECH_TESTED → ENV_READY → LIVE_VALIDATED → PRODUCTION_READY`。Mock、fixture、fake provider、文件存在或 pytest 通过最高只算 `TECH_TESTED`；没有项目内安装、正式本机配置、真实输入输出和运行证据，不得写“已补齐”“已接通”或“功能完成”。只有达到 `LIVE_VALIDATED` 的来源，才有资格在另行授权后进入真实候选发现。
 
 ```powershell
 python scripts/core/production/stage1b_daily_discovery.py --domain fan_kepu_social_life --mode production_daily --actor <audited-user> --idempotency-key <stable-authorized-run-key> --batch-timeout-seconds 600

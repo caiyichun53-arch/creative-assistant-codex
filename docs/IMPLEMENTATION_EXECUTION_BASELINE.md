@@ -1,6 +1,6 @@
 ---
 mode: IMPLEMENTATION_AND_VALIDATION_LIVE
-stage: STAGE_1_HOTSPOT_RUNTIME_SETUP
+stage: STAGE_1_SOURCE_READINESS_CORRECTION
 design_complete: true
 baseline_sha256: 03d1a9950f86d379368b4c00b607c6ebfde6e03d18d2d2658d20025063895001
 base_commit: 969901890c7025e826538ed51bb29ac6b8544808
@@ -17,13 +17,12 @@ requirements:
       - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#Stage 1 热点运行时补齐授权
     tests:
       - [python, -m, pytest, tests/core/test_local_trendradar_executor.py, tests/core/test_daily_source_acquisition.py, -q]
-  - id: STAGE1-HOTSPOT-RUNTIME-003
-    description: 接通后必须手动执行一次真实热点 validation_live 和显式 Mimo 候选判断，允许零候选且禁止自动重试。
+  - id: STAGE1-SOURCE-STATUS-003
+    description: Stage 1全部来源必须按六级状态核实，Mock、fixture、fake provider和pytest最多只能证明TECH_TESTED。
     baseline_refs:
       - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#Stage 1 热点运行时补齐授权
-      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#Stage 1B 真实运行恢复边界与验收条件
     tests:
-      - [python, -m, pytest, tests/core/test_stage1b_daily_discovery.py, -q]
+      - [python, -m, pytest, tests/core/test_local_trendradar_executor.py, -q]
   - id: WF-GUARD-001
     description: 安装、实现、测试、finish、提交和真实调用仍必须经过仓库工作流门禁。
     baseline_refs:
@@ -35,17 +34,14 @@ allowed_paths:
   - TECHNICAL_MANUAL.md
   - config/settings.example.yaml
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
-  - scripts/core/business_data/daily_source_acquisition.py
   - scripts/core/external_adapters/local_trendradar_executor.py
-  - scripts/core/production/stage1b_daily_discovery.py
   - scripts/integrations/trendradar_runtime.py
-  - tests/core/test_daily_source_acquisition.py
   - tests/core/test_local_trendradar_executor.py
-  - tests/core/test_stage1b_daily_discovery.py
 forbidden_actions:
   - unrelated_business_code_change
   - non_trendradar_source_call
-  - non_mimo_model_call
+  - any_model_call
+  - candidate_generation
   - production_daily
   - stage1a_handoff
   - research_stage_entry
@@ -90,19 +86,21 @@ external_call_authorized: true
 
 ## Stage 1 热点运行时补齐授权
 
-用户在得知此前只完成接口框架、没有安装或接通 TrendRadar 后，明确要求立即把它真正安装并接通。本轮批准从 TrendRadar 官方来源完成本机安装，补充项目内必要且有限的确定性输出转换入口，配置被 Git 忽略的本机运行参数，运行对应测试并提交，然后手动执行一次热点源 `validation_live` 和显式 Mimo 候选判断。
+用户在得知此前只完成接口框架、没有安装或接通 TrendRadar 后，明确要求立即把它真正安装并接通。本轮批准从 TrendRadar 官方来源完成本机安装，补充项目内必要且有限的确定性输出转换入口，配置被 Git 忽略的本机运行参数，运行对应测试并提交，然后手动执行一次真实热点来源验收。本轮暂停候选生成，不调用 Mimo 或其他模型。
 
-安装和接入不得修改 TrendRadar 上游源码，不得使用非官方分发、其他热点源、浏览器临时抓取、旧热点、fixture 或人工伪造输出。项目转换入口只能读取 TrendRadar 本次真实运行产生的本地持久化结果并输出规范化 JSON，不作业务判断、不调用模型、不补造 URL 或数量。真实验收只允许热点来源，不得同时启动标签搜索、对标来源、`production_daily`、Stage 1A、研究或经验系统；超时、部分失败和不确定请求不得自动重试。
+安装必须位于仓库内 `vendor/TrendRadar`，不得把仓库外目录作为正式运行位置。接入不得修改 TrendRadar 上游业务源码，不得使用非官方分发、其他热点源、浏览器临时抓取、旧热点、fixture 或人工伪造输出。项目转换入口只能读取 TrendRadar 本次真实运行产生的本地 SQLite 结果并输出规范化 JSON，不作业务判断、不调用模型、不补造 URL 或数量。真实验收只允许热点来源，不得同时启动标签搜索、对标来源、候选生成、`production_daily`、Stage 1A、研究或经验系统；超时、部分失败和不确定请求不得自动重试。
 
-完成后必须记录官方来源版本、本机安装位置、真实运行命令、规范化输出、采集运行、热点观察、过滤、模型运行和候选/零候选结果。随后立即关闭外部调用授权并恢复 `DESIGN_RECOVERY`；任何实际无法完成的环节必须按真实阻断汇报，不得再次把接口、测试或安装文件存在称为“已接通”。
+完成后必须记录官方来源版本、本机安装位置、真实运行命令、规范化输出、原始数据库、标准输出、标准错误、开始/结束时间和耗时。随后立即关闭外部调用授权并恢复 `DESIGN_RECOVERY`；任何实际无法完成的环节必须标记 `ENV_NOT_READY` 并停止，不得再次把接口、测试或安装文件存在称为“已接通”。
+
+Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`TECH_TESTED`、`ENV_READY`、`LIVE_VALIDATED`、`PRODUCTION_READY`。等级必须逐级满足；Mock、fixture、fake provider、文件存在或 pytest 通过最高只能达到 `TECH_TESTED`。`ENV_READY` 必须有项目内安装、依赖、正式本机配置和可执行命令；`LIVE_VALIDATED` 必须有本轮真实来源输入、原始输出、转换结果、错误和耗时证据；`PRODUCTION_READY` 还必须通过进入受控日常发现链路的独立验收。只有 `LIVE_VALIDATED` 或 `PRODUCTION_READY` 的来源才能用于之后另行授权的真实候选发现。
 
 ## 当前执行指针
 
 | 项目 | 当前事实 |
 | --- | --- |
-| 当前阶段 | Stage 1——TrendRadar 运行时安装、真实接通与热点单次验收 |
-| 当前状态 | 用户已明确批准把此前缺失的 TrendRadar 安装、真实输出转换、本机配置和一次热点 `validation_live` 补齐；机器模式为 `IMPLEMENTATION_AND_VALIDATION_LIVE` |
-| 当前动作 | 从官方来源核实并安装 TrendRadar→实现必要的确定性真实输出转换→配置本机路径→测试并提交→手动执行一次真实热点与 Mimo 候选判断→核对审计→关闭授权 |
+| 当前阶段 | Stage 1——来源完成状态纠正与 TrendRadar 真实来源验收 |
+| 当前状态 | TrendRadar 已在仓库内安装并完成确定性转换技术测试，当前只到 `ENV_READY`；尚未产生本轮真实运行证据，不得写成已接通或完成 |
+| 当前动作 | 提交受控 TrendRadar 运行入口→只运行一次真实热点来源采集与转换→保存输出/错误/耗时→更新六级状态→关闭授权；不生成候选、不调用模型 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `6693d3acab913a6845ad1c7665ff15cc4da6aefa` |
@@ -111,9 +109,9 @@ external_call_authorized: true
 | Stage 1A | 已完成并提交：`6693d3a`；尚未经过真实日常候选上游接入 |
 | Stage 1B | 定向修正已提交：`be42e27e1909bb97afa14cfe25beb1f32a82b169`；单领域受控入口已提交：`e85b1e61e85973042c9aca9a4e4bda6cd5de0313`；本次真实链路验收修正已由当前 HEAD `fix: separate live validation from daily production discovery` 记录：既有真实社会生活运行及 9 个候选认定为 `validation_live`，只保留审计且不可进入正式日常生产；stash `wip-stage1b-before-execution-baseline` 已完成比较，未含当前提交之外仍需保留的独有有效内容，已安全删除；当前 `git stash list` 为空，不需要恢复或重新创建该 stash |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
-| 真实来源状态 | 社会生活领域已完成第一次受控真实发现；音乐娱乐领域没有可用真实来源，本轮未运行，禁止用 fixture 或人工编造补齐 |
-| 当前阻断 | 无；仅当官方安装、真实输出结构、运行依赖、Mimo 或受控入口出现不可替代的实际缺失时才停止并如实记录 |
-| 下一唯一动作 | 连续完成 TrendRadar 官方安装、真实接通、测试、提交和一次热点 `validation_live`；完成后关闭授权并汇报真实结果 |
+| 真实来源状态 | 见 Stage 1 六级状态表；只有 `LIVE_VALIDATED` 以上才有资格在后续另行授权后进入真实候选发现 |
+| 当前阻断 | TrendRadar 尚缺一次真实来源运行证据；标签搜索、问题拓展和保存的用户方向也没有真实运行证据 |
+| 下一唯一动作 | 先提交已测试的项目内 TrendRadar 入口，再只运行一次真实热点来源验收并据实关闭状态；不进入候选生成 |
 
 ### 创建本文件时的 Git 事实
 
@@ -199,7 +197,20 @@ external_call_authorized: true
 
 1. **阶段目标和真实业务价值**：由真实来源自然形成可追溯候选和日报快照，等待用户选择；发现不自动立项、不占用正式日产能。
 2. **对应 V1.3 章节**：3.1—3.5、4.1、16.6—16.9、17.1—17.3、19、20.1、21、22、24.2。
-3. **当前代码和数据事实**：既有真实运行 `discovery_run_1f335cdb47f34b6c94ab8e86c8651610` 及 9 个候选保持 `validation_live` 隔离不变。本次来源补齐增加 TrendRadar 原始热点观察、每日采集运行、标签第 1 页完整观察记录及正式热点/标签来源追溯；旧实现中的 7 天轮换、每次读取 20 条和按互动量截取 5 条已撤销，不再构成设计或运行参数。正式库数据未在本轮读取或修改。
+3. **当前代码和数据事实**：既有真实运行 `discovery_run_1f335cdb47f34b6c94ab8e86c8651610` 及 9 个候选保持 `validation_live` 隔离不变。热点与标签搜索此前只有接入框架和假数据技术测试，不能称为来源已补齐；当前正式库没有 `trendradar_hotspot_observation`、`domain_search_tags`、`domain_search_page_observation` 或 `discovered_external_videos` 表，也没有 hotspot/tag/question/user-direction 来源版本。当前只根据真实安装、配置、正式库记录和运行证据采用下表等级。
+
+### Stage 1 来源六级状态
+
+| 来源能力 | 当前等级 | 当前证据 | 未达到下一等级的缺口 |
+| --- | --- | --- | --- |
+| TrendRadar 热点 | `ENV_READY` | 官方 `sansan0/TrendRadar` V6.10.0 安装在 `vendor/TrendRadar`，锁定依赖 101 项；项目 Runtime 转换入口与本机配置已完成，11 项相关技术测试通过 | 尚缺本轮一次真实热点抓取、真实 SQLite、规范化输出、stdout/stderr 和耗时证据；产生前禁止称已接通 |
+| 对标账号日常内容 | `LIVE_VALIDATED` | 正式库有 1,525 条真实抖音对标视频；既有 `validation_live` 运行实际读取 6 条 `daily_competitor_content`，形成 6 条隔离候选；原始 MediaCrawler 归档仍在 | 未在新的 `production_daily` 中验收，因此不是 `PRODUCTION_READY` |
+| 历史高信号 | `LIVE_VALIDATED` | 正式库有 121 条 formal 与 323 条 rough hit；既有 `validation_live` 运行实际读取 6 条 formal `historical_high_signal`，其中 3 条形成隔离候选 | 未在新的 `production_daily` 中验收，因此不是 `PRODUCTION_READY` |
+| 领域标签搜索 | `TECH_TESTED` | 标签轮换、每标签第 1 页、返回多少保存多少及 MediaCrawler 参数路径有测试 | 正式搜索开关仍关闭，正式库没有话题标签/搜索页/发现视频表和真实搜索运行证据 |
+| 有限问题拓展 | `SCAFFOLDED` | Core Schema 预留 `question_expansion` 来源类型 | 当前 Stage 1B 过滤器不接受该类型，无受控加载入口、真实输入或运行证据 |
+| 保存的用户方向 | `SCAFFOLDED` | Core Schema 预留 `saved_user_direction` 来源类型 | 当前 Stage 1B 过滤器不接受该类型，无受控加载入口、真实输入或运行证据 |
+
+以上状态不因代码、Mock、fixture、fake provider 或 pytest 通过自动升级。只有 `LIVE_VALIDATED` 和 `PRODUCTION_READY` 的来源才允许进入后续另行授权的真实候选发现。
 4. **前置条件**：Stage 0、明确领域、来源资格、来源精确版本/时间、显式运行模式和显式模型路由；只有 `production_daily` 可形成正式日产候选，音乐娱乐须先有用户提供并受控登记的真实输入。
 5. **允许修改模块**：唯一 Core 内的来源记录、候选版本、过滤/冷却、日快照、用户决定、模型判断、Stage 1A 衔接和直接测试。
 6. **禁止修改/本阶段不做**：不自动选题、不做深度研究、D0—D7/P0—P7、音频、飞书、完整工作台、第二事实源或人工编造候选。
@@ -214,9 +225,9 @@ external_call_authorized: true
 15. **必须提交的验收证据**：运行模式、真实发现运行 ID、来源/过滤/候选/快照/审计记录、模型运行记录、已授权领域清单和未运行领域边界、测试结果、`git diff --check`。本次证据为运行 `discovery_run_1f335cdb47f34b6c94ab8e86c8651610` 的 `validation_live` 分类审计及其既有社会生活来源、过滤、模型、候选和快照；未读取音乐娱乐，也未重新调用真实来源或 Mimo。
 16. **阻断和停止条件**：获授权领域没有任何真实来源时停止并报告最小阻断；音乐娱乐无来源时不得以 fixture、fake provider 或人工来源补位；模型非法输出、来源过期/重复/风险或批次超时、中断、请求状态不确定时不得形成或升级为完整生产结果。
 17. **异常恢复**：保留关闭原因、失败运行和来源级审计；明确未发出的暂态失败才可按相同冻结输入、路由、Provider、模型、配置和 Prompt 受控重试。请求状态不确定、可能已消耗 token 或已离开明确失败状态时禁止自动重试，须由用户重新提交、取消或创建新运行。
-18. **Git 分支和提交检查点**：当前分支 `implementation/v1.3-stage1b-daily-discovery`；前序 `fix: separate live validation from daily production discovery` 已记录运行模式隔离。本次独立提交补齐 TrendRadar 与标签搜索来源设计、Runtime 顺序、正式追溯、测试和操作说明；`python -m pytest tests -q` 通过 `743 passed`，`git diff --check` 通过。
+18. **Git 分支和提交检查点**：当前分支 `implementation/v1.3-stage1b-daily-discovery`；前序 `fix: separate live validation from daily production discovery` 只记录运行模式隔离和技术实现，不能证明 TrendRadar 或标签搜索已真实可用。本轮先提交项目内 TrendRadar 安装约定、确定性转换入口、技术测试和状态纠正；真实来源运行证据产生后再关闭授权提交。
 19. **下一阶段进入条件**：新建完整 `production_daily` 运行中，用户选择一个精确候选版本，来源链、领域、日产能、运行模式和版本均通过。
-20. **当前状态和缺口**：来源补齐的代码与隔离测试已完成，既有 9 个候选仍停在 `validation_live`，没有任何候选可进入 Stage 1A。本轮没有真实采集或模型调用；下一步须由用户批准后按来源类型逐个进行新的 `validation_live` 验收，全部通过前不运行 `production_daily`。音乐娱乐仍缺少最小真实业务输入。
+20. **当前状态和缺口**：Stage 1 不是整体完成。既有 9 个候选仍停在 `validation_live`，没有任何候选可进入 Stage 1A。对标日常和历史高信号达到 `LIVE_VALIDATED`；TrendRadar 当前仅 `ENV_READY`；标签搜索仅 `TECH_TESTED`；问题拓展和保存的用户方向仅 `SCAFFOLDED`。所有来源分别达到 `LIVE_VALIDATED` 前不得宣称 Stage 1 真实来源完成，也不运行 `production_daily`。
 
 ### Stage 1B 真实运行恢复边界与验收条件
 
