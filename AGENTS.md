@@ -33,12 +33,13 @@
 
 ## 强制工作流门禁
 
-- 任何代码任务在读取两份基线并核对 Git 事实后、修改文件前，必须运行 `python scripts/workflow_guard.py start`。只有返回 `PASS` 才能开始业务代码；返回 `BASELINE_GAP` 时只允许按机器基线的 `DESIGN_RECOVERY` 白名单修复设计或门禁，不得修改业务代码。
-- 工作中可随时运行 `python scripts/workflow_guard.py check`。出现 `SCOPE_MISMATCH`、`USER_AUTH_REQUIRED`、`BASELINE_GAP`、需求映射缺失或基线哈希不一致时必须立即停止，不得通过移动文件、改写 Git 状态或删除检查规避。
-- 完成前必须先暂存本轮全部文件，保证没有未暂存和未跟踪文件，再运行 `python scripts/workflow_guard.py finish`。只有 `finish` 返回 `PASS` 并为当前 Git 索引生成凭证后才允许提交。
-- Git 提交必须通过仓库 `.githooks/pre-commit` 对 finish 凭证的校验。禁止 `--no-verify`、禁用或替换 `core.hooksPath`、删除钩子、伪造凭证、修改门禁输出来绕过检查。
-- 真实数据库写入、真实网络/来源、安装、付费服务和模型调用必须在机器基线中 `external_call_authorized: true`，并在命令执行前以 `--external-call` 通过门禁；未授权必须返回 `USER_AUTH_REQUIRED`。不得先调用后补授权。
-- 每项 requirement 必须同时指向现行基线位置和直接测试；缺少任一项时 `finish` 不得通过。任何业务实现恢复前还必须把 `design_complete` 明确改为 `true` 并由用户确认对应 Stage 详细设计。
+- 所有任务在读取两份基线、核对目录、分支、HEAD、工作区和执行指针后，修改文件前必须运行 `python scripts/workflow_guard.py start`；非零退出必须立即停止，不得继续实施。
+- 工作中可运行 `python scripts/workflow_guard.py check`；出现 `BASELINE_GAP`、`SCOPE_MISMATCH`、`USER_AUTH_REQUIRED`、需求映射缺失、基线哈希不一致或冻结验收测试被修改时，必须停止并汇报，不得移动文件、改写 Git 状态、删除检查或改门禁输出来规避。
+- 完成前必须暂存本轮全部文件，确认没有未暂存和未跟踪文件，再运行 `python scripts/workflow_guard.py finish`。只有 `finish` 返回 `PASS` 并为当前 Git 索引生成凭证后才允许提交。
+- Git 提交必须通过仓库 `.githooks/pre-commit` 对 finish 凭证的校验。禁止 `--no-verify`、禁用或替换 `core.hooksPath`、删除钩子、伪造凭证或绕过门禁。
+- 真实数据库写入、真实网络/来源、安装、环境改动、付费服务和模型调用必须在 `execution/current_stage.yaml` 中显式授权，并在命令执行前以 `--external-call` 或 `--environment-change` 通过门禁；未授权必须返回 `USER_AUTH_REQUIRED`。不得先调用后补授权。
+- 只有 `mode: design_recovery` 可以恢复设计；设计恢复只能修改 `docs/EFFECTIVE_DESIGN_BASELINE.md`，除非当前执行指针明确把门禁或章程治理文件列入白名单。旧 Goal、旧迁移计划、历史报告、交接状态、聊天记忆和旧代码不得直接影响业务代码。
+- 每项 requirement 必须同时指向现行基线位置和直接测试；缺少任一项时 `finish` 不得通过。任何业务实现恢复前必须把 `design_complete` 和 `implementation_authorized` 明确改为 `true`，并由用户确认对应 Stage 详细设计。
 
 ## 交付纪律
 

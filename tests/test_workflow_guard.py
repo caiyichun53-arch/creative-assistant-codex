@@ -30,9 +30,13 @@ def _write_machine_baseline(
 ) -> None:
     effective = root / "docs" / "EFFECTIVE_DESIGN_BASELINE.md"
     state = {
-        "mode": "DESIGN_RECOVERY",
-        "stage": "STAGE_1_TOPIC_DISCOVERY",
+        "mode": "design_recovery",
+        "stage": "stage_1_daily_discovery",
         "design_complete": design_complete,
+        "implementation_authorized": False,
+        "external_calls_authorized": False,
+        "environment_changes_authorized": False,
+        "completion_status": "REJECTED_DESIGN_MISMATCH",
         "baseline_sha256": effective_hash or hashlib.sha256(effective.read_bytes()).hexdigest(),
         "base_commit": base_commit,
         "requirements": [
@@ -46,18 +50,28 @@ def _write_machine_baseline(
         "allowed_paths": [
             "AGENTS.md",
             "docs/IMPLEMENTATION_EXECUTION_BASELINE.md",
+            "execution/current_stage.yaml",
             "scripts/workflow_guard.py",
             "tests/test_workflow_guard.py",
             ".githooks/pre-commit",
         ],
-        "forbidden_actions": ["business_code_change", "external_source_call", "model_call", "workflow_guard_bypass"],
-        "external_call_authorized": False,
+        "frozen_acceptance_tests": ["tests/core/test_stage1b_daily_discovery.py"],
+        "forbidden_actions": [
+            "business_code_change",
+            "stage1_business_acceptance_test_change",
+            "external_source_call",
+            "model_call",
+            "environment_install_or_change",
+            "workflow_guard_bypass",
+        ],
     }
-    baseline = root / "docs" / "IMPLEMENTATION_EXECUTION_BASELINE.md"
-    baseline.write_text(
-        "---\n"
-        + yaml.safe_dump(state, allow_unicode=True, sort_keys=False)
-        + "---\n\n# Fixture execution baseline\n\n## 工作流硬门禁\n\nfixture\n",
+    (root / "execution").mkdir(exist_ok=True)
+    (root / "execution" / "current_stage.yaml").write_text(
+        yaml.safe_dump(state, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    (root / "docs" / "IMPLEMENTATION_EXECUTION_BASELINE.md").write_text(
+        "# Fixture execution baseline\n\n## 工作流硬门禁\n\nfixture\n",
         encoding="utf-8",
     )
 
@@ -68,6 +82,7 @@ def _repo(tmp_path: Path, **baseline_options: object) -> Path:
     (root / ".githooks").mkdir()
     (root / "scripts").mkdir()
     (root / "tests").mkdir()
+    (root / "tests" / "core").mkdir()
     (root / "docs" / "EFFECTIVE_DESIGN_BASELINE.md").write_text("# Effective design fixture\n", encoding="utf-8")
     (root / "AGENTS.md").write_text("# Fixture agents\n\n## 强制工作流门禁\n", encoding="utf-8")
     _git(root, "init", "-q")
@@ -105,6 +120,19 @@ def test_unapproved_external_call_returns_user_auth_required(tmp_path: Path) -> 
     assert result == workflow_guard.EXIT_CODES["USER_AUTH_REQUIRED"]
 
 
+def test_unapproved_environment_change_returns_user_auth_required(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    result = workflow_guard.run(["check", "--environment-change"], repo_root=root)
+    assert result == workflow_guard.EXIT_CODES["USER_AUTH_REQUIRED"]
+
+
+def test_frozen_acceptance_test_change_returns_scope_mismatch(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    (root / "tests" / "core" / "test_stage1b_daily_discovery.py").write_text("# changed frozen test\n", encoding="utf-8")
+    result = workflow_guard.run(["check"], repo_root=root)
+    assert result == workflow_guard.EXIT_CODES["SCOPE_MISMATCH"]
+
+
 def test_requirement_without_current_baseline_reference_is_rejected(tmp_path: Path) -> None:
     root = _repo(tmp_path, refs=[])
     result = workflow_guard.run(["check"], repo_root=root)
@@ -119,7 +147,7 @@ def test_effective_baseline_hash_mismatch_returns_baseline_gap(tmp_path: Path) -
 
 def test_finish_runs_requirement_tests_and_commit_check_binds_to_current_index(tmp_path: Path) -> None:
     root = _repo(tmp_path)
-    _git(root, "add", "AGENTS.md", "docs/IMPLEMENTATION_EXECUTION_BASELINE.md", "scripts/workflow_guard.py", "tests/test_workflow_guard.py", ".githooks/pre-commit")
+    _git(root, "add", "AGENTS.md", "docs/IMPLEMENTATION_EXECUTION_BASELINE.md", "execution/current_stage.yaml", "scripts/workflow_guard.py", "tests/test_workflow_guard.py", ".githooks/pre-commit")
     assert workflow_guard.run(["finish"], repo_root=root) == workflow_guard.EXIT_CODES["PASS"]
     assert workflow_guard.run(["commit-check"], repo_root=root) == workflow_guard.EXIT_CODES["PASS"]
 
@@ -131,14 +159,14 @@ def test_finish_runs_requirement_tests_and_commit_check_binds_to_current_index(t
 
 def test_finish_failure_blocks_attestation(tmp_path: Path) -> None:
     root = _repo(tmp_path, test_command=[sys.executable, "-c", "raise SystemExit(7)"])
-    _git(root, "add", "AGENTS.md", "docs/IMPLEMENTATION_EXECUTION_BASELINE.md", "scripts/workflow_guard.py", "tests/test_workflow_guard.py", ".githooks/pre-commit")
+    _git(root, "add", "AGENTS.md", "docs/IMPLEMENTATION_EXECUTION_BASELINE.md", "execution/current_stage.yaml", "scripts/workflow_guard.py", "tests/test_workflow_guard.py", ".githooks/pre-commit")
     assert workflow_guard.run(["finish"], repo_root=root) == workflow_guard.EXIT_CODES["TEST_FAILED"]
     assert workflow_guard.run(["commit-check"], repo_root=root) == workflow_guard.EXIT_CODES["FINISH_REQUIRED"]
 
 
 def test_pre_commit_hook_rejects_commit_without_finish_and_accepts_matching_attestation(tmp_path: Path) -> None:
     root = _repo(tmp_path)
-    _git(root, "add", "AGENTS.md", "docs/IMPLEMENTATION_EXECUTION_BASELINE.md", "scripts/workflow_guard.py", "tests/test_workflow_guard.py", ".githooks/pre-commit")
+    _git(root, "add", "AGENTS.md", "docs/IMPLEMENTATION_EXECUTION_BASELINE.md", "execution/current_stage.yaml", "scripts/workflow_guard.py", "tests/test_workflow_guard.py", ".githooks/pre-commit")
     _git(root, "config", "core.hooksPath", ".githooks")
     base_head = _git(root, "rev-parse", "HEAD")
     blocked = subprocess.run(

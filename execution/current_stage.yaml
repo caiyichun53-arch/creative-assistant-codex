@@ -1,0 +1,40 @@
+mode: design_recovery
+stage: stage_1_daily_discovery
+design_complete: false
+implementation_authorized: false
+external_calls_authorized: false
+environment_changes_authorized: false
+completion_status: REJECTED_DESIGN_MISMATCH
+baseline_sha256: 24e4312ea025708e3d01ec2940868a3ee0efc89a9370835b77167cf0a06c5a22
+base_commit: 372607d0586fb8dcb16e62781873ee91c0019ae7
+requirements:
+  - id: WF-GUARD-DESIGN-RECOVERY-001
+    description: Unified workflow guard state lives in execution/current_stage.yaml and blocks business implementation, real execution, external calls, and environment changes while Stage 1 design is incomplete.
+    baseline_refs:
+      - AGENTS.md#强制工作流门禁
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#工作流硬门禁
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#当前执行指针
+    tests:
+      - [python, -m, pytest, tests/test_workflow_guard.py, -q]
+allowed_paths:
+  - AGENTS.md
+  - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
+  - execution/current_stage.yaml
+  - scripts/workflow_guard.py
+  - tests/test_workflow_guard.py
+frozen_acceptance_tests:
+  - tests/core/test_stage1b_daily_discovery.py
+  - tests/core/test_local_trendradar_executor.py
+forbidden_actions:
+  - business_code_change
+  - stage1_business_acceptance_test_change
+  - any_external_source_call
+  - any_model_call
+  - environment_install_or_change
+  - candidate_generation
+  - production_daily
+  - validation_live
+  - stage1a_handoff
+  - research_stage_entry
+  - automatic_retry
+  - workflow_guard_bypass

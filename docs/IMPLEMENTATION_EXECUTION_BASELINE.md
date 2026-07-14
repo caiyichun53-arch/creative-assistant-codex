@@ -1,38 +1,44 @@
 ---
-mode: VALIDATION_AUTHORIZATION_WAIT
-stage: STAGE_1_HOTSPOT_SOURCE_LIVE_VALIDATION
-design_complete: true
+mode: design_recovery
+stage: stage_1_daily_discovery
+design_complete: false
+implementation_authorized: false
+external_calls_authorized: false
+environment_changes_authorized: false
+completion_status: REJECTED_DESIGN_MISMATCH
 baseline_sha256: 24e4312ea025708e3d01ec2940868a3ee0efc89a9370835b77167cf0a06c5a22
-base_commit: f62efe07cfdb815d3dc677d2c054c02221be6847
+base_commit: 372607d0586fb8dcb16e62781873ee91c0019ae7
 requirements:
-  - id: STAGE1-HOTSPOT-REPAIR-CLOSE-001
-    description: 热点候选领域包装、严重缺料和严格 JSON 处理已完成不联网修复；真实调用必须保持关闭，修复不得冒充 LIVE_VALIDATED。
-    baseline_refs:
-      - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3 好选题、线索与热点
-      - docs/EFFECTIVE_DESIGN_BASELINE.md#16.7 每日发现、产能、日报与冷却
-      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#本次热点 validation_live 阻断与修复边界
-    tests:
-      - [python, -m, pytest, tests/core/test_stage1b_daily_discovery.py, -q]
-  - id: WF-GUARD-001
-    description: 安装、实现、测试、finish、提交和真实调用仍必须经过仓库工作流门禁。
+  - id: WF-GUARD-DESIGN-RECOVERY-001
+    description: 统一实施门禁状态位于 execution/current_stage.yaml；Stage 1 设计不完整期间阻断业务实现、真实运行、外部调用和环境改动。
     baseline_refs:
       - AGENTS.md#强制工作流门禁
       - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#工作流硬门禁
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#当前执行指针
     tests:
       - [python, -m, pytest, tests/test_workflow_guard.py, -q]
 allowed_paths:
+  - AGENTS.md
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
+  - execution/current_stage.yaml
+  - scripts/workflow_guard.py
+  - tests/test_workflow_guard.py
+frozen_acceptance_tests:
+  - tests/core/test_stage1b_daily_discovery.py
+  - tests/core/test_local_trendradar_executor.py
 forbidden_actions:
   - business_code_change
+  - stage1_business_acceptance_test_change
   - any_external_source_call
   - any_model_call
+  - environment_install_or_change
   - candidate_generation
   - production_daily
+  - validation_live
   - stage1a_handoff
   - research_stage_entry
   - automatic_retry
   - workflow_guard_bypass
-external_call_authorized: false
 ---
 
 # V1.3 实施执行基线
@@ -41,21 +47,21 @@ external_call_authorized: false
 
 ## 机器可读工作流状态
 
-文件顶部 YAML front matter 是 `scripts/workflow_guard.py` 唯一读取的当前工作流状态。`baseline_sha256` 固定校验 `docs/EFFECTIVE_DESIGN_BASELINE.md` 的完整文件 SHA-256；`base_commit` 是本轮允许改动相对于的冻结提交。每项 `requirements` 必须同时提供现行文件中的 `baseline_refs` 和可执行 `tests`，缺一即不允许完成。
+`execution/current_stage.yaml` 是 `scripts/workflow_guard.py` 唯一读取的当前工作流状态。本文顶部 YAML 只保留为人工对照，不作为门禁事实源。`baseline_sha256` 固定校验 `docs/EFFECTIVE_DESIGN_BASELINE.md` 的完整文件 SHA-256；`base_commit` 是本轮允许改动相对于的冻结提交。每项 `requirements` 必须同时提供现行文件中的 `baseline_refs` 和可执行 `tests`，缺一即不允许完成。
 
 ## 工作流硬门禁
 
-- `start` 在任何代码修改前校验机器状态、设计完整性、基线哈希、需求映射、允许路径和外部调用授权。`design_complete: false` 必须返回 `BASELINE_GAP`，业务代码不得开始。
-- `check` 校验当前改动范围；任何不在 `allowed_paths` 的改动返回 `SCOPE_MISMATCH`。声明或检测到未经授权的外部调用请求时返回 `USER_AUTH_REQUIRED`。
-- `finish` 只接受全部已暂存、没有未暂存或未跟踪文件的确定版本，运行每项 requirement 的去重测试命令并生成与当前 Git 索引绑定的 finish 凭证。测试、范围、哈希、需求映射或授权任一未通过，不得提交。
+- `start` 在任何代码修改前校验 `execution/current_stage.yaml`、设计完整性、基线哈希、需求映射、允许路径、实施授权、外部调用授权和环境改动授权。`design_complete: false` 必须返回 `BASELINE_GAP`，业务代码、真实运行、安装和外部调用不得开始。
+- `check` 校验当前改动范围；任何不在 `allowed_paths` 的改动、未授权业务代码改动或冻结验收测试改动返回 `SCOPE_MISMATCH`。声明或检测到未经授权的外部调用、安装或环境改动请求时返回 `USER_AUTH_REQUIRED`。
+- `finish` 只接受全部已暂存、没有未暂存或未跟踪文件的确定版本，运行每项 requirement 的去重测试命令并生成与当前 Git 索引绑定的 finish 凭证。测试、范围、哈希、需求映射或授权任一未通过，不得提交；`design_complete: false` 时即使门禁提交通过，也只能输出 `baseline_status: BASELINE_GAP`，不得宣布业务完成。
 - Git pre-commit 钩子只接受与当前索引完全一致的 finish 凭证。`--no-verify`、移除钩子、伪造凭证、直接调用真实来源/模型或修改门禁结果均属于 `workflow_guard_bypass`。
-- `DESIGN_RECOVERY` 且改动完全位于治理白名单时，`finish` 可以完成门禁或设计文档本身的受控变更，但输出仍保留 `baseline_status: BASELINE_GAP`；这不表示业务设计完整，也不授权任何业务实现。
+- `design_recovery` 且改动完全位于治理白名单时，`finish` 可以完成门禁或设计文档本身的受控变更，但输出仍保留 `baseline_status: BASELINE_GAP`；这不表示业务设计完整，也不授权任何业务实现。
 
 机器状态码固定为：`PASS=0`、`BASELINE_GAP=10`、`SCOPE_MISMATCH=11`、`USER_AUTH_REQUIRED=12`、`REQUIREMENT_GAP=13`、`TEST_FAILED=14`、`FINISH_REQUIRED=15`、`WORKTREE_NOT_READY=16`。调用方必须按状态码失败关闭，不得只解析自然语言。
 
 ## DESIGN_RECOVERY 默认边界
 
-未获得具体单次恢复授权时，默认 Stage 为 `STAGE_1_TOPIC_DISCOVERY`，`design_complete: false`。只允许修改机器执行基线、仓库章程、工作流门禁、提交钩子及其直接测试。不得修改 Stage 1 或其他阶段业务代码，不得写正式业务数据，不得运行发现，不得调用真实来源、TrendRadar、MediaCrawler、Mimo 或其他模型，不得进入研究阶段，必须等待用户确认需要恢复的 Stage 1 详细设计。
+未获得具体单次恢复授权时，默认 Stage 为 `stage_1_daily_discovery`，`design_complete: false`。当前治理任务只允许修改 `execution/current_stage.yaml`、机器执行基线、仓库章程、工作流门禁及其直接测试。后续真正恢复设计时，只能修改 `docs/EFFECTIVE_DESIGN_BASELINE.md` 并等待用户确认 Stage 1 完整设计；不得让旧 Goal、旧迁移计划、历史报告、交接状态、聊天记忆或旧代码直接影响业务代码。当前暂停 Stage 1 业务实现、安装、外部调用、真实来源、真实模型、真实运行、`production_daily`、`validation_live`、Stage 1A 交接、研究阶段和经验系统。
 
 ## Stage 1 热点源单次真实验收授权
 
@@ -109,20 +115,20 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 
 | 项目 | 当前事实 |
 | --- | --- |
-| 当前阶段 | Stage 1——热点候选链技术修复已完成，等待下一次单来源验收授权 |
-| 当前状态 | 恢复批次未通过，TrendRadar 仍为 `ENV_READY`；对应领域包装、严重缺料和严格 JSON 处理已完成不联网修复并通过回归 |
-| 当前动作 | 外部调用保持关闭；不再运行真实热点或模型，等待下一次热点单来源 `validation_live` 明确授权 |
+| 当前阶段 | Stage 1B / `stage_1_daily_discovery` |
+| 当前状态 | `REJECTED_DESIGN_MISMATCH`；Stage 1 详细设计未完整确认，`design_complete: false` |
+| 当前动作 | 暂停 Stage 1 业务实现和真实运行；唯一动作是恢复并由用户确认 Stage 1 完整设计 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `6693d3acab913a6845ad1c7665ff15cc4da6aefa` |
 | Stage 0 | 已完成并提交：`e88c86a` |
 | 参数治理 | 已完成并提交：`d766a51` |
 | Stage 1A | 已完成并提交：`6693d3a`；尚未经过真实日常候选上游接入 |
-| Stage 1B | 不联网六来源修复已提交：`d13e870a26945f9c5f4024d4e691e9f6eed5202a`；错误验证结果已物理删除且全库残留为零；stash 已清空，不需要恢复 |
+| Stage 1B | 当前标记为 `REJECTED_DESIGN_MISMATCH`；既有技术修复和历史验收记录不得继续推动业务实现，必须先恢复并确认 Stage 1 完整设计 |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
-| 真实来源状态 | 见 Stage 1 六级状态表；只有 `LIVE_VALIDATED` 以上才有资格在后续另行授权后进入真实候选发现 |
-| 当前阻断 | 修复只有测试证据，尚未经过新的真实热点和当前配置模型验收；外部调用授权已关闭 |
-| 下一唯一动作 | 获得新的单次明确授权后，只运行一次 `fan_kepu_social_life`、`source_type=hotspot`、`mode=validation_live`；不得复用或删除前两次失败审计，不得运行其他来源或 `production_daily` |
+| 真实来源状态 | 全部暂停；当前不允许安装、外部来源、真实模型调用、真实数据库写入或真实运行 |
+| 当前阻断 | Stage 1 设计不完整且未获实施授权；`implementation_authorized: false`、`external_calls_authorized: false`、`environment_changes_authorized: false` |
+| 下一唯一动作 | 恢复并确认 Stage 1 完整设计；用户确认前不得编写 Stage 1 业务验收测试、不得修改 Stage 1 业务代码、不得运行真实热点或模型 |
 
 ### 创建本文件时的 Git 事实
 
