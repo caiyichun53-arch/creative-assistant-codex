@@ -1,49 +1,49 @@
 ---
-mode: DESIGN_RECOVERY
-stage: STAGE_1_TOPIC_DISCOVERY
-design_complete: false
+mode: VALIDATION_LIVE
+stage: STAGE_1_HOTSPOT_SOURCE_VALIDATION
+design_complete: true
 baseline_sha256: 03d1a9950f86d379368b4c00b607c6ebfde6e03d18d2d2658d20025063895001
-base_commit: 086630c635af00e4662f51348d4b03dac4cafd41
+base_commit: e1c9340452af4b9d78213272aca9626b8b70e0b3
 requirements:
-  - id: WF-GUARD-001
-    description: 实施执行基线顶部必须提供完整且可校验的机器可读状态。
+  - id: STAGE1-HOTSPOT-VAL-001
+    description: 本轮只允许手动执行一次 TrendRadar 热点来源 validation_live，不得混入其他来源验收。
     baseline_refs:
-      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#机器可读工作流状态
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#Stage 1 热点源单次真实验收授权
     tests:
-      - [python, -m, pytest, tests/test_workflow_guard.py, -q]
-  - id: WF-GUARD-002
-    description: start、check、finish 必须稳定返回门禁结果并阻断越界、未授权外部调用和缺失设计。
+      - [python, -m, pytest, tests/core/test_daily_source_acquisition.py, tests/core/test_stage1b_daily_discovery.py, -q]
+  - id: STAGE1-HOTSPOT-VAL-002
+    description: 热点原始观察必须先经过领域匹配和候选判断，允许零候选且禁止不确定请求自动重试。
     baseline_refs:
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#Stage 1 热点源单次真实验收授权
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#Stage 1B 真实运行恢复边界与验收条件
+    tests:
+      - [python, -m, pytest, tests/core/test_daily_source_acquisition.py, tests/core/test_stage1b_daily_discovery.py, -q]
+  - id: STAGE1-HOTSPOT-VAL-003
+    description: 运行及候选必须保持 validation_live，不能进入正式候选池、日产能、Stage 1A、研究或经验系统。
+    baseline_refs:
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#Stage 1 热点源单次真实验收授权
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#Stage 1B 真实运行恢复边界与验收条件
+    tests:
+      - [python, -m, pytest, tests/core/test_daily_source_acquisition.py, tests/core/test_stage1b_daily_discovery.py, -q]
+  - id: WF-GUARD-001
+    description: 本次真实验收仍须通过工作流门禁、范围校验、requirement 测试和 finish 凭证。
+    baseline_refs:
+      - AGENTS.md#强制工作流门禁
       - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#工作流硬门禁
     tests:
       - [python, -m, pytest, tests/test_workflow_guard.py, -q]
-  - id: WF-GUARD-003
-    description: 任何代码任务必须执行 start 和 finish，提交必须持有当前索引对应的 finish 凭证。
-    baseline_refs:
-      - AGENTS.md#强制工作流门禁
-    tests:
-      - [python, -m, pytest, tests/test_workflow_guard.py, -q]
-  - id: WF-GUARD-004
-    description: 当前只允许建立工作流门禁，不得修改业务代码、调用外部来源或模型。
-    baseline_refs:
-      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#DESIGN_RECOVERY 当前边界
-    tests:
-      - [python, -m, pytest, tests/test_workflow_guard.py, -q]
 allowed_paths:
-  - AGENTS.md
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
-  - scripts/workflow_guard.py
-  - tests/test_workflow_guard.py
-  - .githooks/pre-commit
 forbidden_actions:
   - business_code_change
-  - production_data_write
-  - external_source_call
-  - model_call
-  - discovery_run
+  - production_daily
+  - non_hotspot_source_validation
+  - stage1a_handoff
   - research_stage_entry
+  - experience_write
+  - automatic_retry
   - workflow_guard_bypass
-external_call_authorized: false
+external_call_authorized: true
 ---
 
 # V1.3 实施执行基线
@@ -64,17 +64,25 @@ external_call_authorized: false
 
 机器状态码固定为：`PASS=0`、`BASELINE_GAP=10`、`SCOPE_MISMATCH=11`、`USER_AUTH_REQUIRED=12`、`REQUIREMENT_GAP=13`、`TEST_FAILED=14`、`FINISH_REQUIRED=15`、`WORKTREE_NOT_READY=16`。调用方必须按状态码失败关闭，不得只解析自然语言。
 
-## DESIGN_RECOVERY 当前边界
+## DESIGN_RECOVERY 默认边界
 
-当前 Stage 为 `STAGE_1_TOPIC_DISCOVERY`，`design_complete: false`。本轮只允许修改机器执行基线、仓库章程、工作流门禁、提交钩子及其直接测试。不得修改 Stage 1 或其他阶段业务代码，不得写正式业务数据，不得运行发现，不得调用真实来源、TrendRadar、MediaCrawler、Mimo 或其他模型，不得进入研究阶段。完成本轮治理提交后必须停止，等待用户确认需要恢复的 Stage 1 详细设计。
+未获得具体单次恢复授权时，默认 Stage 为 `STAGE_1_TOPIC_DISCOVERY`，`design_complete: false`。只允许修改机器执行基线、仓库章程、工作流门禁、提交钩子及其直接测试。不得修改 Stage 1 或其他阶段业务代码，不得写正式业务数据，不得运行发现，不得调用真实来源、TrendRadar、MediaCrawler、Mimo 或其他模型，不得进入研究阶段，必须等待用户确认需要恢复的 Stage 1 详细设计。
+
+## Stage 1 热点源单次真实验收授权
+
+用户已明确确认：“恢复 Stage 1 热点选题测试，并允许这一次真实热点和模型调用。”本次只恢复 `STAGE_1_HOTSPOT_SOURCE_VALIDATION` 这一条窄边界，视为该单次验收的设计已完整，不代表 Stage 1 其他来源、正式日产或后续阶段设计已恢复。
+
+本次允许项目 Runtime 手动执行一次真实 TrendRadar 热点采集，并只把该次采集形成的合格热点来源送入显式 Mimo/ModelGateway 候选判断。运行身份必须是 `validation_live`；可以形成零候选。不得同时验证对标日常、对标历史、标签搜索、问题拓展或人工任务，不得运行 `production_daily`，不得选择候选、进入 Stage 1A、研究、经验或日产能。真实调用只允许一次，不确定请求、超时或部分失败不得自动重试。
+
+执行前必须核实本机 TrendRadar、规范化导出、Mimo 路由、凭证和受控入口均已配置；任一缺失即记录阻断并停止，不得用临时脚本、其他热点源、其他模型、旧结果、fixture 或手工数据替代。运行结束后必须核对采集运行、热点原始观察、领域过滤、模型运行、候选/零候选和 `validation_live` 隔离审计，然后立即把 `external_call_authorized` 恢复为 `false`、`design_complete` 恢复为 `false`、模式恢复为 `DESIGN_RECOVERY`，提交执行基线并停止。
 
 ## 当前执行指针
 
 | 项目 | 当前事实 |
 | --- | --- |
-| 当前阶段 | Stage 1——选题发现设计恢复；业务实现暂停 |
-| 当前状态 | `DESIGN_RECOVERY`，Stage 1 选题发现详细设计尚未重新确认，`design_complete: false`；仓库工作流硬门禁、提交钩子和直接测试已建立，本提交以真实 `finish=PASS` 和 pre-commit 凭证为提交条件 |
-| 当前动作 | 仅实现并验证 `scripts/workflow_guard.py`、机器可读执行基线、AGENTS 强制规则、pre-commit 提交阻断和直接测试；完成提交后停止等待用户确认 Stage 1 详细设计 |
+| 当前阶段 | Stage 1——热点来源单次真实验收；其他业务实现仍暂停 |
+| 当前状态 | 用户已授权一次真实 TrendRadar 热点和 Mimo 候选判断；机器模式为 `VALIDATION_LIVE`，只对 `STAGE_1_HOTSPOT_SOURCE_VALIDATION` 视为设计完整 |
+| 当前动作 | 先提交本次一次性授权状态，再通过 `start --external-call` 检查；只在本机配置完整时手动执行一次热点源 `validation_live`，核对审计后立即关闭授权 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `6693d3acab913a6845ad1c7665ff15cc4da6aefa` |
@@ -84,8 +92,8 @@ external_call_authorized: false
 | Stage 1B | 定向修正已提交：`be42e27e1909bb97afa14cfe25beb1f32a82b169`；单领域受控入口已提交：`e85b1e61e85973042c9aca9a4e4bda6cd5de0313`；本次真实链路验收修正已由当前 HEAD `fix: separate live validation from daily production discovery` 记录：既有真实社会生活运行及 9 个候选认定为 `validation_live`，只保留审计且不可进入正式日常生产；stash `wip-stage1b-before-execution-baseline` 已完成比较，未含当前提交之外仍需保留的独有有效内容，已安全删除；当前 `git stash list` 为空，不需要恢复或重新创建该 stash |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
 | 真实来源状态 | 社会生活领域已完成第一次受控真实发现；音乐娱乐领域没有可用真实来源，本轮未运行，禁止用 fixture 或人工编造补齐 |
-| 当前阻断 | Stage 1 选题发现详细设计未确认；所有业务实现、真实来源、模型、发现运行和研究阶段均被门禁阻断 |
-| 下一唯一动作 | 完成工作流硬门禁提交后停止，等待用户确认需要恢复的 Stage 1 详细设计；不得自行恢复业务实现 |
+| 当前阻断 | 除本次热点源 `validation_live` 外，Stage 1 其他来源、`production_daily`、Stage 1A、研究和经验系统仍全部阻断 |
+| 下一唯一动作 | 提交一次性授权→检查真实运行配置→最多执行一次热点源 `validation_live`→核对结果→关闭授权并恢复 `DESIGN_RECOVERY`→提交后汇报并停止 |
 
 ### 创建本文件时的 Git 事实
 
