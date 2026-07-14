@@ -310,7 +310,7 @@ def check_no_engineering_execution_route() -> dict[str, Any]:
     return {
         "name": "no_engineering_execution_route",
         "passed": not present,
-        "detail": "engineering_execution route re-added -- Codex/Claude Code writing code is not a runtime model position" if present else "clean",
+        "detail": "engineering_execution route re-added -- Codex writing code is not a runtime model position" if present else "clean",
     }
 
 
@@ -325,20 +325,14 @@ def check_env_example_no_dead_config() -> dict[str, Any]:
     }
 
 
-def check_claude_md_no_runtime_claude_claim() -> dict[str, Any]:
-    text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-    stale_patterns = (
-        re.compile(r"创作走用户的\s*Claude(?:\s*Code)?\s*订阅"),
-    )
-    hits = [pattern.pattern for pattern in stale_patterns if pattern.search(text)]
-    tool_not_provider_present = "不是运行期业务 Provider" in text
+def check_agents_md_declares_codex_single_entry() -> dict[str, Any]:
+    text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    required_phrases = ("Codex 是当前唯一代码执行入口", "不是运行期业务 Provider", "不生成、不读取也不依赖 `CLAUDE.md`")
+    missing = [phrase for phrase in required_phrases if phrase not in text]
     return {
-        "name": "claude_md_does_not_claim_creation_runs_on_claude",
-        "passed": not hits and tool_not_provider_present,
-        "detail": {
-            "stale_phrases_found": hits,
-            "tool_vs_provider_clarification_present": tool_not_provider_present,
-        } if hits or not tool_not_provider_present else "clean",
+        "name": "agents_md_declares_codex_single_entry",
+        "passed": not missing,
+        "detail": missing or "clean",
     }
 
 
@@ -385,7 +379,7 @@ def run_checklist() -> dict[str, Any]:
         check_fallback_disabled(),
         check_no_engineering_execution_route(),
         check_env_example_no_dead_config(),
-        check_claude_md_no_runtime_claude_claim(),
+        check_agents_md_declares_codex_single_entry(),
         check_no_content_workflow_ghost_reference(),
         check_effective_design_baseline_is_authoritative(),
     ]

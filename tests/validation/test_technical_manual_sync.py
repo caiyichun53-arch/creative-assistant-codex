@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # exist and mention it. This is a structural presence check only -- it cannot
 # verify the prose is accurate or complete, only that nobody shipped a whole
 # new module while leaving the manual untouched (the exact failure mode the
-# 2026-07-07 "module built, manual never updated" rule in CLAUDE.md/AGENTS.md
+# "module built, manual never updated" rule in AGENTS.md
 # exists to prevent).
 CORE_MODULE_TO_MANUAL_SECTION = {
     "business_data": "竞品数据层",
@@ -35,7 +35,7 @@ class TechnicalManualSyncTests(unittest.TestCase):
         manual_path = ROOT / "TECHNICAL_MANUAL.md"
         self.assertTrue(
             manual_path.exists(),
-            "TECHNICAL_MANUAL.md must exist -- see the CLAUDE.md/AGENTS.md rule "
+            "TECHNICAL_MANUAL.md must exist -- see the AGENTS.md rule "
             "requiring every scripts/core/<module> to have a corresponding section.",
         )
         self.manual_text = manual_path.read_text(encoding="utf-8")

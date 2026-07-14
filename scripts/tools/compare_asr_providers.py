@@ -7,7 +7,7 @@ production reverse-prep path. It exists so the two providers can actually be
 compared with a real Chinese 口播 sample before BR-ASR-001's default (local
 SenseVoice) is reconsidered, and so this comparison itself is a real, cited,
 committed script rather than an ad hoc command run directly against the real
-world (see CLAUDE.md/AGENTS.md "执行纪律").
+world (see AGENTS.md "执行纪律").
 
 Usage (from repo root, using the project's normal Python -- NOT the SenseVoice
 env, that is only used internally via subprocess):

@@ -1,7 +1,6 @@
-"""One command to run before wrapping up a session (收工) or handing off to
-another executor (Codex/Claude Code taking over from each other).
+"""One command to run before wrapping up a session (收工) in Codex.
 
-AGENTS.md/CLAUDE.md "执行纪律" already requires all of the following before
+AGENTS.md "执行纪律" already requires all of the following before
 anything gets called done/completed/ENGINEERING_READY:
   1. the working tree is committed cleanly (no uncommitted changes left
      behind for a reset/handoff to silently drop)
@@ -25,8 +24,8 @@ anything gets called done/completed/ENGINEERING_READY:
      entrypoint, no active code reaches back into archive/, the three model
      positions (dialogue_model/business_model/writing_model) still exist and
      are Mimo with fallback disabled, no engineering_execution route crept
-     back in, .env.example has no dead model config, CLAUDE.md/AGENTS.md
-     have not regressed to claiming creation runs on Claude/is complete, and
+     back in, .env.example has no dead model config, AGENTS.md still declares
+     Codex as the sole code-execution entry, and
      no retired governance file is treated as a design source
   8. the production-activation control-package gate (scripts/validation/
      production_activation_gate.py, 2026-07-13, 置顶规则总表条目22/23) still

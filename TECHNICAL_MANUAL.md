@@ -94,4 +94,4 @@ python scripts/validation/live_gates.py dry-run
 
 - 新模块在同一改动中更新本手册的当前使用说明。
 - 不将旧计划、历史报告、迁移说明、交接记录或旧会话 Skill 写回为设计依据。
-- 修改 `AGENTS.md` 后，运行 `python -m scripts.validation.generate_constitution_mirror` 刷新 `CLAUDE.md`，随后运行宪法同步测试。
+- `AGENTS.md` 是唯一执行章程；不生成或依赖 `CLAUDE.md`。

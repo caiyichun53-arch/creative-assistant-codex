@@ -221,7 +221,7 @@ CREATE INDEX IF NOT EXISTS idx_hit_transcripts_hit
 ON hit_transcripts(hit_id, version);
 
 -- One row per top-level comment fetched alongside a MediaCrawler detail call
--- (source document section 16 / CLAUDE.md: "合并成一趟 detail 爬 -- 下载链接+
+-- (source document section 16: "合并成一趟 detail 爬 -- 下载链接+
 -- 评论一次拿"). Reply/second-level comments are excluded at the crawler level
 -- (LocalMediaCrawlerExecutor always passes --get_sub_comment no), matching
 -- section 16's "第一阶段关闭二级评论". sample_rank preserves the crawler's own
@@ -446,7 +446,7 @@ ON script_reviews(source_draft_id, version);
 -- this row's only real job is to carry a SEPARATE human_review_status so the
 -- "this is final" confirmation is independently auditable). No further stage
 -- exists after this one; publishing is manual and out of scope (see
--- CLAUDE.md/置顶规则总表条目5: "发布由用户人工完成").
+-- 有效设计基线的发布规则: "发布由用户人工完成").
 CREATE TABLE IF NOT EXISTS final_drafts (
     final_draft_id TEXT PRIMARY KEY,
     source_review_id TEXT NOT NULL REFERENCES script_reviews(review_id) ON DELETE RESTRICT,

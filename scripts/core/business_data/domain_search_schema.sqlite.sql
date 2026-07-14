@@ -125,7 +125,7 @@ ON discovered_account_review(disposition, domain_label);
 -- hotspot_event、用领域话题标签库(A3 的 domain_search_tags)做确定性关键词
 -- 匹配来判断"这条热点跟当前领域有没有关系"(不调LLM,呼应 BR-TOPIC-001 的
 -- 不打分排序原则)。TrendRadar 自动抓取整体不在这次范围内。source 目前只有
--- feishu_manual 一个值,虽然飞书当前实际没有真实接入(CLAUDE.md 已经写明)——
+-- feishu_manual 一个值,虽然飞书当前实际没有真实接入（见有效设计基线）——
 -- 这个字段名字保留"未来真接了飞书用哪个来源"的语义,这次的登记入口是命令行,
 -- 不是真的飞书。
 CREATE TABLE IF NOT EXISTS hotspot_events (

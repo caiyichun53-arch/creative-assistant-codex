@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # a mechanism problem, because the document sitting in the repo is itself the
 # standing invitation to fall back to it. The fix the user chose: the document does
 # not live in this repository at all. Its real path is local-machine-only config,
-# same pattern CLAUDE.md already uses for the other three reference libraries ("真实
+# same pattern AGENTS.md uses for the other reference libraries ("真实
 # 路径写在本机配置,不入库"). It is only ever supplied again, deliberately, by the user,
 # for a bounded formal reconciliation session (like the one that produced BR-HIT-001) --
 # never as day-to-day fallback reading. This test makes "the file must not be tracked"

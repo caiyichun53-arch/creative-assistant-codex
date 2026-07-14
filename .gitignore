@@ -45,9 +45,6 @@ raw_external/
 *.sqlite
 *.sqlite3
 
-# Local agent/tool state
-.claude/settings.local.json
-
 # Python
 __pycache__/
 *.py[cod]

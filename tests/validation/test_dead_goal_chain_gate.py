@@ -13,7 +13,7 @@ from scripts.validation.dead_goal_chain_gate import (
     ROOT,
     check_active_verify_scripts_dont_import_dead_chain,
     check_archive_not_reachable_from_real_entrypoints,
-    check_claude_md_no_runtime_claude_claim,
+    check_agents_md_declares_codex_single_entry,
     check_effective_design_baseline_is_authoritative,
     check_dead_chain_not_reachable,
     check_env_example_no_dead_config,
@@ -249,9 +249,9 @@ class EnvExampleTests(unittest.TestCase):
         self.assertTrue(result["passed"], result["detail"])
 
 
-class ClaudeMdTests(unittest.TestCase):
-    def test_claude_md_no_longer_claims_creation_runs_on_claude(self) -> None:
-        result = check_claude_md_no_runtime_claude_claim()
+class CodexSingleEntryTests(unittest.TestCase):
+    def test_agents_md_declares_codex_as_the_only_execution_entry(self) -> None:
+        result = check_agents_md_declares_codex_single_entry()
         self.assertTrue(result["passed"], result["detail"])
 
 
