@@ -1,18 +1,24 @@
 ---
-mode: DESIGN_RECOVERY
-stage: STAGE_1_DESIGN_RECOVERY
-design_complete: false
-baseline_sha256: 03d1a9950f86d379368b4c00b607c6ebfde6e03d18d2d2658d20025063895001
-base_commit: 6c24cd2d7018f1727446351e69d5f21cd2ed4ea7
+mode: IMPLEMENTATION
+stage: STAGE_1_SOURCE_CHAIN_REPAIR
+design_complete: true
+baseline_sha256: fbc903a2e8aabdcf4d4558c4e7fe5f017941a85d9cec11154035d3c55b32d216
+base_commit: b3a79949b234c36aebef7b1d6f5628e0f3f6bd5d
 requirements:
-  - id: STAGE1-DESIGN-RECOVERY-001
-    description: 必须把用户确认的Stage 1来源设计、领域扩展、话题标签分类和旧错误结果清理边界写入唯一有效设计基线。
+  - id: STAGE1-DOMAIN-AND-TAG-001
+    description: 通用发现链必须支持版本化新增领域，热点不得依赖话题库，科普和知识不得被误删，平台活动标签必须凭登记证据排除。
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#3.5 对标观察、发现处理与采集记录
-      - docs/EFFECTIVE_DESIGN_BASELINE.md#16.7 每日发现、产能、日报与冷却
-      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#当前执行指针
+      - docs/EFFECTIVE_DESIGN_BASELINE.md#16.8 账号纳入、来源类型与标签状态
     tests:
-      - [python, -m, pytest, tests/test_workflow_guard.py, -q]
+      - [python, -m, pytest, tests/core/test_run_domain_search.py, tests/core/test_stage1b_daily_discovery.py, -q]
+  - id: STAGE1-MODE-AND-CLEANUP-002
+    description: 三种运行身份必须隔离，旧错误运行及其九个候选和全部派生结果必须通过受控入口物理删除。
+    baseline_refs:
+      - docs/EFFECTIVE_DESIGN_BASELINE.md#16.7 每日发现、产能、日报与冷却
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#Stage 1B 真实运行恢复边界与验收条件
+    tests:
+      - [python, -m, pytest, tests/core/test_stage0_content_core.py, tests/core/test_stage1b_daily_discovery.py, -q]
   - id: WF-GUARD-001
     description: 安装、实现、测试、finish、提交和真实调用仍必须经过仓库工作流门禁。
     baseline_refs:
@@ -21,10 +27,28 @@ requirements:
     tests:
       - [python, -m, pytest, tests/test_workflow_guard.py, -q]
 allowed_paths:
+  - TECHNICAL_MANUAL.md
+  - config/domains/*.yaml
+  - config/settings.example.yaml
   - docs/EFFECTIVE_DESIGN_BASELINE.md
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
+  - scripts/core/business_data/domain_labels.py
+  - scripts/core/business_data/domain_search_schema.sqlite.sql
+  - scripts/core/business_data/run_domain_search.py
+  - scripts/core/business_data/run_hotspot_registration.py
+  - scripts/core/execution_contract.py
+  - scripts/core/external_adapters/*.py
+  - scripts/core/production/stage0_content_core.py
+  - scripts/core/production/stage1b_daily_discovery.py
+  - scripts/core/production/stage1_source_runtime.py
+  - scripts/integrations/*.py
+  - tests/core/test_execution_contract.py
+  - tests/core/test_run_domain_search.py
+  - tests/core/test_stage0_content_core.py
+  - tests/core/test_stage1b_daily_discovery.py
+  - tests/fixtures/stage1/**
+  - tests/test_workflow_guard.py
 forbidden_actions:
-  - business_code_change
   - any_external_source_call
   - any_model_call
   - candidate_generation
@@ -88,24 +112,32 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 
 本机审计证据保存在 `validation_evidence/stage1/trendradar/20260714T061346.033845Z/`：`manifest.json` 记录命令、安装身份、开始/结束时间、耗时、原始库、平台状态和输出路径；`stdout.log` 为 3,038 字节；`stderr.log` 为 0 字节。规范化原始来源输出保存在 `outputs/stage1/trendradar/latest.json`。正式库文件最后修改时间仍为 `2026-07-14 11:53:29`，其中发现运行 1、Stage 1B 模型运行 12、候选 9、来源版本 12，均未因本轮运行增加。本轮没有执行领域匹配、社会生活排除规则、热点转具体问题、候选判断或确定性零候选审计，因此 TrendRadar 只保持 `ENV_READY`，不是 `LIVE_VALIDATED`，更不是 `PRODUCTION_READY`。
 
+## Stage 1 设计恢复决定
+
+- 本轮真实验收只使用“泛科普—社会生活”。音乐娱乐不运行、不补位；通用能力必须通过版本化领域包支持以后新增领域，第三领域 fixture 只验证核心没有写死，不能获得真实来源等级。
+- 领域话题库只用于视频平台标签搜索，与 TrendRadar 热点无关。每天轮换最多 3 个活跃标签，每标签只采集第 1 页，返回多少保存多少；`科普`、`知识`属于可保留的领域标签。
+- 平台活动标签必须以版本化登记中的平台、活动身份或页面、有效期和理由为排除证据。活动词面只进入待复核，不能自动删除；现实事件、节日和季节性议题不因时效性自动排除。
+- 候选判断依赖显式“当前配置的候选判断模型”位点，不把当前 Mimo 绑定写成业务语义或永久依赖。
+- 旧错误运行 `discovery_run_1f335cdb47f34b6c94ab8e86c8651610`、9 个候选及只由该运行产生的来源、模型运行、零候选、快照、执行上下文、幂等回执和审计结果，按用户明确授权通过已提交的受控清理入口物理删除；当前工作树和正式库不保留这些结果的审计副本，也不再把它们作为测试样本、冷却依据、产能、经验或验收证据。不得用临时 SQL 绕过 Core；清理前后必须核对精确行数和非目标数据不变。
+
 ## 当前执行指针
 
 | 项目 | 当前事实 |
 | --- | --- |
-| 当前阶段 | Stage 1——来源六级状态纠正完成，等待真实业务链路验收授权 |
-| 当前状态 | TrendRadar、对标日常和历史高信号均只到 `ENV_READY`；当前没有任何 Stage 1 来源达到 `LIVE_VALIDATED`，外部调用授权已关闭 |
-| 当前动作 | 停止业务实现和外部调用，等待用户确认下一项来源环境补齐或真实验收；不得生成候选、调用模型或进入后续阶段 |
+| 当前阶段 | Stage 1——六来源真实链路修复，先完成不联网实现与旧错误结果受控清理 |
+| 当前状态 | 设计恢复决定已确认；TrendRadar、对标日常和历史高信号均只到 `ENV_READY`，标签搜索为 `TECH_TESTED`，其余两类为 `SCAFFOLDED`；当前没有来源达到 `LIVE_VALIDATED` |
+| 当前动作 | 修复领域包、热点与话题库解耦、活动标签证据规则、六来源统一入口、运行隔离与受控物理清理；运行测试、更新手册并提交。当前禁止真实来源、模型和候选生成 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `6693d3acab913a6845ad1c7665ff15cc4da6aefa` |
 | Stage 0 | 已完成并提交：`e88c86a` |
 | 参数治理 | 已完成并提交：`d766a51` |
 | Stage 1A | 已完成并提交：`6693d3a`；尚未经过真实日常候选上游接入 |
-| Stage 1B | 定向修正已提交：`be42e27e1909bb97afa14cfe25beb1f32a82b169`；单领域受控入口已提交：`e85b1e61e85973042c9aca9a4e4bda6cd5de0313`；本次真实链路验收修正已由当前 HEAD `fix: separate live validation from daily production discovery` 记录：既有真实社会生活运行及 9 个候选认定为 `validation_live`，只保留审计且不可进入正式日常生产；stash `wip-stage1b-before-execution-baseline` 已完成比较，未含当前提交之外仍需保留的独有有效内容，已安全删除；当前 `git stash list` 为空，不需要恢复或重新创建该 stash |
+| Stage 1B | 定向修正已提交：`be42e27e1909bb97afa14cfe25beb1f32a82b169`；单领域受控入口已提交：`e85b1e61e85973042c9aca9a4e4bda6cd5de0313`；旧错误社会生活运行及 9 个候选不再保留审计，须由本轮受控清理入口从正式库物理删除；stash 已清空，不需要恢复 |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
 | 真实来源状态 | 见 Stage 1 六级状态表；只有 `LIVE_VALIDATED` 以上才有资格在后续另行授权后进入真实候选发现 |
-| 当前阻断 | TrendRadar 尚未经过领域过滤、热点转具体问题及候选/零候选审计；对标日常和历史高信号的唯一真实验收暴露了领域过滤错误，修复后未重验；标签搜索仅 `TECH_TESTED`；问题拓展和保存的用户方向仅 `SCAFFOLDED` |
-| 下一唯一动作 | 只能选择一个 `ENV_READY` 来源，用当前版本完整经过领域过滤与候选/零候选审计的单次 `validation_live`；须先获得用户明确授权并更新门禁 |
+| 当前阻断 | 领域与标签规则仍在代码中写死，热点错误依赖活跃话题标签，六来源尚未统一接入，旧错误结果尚未物理删除；修复前不得真实验收 |
+| 下一唯一动作 | 完成本阶段不联网代码修复、测试、手册、受控清理入口和阶段提交；提交后执行一次精确物理清理，再逐来源申请真实调用授权 |
 
 ### 创建本文件时的 Git 事实
 
@@ -191,7 +223,7 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 
 1. **阶段目标和真实业务价值**：由真实来源自然形成可追溯候选和日报快照，等待用户选择；发现不自动立项、不占用正式日产能。
 2. **对应 V1.3 章节**：3.1—3.5、4.1、16.6—16.9、17.1—17.3、19、20.1、21、22、24.2。
-3. **当前代码和数据事实**：既有真实运行 `discovery_run_1f335cdb47f34b6c94ab8e86c8651610` 及 9 个候选保持 `validation_live` 隔离不变。热点与标签搜索此前只有接入框架和假数据技术测试，不能称为来源已补齐；当前正式库没有 `trendradar_hotspot_observation`、`domain_search_tags`、`domain_search_page_observation` 或 `discovered_external_videos` 表，也没有 hotspot/tag/question/user-direction 来源版本。当前只根据真实安装、配置、正式库记录和运行证据采用下表等级。
+3. **当前代码和数据事实**：旧错误运行 `discovery_run_1f335cdb47f34b6c94ab8e86c8651610` 及 9 个候选已获用户明确授权物理删除，不能继续保留或作为任何验收证据；删除须由本轮先提交的受控 Core 入口执行。热点与标签搜索此前只有接入框架和假数据技术测试，不能称为来源已补齐；当前正式库没有 `trendradar_hotspot_observation`、`domain_search_tags`、`domain_search_page_observation` 或 `discovered_external_videos` 表，也没有 hotspot/tag/question/user-direction 来源版本。当前只根据真实安装、配置、正式库记录和运行证据采用下表等级。
 
 ### Stage 1 来源六级状态
 
@@ -214,14 +246,14 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 10. **输出及数据去向**：来源记录、过滤原因、候选版本、快照、批次模式/实际生命周期和审计写入唯一正式库；`test_isolated` 与 `validation_live` 的候选只可查看和审计，不能进入正式候选池、日产能、Stage 1A、研究或经验系统；未选择不得创建任务。
 11. **人工确认节点**：用户选择、暂缓、拒绝、要求换角度或保留常青；选择是创建正式选题的唯一动作。
 12. **单模块测试**：无真实来源零候选、重复、三天冷却、过期、社会生活领域排除、面向用户字段中文、无 score/rank/weight、热点先于标签、热点/标签正式追溯、每天最多 3 标签、标签不足不补位、每标签第 1 页完整留存、超时/中断/部分失败无自动重试、模型仅处理过滤后对象、候选不占产能、运行模式不可升级、选择精确关联、日产能、幂等与测试身份隔离。
-13. **真实模型、真实数据和真实业务验证**：授权后从生产库读取真实来源，经显式 Mimo/ModelGateway 生成有限候选；每个获授权领域分别展示真实候选或零候选原因，不得补位；未经本次授权的领域不得运行或以 fixture、fake provider、人工来源补位。
-14. **Mock/fixture/fake provider 证明边界**：本轮只证明 Runtime 顺序、页数/数量边界、原始观察留存、来源追溯、过滤、状态、幂等、异常和隔离；没有调用真实 TrendRadar、MediaCrawler 来源或 Mimo，不能证明任何来源真实可用、能形成合格候选、真实模型连通或音乐娱乐已激活。
-15. **必须提交的验收证据**：运行模式、真实发现运行 ID、来源/过滤/候选/快照/审计记录、模型运行记录、已授权领域清单和未运行领域边界、测试结果、`git diff --check`。本次证据为运行 `discovery_run_1f335cdb47f34b6c94ab8e86c8651610` 的 `validation_live` 分类审计及其既有社会生活来源、过滤、模型、候选和快照；未读取音乐娱乐，也未重新调用真实来源或 Mimo。
+13. **真实模型、真实数据和真实业务验证**：另行授权后只以泛科普—社会生活逐来源读取真实输入，经显式候选判断模型位点和 ModelGateway 形成有限候选或确定性零候选；音乐娱乐不运行、不补位。新增领域能力只通过领域包 fixture 和回归证明可扩展，不能据此升级真实来源等级。
+14. **Mock/fixture/fake provider 证明边界**：本轮只证明 Runtime 顺序、页数/数量边界、原始观察留存、来源追溯、过滤、状态、幂等、异常、隔离和新增领域不需要修改通用核心；没有真实来源和当前配置模型调用，不能证明任何来源真实可用或能形成合格候选。
+15. **必须提交的验收证据**：运行模式、真实发现运行 ID、来源/过滤/候选/快照/审计记录、模型运行记录、已授权领域清单和未运行领域边界、测试结果、`git diff --check`。旧错误运行及其派生结果必须先物理删除，不得出现在新验收证据、测试输入、冷却或日产能读取中。
 16. **阻断和停止条件**：获授权领域没有任何真实来源时停止并报告最小阻断；音乐娱乐无来源时不得以 fixture、fake provider 或人工来源补位；模型非法输出、来源过期/重复/风险或批次超时、中断、请求状态不确定时不得形成或升级为完整生产结果。
 17. **异常恢复**：保留关闭原因、失败运行和来源级审计；明确未发出的暂态失败才可按相同冻结输入、路由、Provider、模型、配置和 Prompt 受控重试。请求状态不确定、可能已消耗 token 或已离开明确失败状态时禁止自动重试，须由用户重新提交、取消或创建新运行。
 18. **Git 分支和提交检查点**：当前分支 `implementation/v1.3-stage1b-daily-discovery`；前序 `fix: separate live validation from daily production discovery` 只记录运行模式隔离和技术实现，不能证明 TrendRadar 或标签搜索已真实可用。本轮先提交项目内 TrendRadar 安装约定、确定性转换入口、技术测试和状态纠正；真实来源运行证据产生后再关闭授权提交。
 19. **下一阶段进入条件**：新建完整 `production_daily` 运行中，用户选择一个精确候选版本，来源链、领域、日产能、运行模式和版本均通过。
-20. **当前状态和缺口**：Stage 1 不是整体完成。既有 9 个候选仍停在修复前的 `validation_live`，只能保留问题审计，没有任何候选可进入 Stage 1A。TrendRadar、对标日常和历史高信号仅 `ENV_READY`；标签搜索仅 `TECH_TESTED`；问题拓展和保存的用户方向仅 `SCAFFOLDED`。当前没有任何来源达到 `LIVE_VALIDATED`，不得运行真实候选发现或 `production_daily`。
+20. **当前状态和缺口**：Stage 1 不是整体完成。旧错误运行和 9 个候选待本轮受控入口物理删除，删除后不保留业务审计副本。TrendRadar、对标日常和历史高信号仅 `ENV_READY`；标签搜索仅 `TECH_TESTED`；问题拓展和保存的用户方向仅 `SCAFFOLDED`。当前没有任何来源达到 `LIVE_VALIDATED`，不得运行 `production_daily`。
 
 ### Stage 1B 真实运行恢复边界与验收条件
 
