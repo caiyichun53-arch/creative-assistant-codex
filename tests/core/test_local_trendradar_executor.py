@@ -10,7 +10,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.core.external_adapters import ExternalAdapterCommand, LocalTrendRadarExecutor
-from scripts.integrations.trendradar_runtime import changed_crawl_record, export_crawl
+from scripts.integrations.trendradar_runtime import (
+    approved_runtime_worktree_change,
+    changed_crawl_record,
+    export_crawl,
+    verify_official_install,
+)
 
 
 class LocalTrendRadarExecutorTests(unittest.TestCase):
@@ -116,6 +121,23 @@ class LocalTrendRadarExecutorTests(unittest.TestCase):
         current = dict(old)
         current[("one.db", "10-01")] = (9, "2026-07-14 10:01:02")
         self.assertEqual(changed_crawl_record(old, current), (Path("one.db"), "10-01"))
+
+    def test_install_check_allows_runtime_outputs_but_rejects_source_changes(self) -> None:
+        self.assertTrue(approved_runtime_worktree_change(" M config/config.yaml"))
+        self.assertTrue(approved_runtime_worktree_change("M config/config.yaml"))
+        self.assertTrue(approved_runtime_worktree_change("?? output/news/2026-07-14.db"))
+        self.assertTrue(approved_runtime_worktree_change("?? trendradar/core/__pycache__/runner.pyc"))
+        self.assertFalse(approved_runtime_worktree_change(" M trendradar/core/runner.py"))
+        self.assertFalse(approved_runtime_worktree_change("?? unexpected.py"))
+        self.assertFalse(approved_runtime_worktree_change("R  trendradar/a.py -> output/a.py"))
+
+    def test_current_official_install_remains_valid_after_a_real_output_exists(self) -> None:
+        install = Path("vendor/TrendRadar")
+        if not install.is_dir():
+            self.skipTest("repository-local TrendRadar install is not present")
+        identity = verify_official_install(install)
+        self.assertEqual(identity["origin"], "https://github.com/sansan0/TrendRadar.git")
+        self.assertTrue(identity["python_executable"].endswith("python.exe"))
 
     def test_execution_baseline_forbids_test_evidence_from_claiming_live_completion(self) -> None:
         baseline = Path("docs/IMPLEMENTATION_EXECUTION_BASELINE.md").read_text(encoding="utf-8")

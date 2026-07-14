@@ -63,6 +63,8 @@ Input Assembly、ModelGateway 运行记录和审计边界，不执行真实内�
 
 真实采集默认关闭。启用前分别核实所运行来源的 `live_enabled: true`；单独验收热点不要求同时启用标签搜索。官方 TrendRadar 固定安装在仓库内 `vendor/TrendRadar`，使用其锁定环境的命令为 `vendor/TrendRadar/.venv/Scripts/python.exe -m trendradar`。项目 Runtime 直接入口为 `python scripts/integrations/trendradar_runtime.py --trendradar-dir vendor/TrendRadar --output outputs/stage1/trendradar/latest.json --evidence-root validation_evidence/stage1/trendradar --timeout-seconds 300`。入口只运行一次官方命令，从本次更新的 `output/news/YYYY-MM-DD.db` 转换标准对象，并保存 stdout、stderr、命令、官方提交、原始数据库、输出、错误和耗时；不调用模型、不自动重试、不补造 URL 或数量。
 
+TrendRadar 安装完整性检查允许上游命令自身产生或更新 `output/` 运行数据、项目批准的 `config/config.yaml` 和 Python `__pycache__`；它们不会被误判为源码篡改。除此之外，任何上游工作区改动仍会在发出网络请求前失败关闭。不要为了通过检查删除真实运行输出，也不要在 `vendor/TrendRadar` 内修改上游源码。
+
 Stage 1 来源完成度统一使用 `DESIGNED → SCAFFOLDED → TECH_TESTED → ENV_READY → LIVE_VALIDATED → PRODUCTION_READY`。Mock、fixture、fake provider、文件存在或 pytest 通过最高只算 `TECH_TESTED`；没有项目内安装、正式本机配置、真实输入输出和运行证据，不得写“已补齐”“已接通”或“功能完成”。只有达到 `LIVE_VALIDATED` 的来源，才有资格在另行授权后进入真实候选发现。
 
 ```powershell

@@ -26,6 +26,27 @@ from zoneinfo import ZoneInfo
 OFFICIAL_ORIGIN = "https://github.com/sansan0/TrendRadar.git"
 
 
+def approved_runtime_worktree_change(status_line: str) -> bool:
+    """Allow only files that the locked TrendRadar runtime is expected to mutate."""
+    if len(status_line) >= 3 and status_line[2] == " ":
+        path = status_line[3:]
+    elif len(status_line) >= 2 and status_line[1] == " ":
+        # ``_git`` strips the leading status-column space from its first line.
+        path = status_line[2:]
+    else:
+        return False
+    path = path.strip().replace("\\", "/")
+    if " -> " in path:
+        return False
+    return (
+        path == "config/config.yaml"
+        or path.startswith("output/")
+        or path == "__pycache__"
+        or path.startswith("__pycache__/")
+        or "/__pycache__/" in f"/{path}/"
+    )
+
+
 def _canonical(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -66,7 +87,7 @@ def verify_official_install(trendradar_dir: Path) -> dict[str, Any]:
     if not config_path.is_file():
         raise RuntimeError("TrendRadar config/config.yaml is missing")
     changed = [line for line in _git(trendradar_dir, "status", "--short").splitlines() if line.strip()]
-    unexpected = [line for line in changed if not line.endswith(" config/config.yaml") and "__pycache__/" not in line]
+    unexpected = [line for line in changed if not approved_runtime_worktree_change(line)]
     if unexpected:
         raise RuntimeError(f"TrendRadar upstream source has unapproved local changes: {unexpected}")
     with pyproject_path.open("rb") as handle:
