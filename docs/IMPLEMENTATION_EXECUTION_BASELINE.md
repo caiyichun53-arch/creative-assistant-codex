@@ -1,17 +1,17 @@
 ---
-mode: TECHNICAL_REPAIR
-stage: STAGE_1_HOTSPOT_RUNTIME_REPAIR
+mode: VALIDATION_RECOVERY_DECISION
+stage: STAGE_1_HOTSPOT_SOURCE_VALIDATION
 design_complete: true
 baseline_sha256: fbc903a2e8aabdcf4d4558c4e7fe5f017941a85d9cec11154035d3c55b32d216
-base_commit: 6ccf8f769e2809360439ffc59003201b947dfd62
+base_commit: d9438db02ca21599312bdcca717ad18576aec2a0
 requirements:
-  - id: STAGE1-HOTSPOT-REPAIR-001
-    description: TrendRadar 正式运行产生的本地输出不得在下一批启动前被误判为上游源码篡改；真正的上游源码改动仍须失败关闭。
+  - id: STAGE1-HOTSPOT-RECOVERY-001
+    description: 已失败的 validation_live 必须保留隔离审计；在幂等恢复规则获得裁决前，不得以新幂等键伪装成原批次恢复或再次调用外部来源和模型。
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#16.7 每日发现、产能、日报与冷却
       - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#本次热点 validation_live 阻断与修复边界
     tests:
-      - [python, -m, pytest, tests/core/test_local_trendradar_executor.py, -q]
+      - [python, -m, pytest, tests/core/test_stage1b_daily_discovery.py, -q]
   - id: WF-GUARD-001
     description: 安装、实现、测试、finish、提交和真实调用仍必须经过仓库工作流门禁。
     baseline_refs:
@@ -21,10 +21,8 @@ requirements:
       - [python, -m, pytest, tests/test_workflow_guard.py, -q]
 allowed_paths:
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
-  - TECHNICAL_MANUAL.md
-  - scripts/integrations/trendradar_runtime.py
-  - tests/core/test_local_trendradar_executor.py
 forbidden_actions:
+  - business_code_change
   - any_external_source_call
   - any_model_call
   - candidate_generation
@@ -68,7 +66,7 @@ external_call_authorized: false
 
 ### 本次热点 validation_live 阻断与修复边界
 
-2026-07-14 以 `source_type=hotspot`、`domain=fan_kepu_social_life`、`mode=validation_live` 启动的批次 `discovery_run_cf43d61dd5024db393c21d2e65e19100` 在 TrendRadar 桥接预检阶段确定性失败。桥接把上一次受控真实运行自己生成的 `vendor/TrendRadar/output/news/2026-07-14.db` 误判为未经批准的上游源码改动，因此在创建新证据目录、启动 TrendRadar 上游命令和调用候选判断模型之前以退出码 2 结束。该批次状态为 `completed_with_failures`，热点原始观察、来源版本、模型运行、候选和快照均为零；不得把它认定为一次真实热点业务验收，也不得提升 TrendRadar 的六级状态。
+2026-07-14 以 `source_type=hotspot`、`domain=fan_kepu_social_life`、`mode=validation_live` 启动的批次 `discovery_run_cf43d61dd5024db393c21d2e65e19100` 在 TrendRadar 桥接预检阶段确定性失败。桥接把上一次受控真实运行自己生成的 `vendor/TrendRadar/output/news/2026-07-14.db` 误判为未经批准的上游源码改动，因此在创建新证据目录、启动 TrendRadar 上游命令和调用候选判断模型之前以退出码 2 结束。该批次状态为 `completed_with_failures`；热点原始观察、来源版本、输入组装、模型运行、候选、无候选记录和用户决定均为零，只保存 1 条 `candidate_version_id=NULL` 的空 `validation_live` 快照占位、3 条命令回执和 3 条审计事件。数据库完整性检查为 `ok`，外键违规为零。不得把它认定为一次真实热点业务验收，也不得提升 TrendRadar 的六级状态。
 
 当前外部调用授权已关闭。项目桥接的安装完整性判定已修复：继续拒绝 TrendRadar 上游源码和其他陌生文件的改动，仅允许项目批准的 `config/config.yaml`、明确限定在 `output/` 下的 TrendRadar 自身运行产物以及 Python `__pycache__/`。`tests/core/test_local_trendradar_executor.py` 8 项和 `tests/core/test_stage1b_daily_discovery.py` 22 项通过；修复期间没有调用真实来源或模型。由于原批次已写入完成回执，同一幂等键只会重放失败结果；在现行设计要求使用同一冻结输入、配置和幂等键恢复的前提下，不得擅自改用新幂等键重跑，必须先解决该设计与现有幂等实现的冲突。
 
@@ -106,9 +104,9 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 
 | 项目 | 当前事实 |
 | --- | --- |
-| 当前阶段 | Stage 1——TrendRadar 热点 Runtime 缺陷已修复，等待恢复机制裁决 |
+| 当前阶段 | Stage 1——TrendRadar 热点 Runtime 缺陷已修复，等待验证恢复机制裁决 |
 | 当前状态 | 已启动的单次热点验收在上游请求前因本地输出误判而失败；缺陷回归已通过，但没有热点原始观察、模型运行或候选，TrendRadar 仍为 `ENV_READY` |
-| 当前动作 | 提交已完成的本地桥接修复、回归测试和操作说明；外部调用保持关闭，不创建第二批次 |
+| 当前动作 | 外部调用保持关闭，不创建第二批次；等待用户裁决失败批次应如何在不破坏幂等语义的前提下恢复 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `6693d3acab913a6845ad1c7665ff15cc4da6aefa` |
