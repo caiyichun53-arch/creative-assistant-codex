@@ -112,7 +112,7 @@ SOURCE_EVIDENCE_ITEMS_MAX = PATTERN_EVIDENCE_ITEM_COUNT + REVERSE_PREP_MAX_COMME
 # 合理默认,不是文档依据——HOTSPOT_EVIDENCE_WINDOW_DAYS 特意跟 D3 的去重冷却窗口
 # 用同一个 30,保持口径一致,不是另起一个不相关的数字;DEDUP_CANDIDATE_WINDOW_DAYS/
 # DEDUP_CANDIDATE_COMPARE_MAX 参照这次会话里其它地方反复出现的 30天/20条上限
-# (A5的30天账号复查窗口、A3的search_read_max/tactic_extract的dna_note_refs_max)。
+# (账号复查窗口、标签搜索的单页边界、tactic_extract 的 dna_note_refs_max)。
 HOTSPOT_EVIDENCE_WINDOW_DAYS = 30
 DEDUP_CANDIDATE_WINDOW_DAYS = 30
 DEDUP_CANDIDATE_COMPARE_MAX = 20

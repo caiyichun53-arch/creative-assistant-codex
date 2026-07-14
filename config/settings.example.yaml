@@ -125,16 +125,22 @@ hit_detection:
   first_crawl_fetch_buffer: 5
   recheck_interval_hours: 24
 
-# 2026-07-13 (BR-TOPIC-005): 领域话题标签搜索的真实抓取默认关闭,跟
-# BR-RESEARCH-003 的"真实抓取需要显式开门"同一个纪律。这些数字全部来自原文档
-# 第21章真实写的默认值,不是拍脑袋定的。
+# 真实热点和标签搜索默认关闭；只有有效设计基线冻结的数量边界可启用。
+hotspot_collection:
+  provider: trendradar
+  live_enabled: false
+  project_dir: "C:/path/to/TrendRadar"
+  executable: "C:/path/to/python.exe"
+  args: ["main.py"]
+  normalized_json_path: "C:/path/to/TrendRadar/output/codex_hotspots.json"
+  timeout_seconds: 180
+  max_items: 500
+
 domain_search:
   live_enabled: false
-  rotation_days: 7
-  search_read_max: 20
-  deep_processing_max_per_tag: 5
+  daily_tag_count: 3
+  page_count_per_tag: 1
   consecutive_cycles_before_pause: 3
-  daily_deep_processing_max_per_domain: 10
 
 # 2026-07-13 (BR-EXPERIENCE-004): 自营发布实验 P+ 指标三态判断的两个安全默认
 # 阈值,来自原文档29.1"安全默认阈值"。>=support_ratio 支持,<=not_supported_ratio

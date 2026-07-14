@@ -14,7 +14,7 @@ from scripts.core.business_data.run_domain_search import (
     extract_hashtags,
     install_schema,
     load_sources_yaml,
-    rank_and_select_for_deep_processing,
+    run_daily_tag_searches,
     record_search_cycle_result,
     search_one_tag,
     seed_active_tags_from_sources_yaml,
@@ -53,6 +53,15 @@ def _insert_video(conn: sqlite3.Connection, video_id: str, account_id: str, *, d
         "INSERT INTO competitor_videos(video_id, account_id, platform, platform_item_id, title, url, raw_json) "
         "VALUES (?, ?, 'douyin', ?, 't', 'https://x', ?)",
         (video_id, account_id, video_id + "_item", json.dumps({"desc": desc})),
+    )
+    conn.execute(
+        """
+        INSERT INTO hits(
+            hit_id, video_id, account_id, platform, platform_item_id, title, url,
+            hit_channel, judgment_confidence, run_id
+        ) VALUES (?, ?, ?, 'douyin', ?, 't', 'https://x', 'test', 'formal', 'test-run')
+        """,
+        (f"hit_{video_id}", video_id, account_id, video_id + "_item"),
     )
     conn.commit()
 
@@ -122,17 +131,15 @@ class ExtractHashtagsTests(unittest.TestCase):
 
 class SuggestTagsFromHitLibraryTests(unittest.TestCase):
     def test_long_tags_are_filtered_as_campaign_tags(self) -> None:
-        # Real-data-validated rule from A2: tags >=6 chars are almost always
-        # platform campaign tags, not reusable domain topics.
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
                 _insert_account(conn, "acc1")
-                _insert_video(conn, "v1", "acc1", desc="标题 #房产中介 #知识前沿派对")
+                _insert_video(conn, "v1", "acc1", desc="标题 #房产中介 #知识挑战赛")
                 result = suggest_tags_from_hit_library(conn, domain_label="fan_kepu_social_life", run_id="run1")
                 tags = {r["tag"] for r in conn.execute("SELECT tag FROM domain_search_tags").fetchall()}
                 self.assertIn("房产中介", tags)
-                self.assertNotIn("知识前沿派对", tags)
+                self.assertNotIn("知识挑战赛", tags)
                 self.assertEqual(result["suggested"], 1)
             finally:
                 conn.close()
@@ -163,6 +170,19 @@ class SuggestTagsFromHitLibraryTests(unittest.TestCase):
                 row = conn.execute("SELECT * FROM domain_search_tags WHERE tag='房产中介'").fetchone()
                 self.assertEqual(row["status"], "suggested")
                 self.assertEqual(row["source"], "discovered")
+            finally:
+                conn.close()
+
+    def test_generic_tags_are_filtered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn, "acc1")
+                _insert_video(conn, "v1", "acc1", desc="#科普 #房产中介避坑")
+                suggest_tags_from_hit_library(conn, domain_label="fan_kepu_social_life", run_id="run1")
+                tags = {r["tag"] for r in conn.execute("SELECT tag FROM domain_search_tags").fetchall()}
+                self.assertNotIn("科普", tags)
+                self.assertIn("房产中介避坑", tags, "specific longer tags must not be rejected only for their length")
             finally:
                 conn.close()
 
@@ -238,7 +258,7 @@ class SelectTagsDueForSearchTests(unittest.TestCase):
             finally:
                 conn.close()
 
-    def test_recently_searched_tag_is_not_due(self) -> None:
+    def test_recently_searched_tag_remains_in_rotation_when_it_is_the_only_active_tag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
@@ -246,7 +266,7 @@ class SelectTagsDueForSearchTests(unittest.TestCase):
                 tag_id = conn.execute("SELECT tag_id FROM domain_search_tags").fetchone()["tag_id"]
                 record_search_cycle_result(conn, tag_id=tag_id, run_id="run1", produced_validated_topic=False, now=datetime.now(timezone.utc))
                 due = select_tags_due_for_search(conn, domain_label="fan_kepu_social_life", limit=10)
-                self.assertEqual(due, [])
+                self.assertEqual([r["tag"] for r in due], ["科普"])
             finally:
                 conn.close()
 
@@ -260,6 +280,21 @@ class SelectTagsDueForSearchTests(unittest.TestCase):
                 record_search_cycle_result(conn, tag_id=tag_id, run_id="run1", produced_validated_topic=False, now=old_time)
                 due = select_tags_due_for_search(conn, domain_label="fan_kepu_social_life", limit=10)
                 self.assertEqual([r["tag"] for r in due], ["科普"])
+            finally:
+                conn.close()
+
+    def test_daily_selection_is_capped_at_three_oldest_active_tags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                seed_active_tags_from_sources_yaml(
+                    conn,
+                    {"domain_label": "fan_kepu_social_life", "active_tags": ["标签一", "标签二", "标签三", "标签四"]},
+                )
+                due = select_tags_due_for_search(conn, domain_label="fan_kepu_social_life", limit=99)
+                self.assertEqual(len(due), 3)
+                repeated = select_tags_due_for_search(conn, domain_label="fan_kepu_social_life", limit=99)
+                self.assertEqual([r["tag_id"] for r in due], [r["tag_id"] for r in repeated])
             finally:
                 conn.close()
 
@@ -294,14 +329,6 @@ class DeterministicFilterTests(unittest.TestCase):
         items = [{"aweme_id": "1", "desc": "#房产中介"}, {"aweme_id": "1", "desc": "#房产中介"}]
         kept = deterministic_filter(items, tag="房产中介", already_discovered_ids=set())
         self.assertEqual(len(kept), 1)
-
-
-class RankAndSelectTests(unittest.TestCase):
-    def test_ranks_by_engagement_and_caps_at_limit(self) -> None:
-        items = [{"aweme_id": str(i), "liked_count": i, "comment_count": 0} for i in range(10)]
-        selected = rank_and_select_for_deep_processing(items, limit=5)
-        self.assertEqual(len(selected), 5)
-        self.assertEqual([i["aweme_id"] for i in selected], ["9", "8", "7", "6", "5"])
 
 
 class RecordSearchCycleResultTests(unittest.TestCase):
@@ -404,6 +431,9 @@ class SearchOneTagTests(unittest.TestCase):
 
                 self.assertEqual(result["status"], "completed")
                 self.assertEqual(result["inserted"], 2)
+                self.assertEqual(executor.commands[0].max_items, 10)
+                self.assertEqual(executor.commands[0].input_payload["page_count"], 1)
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM domain_search_page_observation").fetchone()[0], 2)
                 rows = {r["platform_item_id"]: r for r in conn.execute("SELECT * FROM discovered_external_videos").fetchall()}
                 self.assertEqual(rows["v_tracked"]["is_tracked_account"], 1)
                 self.assertEqual(rows["v_untracked"]["is_tracked_account"], 0)
@@ -423,6 +453,30 @@ class SearchOneTagTests(unittest.TestCase):
                         domain_search_cfg={"live_enabled": False},
                     )
                 self.assertEqual(executor.commands, [], "no real call should have been attempted")
+            finally:
+                conn.close()
+
+
+class DailyTagSearchTests(unittest.TestCase):
+    def test_runs_three_tags_once_each_and_does_not_pad_a_short_pool(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                seed_active_tags_from_sources_yaml(
+                    conn,
+                    {"domain_label": "fan_kepu_social_life", "active_tags": ["标签一", "标签二"]},
+                )
+                executor = _FakeExecutor(ExternalCommandResult(status="succeeded", payload={"items": []}))
+                result = run_daily_tag_searches(
+                    conn,
+                    executor,
+                    domain_label="fan_kepu_social_life",
+                    run_id="daily-run",
+                    domain_search_cfg={"live_enabled": True},
+                )
+                self.assertEqual(result["selected_tag_count"], 2)
+                self.assertEqual(len(executor.commands), 2)
+                self.assertTrue(all(command.max_items == 10 for command in executor.commands))
             finally:
                 conn.close()
 

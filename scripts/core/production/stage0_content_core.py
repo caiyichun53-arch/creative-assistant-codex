@@ -521,6 +521,8 @@ class Stage0ContentProductionCore:
             BEGIN SELECT RAISE(ABORT, 'stage1b execution mode is immutable; create a new run instead'); END;
             """
         )
+        discovery_schema = Path(__file__).resolve().parents[1] / "business_data" / "domain_search_schema.sqlite.sql"
+        self.conn.executescript(discovery_schema.read_text(encoding="utf-8"))
         self.conn.commit()
 
     def create_task(
@@ -993,6 +995,24 @@ class Stage0ContentProductionCore:
                 (source_object_id,),
             ).fetchone()
             expected_table, expected_version = "hits", "promoted_at"
+        elif source_type == "hotspot":
+            row = self.conn.execute(
+                "SELECT observation.*, run.status FROM trendradar_hotspot_observation observation "
+                "JOIN trendradar_collection_run run ON run.collection_run_id=observation.collection_run_id "
+                "WHERE observation.observation_id=? AND run.status IN ('completed', 'completed_with_failures') "
+                "AND EXISTS (SELECT 1 FROM domain_search_tags tag WHERE tag.domain_label=? "
+                "AND tag.status='active' AND instr(observation.title, tag.tag)>0)",
+                (source_object_id, domain_label),
+            ).fetchone()
+            expected_table, expected_version = "trendradar_hotspot_observation", "observed_at"
+        elif source_type == "tag_discovery":
+            row = self.conn.execute(
+                "SELECT video.*, tag.tag FROM discovered_external_videos video "
+                "JOIN domain_search_tags tag ON tag.tag_id=video.tag_id "
+                "WHERE video.discovered_video_id=? AND video.domain_label=? AND tag.status='active'",
+                (source_object_id, domain_label),
+            ).fetchone()
+            expected_table, expected_version = "discovered_external_videos", "discovered_at"
         else:
             raise StateTransitionError("daily discovery source type is not enabled in this Stage 1B slice")
         if row is None:
@@ -1002,16 +1022,20 @@ class Stage0ContentProductionCore:
         formal_version = str(row[expected_version])
         if origin.get("object_version") != formal_version or source_object_version != formal_version:
             raise StaleResultError("daily discovery source version does not match the formal origin")
-        if source_time != str(row["publish_time"]) or domain_label != str(row["domain_label"]):
-            raise StateTransitionError("daily discovery source time or domain does not match the formal origin")
-        if row["registration_status"] != "active" or not str(row["source_config_ref"] or "").strip():
-            raise StateTransitionError("daily discovery source account is not qualified")
-        if not str(row["title"] or "").strip() or not str(row["url"] or "").strip() or not str(row["raw_archive_ref"] or "").strip():
+        expected_time_field = "publish_time" if source_type in {"daily_competitor_content", "historical_high_signal"} else expected_version
+        if source_time != str(row[expected_time_field]):
+            raise StateTransitionError("daily discovery source time does not match the formal origin")
+        if source_type in {"daily_competitor_content", "historical_high_signal"}:
+            if domain_label != str(row["domain_label"]):
+                raise StateTransitionError("daily discovery source domain does not match the formal origin")
+            if row["registration_status"] != "active" or not str(row["source_config_ref"] or "").strip():
+                raise StateTransitionError("daily discovery source account is not qualified")
+            if not str(row["raw_archive_ref"] or "").strip() or row["excluded_reason"] is not None:
+                raise StateTransitionError("daily discovery source lacks qualified formal material")
+            if source_type == "historical_high_signal" and row["judgment_confidence"] != "formal":
+                raise StateTransitionError("historical source lacks formal high-signal qualification")
+        if not str(row["title"] or "").strip() or not str(row["url"] or "").strip():
             raise StateTransitionError("daily discovery source lacks required formal material")
-        if row["excluded_reason"] is not None:
-            raise StateTransitionError("daily discovery source is excluded by formal source facts")
-        if source_type == "historical_high_signal" and row["judgment_confidence"] != "formal":
-            raise StateTransitionError("historical source lacks formal high-signal qualification")
         try:
             raw_hash = _hash(json.loads(str(row["raw_json"])))
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -1573,21 +1597,14 @@ class Stage0ContentProductionCore:
         if domain_label not in {"fan_kepu_social_life", "music_entertainment"}:
             raise StateTransitionError("daily discovery supports only the two approved formal domains")
         tables = {row["name"] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-        if not {"competitor_accounts", "competitor_videos", "hits"}.issubset(tables):
-            return {"status": "blocked", "reason": "formal_source_schema_missing", "daily_sources": 0, "historical_sources": 0}
-        active_accounts = self.conn.execute(
-            "SELECT COUNT(*) FROM competitor_accounts WHERE domain_label=? AND registration_status='active' AND COALESCE(source_config_ref, '')<>''",
-            (domain_label,),
-        ).fetchone()[0]
-        if not active_accounts:
-            return {"status": "blocked", "reason": "no_active_registered_account", "daily_sources": 0, "historical_sources": 0}
+        competitor_ready = {"competitor_accounts", "competitor_videos", "hits"}.issubset(tables)
         daily_sources = self.conn.execute(
             "SELECT COUNT(*) FROM competitor_videos video JOIN competitor_accounts account ON account.account_id=video.account_id "
             "WHERE account.domain_label=? AND account.registration_status='active' AND COALESCE(account.source_config_ref, '')<>'' "
             "AND video.publish_time>=? AND COALESCE(video.title, '')<>'' AND COALESCE(video.url, '')<>'' "
             "AND COALESCE(video.raw_archive_ref, '')<>'' AND video.excluded_reason IS NULL",
             (domain_label, daily_since),
-        ).fetchone()[0]
+        ).fetchone()[0] if competitor_ready else 0
         historical_sources = self.conn.execute(
             "SELECT COUNT(*) FROM hits hit JOIN competitor_videos video ON video.video_id=hit.video_id "
             "JOIN competitor_accounts account ON account.account_id=hit.account_id WHERE account.domain_label=? "
@@ -1595,16 +1612,42 @@ class Stage0ContentProductionCore:
             "AND hit.judgment_confidence='formal' AND COALESCE(hit.title, '')<>'' AND COALESCE(hit.url, '')<>'' "
             "AND COALESCE(video.raw_archive_ref, '')<>'' AND video.excluded_reason IS NULL",
             (domain_label,),
+        ).fetchone()[0] if competitor_ready else 0
+        hotspot_sources = self.conn.execute(
+            "SELECT COUNT(*) FROM trendradar_hotspot_observation observation "
+            "JOIN trendradar_collection_run run ON run.collection_run_id=observation.collection_run_id "
+            "WHERE observation.observed_at>=? AND run.status IN ('completed', 'completed_with_failures') "
+            "AND EXISTS (SELECT 1 FROM domain_search_tags tag WHERE tag.domain_label=? "
+            "AND tag.status='active' AND instr(observation.title, tag.tag)>0)",
+            (daily_since, domain_label),
         ).fetchone()[0]
-        if not daily_sources and not historical_sources:
-            return {"status": "blocked", "reason": "no_qualified_formal_source", "daily_sources": 0, "historical_sources": 0}
-        return {"status": "ready", "reason": "qualified_formal_source_available", "daily_sources": daily_sources, "historical_sources": historical_sources}
+        tag_sources = self.conn.execute(
+            "SELECT COUNT(*) FROM discovered_external_videos video JOIN domain_search_tags tag ON tag.tag_id=video.tag_id "
+            "WHERE video.domain_label=? AND tag.status='active' AND COALESCE(video.title, '')<>'' AND COALESCE(video.url, '')<>''",
+            (domain_label,),
+        ).fetchone()[0]
+        counts = {"hotspot_sources": hotspot_sources, "daily_sources": daily_sources, "historical_sources": historical_sources, "tag_sources": tag_sources}
+        if not any(counts.values()):
+            return {"status": "blocked", "reason": "no_qualified_formal_source", **counts}
+        return {"status": "ready", "reason": "qualified_formal_source_available", **counts}
 
     def load_real_discovery_sources(self, *, domain_label: str, daily_since: str, per_source_limit: int) -> list[dict[str, Any]]:
         """Read only qualified, already-recorded formal source facts; never collect or invent content."""
         if self.discovery_source_readiness(domain_label=domain_label, daily_since=daily_since)["status"] != "ready":
             return []
         result: list[dict[str, Any]] = []
+        hotspot_rows = self.conn.execute(
+            "SELECT observation.* FROM trendradar_hotspot_observation observation "
+            "JOIN trendradar_collection_run run ON run.collection_run_id=observation.collection_run_id "
+            "WHERE observation.observed_at>=? AND run.status IN ('completed', 'completed_with_failures') "
+            "AND EXISTS (SELECT 1 FROM domain_search_tags tag WHERE tag.domain_label=? "
+            "AND tag.status='active' AND instr(observation.title, tag.tag)>0) "
+            "ORDER BY observation.observed_at DESC, observation.observation_id ASC LIMIT ?",
+            (daily_since, domain_label, per_source_limit),
+        ).fetchall()
+        for row in hotspot_rows:
+            raw_hash = _hash(json.loads(row["raw_json"]))
+            result.append({"source_type": "hotspot", "source_object_id": row["observation_id"], "source_object_version": row["observed_at"], "source_time": row["observed_at"], "payload": {"source_id": row["observation_id"], "title": row["title"], "url": row["url"], "account_name": f"TrendRadar/{row['source_channel']}", "source_time": row["observed_at"], "formal_source": {"table": "trendradar_hotspot_observation", "object_id": row["observation_id"], "object_version": row["observed_at"], "raw_metadata_hash": raw_hash}}})
         daily_rows = self.conn.execute(
             "SELECT video.video_id, video.title, video.url, video.publish_time, video.last_checked_at, video.raw_json, account.account_name "
             "FROM competitor_videos video JOIN competitor_accounts account ON account.account_id=video.account_id "
@@ -1630,6 +1673,16 @@ class Stage0ContentProductionCore:
         for row in historical_rows:
             raw_hash = _hash(json.loads(row["raw_json"]))
             result.append({"source_type": "historical_high_signal", "source_object_id": row["hit_id"], "source_object_version": row["promoted_at"], "source_time": row["publish_time"], "payload": {"source_id": row["hit_id"], "title": row["title"], "url": row["url"], "account_name": row["account_name"], "source_time": row["publish_time"], "signal_basis": row["hit_channel"], "signal_confidence": row["judgment_confidence"], "formal_source": {"table": "hits", "object_id": row["hit_id"], "object_version": row["promoted_at"], "raw_metadata_hash": raw_hash}}})
+        tag_rows = self.conn.execute(
+            "SELECT video.*, tag.tag FROM discovered_external_videos video "
+            "JOIN domain_search_tags tag ON tag.tag_id=video.tag_id WHERE video.domain_label=? "
+            "AND tag.status='active' AND COALESCE(video.title, '')<>'' AND COALESCE(video.url, '')<>'' "
+            "ORDER BY video.discovered_at DESC, video.discovered_video_id ASC LIMIT ?",
+            (domain_label, per_source_limit),
+        ).fetchall()
+        for row in tag_rows:
+            raw_hash = _hash(json.loads(row["raw_json"]))
+            result.append({"source_type": "tag_discovery", "source_object_id": row["discovered_video_id"], "source_object_version": row["discovered_at"], "source_time": row["discovered_at"], "payload": {"source_id": row["discovered_video_id"], "title": row["title"], "url": row["url"], "account_name": f"标签搜索/{row['tag']}", "source_time": row["discovered_at"], "formal_source": {"table": "discovered_external_videos", "object_id": row["discovered_video_id"], "object_version": row["discovered_at"], "raw_metadata_hash": raw_hash}}})
         return result
 
     def discovery_source_seen(self, *, source_type: str, source_object_id: str, source_object_version: str) -> bool:

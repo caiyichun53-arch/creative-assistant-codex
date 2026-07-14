@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from scripts.core.business_data.run_domain_search import seed_active_tags_from_sources_yaml
 from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelGatewayError, ModelProviderResult, ModelRoute, ModelUsage
 from scripts.core.production.stage0_content_core import (
     CoreDiscoveryModelRunMaterializer,
@@ -133,6 +134,48 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         )
         self.core.conn.commit()
 
+    def _insert_hotspot(self, *, observation_id: str = "hotspot-1", title: str = "养老服务为什么引发普通家庭讨论") -> None:
+        seed_active_tags_from_sources_yaml(
+            self.core.conn,
+            {"domain_label": "fan_kepu_social_life", "active_tags": ["养老"]},
+        )
+        self.core.conn.execute(
+            """
+            INSERT INTO trendradar_collection_run(
+                collection_run_id, discovery_run_id, status, item_count, command_hash, started_at, completed_at
+            ) VALUES ('tr-run', 'upstream-run', 'completed', 1, 'hash', ?, ?)
+            """,
+            (self.NOW.isoformat(), self.NOW.isoformat()),
+        )
+        self.core.conn.execute(
+            """
+            INSERT INTO trendradar_hotspot_observation(
+                observation_id, provider_item_id, title, url, source_channel, source_rank,
+                observed_at, raw_json, collection_run_id
+            ) VALUES (?, 'provider-1', ?, 'https://example.test/hotspot', 'news', 1, ?, ?, 'tr-run')
+            """,
+            (observation_id, title, self.NOW.isoformat(), json.dumps({"id": "provider-1", "title": title})),
+        )
+        self.core.conn.commit()
+
+    def _insert_tag_source(self) -> None:
+        seed_active_tags_from_sources_yaml(
+            self.core.conn,
+            {"domain_label": "fan_kepu_social_life", "active_tags": ["消费规则"]},
+        )
+        tag_id = self.core.conn.execute("SELECT tag_id FROM domain_search_tags WHERE tag='消费规则'").fetchone()[0]
+        self.core.conn.execute(
+            """
+            INSERT INTO discovered_external_videos(
+                discovered_video_id, platform, platform_item_id, tag_id, domain_label,
+                title, url, raw_json, discovered_at, run_id
+            ) VALUES ('tag-video-1', 'douyin', 'item-1', ?, 'fan_kepu_social_life',
+                      '消费规则为什么让普通人困惑', 'https://example.test/tag-video', ?, ?, 'search-run')
+            """,
+            (tag_id, json.dumps({"aweme_id": "item-1", "desc": "消费规则为什么让普通人困惑"}), self.NOW.isoformat()),
+        )
+        self.core.conn.commit()
+
     def _run(self, key: str = "daily-1", **kwargs: object) -> dict:
         return self.service.run_daily_discovery(
             discovery_date="2026-07-14",
@@ -151,6 +194,53 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 0)
         self.assertEqual(result["summary"]["source_readiness"]["fan_kepu_social_life"]["reason"], "no_qualified_formal_source")
         self.assertEqual(self.provider.calls, 0)
+
+    def test_hotspot_and_tag_discovery_are_formal_sources_not_direct_candidates(self) -> None:
+        self._insert_hotspot()
+        self._insert_tag_source()
+        sources = self.core.load_real_discovery_sources(
+            domain_label="fan_kepu_social_life",
+            daily_since="2026-07-11T12:00:00+00:00",
+            per_source_limit=6,
+        )
+        self.assertEqual([source["source_type"] for source in sources], ["hotspot", "tag_discovery"])
+        result = self._run("hotspot-tag")
+        self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["sources_read"], 2)
+        self.assertEqual(self.provider.calls, 2)
+        recorded_types = {
+            row[0] for row in self.core.conn.execute("SELECT source_type FROM stage1b_source_version").fetchall()
+        }
+        self.assertEqual(recorded_types, {"hotspot", "tag_discovery"})
+
+    def test_runtime_collects_hotspot_then_converts_it_before_starting_tag_search(self) -> None:
+        test_case = self
+
+        class OrderedAcquirer:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def collect_hotspots(self, *, discovery_run_id: str, now: datetime, deadline_monotonic: float | None = None) -> dict:
+                self.calls.append("trendradar")
+                test_case._insert_hotspot()
+                return {"status": "completed", "item_count": 1}
+
+            def search_tags(self, *, discovery_run_id: str, domain: str, now: datetime, deadline_monotonic: float | None = None) -> dict:
+                self.calls.append("tag_search")
+                test_case.assertEqual(test_case.provider.calls, 1, "hotspot conversion must finish before tag search starts")
+                return {"selected_tag_count": 0, "results": [], "failed": 0}
+
+        acquirer = OrderedAcquirer()
+        service = Stage1BDailyDiscoveryService(core=self.core, gateway=self.gateway, source_acquirer=acquirer)  # type: ignore[arg-type]
+        result = service.run_daily_discovery(
+            discovery_date="2026-07-14",
+            actor="test-worker",
+            idempotency_key="ordered-runtime",
+            execution_mode="test_isolated",
+            now=self.NOW,
+            domains=("fan_kepu_social_life",),
+        )
+        self.assertEqual(acquirer.calls, ["trendradar", "tag_search"])
+        self.assertEqual(result["summary"]["acquisition"]["execution_order"][:2], ["trendradar_hotspot", "hotspot_conversion"])
 
     def test_explicit_single_domain_never_reads_or_snapshots_music_entertainment(self) -> None:
         self._insert_video()

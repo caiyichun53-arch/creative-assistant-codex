@@ -1,18 +1,6 @@
-"""领域话题标签库:sources.yaml 种子加载 + 爆款库标签建议 + 轮换调度 + 四层过滤
-(2026-07-13, 置顶规则总表核对后, 原文档第21章)。
+"""领域话题标签库、爆款标签建议、每日轮换和单页搜索来源留存。
 
-Explicitly NOT implemented in this pass (documented limitation, not an
-oversight):
-  - Turning a discovered_external_videos row into a real topic_candidates
-    row (would need its own topic-generation path, since discovered videos
-    have no hit_deep_analysis row -- topic_candidates.source_analysis_id is
-    a NOT NULL FK to it). record_search_cycle_result() therefore takes
-    produced_validated_topic as an explicit caller-supplied boolean rather
-    than querying for it -- there is currently no real query that could
-    answer that question.
-  - Feeding discovered videos into ASR/deep-analysis at all. Section 21.2's
-    "ASR后低成本判断" tier is not wired -- the top-N selected by
-    rank_and_select_for_deep_processing() here is as far as this pass goes.
+搜索只产生可追溯来源记录，不直接建立候选、研究或经验对象。
 
 Usage:
     python -m scripts.core.business_data.run_domain_search --domain-config config/domains/泛科普.yaml
@@ -24,7 +12,8 @@ import argparse
 import json
 import re
 import sys
-from datetime import datetime, timedelta, timezone
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 import sqlite3
@@ -37,20 +26,18 @@ if str(ROOT) not in sys.path:
 
 from scripts.core.business_data.domain_labels import ALLOWED_DOMAIN_LABELS  # noqa: E402
 from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
-from scripts.core.external_adapters import ExternalAdapterCommand  # noqa: E402
-from scripts.core.external_adapters.local_mediacrawler_executor import LocalMediaCrawlerExecutor  # noqa: E402
+from scripts.core.external_adapters import ExternalAdapterCommand, ExternalCommandExecutor  # noqa: E402
 
 SCHEMA_PATH = Path(__file__).with_name("domain_search_schema.sqlite.sql")
 
-# 原文档21.1/21.3 的真实数字,不是拍脑袋定的。
-TAG_ROTATION_DAYS = 7
-SEARCH_READ_MAX = 20
-DEEP_PROCESSING_MAX_PER_TAG = 5
+DAILY_TAG_SEARCH_COUNT = 3
+SEARCH_PAGE_COUNT = 1
+# MediaCrawler 的抖音搜索每页为 10 条；max_items=10 只触发第一页。
+DOUYIN_FIRST_PAGE_MAX_ITEMS = 10
 CONSECUTIVE_CYCLES_BEFORE_PAUSE = 3
-DAILY_DEEP_PROCESSING_MAX_PER_DOMAIN = 10
-# A2 之前已经验证过的真实标签长度/领域内频率过滤规则,来自真实数据统计。
-TAG_MAX_CHARS_FOR_REUSABLE = 5  # >=6 字几乎全是平台活动标签(真实数据验证过)
 _HASHTAG_PATTERN = re.compile(r"#([^#\s]+)")
+_GENERIC_TAGS = frozenset({"科普", "知识", "涨知识", "生活", "热点", "热门", "推荐", "上热门", "干货"})
+_ACTIVITY_TAG_TERMS = ("挑战赛", "挑战", "活动", "打卡", "创作季", "征集", "大赛", "任务", "话题活动")
 
 
 def validate_domain_search_execution_contract(domain_search_cfg: dict[str, Any]) -> dict[str, Any]:
@@ -64,6 +51,10 @@ def validate_domain_search_execution_contract(domain_search_cfg: dict[str, Any])
             "domain_search.live_enabled is false (or unset) in config/settings.yaml -- "
             "real MediaCrawler keyword search is not allowed until this is explicitly turned on"
         )
+    if int(domain_search_cfg.get("daily_tag_count", DAILY_TAG_SEARCH_COUNT)) != DAILY_TAG_SEARCH_COUNT:
+        raise ValueError("domain_search.daily_tag_count must remain 3 under the effective baseline")
+    if int(domain_search_cfg.get("page_count_per_tag", SEARCH_PAGE_COUNT)) != SEARCH_PAGE_COUNT:
+        raise ValueError("domain_search.page_count_per_tag must remain 1 under the effective baseline")
     return contract
 
 
@@ -107,15 +98,12 @@ def extract_hashtags(text: str) -> list[str]:
 
 
 def suggest_tags_from_hit_library(conn: sqlite3.Connection, *, domain_label: str, run_id: str) -> dict[str, Any]:
-    """从真实爆款视频的 desc/title 里抓 #xxx 标签,按两条已用真实数据验证过的规则
-    过滤(见 A2 阶段的统计):字数>=6的标签几乎全是平台活动标签,过滤掉;领域内
-    出现频率排在最前面的标签太泛,过滤掉(具体截多少不是固定比例,按这批真实
-    数据的分布取最高频的一小撮,见下方 generic_cutoff)。落成 status='suggested',
-    不自动转正为 active。"""
+    """只从本领域正式爆款样本提取标签，过滤泛类和时效活动标签。"""
     rows = conn.execute(
         """
         SELECT competitor_videos.video_id, competitor_videos.raw_json
-          FROM competitor_videos
+          FROM hits
+          JOIN competitor_videos ON competitor_videos.video_id = hits.video_id
           JOIN competitor_accounts ON competitor_accounts.account_id = competitor_videos.account_id
          WHERE competitor_accounts.domain_label = ?
         """,
@@ -128,7 +116,8 @@ def suggest_tags_from_hit_library(conn: sqlite3.Connection, *, domain_label: str
         raw = json.loads(row["raw_json"])
         text = raw.get("desc") or raw.get("title") or ""
         for tag in extract_hashtags(text):
-            if len(tag) >= 6:  # 平台活动标签过滤(真实数据验证过)
+            tag = tag.strip("，。！？、,.!? ")
+            if not tag or tag in _GENERIC_TAGS or any(term in tag for term in _ACTIVITY_TAG_TERMS):
                 continue
             tag_counts[tag] = tag_counts.get(tag, 0) + 1
             tag_video_ids.setdefault(tag, row["video_id"])
@@ -136,17 +125,15 @@ def suggest_tags_from_hit_library(conn: sqlite3.Connection, *, domain_label: str
     if not tag_counts:
         return {"domain_label": domain_label, "suggested": 0, "candidates_scanned": len(rows)}
 
-    # 领域内高频过滤:取这批真实标签计数分布里最高的一成(至少留1个不过滤,
-    # 避免全领域只有几个标签时把所有标签都当成"太泛"过滤光)。这是对着真实
-    # 分布算出来的比例,不是写死一个固定次数阈值。
     sorted_counts = sorted(tag_counts.values(), reverse=True)
-    generic_cutoff_index = max(1, len(sorted_counts) // 10)
-    generic_cutoff_value = sorted_counts[generic_cutoff_index - 1]
+    dominant_generic_count = None
+    if len(sorted_counts) > 1 and sorted_counts[0] >= 3 and sorted_counts[0] >= sorted_counts[1] * 3:
+        dominant_generic_count = sorted_counts[0]
 
     inserted = 0
     for tag, count in tag_counts.items():
-        if count >= generic_cutoff_value and len(sorted_counts) > 1:
-            continue  # 领域内出现频率太高,太泛
+        if dominant_generic_count is not None and count == dominant_generic_count:
+            continue
         tag_id = f"{domain_label}_{tag}"
         cur = conn.execute(
             """
@@ -161,11 +148,10 @@ def suggest_tags_from_hit_library(conn: sqlite3.Connection, *, domain_label: str
     return {"domain_label": domain_label, "suggested": inserted, "candidates_scanned": len(rows)}
 
 
-def select_tags_due_for_search(conn: sqlite3.Connection, *, domain_label: str, limit: int, now: datetime | None = None) -> list[sqlite3.Row]:
-    """轮换调度:只挑 status='active' 且(从没搜过,或者上次搜索距今>=7天)的标签,
-    按最久没搜的排在最前面——不是一次性把所有标签都搜一遍。"""
-    now = now or datetime.now(timezone.utc)
-    cutoff = (now - timedelta(days=TAG_ROTATION_DAYS)).isoformat()
+def select_tags_due_for_search(conn: sqlite3.Connection, *, domain_label: str, limit: int = DAILY_TAG_SEARCH_COUNT, now: datetime | None = None) -> list[sqlite3.Row]:
+    """每天按从未搜索、最久未搜索的稳定顺序轮换最多三个活跃标签。"""
+    del now
+    effective_limit = min(max(int(limit), 0), DAILY_TAG_SEARCH_COUNT)
     return conn.execute(
         """
         SELECT domain_search_tags.*, domain_search_cursor.last_searched_at
@@ -173,16 +159,17 @@ def select_tags_due_for_search(conn: sqlite3.Connection, *, domain_label: str, l
           JOIN domain_search_cursor ON domain_search_cursor.tag_id = domain_search_tags.tag_id
          WHERE domain_search_tags.domain_label = ?
            AND domain_search_tags.status = 'active'
-           AND (domain_search_cursor.last_searched_at IS NULL OR domain_search_cursor.last_searched_at <= ?)
-         ORDER BY domain_search_cursor.last_searched_at IS NOT NULL, domain_search_cursor.last_searched_at ASC
+         ORDER BY domain_search_cursor.last_searched_at IS NOT NULL,
+                  domain_search_cursor.last_searched_at ASC,
+                  domain_search_tags.tag_id ASC
          LIMIT ?
         """,
-        (domain_label, cutoff, limit),
+        (domain_label, effective_limit),
     ).fetchall()
 
 
 def deterministic_filter(items: list[dict[str, Any]], *, tag: str, already_discovered_ids: set[str]) -> list[dict[str, Any]]:
-    """21.2 第一层"确定性过滤":平台视频ID已处理(已经在 discovered_external_videos
+    """确定性过滤：平台视频ID已处理(已经在 discovered_external_videos
     或本批次内重复)则跳过;标题/描述完全没命中当前标签本身也跳过(搜索结果偶尔
     会有跑题的)。"""
     kept: list[dict[str, Any]] = []
@@ -197,16 +184,6 @@ def deterministic_filter(items: list[dict[str, Any]], *, tag: str, already_disco
         seen_in_batch.add(platform_item_id)
         kept.append(item)
     return kept
-
-
-def rank_and_select_for_deep_processing(items: list[dict[str, Any]], *, limit: int = DEEP_PROCESSING_MAX_PER_TAG) -> list[dict[str, Any]]:
-    """21.2 第三层"批次完整处理排序":按搜索位置(结果本身的顺序,越靠前越好)和
-    互动量粗排,取前 limit 个。不产出正式倍数(没有基线可比),只做弱排序。"""
-    def _engagement(item: dict[str, Any]) -> int:
-        return int(item.get("liked_count") or 0) + int(item.get("comment_count") or 0)
-
-    ranked = sorted(enumerate(items), key=lambda pair: (-_engagement(pair[1]), pair[0]))
-    return [item for _, item in ranked[:limit]]
 
 
 def record_search_cycle_result(
@@ -248,15 +225,16 @@ def record_search_cycle_result(
 
 def search_one_tag(
     conn: sqlite3.Connection,
-    executor: LocalMediaCrawlerExecutor,
+    executor: ExternalCommandExecutor,
     tag_row: sqlite3.Row,
     *,
     domain_label: str,
     run_id: str,
     domain_search_cfg: dict[str, Any],
     platform: str = "douyin",
+    timeout_seconds: int = 60,
 ) -> dict[str, Any]:
-    """21.1-21.2:一次搜索一个标签,过滤+排序,把入选的视频存进
+    """一次搜索一个标签的第 1 页，先留存整页，再把合格视频写入
     discovered_external_videos(不写 hits/competitor_videos——见 schema 文件顶部
     说明)。account_platform_id 已经在 competitor_accounts 里(is_tracked_account=1)
     的直接跳过写入,交给 A5 的复查流程处理未追踪账号。"""
@@ -266,8 +244,9 @@ def search_one_tag(
         capability="platform.keyword_search",
         executable="vendor/MediaCrawler/main.py",
         args=(platform, "search"),
-        input_payload={"platform": platform, "source_kind": "search", "keywords": [tag_row["tag"]]},
-        max_items=SEARCH_READ_MAX,
+        input_payload={"platform": platform, "source_kind": "search", "keywords": [tag_row["tag"]], "page_count": SEARCH_PAGE_COUNT},
+        max_items=DOUYIN_FIRST_PAGE_MAX_ITEMS,
+        timeout_seconds=max(int(timeout_seconds), 1),
     )
     result = executor.execute(command)
     if result.status != "succeeded":
@@ -277,19 +256,56 @@ def search_one_tag(
         row["platform_item_id"]
         for row in conn.execute("SELECT platform_item_id FROM discovered_external_videos WHERE platform=?", (platform,)).fetchall()
     }
-    filtered = deterministic_filter(result.payload.get("items", []), tag=tag_row["tag"], already_discovered_ids=already)
-    selected = rank_and_select_for_deep_processing(filtered)
+    page_items = result.payload.get("items", [])
+    if not isinstance(page_items, list):
+        return {"tag_id": tag_row["tag_id"], "status": "failed", "reason": "invalid_items_payload"}
 
-    tracked_accounts = {
-        row["sec_uid"] for row in conn.execute("SELECT sec_uid FROM competitor_accounts").fetchall()
+    eligible_ids = {
+        str(item.get("aweme_id") or item.get("note_id") or item.get("id") or "")
+        for item in deterministic_filter(page_items, tag=tag_row["tag"], already_discovered_ids=already)
     }
-    inserted = 0
-    for position, item in enumerate(selected):
+    seen_in_page: set[str] = set()
+    for position, item in enumerate(page_items):
         platform_item_id = str(item.get("aweme_id") or item.get("note_id") or item.get("id") or "")
+        text = str(item.get("desc") or item.get("title") or "")
+        if not platform_item_id:
+            outcome, reason = "excluded", "missing_platform_item_id"
+        elif platform_item_id in already:
+            outcome, reason = "excluded", "already_discovered"
+        elif platform_item_id in seen_in_page:
+            outcome, reason = "excluded", "duplicate_in_page"
+        elif tag_row["tag"] not in text:
+            outcome, reason = "excluded", "tag_mismatch"
+        else:
+            outcome, reason = "eligible", "eligible"
+        seen_in_page.add(platform_item_id)
+        observation_id = f"search_obs_{run_id}_{tag_row['tag_id']}_{position}"
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO domain_search_page_observation(
+                observation_id, platform, platform_item_id, tag_id, domain_label, page_number,
+                search_position, title, url, filter_outcome, filter_reason, raw_json, run_id
+            ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (observation_id, platform, platform_item_id or None, tag_row["tag_id"], domain_label,
+             position, item.get("title") or item.get("desc"), item.get("aweme_url"), outcome,
+             reason, json.dumps(item, ensure_ascii=False), run_id),
+        )
+
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    tracked_accounts = (
+        {row["sec_uid"] for row in conn.execute("SELECT sec_uid FROM competitor_accounts").fetchall()}
+        if "competitor_accounts" in tables else set()
+    )
+    inserted = 0
+    for position, item in enumerate(page_items):
+        platform_item_id = str(item.get("aweme_id") or item.get("note_id") or item.get("id") or "")
+        if platform_item_id not in eligible_ids:
+            continue
         account_platform_id = str(item.get("sec_uid") or item.get("user_id") or "")
         is_tracked = 1 if account_platform_id in tracked_accounts else 0
         discovered_video_id = f"disc_{platform}_{platform_item_id}"
-        conn.execute(
+        cur = conn.execute(
             """
             INSERT OR IGNORE INTO discovered_external_videos(
                 discovered_video_id, platform, platform_item_id, account_handle, account_platform_id,
@@ -304,9 +320,52 @@ def search_one_tag(
                 position, json.dumps(item, ensure_ascii=False), run_id,
             ),
         )
-        inserted += 1
+        inserted += int(cur.rowcount > 0)
     conn.commit()
-    return {"tag_id": tag_row["tag_id"], "status": "completed", "raw_results": len(result.payload.get("items", [])), "inserted": inserted}
+    return {"tag_id": tag_row["tag_id"], "status": "completed", "page_number": 1, "raw_results": len(page_items), "inserted": inserted}
+
+
+def run_daily_tag_searches(
+    conn: sqlite3.Connection,
+    executor: ExternalCommandExecutor,
+    *,
+    domain_label: str,
+    run_id: str,
+    domain_search_cfg: dict[str, Any],
+    now: datetime | None = None,
+    deadline_monotonic: float | None = None,
+) -> dict[str, Any]:
+    """Run at most three one-page tag searches sequentially, without retries or padding."""
+    selected = select_tags_due_for_search(conn, domain_label=domain_label, limit=DAILY_TAG_SEARCH_COUNT, now=now)
+    results: list[dict[str, Any]] = []
+    for tag_row in selected:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            results.append({"tag_id": tag_row["tag_id"], "status": "timed_out", "reason": "batch deadline reached; no request was sent or retried"})
+            break
+        remaining_seconds = 60
+        if deadline_monotonic is not None:
+            remaining_seconds = max(1, min(60, int(deadline_monotonic - time.monotonic())))
+        result = search_one_tag(
+            conn, executor, tag_row, domain_label=domain_label, run_id=run_id,
+            domain_search_cfg=domain_search_cfg,
+            timeout_seconds=remaining_seconds,
+        )
+        results.append(result)
+        conn.execute(
+            "UPDATE domain_search_cursor SET last_searched_at=?, run_id=? WHERE tag_id=?",
+            ((now or datetime.now(timezone.utc)).isoformat(), run_id, tag_row["tag_id"]),
+        )
+        conn.commit()
+    timed_out = any(result["status"] == "timed_out" or result.get("reason") == "failed_timeout" for result in results)
+    failed = sum(result["status"] != "completed" for result in results)
+    return {
+        "status": "timed_out" if timed_out else ("completed_with_failures" if failed else "completed"),
+        "domain_label": domain_label,
+        "selected_tag_count": len(selected),
+        "tags": [row["tag"] for row in selected],
+        "results": results,
+        "failed": failed,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
