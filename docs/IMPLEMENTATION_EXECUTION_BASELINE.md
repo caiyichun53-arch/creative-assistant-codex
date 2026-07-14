@@ -2,18 +2,18 @@
 mode: implementation
 stage: stage_1_daily_discovery
 design_complete: true
-implementation_authorized: false
+implementation_authorized: true
 external_calls_authorized: false
 environment_changes_authorized: false
 formal_data_writes_authorized: false
 production_authorized: false
-completion_status: SOURCE_TO_TOPIC_HOTSPOT_LIVE_VALIDATION_REJECTED_PATH_MISMATCH
-stage_status: LIVE_VALIDATION_REJECTED_PATH_MISMATCH
+completion_status: SOURCE_TO_TOPIC_STAGE1B_ENTRYPOINT_FIX_AUTHORIZED
+stage_status: IMPLEMENTATION_FIX_AUTHORIZED
 source_evidence_level: LIVE_RUN_REJECTED
 claimed_source_level: NONE
-next_action: fix_stage1b_entrypoint_to_use_confirmed_source_to_topic_skill_before_next_live_validation
+next_action: implement_stage1b_entrypoint_source_to_topic_skill_wiring_without_live_calls
 baseline_sha256: 6822f5e121073f321b2a7d5a2ae1043d1bb46c001ca72edc8263371f2d2b70e8
-base_commit: 96f09964da5bdb4840e7b7e06b0485fc2cc25717
+base_commit: f5adadacac4b19677ecf023e1061798f82b3825d
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
 execution_state_sources:
@@ -30,7 +30,7 @@ prohibited_design_sources:
   - old code comments business rules
 requirements:
   - id: STAGE1-HOTSPOT-DESIGN-CORRECTION-001
-    description: 用户已确认的 source_to_topic Skill 合同尚未被 Stage 1B 真实入口实际调用；本次真实热点 validation_live 已执行但因路径不匹配被拒绝，真实来源、业务模型调用和正式验收写入授权均已关闭。
+    description: 用户已授权一次只改代码的修复：把 Stage 1B 真实入口接入已确认的 source_to_topic 原子 Skill 路径；真实来源、模型调用、正式库写入、production_daily 和 validation_live 仍未授权。
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3.1 热点转选题的受控搜索与 Skill 审核
       - docs/EFFECTIVE_DESIGN_BASELINE.md#20.1 来源与选题 Skill
@@ -40,6 +40,9 @@ requirements:
 allowed_paths:
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
   - execution/current_stage.yaml
+  - scripts/core/production/stage1b_daily_discovery.py
+  - tests/core/test_stage1b_daily_discovery.py
+  - TECHNICAL_MANUAL.md
 frozen_acceptance_tests:
   - tests/core/test_local_trendradar_executor.py
 frozen_contracts:
@@ -156,19 +159,19 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 | 项目 | 当前事实 |
 | --- | --- |
 | 当前阶段 | Stage 1B / `stage_1_daily_discovery` |
-| 当前状态 | `SOURCE_TO_TOPIC_HOTSPOT_LIVE_VALIDATION_REJECTED_PATH_MISMATCH`；一次真实热点验收已执行，但未调用用户确认的新版 `source_to_topic` 原子 Skill 入口，不能判通过 |
-| 当前动作 | 修复 Stage 1B 真实入口接入已确认的 `source_to_topic` Skill；真实来源、业务模型调用、正式验收写入、`production_daily`、Stage 1A 交接、研究、经验和自动重试均未授权 |
+| 当前状态 | `SOURCE_TO_TOPIC_STAGE1B_ENTRYPOINT_FIX_AUTHORIZED`；用户已授权只改代码修复 Stage 1B 真实入口，使其接入已确认的 `source_to_topic` 原子 Skill |
+| 当前动作 | 修复 Stage 1B 入口和直接测试；真实来源、业务模型调用、正式验收写入、`production_daily`、Stage 1A 交接、研究、经验和自动重试均未授权 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `9c5b4a8130deb7b5f1990ca66053817614f5793f` |
 | Stage 0 | 已完成并提交：`e88c86a` |
 | 参数治理 | 已完成并提交：`d766a51` |
 | Stage 1A | 已完成并提交：`6693d3a`；尚未经过真实日常候选上游接入 |
-| Stage 1B | 当前标记为 `LIVE_VALIDATION_REJECTED_PATH_MISMATCH`；没有来源可按修正后设计标记为 `LIVE_VALIDATED`，不得冒充 `PRODUCTION_READY` 或真实日常完成 |
+| Stage 1B | 当前标记为 `IMPLEMENTATION_FIX_AUTHORIZED`；没有来源可按修正后设计标记为 `LIVE_VALIDATED`，不得冒充 `PRODUCTION_READY` 或真实日常完成 |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
 | 真实来源状态 | TrendRadar 原始采集环境保持可用事实，但热点转选题业务验收被拒绝；真实调用授权已关闭 |
-| 当前阻断 | 本次真实验收因入口路径不匹配被拒绝；`implementation_authorized: false`、`external_calls_authorized: false`、`formal_data_writes_authorized: false`、`environment_changes_authorized: false`、`production_authorized: false` |
-| 下一唯一动作 | 修复 Stage 1B 真实入口，使其调用已确认的 `source_to_topic` 原子 Skill 合同；修复提交后再由用户决定是否授权下一次真实验收 |
+| 当前阻断 | 本轮只授权代码修复，不授权真实来源、模型调用、正式库写入、环境改动或生产运行；`external_calls_authorized: false`、`formal_data_writes_authorized: false`、`environment_changes_authorized: false`、`production_authorized: false` |
+| 下一唯一动作 | 实现并测试 Stage 1B 真实入口调用已确认的 `source_to_topic` 原子 Skill；修复提交后关闭实施授权并等待用户决定是否授权下一次真实验收 |
 
 ### 创建本文件时的 Git 事实
 

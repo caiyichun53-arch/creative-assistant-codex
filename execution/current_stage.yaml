@@ -1,18 +1,18 @@
 mode: implementation
 stage: stage_1_daily_discovery
 design_complete: true
-implementation_authorized: false
+implementation_authorized: true
 external_calls_authorized: false
 environment_changes_authorized: false
 formal_data_writes_authorized: false
 production_authorized: false
-completion_status: SOURCE_TO_TOPIC_HOTSPOT_LIVE_VALIDATION_REJECTED_PATH_MISMATCH
-stage_status: LIVE_VALIDATION_REJECTED_PATH_MISMATCH
+completion_status: SOURCE_TO_TOPIC_STAGE1B_ENTRYPOINT_FIX_AUTHORIZED
+stage_status: IMPLEMENTATION_FIX_AUTHORIZED
 source_evidence_level: LIVE_RUN_REJECTED
 claimed_source_level: NONE
-next_action: fix_stage1b_entrypoint_to_use_confirmed_source_to_topic_skill_before_next_live_validation
+next_action: implement_stage1b_entrypoint_source_to_topic_skill_wiring_without_live_calls
 baseline_sha256: 6822f5e121073f321b2a7d5a2ae1043d1bb46c001ca72edc8263371f2d2b70e8
-base_commit: 96f09964da5bdb4840e7b7e06b0485fc2cc25717
+base_commit: f5adadacac4b19677ecf023e1061798f82b3825d
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
 execution_state_sources:
@@ -29,7 +29,7 @@ prohibited_design_sources:
   - old code comments business rules
 requirements:
   - id: STAGE1-HOTSPOT-DESIGN-CORRECTION-001
-    description: "The authorized Stage 1 hotspot validation_live run was real but rejected: it used the Stage 1B daily_discovery prompt path instead of the confirmed source_to_topic atomic Skill entrypoint. All real-call authorization is now closed until the entrypoint is fixed and separately re-authorized."
+    description: "User authorized a code-only repair to wire the Stage 1B real entrypoint to the confirmed source_to_topic atomic Skill path. Real sources, model calls, formal data writes, production_daily, and validation_live remain unauthorized."
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3.1 热点转选题的受控搜索与 Skill 审核
       - docs/EFFECTIVE_DESIGN_BASELINE.md#20.1 来源与选题 Skill
@@ -39,6 +39,9 @@ requirements:
 allowed_paths:
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
   - execution/current_stage.yaml
+  - scripts/core/production/stage1b_daily_discovery.py
+  - tests/core/test_stage1b_daily_discovery.py
+  - TECHNICAL_MANUAL.md
 frozen_acceptance_tests:
   - tests/core/test_local_trendradar_executor.py
 frozen_contracts:
