@@ -1,26 +1,14 @@
 ---
-mode: IMPLEMENTATION_AND_VALIDATION_LIVE
-stage: STAGE_1_SOURCE_READINESS_CORRECTION
-design_complete: true
+mode: DESIGN_RECOVERY
+stage: STAGE_1_SOURCE_READINESS_REVIEW
+design_complete: false
 baseline_sha256: 03d1a9950f86d379368b4c00b607c6ebfde6e03d18d2d2658d20025063895001
-base_commit: 969901890c7025e826538ed51bb29ac6b8544808
+base_commit: a6306535c7cea56babd31541723eaf9288c1ea83
 requirements:
-  - id: STAGE1-HOTSPOT-RUNTIME-001
-    description: 必须安装官方 TrendRadar 并形成项目 Runtime 可直接执行的确定性本地入口，不得以接口空壳或 fake 代替。
+  - id: STAGE1-SOURCE-STATUS-CLOSE-001
+    description: 必须关闭外部授权并把TrendRadar真实结果及Stage 1全部来源六级状态据实写回执行基线。
     baseline_refs:
-      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#Stage 1 热点运行时补齐授权
-    tests:
-      - [python, -m, pytest, tests/core/test_local_trendradar_executor.py, tests/core/test_daily_source_acquisition.py, -q]
-  - id: STAGE1-HOTSPOT-RUNTIME-002
-    description: 必须把 TrendRadar 的真实输出确定性转换为项目规范化热点记录，保留来源、时间、排名、URL 和原始审计引用。
-    baseline_refs:
-      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#Stage 1 热点运行时补齐授权
-    tests:
-      - [python, -m, pytest, tests/core/test_local_trendradar_executor.py, tests/core/test_daily_source_acquisition.py, -q]
-  - id: STAGE1-SOURCE-STATUS-003
-    description: Stage 1全部来源必须按六级状态核实，Mock、fixture、fake provider和pytest最多只能证明TECH_TESTED。
-    baseline_refs:
-      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#Stage 1 热点运行时补齐授权
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#Stage 1 来源六级状态
     tests:
       - [python, -m, pytest, tests/core/test_local_trendradar_executor.py, -q]
   - id: WF-GUARD-001
@@ -31,15 +19,10 @@ requirements:
     tests:
       - [python, -m, pytest, tests/test_workflow_guard.py, -q]
 allowed_paths:
-  - TECHNICAL_MANUAL.md
-  - config/settings.example.yaml
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
-  - scripts/core/external_adapters/local_trendradar_executor.py
-  - scripts/integrations/trendradar_runtime.py
-  - tests/core/test_local_trendradar_executor.py
 forbidden_actions:
-  - unrelated_business_code_change
-  - non_trendradar_source_call
+  - business_code_change
+  - any_external_source_call
   - any_model_call
   - candidate_generation
   - production_daily
@@ -47,7 +30,7 @@ forbidden_actions:
   - research_stage_entry
   - automatic_retry
   - workflow_guard_bypass
-external_call_authorized: true
+external_call_authorized: false
 ---
 
 # V1.3 实施执行基线
@@ -80,7 +63,7 @@ external_call_authorized: true
 
 执行前必须核实本机 TrendRadar、规范化导出、Mimo 路由、凭证和受控入口均已配置；任一缺失即记录阻断并停止，不得用临时脚本、其他热点源、其他模型、旧结果、fixture 或手工数据替代。运行结束后必须核对采集运行、热点原始观察、领域过滤、模型运行、候选/零候选和 `validation_live` 隔离审计，然后立即把 `external_call_authorized` 恢复为 `false`、`design_complete` 恢复为 `false`、模式恢复为 `DESIGN_RECOVERY`，提交执行基线并停止。
 
-### 本次授权的实际结果
+### 上一次单次验收授权的阻断结果
 
 本次只完成了受控运行前检查，没有发出任何真实热点或模型请求，也没有创建发现运行。检查结果：Mimo 的 `business_analysis` 路由可解析为显式 Hermes 适配器，模型引用已配置且 `fallback: none`；但 `config/settings.yaml` 中 `hotspot_collection.live_enabled` 仍为 `false`，`project_dir`、`executable` 和 `normalized_json_path` 均为空，本机未发现 TrendRadar 命令、项目目录或 Docker 容器。因此命中“任一真实运行配置缺失即停止”的规则，未使用其他热点源、旧数据、fixture 或临时脚本替代。一次性外部调用授权未被消耗为真实请求，现已关闭。
 
@@ -94,13 +77,21 @@ external_call_authorized: true
 
 Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`TECH_TESTED`、`ENV_READY`、`LIVE_VALIDATED`、`PRODUCTION_READY`。等级必须逐级满足；Mock、fixture、fake provider、文件存在或 pytest 通过最高只能达到 `TECH_TESTED`。`ENV_READY` 必须有项目内安装、依赖、正式本机配置和可执行命令；`LIVE_VALIDATED` 必须有本轮真实来源输入、原始输出、转换结果、错误和耗时证据；`PRODUCTION_READY` 还必须通过进入受控日常发现链路的独立验收。只有 `LIVE_VALIDATED` 或 `PRODUCTION_READY` 的来源才能用于之后另行授权的真实候选发现。
 
+### TrendRadar 本轮真实来源验收结果
+
+项目内受控入口已由提交 `a6306535c7cea56babd31541723eaf9288c1ea83` 固定。本轮只执行一次 `vendor/TrendRadar/.venv/Scripts/python.exe -m trendradar`，没有自动重试、模型调用、候选生成或正式库写入。官方来源为 `https://github.com/sansan0/TrendRadar.git`，版本 V6.10.0，提交 `1f178da10e6680e5b652b0dec781e675fe73cf31`，安装位置为 `vendor/TrendRadar`。
+
+运行从 `2026-07-14T06:13:46.033845+00:00` 到 `2026-07-14T06:14:43.939924+00:00`，耗时 `57.871` 秒，退出码 0。11 个配置平台全部成功，失败来源 0；真实原始库为 `vendor/TrendRadar/output/news/2026-07-14.db`，抓取批次 `14-14`。项目转换得到 255 条标准对象，255 条标题、URL 和 ID 均非空且 ID 唯一，输出 SHA-256 为 `ec8d524ee72d6be176e28d92622a8a181d9bb421c96df674499f3307a9552069`。
+
+本机审计证据保存在 `validation_evidence/stage1/trendradar/20260714T061346.033845Z/`：`manifest.json` 记录命令、安装身份、开始/结束时间、耗时、原始库、平台状态和输出路径；`stdout.log` 为 3,038 字节；`stderr.log` 为 0 字节。规范化输出保存在 `outputs/stage1/trendradar/latest.json`。正式库文件最后修改时间仍为 `2026-07-14 11:53:29`，其中发现运行 1、Stage 1B 模型运行 12、候选 9、来源版本 12，均未因本轮来源验收增加。TrendRadar 因此只升级到 `LIVE_VALIDATED`，不升级为 `PRODUCTION_READY`。
+
 ## 当前执行指针
 
 | 项目 | 当前事实 |
 | --- | --- |
-| 当前阶段 | Stage 1——来源完成状态纠正与 TrendRadar 真实来源验收 |
-| 当前状态 | TrendRadar 已在仓库内安装并完成确定性转换技术测试，当前只到 `ENV_READY`；尚未产生本轮真实运行证据，不得写成已接通或完成 |
-| 当前动作 | 提交受控 TrendRadar 运行入口→只运行一次真实热点来源采集与转换→保存输出/错误/耗时→更新六级状态→关闭授权；不生成候选、不调用模型 |
+| 当前阶段 | Stage 1——来源六级状态复核完成，等待下一来源真实验收授权 |
+| 当前状态 | TrendRadar 来源已完成一次真实采集和标准转换，等级为 `LIVE_VALIDATED`；Stage 1 整体仍未完成，外部调用授权已关闭 |
+| 当前动作 | 停止业务实现和外部调用，等待用户确认下一项来源环境补齐或真实验收；不得生成候选、调用模型或进入后续阶段 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `6693d3acab913a6845ad1c7665ff15cc4da6aefa` |
@@ -110,8 +101,8 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 | Stage 1B | 定向修正已提交：`be42e27e1909bb97afa14cfe25beb1f32a82b169`；单领域受控入口已提交：`e85b1e61e85973042c9aca9a4e4bda6cd5de0313`；本次真实链路验收修正已由当前 HEAD `fix: separate live validation from daily production discovery` 记录：既有真实社会生活运行及 9 个候选认定为 `validation_live`，只保留审计且不可进入正式日常生产；stash `wip-stage1b-before-execution-baseline` 已完成比较，未含当前提交之外仍需保留的独有有效内容，已安全删除；当前 `git stash list` 为空，不需要恢复或重新创建该 stash |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
 | 真实来源状态 | 见 Stage 1 六级状态表；只有 `LIVE_VALIDATED` 以上才有资格在后续另行授权后进入真实候选发现 |
-| 当前阻断 | TrendRadar 尚缺一次真实来源运行证据；标签搜索、问题拓展和保存的用户方向也没有真实运行证据 |
-| 下一唯一动作 | 先提交已测试的项目内 TrendRadar 入口，再只运行一次真实热点来源验收并据实关闭状态；不进入候选生成 |
+| 当前阻断 | 标签搜索仅 `TECH_TESTED`；有限问题拓展与保存的用户方向仅 `SCAFFOLDED`；没有用户对下一来源的单次外部调用授权 |
+| 下一唯一动作 | 只能补齐一个未达 `LIVE_VALIDATED` 来源的真实环境或运行该来源的单次真实验收；须先获得用户明确授权并更新门禁 |
 
 ### 创建本文件时的 Git 事实
 
@@ -203,7 +194,7 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 
 | 来源能力 | 当前等级 | 当前证据 | 未达到下一等级的缺口 |
 | --- | --- | --- | --- |
-| TrendRadar 热点 | `ENV_READY` | 官方 `sansan0/TrendRadar` V6.10.0 安装在 `vendor/TrendRadar`，锁定依赖 101 项；项目 Runtime 转换入口与本机配置已完成，11 项相关技术测试通过 | 尚缺本轮一次真实热点抓取、真实 SQLite、规范化输出、stdout/stderr 和耗时证据；产生前禁止称已接通 |
+| TrendRadar 热点 | `LIVE_VALIDATED` | 官方 V6.10.0/`1f178da` 安装在 `vendor/TrendRadar`；单次真实运行 57.871 秒，11 平台全成功、255 条标准对象、stderr 为空，完整证据与原始 SQLite 已保存 | 未进入受控 `production_daily`，因此不是 `PRODUCTION_READY` |
 | 对标账号日常内容 | `LIVE_VALIDATED` | 正式库有 1,525 条真实抖音对标视频；既有 `validation_live` 运行实际读取 6 条 `daily_competitor_content`，形成 6 条隔离候选；原始 MediaCrawler 归档仍在 | 未在新的 `production_daily` 中验收，因此不是 `PRODUCTION_READY` |
 | 历史高信号 | `LIVE_VALIDATED` | 正式库有 121 条 formal 与 323 条 rough hit；既有 `validation_live` 运行实际读取 6 条 formal `historical_high_signal`，其中 3 条形成隔离候选 | 未在新的 `production_daily` 中验收，因此不是 `PRODUCTION_READY` |
 | 领域标签搜索 | `TECH_TESTED` | 标签轮换、每标签第 1 页、返回多少保存多少及 MediaCrawler 参数路径有测试 | 正式搜索开关仍关闭，正式库没有话题标签/搜索页/发现视频表和真实搜索运行证据 |
@@ -227,7 +218,7 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 17. **异常恢复**：保留关闭原因、失败运行和来源级审计；明确未发出的暂态失败才可按相同冻结输入、路由、Provider、模型、配置和 Prompt 受控重试。请求状态不确定、可能已消耗 token 或已离开明确失败状态时禁止自动重试，须由用户重新提交、取消或创建新运行。
 18. **Git 分支和提交检查点**：当前分支 `implementation/v1.3-stage1b-daily-discovery`；前序 `fix: separate live validation from daily production discovery` 只记录运行模式隔离和技术实现，不能证明 TrendRadar 或标签搜索已真实可用。本轮先提交项目内 TrendRadar 安装约定、确定性转换入口、技术测试和状态纠正；真实来源运行证据产生后再关闭授权提交。
 19. **下一阶段进入条件**：新建完整 `production_daily` 运行中，用户选择一个精确候选版本，来源链、领域、日产能、运行模式和版本均通过。
-20. **当前状态和缺口**：Stage 1 不是整体完成。既有 9 个候选仍停在 `validation_live`，没有任何候选可进入 Stage 1A。对标日常和历史高信号达到 `LIVE_VALIDATED`；TrendRadar 当前仅 `ENV_READY`；标签搜索仅 `TECH_TESTED`；问题拓展和保存的用户方向仅 `SCAFFOLDED`。所有来源分别达到 `LIVE_VALIDATED` 前不得宣称 Stage 1 真实来源完成，也不运行 `production_daily`。
+20. **当前状态和缺口**：Stage 1 不是整体完成。既有 9 个候选仍停在 `validation_live`，没有任何候选可进入 Stage 1A。TrendRadar、对标日常和历史高信号达到 `LIVE_VALIDATED`；标签搜索仅 `TECH_TESTED`；问题拓展和保存的用户方向仅 `SCAFFOLDED`。所有来源分别达到 `LIVE_VALIDATED` 前不得宣称 Stage 1 真实来源完成，也不运行 `production_daily`。
 
 ### Stage 1B 真实运行恢复边界与验收条件
 
