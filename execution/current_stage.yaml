@@ -1,18 +1,18 @@
-mode: implementation
+mode: baseline_gap_resolution
 stage: stage_1_daily_discovery
-design_complete: true
-implementation_authorized: true
+design_complete: false
+implementation_authorized: false
 external_calls_authorized: false
 environment_changes_authorized: false
 formal_data_writes_authorized: false
 production_authorized: false
-completion_status: HOTSPOT_LIVE_VALIDATED_ZERO_CANDIDATE
-stage_status: PARTIAL_LIVE_VALIDATED
-source_evidence_level: LIVE_VALIDATED
-claimed_source_level: LIVE_VALIDATED
-next_action: validate_remaining_daily_discovery_sources_before_production_daily
-baseline_sha256: 08d38a9ed9c674104f9d416a816203e80e387115fd2b7199c49c63616a9ff1ab
-base_commit: 870f1c798e2e3be049095678c066a74b674603bb
+completion_status: REJECTED_HOTSPOT_VALIDATION_DESIGN_MISMATCH
+stage_status: BASELINE_GAP
+source_evidence_level: LIVE_RUN_REJECTED
+claimed_source_level: NONE
+next_action: user_review_source_to_topic_skill_and_confirm_hotspot_search_design
+baseline_sha256: 19a7be8a7938c1889a79a8317609d558920fa8ad9adf370d643f0ba2c1defac3
+base_commit: 9c5b4a8130deb7b5f1990ca66053817614f5793f
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
 execution_state_sources:
@@ -28,24 +28,18 @@ prohibited_design_sources:
   - Git history old designs
   - old code comments business rules
 requirements:
-  - id: WF-GUARD-DESIGN-RECOVERY-001
-    description: Unified workflow guard state lives in execution/current_stage.yaml and blocks business implementation, real execution, external calls, and environment changes while Stage 1 design is incomplete.
+  - id: STAGE1-HOTSPOT-DESIGN-CORRECTION-001
+    description: Stage 1 hotspot-to-topic design requires event clustering, deterministic prefilters, controlled search material packets, and user-reviewed atomic source-to-topic Skill before any further live validation.
     baseline_refs:
-      - AGENTS.md#强制工作流门禁
-      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#工作流硬门禁
+      - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3.1 热点转选题的受控搜索与 Skill 审核
+      - docs/EFFECTIVE_DESIGN_BASELINE.md#20.1 来源与选题 Skill
       - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#当前执行指针
     tests:
       - [python, -m, pytest, tests/test_workflow_guard.py, tests/core/test_stage1b_daily_discovery.py, -q]
 allowed_paths:
-  - AGENTS.md
   - docs/EFFECTIVE_DESIGN_BASELINE.md
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
   - execution/current_stage.yaml
-  - scripts/workflow_guard.py
-  - tests/test_workflow_guard.py
-  - tests/core/test_stage1b_daily_discovery.py
-  - scripts/core/production/stage1b_daily_discovery.py
-  - scripts/core/production/stage0_content_core.py
 frozen_acceptance_tests:
   - tests/core/test_local_trendradar_executor.py
 frozen_contracts:
@@ -53,12 +47,14 @@ frozen_contracts:
   - '*_BUSINESS_CONTRACT.yaml'
   - runtime_skills/**
 forbidden_actions:
-  - stage1_acceptance_test_bypass
-  - any_external_source_call_without_new_authorization
-  - any_model_call_without_new_authorization
+  - business_code_change
+  - stage1_acceptance_test_change
+  - any_external_source_call
+  - any_model_call
   - environment_install_or_change
+  - formal_data_write
   - production_daily
-  - validation_live_without_new_authorization
+  - validation_live
   - stage1a_handoff
   - research_stage_entry
   - automatic_retry

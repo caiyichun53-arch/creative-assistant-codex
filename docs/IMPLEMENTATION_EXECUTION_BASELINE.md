@@ -1,19 +1,19 @@
 ---
-mode: implementation
+mode: baseline_gap_resolution
 stage: stage_1_daily_discovery
-design_complete: true
-implementation_authorized: true
+design_complete: false
+implementation_authorized: false
 external_calls_authorized: false
 environment_changes_authorized: false
 formal_data_writes_authorized: false
 production_authorized: false
-completion_status: HOTSPOT_LIVE_VALIDATED_ZERO_CANDIDATE
-stage_status: PARTIAL_LIVE_VALIDATED
-source_evidence_level: LIVE_VALIDATED
-claimed_source_level: LIVE_VALIDATED
-next_action: validate_remaining_daily_discovery_sources_before_production_daily
-baseline_sha256: 08d38a9ed9c674104f9d416a816203e80e387115fd2b7199c49c63616a9ff1ab
-base_commit: 870f1c798e2e3be049095678c066a74b674603bb
+completion_status: REJECTED_HOTSPOT_VALIDATION_DESIGN_MISMATCH
+stage_status: BASELINE_GAP
+source_evidence_level: LIVE_RUN_REJECTED
+claimed_source_level: NONE
+next_action: user_review_source_to_topic_skill_and_confirm_hotspot_search_design
+baseline_sha256: 19a7be8a7938c1889a79a8317609d558920fa8ad9adf370d643f0ba2c1defac3
+base_commit: 9c5b4a8130deb7b5f1990ca66053817614f5793f
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
 execution_state_sources:
@@ -29,24 +29,18 @@ prohibited_design_sources:
   - Git history old designs
   - old code comments business rules
 requirements:
-  - id: WF-GUARD-DESIGN-RECOVERY-001
-    description: 统一实施门禁状态位于 execution/current_stage.yaml；Stage 1 设计不完整期间阻断业务实现、真实运行、外部调用和环境改动。
+  - id: STAGE1-HOTSPOT-DESIGN-CORRECTION-001
+    description: Stage 1 热点转选题设计必须在再次真实验收前补齐事件聚合去重、确定性前置过滤、受控搜索材料包和经用户审核的原子化来源转选题 Skill。
     baseline_refs:
-      - AGENTS.md#强制工作流门禁
-      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#工作流硬门禁
+      - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3.1 热点转选题的受控搜索与 Skill 审核
+      - docs/EFFECTIVE_DESIGN_BASELINE.md#20.1 来源与选题 Skill
       - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#当前执行指针
     tests:
       - [python, -m, pytest, tests/test_workflow_guard.py, tests/core/test_stage1b_daily_discovery.py, -q]
 allowed_paths:
-  - AGENTS.md
   - docs/EFFECTIVE_DESIGN_BASELINE.md
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
   - execution/current_stage.yaml
-  - scripts/workflow_guard.py
-  - tests/test_workflow_guard.py
-  - tests/core/test_stage1b_daily_discovery.py
-  - scripts/core/production/stage1b_daily_discovery.py
-  - scripts/core/production/stage0_content_core.py
 frozen_acceptance_tests:
   - tests/core/test_local_trendradar_executor.py
 frozen_contracts:
@@ -54,12 +48,14 @@ frozen_contracts:
   - '*_BUSINESS_CONTRACT.yaml'
   - runtime_skills/**
 forbidden_actions:
-  - stage1_acceptance_test_bypass
-  - any_external_source_call_without_new_authorization
-  - any_model_call_without_new_authorization
+  - business_code_change
+  - stage1_acceptance_test_change
+  - any_external_source_call
+  - any_model_call
   - environment_install_or_change
+  - formal_data_write
   - production_daily
-  - validation_live_without_new_authorization
+  - validation_live
   - stage1a_handoff
   - research_stage_entry
   - automatic_retry
@@ -116,7 +112,9 @@ forbidden_actions:
 
 本次领域匹配后进入 Stage 1B 候选判断的热点来源版本为 3 条；3 次模型调用均经 `business_analysis` 显式路由、`hermes` Provider、`xiaomi/mimo-v2.5-pro` 模型、`retry_status=not_retried`、`validation_status=passed`。3 条结果全部记录为 `model_returned_no_candidate`，候选数为 0，并生成 1 条 `candidate_version_id=NULL` 的 `validation_live` 快照。正式库 `data/formal/production_activation.sqlite3` 检查结果为 `PRAGMA integrity_check=ok`，外键违规为 0；命令回执和 `stage0_audit_event` 已记录运行开始、来源记录、过滤、输入组装、模型网关、零候选、快照完成和批次完成事件。
 
-因此，热点来源在当前版本下可标记为 `LIVE_VALIDATED`，结果是确定性零候选；这不表示 Stage 1B 整体完成，也不授权 `production_daily`。真实调用授权已关闭，后续来源和整日日常发现仍必须逐项重新授权和验收。
+用户审核该真实执行结果后明确拒绝其业务验收结论：简单确定性排除仍消耗 LLM，重复热点没有先聚合去重，裸热榜标题缺少受控搜索和最小材料包支撑，且 6 条读取结果进入 3 条模型判断的标准不清晰。因此，本次运行只能证明真实采集、模型路由、审计和数据库完整性链路发生过，不得把热点来源标记为 `LIVE_VALIDATED`，不得把 0 候选解释为设计有效，也不得继续推进剩余来源验收或 `production_daily`。
+
+当前结论固定为 `REJECTED_HOTSPOT_VALIDATION_DESIGN_MISMATCH`：Stage 1B 回到 `BASELINE_GAP`，真实调用授权已关闭，实施、模型调用、外部来源、正式库写入和真实运行均未授权。下一步只能等待用户审核 `runtime_skills/source_to_topic` 是否满足原子化标准结构，并确认热点受控搜索、最小材料包、事件聚合去重和跨领域处理设计后，才能讨论新的验收授权。
 
 ### 上一次单次验收授权的阻断结果
 
@@ -153,19 +151,19 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 | 项目 | 当前事实 |
 | --- | --- |
 | 当前阶段 | Stage 1B / `stage_1_daily_discovery` |
-| 当前状态 | `HOTSPOT_LIVE_VALIDATED_ZERO_CANDIDATE`；热点来源已完成一次受控真实 `validation_live`，结果为零候选 |
-| 当前动作 | 关闭本次真实调用授权；继续推进剩余日常发现来源的真实验收，不得直接运行 `production_daily` |
+| 当前状态 | `REJECTED_HOTSPOT_VALIDATION_DESIGN_MISMATCH`；热点来源真实运行已发生，但业务验收结论被用户拒绝 |
+| 当前动作 | 暂停 Stage 1B 业务实现、真实运行、外部来源、模型调用和正式库写入；等待用户审核来源转选题 Skill 并确认热点受控搜索与最小材料包设计 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
-| 基础提交 | `6693d3acab913a6845ad1c7665ff15cc4da6aefa` |
+| 基础提交 | `9c5b4a8130deb7b5f1990ca66053817614f5793f` |
 | Stage 0 | 已完成并提交：`e88c86a` |
 | 参数治理 | 已完成并提交：`d766a51` |
 | Stage 1A | 已完成并提交：`6693d3a`；尚未经过真实日常候选上游接入 |
-| Stage 1B | 当前标记为 `PARTIAL_LIVE_VALIDATED`；仅热点来源达到 `LIVE_VALIDATED`，Stage 1B 整体不得冒充 `PRODUCTION_READY` 或真实日常完成 |
+| Stage 1B | 当前标记为 `BASELINE_GAP`；没有来源可按修正后设计标记为 `LIVE_VALIDATED`，不得冒充 `PRODUCTION_READY` 或真实日常完成 |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
-| 真实来源状态 | 热点来源本轮已验收；真实调用授权已关闭，后续来源必须重新获得明确授权 |
-| 当前阻断 | 剩余日常发现来源尚未逐项真实验收；`external_calls_authorized: false`、`formal_data_writes_authorized: false`、`environment_changes_authorized: false`、`production_authorized: false` |
-| 下一唯一动作 | 逐项验证剩余日常发现来源；未完成前不得运行 `production_daily` |
+| 真实来源状态 | TrendRadar 原始采集环境保持可用事实，但热点转选题业务验收被拒绝；真实调用授权已关闭 |
+| 当前阻断 | 热点转选题缺少事件聚合去重、确定性前置排除、受控搜索最小材料包、6 到 3 的稳定处理规则，以及经用户审核的原子化来源转选题 Skill；`implementation_authorized: false`、`external_calls_authorized: false`、`formal_data_writes_authorized: false`、`environment_changes_authorized: false`、`production_authorized: false` |
+| 下一唯一动作 | 用户审核 `runtime_skills/source_to_topic` 的原子化结构，并确认热点受控搜索、材料包、去重和跨领域设计；确认前不得进入新的真实验收 |
 
 ### 创建本文件时的 Git 事实
 
@@ -257,14 +255,14 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 
 | 来源能力 | 当前等级 | 当前证据 | 未达到下一等级的缺口 |
 | --- | --- | --- | --- |
-| TrendRadar 热点 | `LIVE_VALIDATED` | 本轮 `discovery_run_cde00cb53c994439b2a37111e5223a3f` 以 `validation_live` 完成：TrendRadar 11 平台采集成功，255 条真实热点观察，3 条社会生活热点进入当前领域过滤、输入组装和显式模型判断，3 条均审计为 `model_returned_no_candidate`，候选数为 0，正式库完整性 `ok`、外键违规 0 | 尚未进入独立 `production_daily`；热点来源通过不代表其他四类日报来源或 Stage 1B 整体完成 |
+| TrendRadar 热点 | `ENV_READY` | TrendRadar 已在本机受控入口完成真实采集，11 平台采集成功并取得 255 条真实热点观察；后续 `validation_live` 批次 `discovery_run_cde00cb53c994439b2a37111e5223a3f` 真实发生，正式库完整性 `ok`、外键违规 0，但用户审核拒绝其业务验收结论 | 需要先补齐事件聚合去重、确定性前置排除、受控搜索最小材料包、6 到 3 的稳定处理规则、跨领域独立处理，以及经用户审核的原子化来源转选题 Skill；修正设计并重新授权真实验收前不得升为 `LIVE_VALIDATED` |
 | 对标账号日常内容 | `ENV_READY` | 正式库有 1,525 条真实抖音对标视频，MediaCrawler 原始归档仍在，真实环境可用 | 唯一真实候选链验收暴露了火箭、硬核工程和音乐娱乐等领域过滤错误；修复后未重新真实验收 |
 | 历史高信号 | `ENV_READY` | 正式库有 121 条 formal 与 323 条 rough hit，真实来源数据可用 | 唯一真实候选链验收使用了修复前过滤逻辑；当前版本未重新真实验收 |
 | 领域标签搜索 | `TECH_TESTED` | 标签轮换、每标签第 1 页、返回多少保存多少、科普/知识保留、活动词待复核、活动证据精确排除及 MediaCrawler 参数路径均有测试 | 正式搜索开关仍关闭，尚无真实搜索运行证据 |
 | 有限问题拓展 | `TECH_TESTED` | 已有 Core 正式来源表、受控登记、精确来源版本、统一过滤/模型输入和回归测试 | 尚无泛科普—社会生活真实完成拓展输入及真实候选/零候选运行证据 |
 | 保存的用户方向 | `TECH_TESTED` | 已有 Core 正式来源表、受控登记、精确来源版本、统一过滤/模型输入和回归测试 | 尚无本轮用户真实方向输入及真实候选/零候选运行证据 |
 
-以上状态不因代码、Mock、fixture、fake provider、pytest 通过或上游采集器成功返回原始数据而自动升级。只有完整经过当前业务过滤和候选/零候选审计的 `LIVE_VALIDATED` 或 `PRODUCTION_READY` 来源，才允许进入后续真实候选发现。当前只有 TrendRadar 热点来源达到 `LIVE_VALIDATED`，Stage 1B 整体仍未完成。
+以上状态不因代码、Mock、fixture、fake provider、pytest 通过或上游采集器成功返回原始数据而自动升级。只有完整经过修正后业务过滤、受控搜索材料包、候选/零候选审计和用户认可验收的 `LIVE_VALIDATED` 或 `PRODUCTION_READY` 来源，才允许进入后续真实候选发现。当前没有任何来源达到 `LIVE_VALIDATED`，Stage 1B 整体仍为 `BASELINE_GAP`。
 4. **前置条件**：Stage 0、明确领域、来源资格、来源精确版本/时间、显式运行模式和显式模型路由；只有 `production_daily` 可形成正式日产候选，音乐娱乐须先有用户提供并受控登记的真实输入。
 5. **允许修改模块**：唯一 Core 内的来源记录、候选版本、过滤/冷却、日快照、用户决定、模型判断、Stage 1A 衔接和直接测试。
 6. **禁止修改/本阶段不做**：不自动选题、不做深度研究、D0—D7/P0—P7、音频、飞书、完整工作台、第二事实源或人工编造候选。
