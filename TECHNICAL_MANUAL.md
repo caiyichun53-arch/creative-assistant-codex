@@ -51,6 +51,14 @@ Input Assembly、ModelGateway 运行记录和审计边界，不执行真实内�
 `awaiting_human_review`。`view_artifact`、`approve_research_plan`、`return_research_plan` 与
 `cancel_task` 分别用于查看、人工通过、退回并以新版本重做、取消。Stage 1A 不执行深度研究。
 
+### Stage 1B：受控日常发现
+
+`scripts/core/production/stage1b_daily_discovery.py` 是一次正式日常发现的受控入口。必须显式给出一个已获授权的领域、审计主体和幂等键；入口只读取已登记的正式来源，经过确定性过滤后才通过显式 `business_analysis` Mimo 路由判断候选，并将来源、过滤、模型运行、候选和日报快照写入 `data/formal/production_activation.sqlite3`。它不自动选择候选、不创建正式生产任务、不进入研究。单次运行只处理传入的领域；没有真实来源的领域不得作为补位运行。
+
+```powershell
+python scripts/core/production/stage1b_daily_discovery.py --domain fan_kepu_social_life --actor <audited-user> --idempotency-key <stable-authorized-run-key>
+```
+
 ### 外部适配器
 
 `scripts/core/external_adapters/` 隔离采集、评论、研究和转写等外部能力。适配器只传递受控输入与结果，不能自行改变业务流程或作为模型调用入口。

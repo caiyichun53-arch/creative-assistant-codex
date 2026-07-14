@@ -6,19 +6,26 @@ candidate snapshots and user decisions, never a production task by itself.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelGatewayError
 from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig
 from scripts.core.model_gateway.model_router import DEFAULT_MODEL_ENV_PATH, ModelRouter, ModelRouterError
 from scripts.core.production.stage0_content_core import (
     CoreDiscoveryModelRunMaterializer,
+    FORMAL_DB_PATH,
     Stage0ContentProductionCore,
     StateTransitionError,
 )
@@ -161,16 +168,22 @@ class Stage1BDailyDiscoveryService:
         actor: str,
         idempotency_key: str,
         now: datetime | None = None,
+        domains: tuple[str, ...] = APPROVED_DOMAINS,
     ) -> dict[str, Any]:
+        requested_domains = tuple(domains)
+        if not requested_domains or len(set(requested_domains)) != len(requested_domains):
+            raise DailyDiscoveryValidationError("daily discovery requires one or more distinct approved domains")
+        if any(domain_label not in APPROVED_DOMAINS for domain_label in requested_domains):
+            raise DailyDiscoveryValidationError("daily discovery received an unapproved domain")
         now = now or datetime.now(timezone.utc)
-        request = {"discovery_date": discovery_date, "actor": actor, "domains": list(APPROVED_DOMAINS)}
+        request = {"discovery_date": discovery_date, "actor": actor, "domains": list(requested_domains)}
         replay = self.core.find_command_replay("stage1b_execute_daily_discovery", idempotency_key, request)
         if replay:
             return {**replay, "replayed": True}
         run = self.core.create_discovery_run(discovery_date=discovery_date, actor=actor, idempotency_key=f"{idempotency_key}:run")
         summary: dict[str, Any] = {"run_id": run["run_id"], "discovery_date": discovery_date, "domains": {}, "filtered": {}, "source_readiness": {}}
         daily_since = (now - timedelta(hours=DAILY_SOURCE_VALIDITY_HOURS)).isoformat()
-        for domain_label in APPROVED_DOMAINS:
+        for domain_label in requested_domains:
             summary["source_readiness"][domain_label] = self.core.discovery_source_readiness(domain_label=domain_label, daily_since=daily_since)
             sources = self.core.load_real_discovery_sources(domain_label=domain_label, daily_since=daily_since, per_source_limit=SOURCE_READ_LIMIT)
             filtered: dict[str, int] = {}
@@ -244,13 +257,21 @@ class Stage1BDailyDiscoveryService:
                 candidate_count += 1
             summary["domains"][domain_label] = {"sources_read": len(sources), "candidates": candidate_count}
             summary["filtered"][domain_label] = filtered
-        self.core.complete_discovery_run(run_id=run["run_id"], domains=APPROVED_DOMAINS, idempotency_key=f"{idempotency_key}:snapshot")
+        self.core.complete_discovery_run(run_id=run["run_id"], domains=requested_domains, idempotency_key=f"{idempotency_key}:snapshot")
         result = {"run_id": run["run_id"], "discovery_date": discovery_date, "status": "completed", "summary": summary}
         self.core.record_completed_command(command="stage1b_execute_daily_discovery", idempotency_key=idempotency_key, request=request, task_id=run["run_id"], event="stage1b_daily_discovery_completed", result={"run_id": run["run_id"], "status": "completed"})
         return result
 
-    def view_daily_snapshot(self, *, run_id: str) -> dict[str, list[dict[str, Any]]]:
-        return {domain_label: self.core.get_discovery_snapshot(run_id=run_id, domain_label=domain_label) for domain_label in APPROVED_DOMAINS}
+    def view_daily_snapshot(
+        self, *, run_id: str, domains: tuple[str, ...] = APPROVED_DOMAINS
+    ) -> dict[str, list[dict[str, Any]]]:
+        requested_domains = tuple(domains)
+        if not requested_domains or any(domain_label not in APPROVED_DOMAINS for domain_label in requested_domains):
+            raise DailyDiscoveryValidationError("snapshot view received an unapproved domain")
+        return {
+            domain_label: self.core.get_discovery_snapshot(run_id=run_id, domain_label=domain_label)
+            for domain_label in requested_domains
+        }
 
     def record_user_decision(self, *, candidate_version_id: str, decision: str, actor: str, reason: str, idempotency_key: str) -> dict[str, str]:
         if decision == "selected":
@@ -314,3 +335,35 @@ class Stage1BDailyDiscoveryService:
             "input_completeness": "source_clue_only",
             "prompt_version": DISCOVERY_PROMPT_VERSION, "skill_version": DISCOVERY_SKILL_VERSION,
         }
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run one explicitly authorized formal-domain discovery through the Core boundary."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--domain", required=True, choices=APPROVED_DOMAINS, help="one authorized formal domain")
+    parser.add_argument("--actor", required=True, help="audited actor for the explicit user authorization")
+    parser.add_argument("--idempotency-key", required=True, help="stable key for this exact authorized run")
+    parser.add_argument("--discovery-date", default=datetime.now(timezone.utc).date().isoformat(), help="YYYY-MM-DD (defaults to UTC today)")
+    args = parser.parse_args(argv)
+
+    core = Stage0ContentProductionCore.open(FORMAL_DB_PATH, data_identity="production")
+    try:
+        service = Stage1BDailyDiscoveryService(
+            core=core,
+            gateway=build_production_daily_discovery_gateway(core),
+        )
+        result = service.run_daily_discovery(
+            discovery_date=args.discovery_date,
+            actor=args.actor,
+            idempotency_key=args.idempotency_key,
+            domains=(args.domain,),
+        )
+        snapshot = service.view_daily_snapshot(run_id=result["run_id"], domains=(args.domain,))
+        print(_canonical({**result, "snapshot": snapshot}))
+        return 0
+    finally:
+        core.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

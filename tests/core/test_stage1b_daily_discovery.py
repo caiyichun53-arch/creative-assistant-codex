@@ -145,6 +145,26 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         self.assertEqual(result["summary"]["source_readiness"]["fan_kepu_social_life"]["reason"], "no_qualified_formal_source")
         self.assertEqual(self.provider.calls, 0)
 
+    def test_explicit_single_domain_never_reads_or_snapshots_music_entertainment(self) -> None:
+        self._insert_video()
+        result = self.service.run_daily_discovery(
+            discovery_date="2026-07-14",
+            actor="test-worker",
+            idempotency_key="social-only",
+            now=self.NOW,
+            domains=("fan_kepu_social_life",),
+        )
+        self.assertEqual(set(result["summary"]["domains"]), {"fan_kepu_social_life"})
+        self.assertEqual(set(result["summary"]["source_readiness"]), {"fan_kepu_social_life"})
+        snapshot_domains = [
+            row[0]
+            for row in self.core.conn.execute(
+                "SELECT DISTINCT domain_label FROM stage1b_daily_snapshot WHERE run_id=?",
+                (result["run_id"],),
+            ).fetchall()
+        ]
+        self.assertEqual(snapshot_domains, ["fan_kepu_social_life"])
+
     def test_unregistered_or_stale_source_cannot_be_recorded(self) -> None:
         self._insert_video()
         run = self.core.create_discovery_run(discovery_date="2026-07-14", actor="test-worker", idempotency_key="source-run")
