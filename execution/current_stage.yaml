@@ -1,18 +1,18 @@
 mode: implementation
 stage: stage_1_daily_discovery
 design_complete: true
-implementation_authorized: true
-external_calls_authorized: true
+implementation_authorized: false
+external_calls_authorized: false
 environment_changes_authorized: false
-formal_data_writes_authorized: true
+formal_data_writes_authorized: false
 production_authorized: false
-completion_status: SOURCE_TO_TOPIC_HOTSPOT_LIVE_VALIDATION_AUTHORIZED
-stage_status: VALIDATION_LIVE_AUTHORIZED
+completion_status: SOURCE_TO_TOPIC_HOTSPOT_LIVE_VALIDATION_REJECTED_PATH_MISMATCH
+stage_status: LIVE_VALIDATION_REJECTED_PATH_MISMATCH
 source_evidence_level: LIVE_RUN_REJECTED
 claimed_source_level: NONE
-next_action: run_one_source_to_topic_hotspot_validation_live
+next_action: fix_stage1b_entrypoint_to_use_confirmed_source_to_topic_skill_before_next_live_validation
 baseline_sha256: 6822f5e121073f321b2a7d5a2ae1043d1bb46c001ca72edc8263371f2d2b70e8
-base_commit: 1b6447e832f7336d246f49f1f62357d1e598acc6
+base_commit: 96f09964da5bdb4840e7b7e06b0485fc2cc25717
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
 execution_state_sources:
@@ -29,7 +29,7 @@ prohibited_design_sources:
   - old code comments business rules
 requirements:
   - id: STAGE1-HOTSPOT-DESIGN-CORRECTION-001
-    description: "User confirmed the revised source_to_topic Skill contract; one controlled Stage 1 hotspot validation_live run is authorized with external calls, model calls, and formal validation writes."
+    description: "The authorized Stage 1 hotspot validation_live run was real but rejected: it used the Stage 1B daily_discovery prompt path instead of the confirmed source_to_topic atomic Skill entrypoint. All real-call authorization is now closed until the entrypoint is fixed and separately re-authorized."
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3.1 热点转选题的受控搜索与 Skill 审核
       - docs/EFFECTIVE_DESIGN_BASELINE.md#20.1 来源与选题 Skill

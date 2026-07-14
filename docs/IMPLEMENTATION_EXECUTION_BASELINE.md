@@ -2,18 +2,18 @@
 mode: implementation
 stage: stage_1_daily_discovery
 design_complete: true
-implementation_authorized: true
-external_calls_authorized: true
+implementation_authorized: false
+external_calls_authorized: false
 environment_changes_authorized: false
-formal_data_writes_authorized: true
+formal_data_writes_authorized: false
 production_authorized: false
-completion_status: SOURCE_TO_TOPIC_HOTSPOT_LIVE_VALIDATION_AUTHORIZED
-stage_status: VALIDATION_LIVE_AUTHORIZED
+completion_status: SOURCE_TO_TOPIC_HOTSPOT_LIVE_VALIDATION_REJECTED_PATH_MISMATCH
+stage_status: LIVE_VALIDATION_REJECTED_PATH_MISMATCH
 source_evidence_level: LIVE_RUN_REJECTED
 claimed_source_level: NONE
-next_action: run_one_source_to_topic_hotspot_validation_live
+next_action: fix_stage1b_entrypoint_to_use_confirmed_source_to_topic_skill_before_next_live_validation
 baseline_sha256: 6822f5e121073f321b2a7d5a2ae1043d1bb46c001ca72edc8263371f2d2b70e8
-base_commit: 1b6447e832f7336d246f49f1f62357d1e598acc6
+base_commit: 96f09964da5bdb4840e7b7e06b0485fc2cc25717
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
 execution_state_sources:
@@ -30,7 +30,7 @@ prohibited_design_sources:
   - old code comments business rules
 requirements:
   - id: STAGE1-HOTSPOT-DESIGN-CORRECTION-001
-    description: 用户已确认修订后的 source_to_topic Skill 合同；授权一次 Stage 1 热点 validation_live 真实验收，允许真实来源、业务模型调用和正式验收写入。
+    description: 用户已确认的 source_to_topic Skill 合同尚未被 Stage 1B 真实入口实际调用；本次真实热点 validation_live 已执行但因路径不匹配被拒绝，真实来源、业务模型调用和正式验收写入授权均已关闭。
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3.1 热点转选题的受控搜索与 Skill 审核
       - docs/EFFECTIVE_DESIGN_BASELINE.md#20.1 来源与选题 Skill
@@ -113,6 +113,14 @@ forbidden_actions:
 
 用户已确认修正口径后，当前结论进入 `SOURCE_TO_TOPIC_SKILL_CONTRACT_REVISION_AUTHORIZED`：真实调用授权仍关闭，模型调用、外部来源、正式库写入和真实运行均未授权；只允许修订 `runtime_skills/source_to_topic` 合同、输入输出、Prompt、fixture 和直接测试。修订完成并经用户复核前，不得讨论新的真实验收授权。
 
+用户确认修订后的 `source_to_topic` Skill 合同后，又授权一次真实热点验收，并要求明确说明哪些节点使用 LLM、使用什么模型，以及是项目运行期 LLM 还是 Codex 写代码 LLM。本轮命令为 `python -m scripts.core.production.stage1b_daily_discovery --domain fan_kepu_social_life --source-type hotspot --actor codex_user_authorized_validation --idempotency-key stage1-hotspot-source-to-topic-live-20260714-user-confirmed-01 --mode validation_live --discovery-date 2026-07-14 --batch-timeout-seconds 600`；命令退出码为 1，批次 `discovery_run_b99a2d88fc534ac69a52046af2733d29` 的执行身份为 `validation_live`，生命周期为 `completed_with_failures`。
+
+该批次真实调用了 TrendRadar 热点采集，采集批次 `trendradar_run_187a1490c909812f5406` 完成，取得 254 条热点观察；社会生活领域读取 3 条热点来源版本，候选数为 0，生成 1 条 `candidate_version_id=NULL` 的隔离快照。正式库 `data/formal/production_activation.sqlite3` 检查结果为 `PRAGMA integrity_check=ok`，外键违规为 0。3 条来源分别处理为：`未来5年消费“路线图”来了` 进入模型后记录 `candidate_material_insufficient`；`24小时制能否成为酒店业服务新方向？我们找消费者和从业者聊了聊` 进入模型后记录 `model_output_invalid`；`邹市明冉莹颖，谁该为之前的投资失败乃至当前的婚姻状态付更大的责？` 被确定性过滤为 `source_already_processed`，没有进入模型。
+
+本次实际发生 2 次业务运行期 LLM 调用，均经项目 `ModelGateway`，不是 Codex 写代码或聊天使用的 LLM。两次调用的节点均为 `stage1b.daily_discovery`，`prompt_version=stage1b.daily_discovery.prompt.v1`，表中记录的 `skill_version=stage1b.source_to_topic.skill.v1` 只是该旧入口写入的字段；实际代码路径是 `scripts/core/production/stage1b_daily_discovery.py` 中 `gateway.complete(daily_discovery_prompt(...))`，没有调用 `runtime_skills/source_to_topic` 或 `scripts.core.experience.run_source_to_topic` 的已确认原子 Skill 合同。两次业务模型均走 `route_id=business_analysis`、`provider_ref=mimo_main`、`provider_name=hermes`、`model_name=xiaomi/mimo-v2.5-pro`、`via_model_gateway=1`、`retry_status=not_retried`；token 记录分别为 1689 和 1981。
+
+因此，本次真实验收结论为 `SOURCE_TO_TOPIC_HOTSPOT_LIVE_VALIDATION_REJECTED_PATH_MISMATCH`：它证明真实采集、部分确定性过滤、模型路由、正式库写入和审计链路发生过，但没有证明用户已确认的新版 `source_to_topic` Skill 被真实入口调用，也不能证明热点源转好选题能力通过。不得把本批次标记为 `LIVE_VALIDATED`、`PRODUCTION_READY` 或 Stage 1 真实完成；不得继续真实运行、外部调用、模型调用、正式库写入、Stage 1A 交接或 `production_daily`。下一唯一动作是修复 Stage 1B 真实入口，使其调用已确认的 `source_to_topic` 原子 Skill 合同；修复后需重新提交并由用户另行授权下一次真实验收。
+
 ### 上一次单次验收授权的阻断结果
 
 本次只完成了受控运行前检查，没有发出任何真实热点或模型请求，也没有创建发现运行。检查结果：Mimo 的 `business_analysis` 路由可解析为显式 Hermes 适配器，模型引用已配置且 `fallback: none`；但 `config/settings.yaml` 中 `hotspot_collection.live_enabled` 仍为 `false`，`project_dir`、`executable` 和 `normalized_json_path` 均为空，本机未发现 TrendRadar 命令、项目目录或 Docker 容器。因此命中“任一真实运行配置缺失即停止”的规则，未使用其他热点源、旧数据、fixture 或临时脚本替代。一次性外部调用授权未被消耗为真实请求，现已关闭。
@@ -148,19 +156,19 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 | 项目 | 当前事实 |
 | --- | --- |
 | 当前阶段 | Stage 1B / `stage_1_daily_discovery` |
-| 当前状态 | `SOURCE_TO_TOPIC_HOTSPOT_LIVE_VALIDATION_AUTHORIZED`；用户已确认修订后的 `source_to_topic` Skill 合同并授权一次真实热点验收 |
-| 当前动作 | 执行一次 `validation_live` 热点来源验收；允许真实来源、业务模型调用和正式验收写入；仍禁止 `production_daily`、Stage 1A 交接、研究、经验和自动重试 |
+| 当前状态 | `SOURCE_TO_TOPIC_HOTSPOT_LIVE_VALIDATION_REJECTED_PATH_MISMATCH`；一次真实热点验收已执行，但未调用用户确认的新版 `source_to_topic` 原子 Skill 入口，不能判通过 |
+| 当前动作 | 修复 Stage 1B 真实入口接入已确认的 `source_to_topic` Skill；真实来源、业务模型调用、正式验收写入、`production_daily`、Stage 1A 交接、研究、经验和自动重试均未授权 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `9c5b4a8130deb7b5f1990ca66053817614f5793f` |
 | Stage 0 | 已完成并提交：`e88c86a` |
 | 参数治理 | 已完成并提交：`d766a51` |
 | Stage 1A | 已完成并提交：`6693d3a`；尚未经过真实日常候选上游接入 |
-| Stage 1B | 当前标记为 `VALIDATION_LIVE_AUTHORIZED`；没有来源可按修正后设计标记为 `LIVE_VALIDATED`，不得冒充 `PRODUCTION_READY` 或真实日常完成 |
+| Stage 1B | 当前标记为 `LIVE_VALIDATION_REJECTED_PATH_MISMATCH`；没有来源可按修正后设计标记为 `LIVE_VALIDATED`，不得冒充 `PRODUCTION_READY` 或真实日常完成 |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
 | 真实来源状态 | TrendRadar 原始采集环境保持可用事实，但热点转选题业务验收被拒绝；真实调用授权已关闭 |
-| 当前阻断 | 本次只授权一次真实验收，不授权生产运行；`environment_changes_authorized: false`、`production_authorized: false` |
-| 下一唯一动作 | 运行一次受控 `validation_live`，并在结果中列明真实来源、所有业务 LLM 节点、路由、Provider、模型、调用次数、是否为系统业务模型，以及与 Codex 写代码模型的区别 |
+| 当前阻断 | 本次真实验收因入口路径不匹配被拒绝；`implementation_authorized: false`、`external_calls_authorized: false`、`formal_data_writes_authorized: false`、`environment_changes_authorized: false`、`production_authorized: false` |
+| 下一唯一动作 | 修复 Stage 1B 真实入口，使其调用已确认的 `source_to_topic` 原子 Skill 合同；修复提交后再由用户决定是否授权下一次真实验收 |
 
 ### 创建本文件时的 Git 事实
 
