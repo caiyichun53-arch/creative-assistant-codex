@@ -53,9 +53,13 @@ Input Assembly、ModelGateway 运行记录和审计边界，不执行真实内�
 
 ### Stage 1B：受控日常发现
 
-`scripts/core/production/stage1b_daily_discovery.py` 是由项目 Core Runtime 直接执行的一次性 Stage 1B 批处理入口；它不是由 Codex 轮询的业务进程。每次必须显式给出一个领域、审计主体、幂等键和运行模式：`test_isolated` 只能使用非生产数据身份，`validation_live` 只保留真实验证审计，`production_daily` 才可能形成正式日产候选池。前两种模式不可自动升级，也不能进入日产能、Stage 1A、研究或经验系统。
+`scripts/core/production/stage1b_daily_discovery.py` 是由项目 Core Runtime 直接执行的一次性 Stage 1B 批处理入口；它不是由 Codex 轮询的业务进程。每次必须显式给出一个领域、审计主体、幂等键和运行模式：`test_isolated` 只能使用非生产数据身份，`validation_live` 只形成隔离的真实验收结果，`production_daily` 才可能形成正式日产候选池。前两种模式不可自动升级，也不能进入日产能、Stage 1A、研究或经验系统。
 
-新批次的固定顺序是：TrendRadar 热点采集→热点领域转化→对标日常来源→对标历史高信号→领域标签搜索→标签来源转化。标签搜索每天按最久未搜索优先轮换最多 3 个活跃标签，每个标签只请求第 1 页；该页返回多少条就在 `domain_search_page_observation` 留存多少条，不翻页补量、不按互动量另截固定条数。通过确定性过滤的记录才进入 `discovered_external_videos`，之后仍只是来源，不是候选。热点原始观察写入 `trendradar_hotspot_observation`，只有命中本领域活跃标签并通过后续过滤才进入热点转化。
+`validation_live` 每次必须且只能指定一个 `--source-type`，用于按来源逐项验收；热点和标签搜索只校验自己需要的采集配置，不要求无关来源同时启用。六个值是 `hotspot`、`daily_competitor_content`、`historical_high_signal`、`tag_discovery`、`question_expansion`、`saved_user_direction`。`production_daily` 不接受缺项，必须执行完整六来源集合。
+
+新批次的固定顺序是：TrendRadar 热点采集→热点领域转化→对标日常来源→对标历史高信号→领域标签搜索→标签来源转化→已完成问题拓展→用户保存方向。标签搜索每天按最久未搜索优先轮换最多 3 个活跃标签，每个标签只请求第 1 页；该页返回多少条就在 `domain_search_page_observation` 留存多少条，不翻页补量、不按互动量另截固定条数。通过确定性过滤的记录才进入 `discovered_external_videos`，之后仍只是来源，不是候选。领域话题库只用于标签搜索；热点原始观察写入 `trendradar_hotspot_observation` 后，按 `config/domain_packs/*.yaml` 的版本化领域规则匹配，不读取活跃话题标签。
+
+领域包的 `discovery.topic_search` 区分领域宽标签、通用流量标签和活动待复核词。`科普`、`知识`在泛科普领域保留；活动词只进入 `pending_review`。只有 `domain_search_activity_tag_registry` 中存在当前有效、带平台、活动身份、证据链接、有效期和理由的精确登记时，才会排除对应平台活动标签。新增领域通过新增领域包接入，通用 Stage 1 代码不增加领域枚举或复制流水线。
 
 真实采集默认关闭。启用前分别核实所运行来源的 `live_enabled: true`；单独验收热点不要求同时启用标签搜索。官方 TrendRadar 固定安装在仓库内 `vendor/TrendRadar`，使用其锁定环境的命令为 `vendor/TrendRadar/.venv/Scripts/python.exe -m trendradar`。项目 Runtime 直接入口为 `python scripts/integrations/trendradar_runtime.py --trendradar-dir vendor/TrendRadar --output outputs/stage1/trendradar/latest.json --evidence-root validation_evidence/stage1/trendradar --timeout-seconds 300`。入口只运行一次官方命令，从本次更新的 `output/news/YYYY-MM-DD.db` 转换标准对象，并保存 stdout、stderr、命令、官方提交、原始数据库、输出、错误和耗时；不调用模型、不自动重试、不补造 URL 或数量。
 
@@ -69,6 +73,19 @@ python scripts/core/production/stage1b_daily_discovery.py --domain fan_kepu_soci
 
 ```powershell
 python scripts/core/production/stage1b_daily_discovery.py --reclassify-run <run-id> --mode validation_live --actor <audited-user> --reason <audited-reclassification-reason> --idempotency-key <stable-reclassification-key>
+```
+
+已完成问题拓展和用户保存方向通过项目 Runtime 的确定性入口登记，不调用外部来源或模型：
+
+```powershell
+python -m scripts.core.production.stage1_source_runtime register-question-expansion --expansion-id <id> --domain fan_kepu_social_life --core-question <具体中文问题> --parent-source-ref <JSON对象> --actor <audited-user>
+python -m scripts.core.production.stage1_source_runtime register-user-direction --direction-id <id> --domain fan_kepu_social_life --core-question <具体中文问题> --submitted-by <user-id>
+```
+
+物理删除错误 `validation_live` 结果只允许用户明确指定运行后执行。入口要求精确候选数和逐字确认令牌，拒绝已有用户决定的运行；它删除该运行及全部派生来源版本、过滤、输入组装、模型记录、候选、零候选、快照、冷却、回执和审计，不删除原始对标视频或历史高信号：
+
+```powershell
+python -m scripts.core.production.stage1_source_runtime purge-validation-run --run-id <run-id> --expected-candidates <count> --actor <audited-user> --reason <reason> --confirm DELETE_VALIDATION_LIVE_RUN:<run-id>
 ```
 
 ### 外部适配器

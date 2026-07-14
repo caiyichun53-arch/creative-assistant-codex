@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from scripts.core.execution_contract import require_baseline_citations
+from scripts.core.business_data.domain_labels import FORMAL_DOMAIN_LABELS, get_discovery_policy
 from scripts.core.model_gateway.goal07_model_gateway import ModelRequest, ModelRunEnvelope
 from scripts.core.model_gateway.model_router import ModelRouter, ModelRouterError
 
@@ -379,6 +380,29 @@ class Stage0ContentProductionCore:
                 classification_reason TEXT NOT NULL,
                 classified_by TEXT NOT NULL,
                 classified_at TEXT NOT NULL,
+                data_identity TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS stage1_question_expansion_source (
+                expansion_id TEXT PRIMARY KEY,
+                domain_label TEXT NOT NULL,
+                core_question TEXT NOT NULL,
+                parent_source_ref_json TEXT NOT NULL,
+                validation_outcome TEXT NOT NULL CHECK(validation_outcome = 'supported'),
+                validated_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                integrity_hash TEXT NOT NULL,
+                data_identity TEXT NOT NULL,
+                created_by TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS stage1_saved_user_direction_source (
+                direction_id TEXT PRIMARY KEY,
+                domain_label TEXT NOT NULL,
+                core_question TEXT NOT NULL,
+                submitted_by TEXT NOT NULL,
+                saved_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                integrity_hash TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('active', 'closed')),
                 data_identity TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS stage1b_source_version (
@@ -999,10 +1023,8 @@ class Stage0ContentProductionCore:
             row = self.conn.execute(
                 "SELECT observation.*, run.status FROM trendradar_hotspot_observation observation "
                 "JOIN trendradar_collection_run run ON run.collection_run_id=observation.collection_run_id "
-                "WHERE observation.observation_id=? AND run.status IN ('completed', 'completed_with_failures') "
-                "AND EXISTS (SELECT 1 FROM domain_search_tags tag WHERE tag.domain_label=? "
-                "AND tag.status='active' AND instr(observation.title, tag.tag)>0)",
-                (source_object_id, domain_label),
+                "WHERE observation.observation_id=? AND run.status IN ('completed', 'completed_with_failures')",
+                (source_object_id,),
             ).fetchone()
             expected_table, expected_version = "trendradar_hotspot_observation", "observed_at"
         elif source_type == "tag_discovery":
@@ -1013,16 +1035,42 @@ class Stage0ContentProductionCore:
                 (source_object_id, domain_label),
             ).fetchone()
             expected_table, expected_version = "discovered_external_videos", "discovered_at"
+        elif source_type == "question_expansion":
+            row = self.conn.execute(
+                "SELECT * FROM stage1_question_expansion_source WHERE expansion_id=? "
+                "AND domain_label=? AND validation_outcome='supported' AND data_identity=?",
+                (source_object_id, domain_label, self.data_identity),
+            ).fetchone()
+            expected_table, expected_version = "stage1_question_expansion_source", "integrity_hash"
+        elif source_type == "saved_user_direction":
+            row = self.conn.execute(
+                "SELECT * FROM stage1_saved_user_direction_source WHERE direction_id=? "
+                "AND domain_label=? AND status='active' AND data_identity=?",
+                (source_object_id, domain_label, self.data_identity),
+            ).fetchone()
+            expected_table, expected_version = "stage1_saved_user_direction_source", "integrity_hash"
         else:
             raise StateTransitionError("daily discovery source type is not enabled in this Stage 1B slice")
         if row is None:
             raise StateTransitionError("daily discovery source is not registered in the formal source facts")
+        if source_type == "hotspot":
+            match_terms = tuple(str(term) for term in get_discovery_policy(domain_label).get("hotspot_match_terms", []))
+            folded_title = str(row["title"]).casefold()
+            if not match_terms or not any(term.casefold() in folded_title for term in match_terms):
+                raise StateTransitionError("hotspot does not match the versioned domain policy")
         if origin.get("table") != expected_table or origin.get("object_id") != source_object_id:
             raise StateTransitionError("daily discovery source mapping does not identify the formal origin")
         formal_version = str(row[expected_version])
         if origin.get("object_version") != formal_version or source_object_version != formal_version:
             raise StaleResultError("daily discovery source version does not match the formal origin")
-        expected_time_field = "publish_time" if source_type in {"daily_competitor_content", "historical_high_signal"} else expected_version
+        if source_type in {"daily_competitor_content", "historical_high_signal"}:
+            expected_time_field = "publish_time"
+        elif source_type == "question_expansion":
+            expected_time_field = "validated_at"
+        elif source_type == "saved_user_direction":
+            expected_time_field = "saved_at"
+        else:
+            expected_time_field = expected_version
         if source_time != str(row[expected_time_field]):
             raise StateTransitionError("daily discovery source time does not match the formal origin")
         if source_type in {"daily_competitor_content", "historical_high_signal"}:
@@ -1034,10 +1082,16 @@ class Stage0ContentProductionCore:
                 raise StateTransitionError("daily discovery source lacks qualified formal material")
             if source_type == "historical_high_signal" and row["judgment_confidence"] != "formal":
                 raise StateTransitionError("historical source lacks formal high-signal qualification")
-        if not str(row["title"] or "").strip() or not str(row["url"] or "").strip():
-            raise StateTransitionError("daily discovery source lacks required formal material")
+        if source_type in {"question_expansion", "saved_user_direction"}:
+            if not str(row["core_question"] or "").strip():
+                raise StateTransitionError("daily discovery source lacks a concrete core question")
+            raw_payload = row["payload_json"]
+        else:
+            if not str(row["title"] or "").strip() or not str(row["url"] or "").strip():
+                raise StateTransitionError("daily discovery source lacks required formal material")
+            raw_payload = row["raw_json"]
         try:
-            raw_hash = _hash(json.loads(str(row["raw_json"])))
+            raw_hash = _hash(json.loads(str(raw_payload)))
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
             raise StateTransitionError("daily discovery source has unreadable formal raw payload") from exc
         if origin.get("raw_metadata_hash") != raw_hash:
@@ -1157,6 +1211,206 @@ class Stage0ContentProductionCore:
             self._receipt("stage1b_classify_existing_validation_live", idempotency_key, request, result)
             self._audit(run_id, "stage1b_run_classified_validation_live", {**result, "reason": reason})
         return result
+
+    def register_question_expansion_source(
+        self,
+        *,
+        expansion_id: str,
+        domain_label: str,
+        core_question: str,
+        parent_source_ref: dict[str, Any],
+        actor: str,
+    ) -> dict[str, str]:
+        """Register only an already-supported bounded expansion as a source."""
+        if domain_label not in FORMAL_DOMAIN_LABELS:
+            raise StateTransitionError("question expansion requires a configured formal domain")
+        if len(core_question.strip()) < 6 or not parent_source_ref:
+            raise StateTransitionError("question expansion requires a concrete question and parent source")
+        payload = {
+            "title": core_question.strip(),
+            "core_question": core_question.strip(),
+            "parent_source_ref": parent_source_ref,
+            "validation_outcome": "supported",
+        }
+        integrity_hash = _hash(payload)
+        validated_at = _now()
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO stage1_question_expansion_source(
+                    expansion_id, domain_label, core_question, parent_source_ref_json,
+                    validation_outcome, validated_at, payload_json, integrity_hash,
+                    data_identity, created_by
+                ) VALUES (?, ?, ?, ?, 'supported', ?, ?, ?, ?, ?)
+                """,
+                (expansion_id, domain_label, core_question.strip(), _canonical(parent_source_ref),
+                 validated_at, _canonical(payload), integrity_hash, self.data_identity, actor),
+            )
+        return {"expansion_id": expansion_id, "source_object_version": integrity_hash, "validated_at": validated_at}
+
+    def register_saved_user_direction_source(
+        self,
+        *,
+        direction_id: str,
+        domain_label: str,
+        core_question: str,
+        submitted_by: str,
+    ) -> dict[str, str]:
+        """Register a user-supplied concrete question without inventing an angle."""
+        if domain_label not in FORMAL_DOMAIN_LABELS:
+            raise StateTransitionError("saved user direction requires a configured formal domain")
+        if len(core_question.strip()) < 6 or not submitted_by.strip():
+            raise StateTransitionError("saved user direction requires a concrete question and user identity")
+        payload = {"title": core_question.strip(), "core_question": core_question.strip(), "submitted_by": submitted_by.strip()}
+        integrity_hash = _hash(payload)
+        saved_at = _now()
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO stage1_saved_user_direction_source(
+                    direction_id, domain_label, core_question, submitted_by, saved_at,
+                    payload_json, integrity_hash, status, data_identity
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)
+                """,
+                (direction_id, domain_label, core_question.strip(), submitted_by.strip(), saved_at,
+                 _canonical(payload), integrity_hash, self.data_identity),
+            )
+        return {"direction_id": direction_id, "source_object_version": integrity_hash, "saved_at": saved_at}
+
+    def purge_validation_live_run(
+        self,
+        *,
+        run_id: str,
+        actor: str,
+        reason: str,
+        expected_candidate_count: int,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        """Physically remove one explicitly approved erroneous validation run.
+
+        This exceptional lifecycle action intentionally leaves no business-data
+        audit copy of the removed run.  It returns exact deletion counts to the
+        invoking controlled Runtime process.
+        """
+        require_baseline_citations(["3", "13", "16", "17"])
+        if self.data_identity != "production":
+            raise DataIdentityError("validation result purge requires production data identity")
+        if confirmation != f"DELETE_VALIDATION_LIVE_RUN:{run_id}":
+            raise StateTransitionError("validation result purge requires the exact confirmation token")
+        if not actor.strip() or not reason.strip():
+            raise StateTransitionError("validation result purge requires actor and reason")
+        run = self._discovery_run(run_id)
+        context = self._discovery_context(run_id)
+        if context["execution_mode"] != "validation_live":
+            raise StateTransitionError("only validation_live results can be physically purged here")
+        candidate_count = int(self.conn.execute(
+            "SELECT COUNT(*) FROM stage1b_candidate_version WHERE run_id=?", (run_id,)
+        ).fetchone()[0])
+        if candidate_count != int(expected_candidate_count):
+            raise StateTransitionError(
+                f"candidate count mismatch: expected {expected_candidate_count}, found {candidate_count}"
+            )
+        decision_count = int(self.conn.execute(
+            "SELECT COUNT(*) FROM stage1b_candidate_decision WHERE candidate_version_id IN "
+            "(SELECT candidate_version_id FROM stage1b_candidate_version WHERE run_id=?)",
+            (run_id,),
+        ).fetchone()[0])
+        if decision_count:
+            raise StateTransitionError("a validation run with user decisions cannot be purged")
+
+        deleted: dict[str, int] = {}
+        derived_tokens = {run_id}
+        for table, column in (
+            ("stage1b_source_version", "source_version_id"),
+            ("stage1b_input_assembly", "assembly_id"),
+            ("stage1b_model_run", "model_run_id"),
+            ("stage1b_candidate_version", "candidate_version_id"),
+            ("stage1b_candidate_absence", "absence_id"),
+            ("stage1b_daily_snapshot", "snapshot_id"),
+        ):
+            derived_tokens.update(
+                str(row[0]) for row in self.conn.execute(
+                    f"SELECT {column} FROM {table} WHERE run_id=?", (run_id,)
+                ).fetchall()
+            )
+        derived_tokens.update(
+            str(row[0]) for row in self.conn.execute(
+                "SELECT filter_result_id FROM stage1b_filter_result WHERE source_version_id IN "
+                "(SELECT source_version_id FROM stage1b_source_version WHERE run_id=?)",
+                (run_id,),
+            ).fetchall()
+        )
+
+        def delete(table: str, where: str, params: tuple[Any, ...]) -> None:
+            cursor = self.conn.execute(f"DELETE FROM {table} WHERE {where}", params)
+            deleted[table] = int(cursor.rowcount)
+
+        with self.conn:
+            self.conn.execute("DROP TRIGGER IF EXISTS stage1b_candidate_version_immutable_delete")
+            self.conn.execute("DROP TRIGGER IF EXISTS stage1b_source_version_immutable_delete")
+            delete(
+                "stage1b_candidate_decision",
+                "candidate_version_id IN (SELECT candidate_version_id FROM stage1b_candidate_version WHERE run_id=?)",
+                (run_id,),
+            )
+            delete(
+                "stage1b_candidate_cooldown",
+                "candidate_version_id IN (SELECT candidate_version_id FROM stage1b_candidate_version WHERE run_id=?)",
+                (run_id,),
+            )
+            delete("stage1b_daily_snapshot", "run_id=?", (run_id,))
+            delete("stage1b_candidate_version", "run_id=?", (run_id,))
+            delete("stage1b_candidate_absence", "run_id=?", (run_id,))
+            delete("stage1b_model_run", "run_id=?", (run_id,))
+            delete("stage1b_input_assembly", "run_id=?", (run_id,))
+            delete(
+                "stage1b_filter_result",
+                "source_version_id IN (SELECT source_version_id FROM stage1b_source_version WHERE run_id=?)",
+                (run_id,),
+            )
+            delete("stage1b_source_version", "run_id=?", (run_id,))
+            delete("domain_search_page_observation", "run_id=?", (run_id,))
+            delete("discovered_external_videos", "run_id=?", (run_id,))
+            self.conn.execute(
+                "UPDATE domain_search_cursor SET last_searched_at=NULL, run_id=NULL WHERE run_id=?", (run_id,)
+            )
+            delete(
+                "trendradar_hotspot_observation",
+                "collection_run_id IN (SELECT collection_run_id FROM trendradar_collection_run WHERE discovery_run_id=?)",
+                (run_id,),
+            )
+            delete("trendradar_collection_run", "discovery_run_id=?", (run_id,))
+            delete("stage1b_run_execution_context", "run_id=?", (run_id,))
+            delete("stage1b_discovery_run", "run_id=?", (run_id,))
+            token_where = " OR ".join("payload_json LIKE ?" for _ in derived_tokens)
+            delete(
+                "stage0_audit_event",
+                f"task_id=? OR {token_where}",
+                (run_id, *(f"%{token}%" for token in sorted(derived_tokens))),
+            )
+            receipt_where = " OR ".join("result_json LIKE ?" for _ in derived_tokens)
+            delete(
+                "stage0_command_receipt",
+                receipt_where,
+                tuple(f"%{token}%" for token in sorted(derived_tokens)),
+            )
+            self.conn.execute(
+                "CREATE TRIGGER stage1b_source_version_immutable_delete "
+                "BEFORE DELETE ON stage1b_source_version "
+                "BEGIN SELECT RAISE(ABORT, 'stage1b source versions are immutable'); END"
+            )
+            self.conn.execute(
+                "CREATE TRIGGER stage1b_candidate_version_immutable_delete "
+                "BEFORE DELETE ON stage1b_candidate_version "
+                "BEGIN SELECT RAISE(ABORT, 'stage1b candidate versions are immutable'); END"
+            )
+        return {
+            "run_id": run_id,
+            "deleted": deleted,
+            "expected_candidate_count": expected_candidate_count,
+            "run_status_before_delete": str(run["status"]),
+            "result": "physically_deleted",
+        }
 
     def record_discovery_source(
         self,
@@ -1594,8 +1848,8 @@ class Stage0ContentProductionCore:
         return result
 
     def discovery_source_readiness(self, *, domain_label: str, daily_since: str) -> dict[str, Any]:
-        if domain_label not in {"fan_kepu_social_life", "music_entertainment"}:
-            raise StateTransitionError("daily discovery supports only the two approved formal domains")
+        if domain_label not in FORMAL_DOMAIN_LABELS:
+            raise StateTransitionError("daily discovery requires a configured formal domain")
         tables = {row["name"] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         competitor_ready = {"competitor_accounts", "competitor_videos", "hits"}.issubset(tables)
         daily_sources = self.conn.execute(
@@ -1613,20 +1867,40 @@ class Stage0ContentProductionCore:
             "AND COALESCE(video.raw_archive_ref, '')<>'' AND video.excluded_reason IS NULL",
             (domain_label,),
         ).fetchone()[0] if competitor_ready else 0
-        hotspot_sources = self.conn.execute(
-            "SELECT COUNT(*) FROM trendradar_hotspot_observation observation "
+        hotspot_rows = self.conn.execute(
+            "SELECT observation.title FROM trendradar_hotspot_observation observation "
             "JOIN trendradar_collection_run run ON run.collection_run_id=observation.collection_run_id "
-            "WHERE observation.observed_at>=? AND run.status IN ('completed', 'completed_with_failures') "
-            "AND EXISTS (SELECT 1 FROM domain_search_tags tag WHERE tag.domain_label=? "
-            "AND tag.status='active' AND instr(observation.title, tag.tag)>0)",
-            (daily_since, domain_label),
-        ).fetchone()[0]
+            "WHERE observation.observed_at>=? AND run.status IN ('completed', 'completed_with_failures')",
+            (daily_since,),
+        ).fetchall()
+        hotspot_terms = tuple(str(term).casefold() for term in get_discovery_policy(domain_label).get("hotspot_match_terms", []))
+        hotspot_sources = sum(
+            1 for row in hotspot_rows
+            if hotspot_terms and any(term in str(row["title"]).casefold() for term in hotspot_terms)
+        )
         tag_sources = self.conn.execute(
             "SELECT COUNT(*) FROM discovered_external_videos video JOIN domain_search_tags tag ON tag.tag_id=video.tag_id "
             "WHERE video.domain_label=? AND tag.status='active' AND COALESCE(video.title, '')<>'' AND COALESCE(video.url, '')<>''",
             (domain_label,),
         ).fetchone()[0]
-        counts = {"hotspot_sources": hotspot_sources, "daily_sources": daily_sources, "historical_sources": historical_sources, "tag_sources": tag_sources}
+        question_expansion_sources = self.conn.execute(
+            "SELECT COUNT(*) FROM stage1_question_expansion_source WHERE domain_label=? "
+            "AND validation_outcome='supported' AND data_identity=?",
+            (domain_label, self.data_identity),
+        ).fetchone()[0]
+        saved_user_direction_sources = self.conn.execute(
+            "SELECT COUNT(*) FROM stage1_saved_user_direction_source WHERE domain_label=? "
+            "AND status='active' AND data_identity=?",
+            (domain_label, self.data_identity),
+        ).fetchone()[0]
+        counts = {
+            "hotspot_sources": hotspot_sources,
+            "daily_sources": daily_sources,
+            "historical_sources": historical_sources,
+            "tag_sources": tag_sources,
+            "question_expansion_sources": question_expansion_sources,
+            "saved_user_direction_sources": saved_user_direction_sources,
+        }
         if not any(counts.values()):
             return {"status": "blocked", "reason": "no_qualified_formal_source", **counts}
         return {"status": "ready", "reason": "qualified_formal_source_available", **counts}
@@ -1636,15 +1910,20 @@ class Stage0ContentProductionCore:
         if self.discovery_source_readiness(domain_label=domain_label, daily_since=daily_since)["status"] != "ready":
             return []
         result: list[dict[str, Any]] = []
-        hotspot_rows = self.conn.execute(
+        tables = {row["name"] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        competitor_ready = {"competitor_accounts", "competitor_videos", "hits"}.issubset(tables)
+        all_hotspot_rows = self.conn.execute(
             "SELECT observation.* FROM trendradar_hotspot_observation observation "
             "JOIN trendradar_collection_run run ON run.collection_run_id=observation.collection_run_id "
             "WHERE observation.observed_at>=? AND run.status IN ('completed', 'completed_with_failures') "
-            "AND EXISTS (SELECT 1 FROM domain_search_tags tag WHERE tag.domain_label=? "
-            "AND tag.status='active' AND instr(observation.title, tag.tag)>0) "
-            "ORDER BY observation.observed_at DESC, observation.observation_id ASC LIMIT ?",
-            (daily_since, domain_label, per_source_limit),
+            "ORDER BY observation.observed_at DESC, observation.observation_id ASC",
+            (daily_since,),
         ).fetchall()
+        hotspot_terms = tuple(str(term).casefold() for term in get_discovery_policy(domain_label).get("hotspot_match_terms", []))
+        hotspot_rows = [
+            row for row in all_hotspot_rows
+            if hotspot_terms and any(term in str(row["title"]).casefold() for term in hotspot_terms)
+        ][:per_source_limit]
         for row in hotspot_rows:
             raw_hash = _hash(json.loads(row["raw_json"]))
             result.append({"source_type": "hotspot", "source_object_id": row["observation_id"], "source_object_version": row["observed_at"], "source_time": row["observed_at"], "payload": {"source_id": row["observation_id"], "title": row["title"], "url": row["url"], "account_name": f"TrendRadar/{row['source_channel']}", "source_time": row["observed_at"], "formal_source": {"table": "trendradar_hotspot_observation", "object_id": row["observation_id"], "object_version": row["observed_at"], "raw_metadata_hash": raw_hash}}})
@@ -1656,7 +1935,7 @@ class Stage0ContentProductionCore:
             "AND COALESCE(video.raw_archive_ref, '')<>'' AND video.excluded_reason IS NULL "
             "ORDER BY video.publish_time DESC, video.video_id ASC LIMIT ?",
             (domain_label, daily_since, per_source_limit),
-        ).fetchall()
+        ).fetchall() if competitor_ready else []
         for row in daily_rows:
             raw_hash = _hash(json.loads(row["raw_json"]))
             result.append({"source_type": "daily_competitor_content", "source_object_id": row["video_id"], "source_object_version": row["last_checked_at"], "source_time": row["publish_time"], "payload": {"source_id": row["video_id"], "title": row["title"], "url": row["url"], "account_name": row["account_name"], "source_time": row["publish_time"], "formal_source": {"table": "competitor_videos", "object_id": row["video_id"], "object_version": row["last_checked_at"], "raw_metadata_hash": raw_hash}}})
@@ -1669,7 +1948,7 @@ class Stage0ContentProductionCore:
             "AND COALESCE(video.raw_archive_ref, '')<>'' AND video.excluded_reason IS NULL "
             "ORDER BY hit.promoted_at DESC, hit.hit_id ASC LIMIT ?",
             (domain_label, per_source_limit),
-        ).fetchall()
+        ).fetchall() if competitor_ready else []
         for row in historical_rows:
             raw_hash = _hash(json.loads(row["raw_json"]))
             result.append({"source_type": "historical_high_signal", "source_object_id": row["hit_id"], "source_object_version": row["promoted_at"], "source_time": row["publish_time"], "payload": {"source_id": row["hit_id"], "title": row["title"], "url": row["url"], "account_name": row["account_name"], "source_time": row["publish_time"], "signal_basis": row["hit_channel"], "signal_confidence": row["judgment_confidence"], "formal_source": {"table": "hits", "object_id": row["hit_id"], "object_version": row["promoted_at"], "raw_metadata_hash": raw_hash}}})
@@ -1683,6 +1962,58 @@ class Stage0ContentProductionCore:
         for row in tag_rows:
             raw_hash = _hash(json.loads(row["raw_json"]))
             result.append({"source_type": "tag_discovery", "source_object_id": row["discovered_video_id"], "source_object_version": row["discovered_at"], "source_time": row["discovered_at"], "payload": {"source_id": row["discovered_video_id"], "title": row["title"], "url": row["url"], "account_name": f"标签搜索/{row['tag']}", "source_time": row["discovered_at"], "formal_source": {"table": "discovered_external_videos", "object_id": row["discovered_video_id"], "object_version": row["discovered_at"], "raw_metadata_hash": raw_hash}}})
+        expansion_rows = self.conn.execute(
+            "SELECT * FROM stage1_question_expansion_source WHERE domain_label=? "
+            "AND validation_outcome='supported' AND data_identity=? ORDER BY validated_at DESC, expansion_id ASC LIMIT ?",
+            (domain_label, self.data_identity, per_source_limit),
+        ).fetchall()
+        for row in expansion_rows:
+            payload = json.loads(row["payload_json"])
+            result.append({
+                "source_type": "question_expansion",
+                "source_object_id": row["expansion_id"],
+                "source_object_version": row["integrity_hash"],
+                "source_time": row["validated_at"],
+                "payload": {
+                    **payload,
+                    "source_id": row["expansion_id"],
+                    "url": "",
+                    "account_name": "已完成拓展验证",
+                    "source_time": row["validated_at"],
+                    "formal_source": {
+                        "table": "stage1_question_expansion_source",
+                        "object_id": row["expansion_id"],
+                        "object_version": row["integrity_hash"],
+                        "raw_metadata_hash": row["integrity_hash"],
+                    },
+                },
+            })
+        direction_rows = self.conn.execute(
+            "SELECT * FROM stage1_saved_user_direction_source WHERE domain_label=? "
+            "AND status='active' AND data_identity=? ORDER BY saved_at DESC, direction_id ASC LIMIT ?",
+            (domain_label, self.data_identity, per_source_limit),
+        ).fetchall()
+        for row in direction_rows:
+            payload = json.loads(row["payload_json"])
+            result.append({
+                "source_type": "saved_user_direction",
+                "source_object_id": row["direction_id"],
+                "source_object_version": row["integrity_hash"],
+                "source_time": row["saved_at"],
+                "payload": {
+                    **payload,
+                    "source_id": row["direction_id"],
+                    "url": "",
+                    "account_name": "用户保存方向",
+                    "source_time": row["saved_at"],
+                    "formal_source": {
+                        "table": "stage1_saved_user_direction_source",
+                        "object_id": row["direction_id"],
+                        "object_version": row["integrity_hash"],
+                        "raw_metadata_hash": row["integrity_hash"],
+                    },
+                },
+            })
         return result
 
     def discovery_source_seen(self, *, source_type: str, source_object_id: str, source_object_version: str) -> bool:

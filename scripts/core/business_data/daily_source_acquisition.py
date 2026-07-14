@@ -133,8 +133,8 @@ class DailyDiscoverySourceAcquirer:
         self,
         *,
         conn: sqlite3.Connection,
-        trendradar_executor: ExternalCommandExecutor,
-        mediacrawler_executor: ExternalCommandExecutor,
+        trendradar_executor: ExternalCommandExecutor | None,
+        mediacrawler_executor: ExternalCommandExecutor | None,
         hotspot_config: dict[str, Any],
         domain_search_config: dict[str, Any],
     ) -> None:
@@ -145,6 +145,8 @@ class DailyDiscoverySourceAcquirer:
         self.domain_search_config = domain_search_config
 
     def collect_hotspots(self, *, discovery_run_id: str, now: datetime, deadline_monotonic: float | None = None) -> dict[str, Any]:
+        if self.trendradar_executor is None:
+            raise ValueError("TrendRadar executor is not configured for this source-specific run")
         config = dict(self.hotspot_config)
         if deadline_monotonic is not None:
             remaining = int(deadline_monotonic - time.monotonic())
@@ -160,6 +162,8 @@ class DailyDiscoverySourceAcquirer:
         )
 
     def search_tags(self, *, discovery_run_id: str, domain: str, now: datetime, deadline_monotonic: float | None = None) -> dict[str, Any]:
+        if self.mediacrawler_executor is None:
+            raise ValueError("platform search executor is not configured for this source-specific run")
         return run_daily_tag_searches(
             self.conn,
             self.mediacrawler_executor,

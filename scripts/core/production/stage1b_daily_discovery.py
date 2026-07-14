@@ -28,33 +28,32 @@ from scripts.core.model_gateway.hermes_model_provider import HermesModelProvider
 from scripts.core.model_gateway.model_router import DEFAULT_MODEL_ENV_PATH, ModelRouter, ModelRouterError
 from scripts.core.production.stage0_content_core import (
     CoreDiscoveryModelRunMaterializer,
+    DataIdentityError,
     FORMAL_DB_PATH,
     Stage0ContentProductionCore,
     StateTransitionError,
 )
 from scripts.core.business_data.daily_source_acquisition import DailyDiscoverySourceAcquirer, validate_hotspot_collection_contract
 from scripts.core.business_data.run_domain_search import validate_domain_search_execution_contract
+from scripts.core.business_data.domain_labels import FORMAL_DOMAIN_LABELS, get_discovery_policy
 from scripts.core.external_adapters import LocalMediaCrawlerExecutor, LocalTrendRadarExecutor
 
 
-APPROVED_DOMAINS = ("fan_kepu_social_life", "music_entertainment")
+APPROVED_DOMAINS = tuple(sorted(FORMAL_DOMAIN_LABELS))
 EXECUTION_MODES = ("test_isolated", "validation_live", "production_daily")
+SOURCE_TYPES = (
+    "hotspot",
+    "daily_competitor_content",
+    "historical_high_signal",
+    "tag_discovery",
+    "question_expansion",
+    "saved_user_direction",
+)
 DAILY_SOURCE_VALIDITY_HOURS = 72
 SOURCE_READ_LIMIT = 6
 DISCOVERY_PROMPT_VERSION = "stage1b.daily_discovery.prompt.v1"
 DISCOVERY_SKILL_VERSION = "stage1b.source_to_topic.skill.v1"
 ORIGINALITY_RELATIONSHIPS = frozenset({"same_topic_original_reconstruction", "problem_expansion", "independent_research"})
-RISK_BLOCK_TERMS = {
-    "fan_kepu_social_life": ("处方", "诊断", "偏方", "急救"),
-    "music_entertainment": ("八卦", "绯闻", "恋情", "私生活", "粉圈", "撕"),
-}
-FAN_KEPU_SOCIAL_LIFE_EXCLUDE_TERMS = (
-    "编程", "代码", "程序员", "软件开发", "算法", "数据库", "服务器", "芯片", "硬件",
-    "火箭", "航天器", "卫星", "航空航天", "材料科学", "材料技术", "合金", "半导体",
-    "工程技术", "机械工程", "土木工程", "音乐", "歌曲", "歌手", "专辑", "乐队", "演唱会",
-    "乐理", "编曲", "娱乐圈", "综艺", "明星", "programming", "software", "algorithm",
-    "database", "rocket", "aerospace", "material science", "music", "entertainment",
-)
 SETTINGS_PATH = ROOT / "config" / "settings.yaml"
 
 
@@ -155,7 +154,7 @@ def _configured_environment_value(reference: str, *, env_path: Path = DEFAULT_MO
 
 
 def build_production_daily_discovery_gateway(core: Stage0ContentProductionCore) -> ModelGateway:
-    """Build the explicit Mimo path; provider calls remain inside ModelGateway."""
+    """Build the explicitly configured candidate-judgement route."""
     if core.data_identity != "production":
         raise StateTransitionError("production daily-discovery gateway requires production data identity")
     router = ModelRouter.from_file()
@@ -164,44 +163,53 @@ def build_production_daily_discovery_gateway(core: Stage0ContentProductionCore) 
         raise ModelRouterError("daily discovery requires an explicit business topic_screening route with fallback none")
     provider = router.providers.get(definition.provider_ref)
     if provider is None or provider.provider_type != "mimo":
-        raise ModelRouterError("daily discovery requires the configured Mimo provider")
+        raise ModelRouterError("configured candidate-judgement provider is unsupported by the current adapter")
     route = router.resolve_bound_route("business_analysis", route_name="stage1b.daily_discovery")
     if route.provider_name != "hermes":
         raise ModelRouterError("daily discovery route has an unexpected provider adapter")
     auth_ref, endpoint_ref = str(provider.settings.get("auth_ref") or ""), str(provider.settings.get("endpoint_ref") or "")
     if not auth_ref or not endpoint_ref:
-        raise ModelRouterError("configured Mimo provider lacks auth_ref or endpoint_ref")
+        raise ModelRouterError("configured candidate-judgement provider lacks auth_ref or endpoint_ref")
     api_key, base_url = _configured_environment_value(auth_ref), _configured_environment_value(endpoint_ref)
     if not base_url.startswith(("https://", "http://")):
-        raise ModelRouterError("configured Mimo endpoint must be an HTTP(S) URL")
+        raise ModelRouterError("configured candidate-judgement endpoint must be an HTTP(S) URL")
     adapter = HermesModelProviderAdapter(HermesModelProviderConfig(api_key=api_key, base_url=base_url, model=route.model_name, timeout_seconds=90, max_retries=0))
     return ModelGateway(routes={route.route_name: route}, providers={adapter.provider_name: adapter}, materializer=CoreDiscoveryModelRunMaterializer(core))
 
 
-def build_production_source_acquirer(core: Stage0ContentProductionCore) -> DailyDiscoverySourceAcquirer:
-    """Build the two explicit live collectors; disabled or incomplete config fails before any call."""
+def build_production_source_acquirer(
+    core: Stage0ContentProductionCore,
+    *,
+    source_types: tuple[str, ...],
+) -> DailyDiscoverySourceAcquirer:
+    """Build only the collectors required by this source-specific run."""
     if core.data_identity != "production":
         raise StateTransitionError("production source acquisition requires production data identity")
     settings = yaml.safe_load(SETTINGS_PATH.read_text(encoding="utf-8")) or {}
     hotspot_config = settings.get("hotspot_collection") or {}
     domain_search_config = settings.get("domain_search") or {}
-    validate_hotspot_collection_contract(hotspot_config)
-    validate_domain_search_execution_contract(domain_search_config)
-    required = ("project_dir", "executable", "normalized_json_path")
-    missing = [key for key in required if not str(hotspot_config.get(key) or "").strip()]
-    if missing:
-        raise StateTransitionError(f"TrendRadar configuration is incomplete: {', '.join(missing)}")
-    trendradar = LocalTrendRadarExecutor(
-        project_dir=Path(hotspot_config["project_dir"]),
-        executable=Path(hotspot_config["executable"]),
-        command_args=tuple(str(value) for value in hotspot_config.get("args", [])),
-        normalized_json_path=Path(hotspot_config["normalized_json_path"]),
-        timeout_seconds=int(hotspot_config.get("timeout_seconds", 180)),
-    )
+    trendradar = None
+    mediacrawler = None
+    if "hotspot" in source_types:
+        validate_hotspot_collection_contract(hotspot_config)
+        required = ("project_dir", "executable", "normalized_json_path")
+        missing = [key for key in required if not str(hotspot_config.get(key) or "").strip()]
+        if missing:
+            raise StateTransitionError(f"TrendRadar configuration is incomplete: {', '.join(missing)}")
+        trendradar = LocalTrendRadarExecutor(
+            project_dir=Path(hotspot_config["project_dir"]),
+            executable=Path(hotspot_config["executable"]),
+            command_args=tuple(str(value) for value in hotspot_config.get("args", [])),
+            normalized_json_path=Path(hotspot_config["normalized_json_path"]),
+            timeout_seconds=int(hotspot_config.get("timeout_seconds", 180)),
+        )
+    if "tag_discovery" in source_types:
+        validate_domain_search_execution_contract(domain_search_config)
+        mediacrawler = LocalMediaCrawlerExecutor()
     return DailyDiscoverySourceAcquirer(
         conn=core.conn,
         trendradar_executor=trendradar,
-        mediacrawler_executor=LocalMediaCrawlerExecutor(),
+        mediacrawler_executor=mediacrawler,
         hotspot_config=hotspot_config,
         domain_search_config=domain_search_config,
     )
@@ -225,14 +233,36 @@ class Stage1BDailyDiscoveryService:
         batch_timeout_seconds: int = 600,
         now: datetime | None = None,
         domains: tuple[str, ...] = APPROVED_DOMAINS,
+        source_types: tuple[str, ...] = SOURCE_TYPES,
     ) -> dict[str, Any]:
         requested_domains = tuple(domains)
+        requested_source_types = tuple(source_types)
         if not requested_domains or len(set(requested_domains)) != len(requested_domains):
             raise DailyDiscoveryValidationError("daily discovery requires one or more distinct approved domains")
         if any(domain_label not in APPROVED_DOMAINS for domain_label in requested_domains):
             raise DailyDiscoveryValidationError("daily discovery received an unapproved domain")
+        if (
+            not requested_source_types
+            or len(set(requested_source_types)) != len(requested_source_types)
+            or any(source_type not in SOURCE_TYPES for source_type in requested_source_types)
+        ):
+            raise DailyDiscoveryValidationError("daily discovery requires distinct supported source types")
         if execution_mode not in EXECUTION_MODES:
             raise DailyDiscoveryValidationError("daily discovery requires an explicit execution mode")
+        if execution_mode == "validation_live" and len(requested_source_types) != 1:
+            raise DailyDiscoveryValidationError("validation_live must validate exactly one source type")
+        if execution_mode == "production_daily" and set(requested_source_types) != set(SOURCE_TYPES):
+            raise DailyDiscoveryValidationError("production_daily must run the complete six-source discovery set")
+        if self.core.data_identity != "production" and execution_mode != "test_isolated":
+            raise DataIdentityError("non-production discovery data must use test_isolated mode")
+        if self.core.data_identity == "production" and execution_mode == "test_isolated":
+            raise DataIdentityError("production discovery data cannot use test_isolated mode")
+        if (
+            execution_mode != "test_isolated"
+            and {"hotspot", "tag_discovery"} & set(requested_source_types)
+            and self.source_acquirer is None
+        ):
+            raise DailyDiscoveryValidationError("the selected live external source requires its Runtime acquirer")
         if batch_timeout_seconds < 0:
             raise DailyDiscoveryValidationError("batch timeout must be zero or a positive number of seconds")
         now = now or datetime.now(timezone.utc)
@@ -241,6 +271,7 @@ class Stage1BDailyDiscoveryService:
             "actor": actor,
             "domains": list(requested_domains),
             "execution_mode": execution_mode,
+            "source_types": list(requested_source_types),
             "batch_timeout_seconds": batch_timeout_seconds,
         }
         replay = self.core.find_command_replay("stage1b_execute_daily_discovery", idempotency_key, request)
@@ -256,6 +287,7 @@ class Stage1BDailyDiscoveryService:
             "run_id": run["run_id"],
             "discovery_date": discovery_date,
             "execution_mode": execution_mode,
+            "source_types": list(requested_source_types),
             "domains": {},
             "filtered": {},
             "source_readiness": {},
@@ -266,13 +298,17 @@ class Stage1BDailyDiscoveryService:
         deadline = time.monotonic() + batch_timeout_seconds
         lifecycle_status, failure_reason = "completed", None
         try:
-            if self.source_acquirer is not None:
+            if self.source_acquirer is not None and "hotspot" in requested_source_types:
                 try:
                     hotspot = self.source_acquirer.collect_hotspots(
                         discovery_run_id=run["run_id"], now=now, deadline_monotonic=deadline
                     )
                     summary["acquisition"] = {
-                        "execution_order": ["trendradar_hotspot", "hotspot_conversion", "daily_competitor", "historical_high_signal", "tag_search", "tag_conversion"],
+                        "execution_order": [
+                            "trendradar_hotspot", "hotspot_conversion", "daily_competitor",
+                            "historical_high_signal", "tag_search", "tag_conversion",
+                            "question_expansion", "saved_user_direction",
+                        ],
                         "hotspot": hotspot,
                         "tag_search": {},
                     }
@@ -284,12 +320,16 @@ class Stage1BDailyDiscoveryService:
                         "execution_order": ["trendradar_hotspot"], "status": "failed", "reason": str(exc), "retry": "forbidden", "tag_search": {}
                     }
                     summary["technical_failures"] += 1
-            elif execution_mode != "test_isolated":
-                summary["acquisition"] = {"status": "failed", "reason": "live modes require the Runtime source acquirer", "retry": "forbidden"}
-                summary["technical_failures"] += 1
+            elif "hotspot" not in requested_source_types:
+                summary["acquisition"] = {"status": "not_selected", "reason": "hotspot is outside this source-specific run", "tag_search": {}}
             for domain_label in requested_domains:
                 summary["source_readiness"][domain_label] = self.core.discovery_source_readiness(domain_label=domain_label, daily_since=daily_since)
-                loaded_sources = self.core.load_real_discovery_sources(domain_label=domain_label, daily_since=daily_since, per_source_limit=SOURCE_READ_LIMIT)
+                loaded_sources = [
+                    source for source in self.core.load_real_discovery_sources(
+                        domain_label=domain_label, daily_since=daily_since, per_source_limit=SOURCE_READ_LIMIT
+                    )
+                    if source["source_type"] in requested_source_types
+                ]
 
                 def ordered_sources():  # type: ignore[no-untyped-def]
                     nonlocal lifecycle_status, failure_reason
@@ -297,6 +337,8 @@ class Stage1BDailyDiscoveryService:
                         yield from loaded_sources
                         return
                     yield from (source for source in loaded_sources if source["source_type"] != "tag_discovery")
+                    if "tag_discovery" not in requested_source_types:
+                        return
                     if time.monotonic() >= deadline:
                         lifecycle_status, failure_reason = "timed_out", "batch deadline reached before tag search; no request was sent or retried"
                         return
@@ -383,7 +425,7 @@ class Stage1BDailyDiscoveryService:
                         "normalized_title": _normalize_title(judgement["title"]),
                         "normalized_source_title": _normalize_title(str(source["payload"]["title"])),
                         "domain": domain_label,
-                        "source_reference": {"source_version_id": source_result["source_version_id"], "source_type": source["source_type"], "source_object_id": source["source_object_id"], "source_object_version": source["source_object_version"], "source_time": source["source_time"], "url": source["payload"]["url"]},
+                        "source_reference": {"source_version_id": source_result["source_version_id"], "source_type": source["source_type"], "source_object_id": source["source_object_id"], "source_object_version": source["source_object_version"], "source_time": source["source_time"], "url": source["payload"].get("url", "")},
                     }
                     self.core.create_discovery_candidate(
                         run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
@@ -444,22 +486,31 @@ class Stage1BDailyDiscoveryService:
         )
 
     def _deterministic_filter(self, *, domain_label: str, source: dict[str, Any], now: datetime) -> tuple[str, str, dict[str, Any]]:
-        if source["source_type"] not in {"hotspot", "daily_competitor_content", "historical_high_signal", "tag_discovery"}:
+        if source["source_type"] not in {
+            "hotspot", "daily_competitor_content", "historical_high_signal", "tag_discovery",
+            "question_expansion", "saved_user_direction",
+        }:
             return "excluded", "source_not_qualified", {}
-        if domain_label not in APPROVED_DOMAINS:
+        if domain_label not in FORMAL_DOMAIN_LABELS:
             return "excluded", "domain_mismatch", {}
         title, url = str(source["payload"].get("title") or ""), str(source["payload"].get("url") or "")
-        if len(title.strip()) < 6 or not url:
+        if len(title.strip()) < 6 or (source["source_type"] not in {"question_expansion", "saved_user_direction"} and not url):
             return "excluded", "material_obviously_insufficient", {}
         if source["source_type"] in {"hotspot", "daily_competitor_content"} and _parse_time(source["source_time"]) + timedelta(hours=DAILY_SOURCE_VALIDITY_HOURS) < now:
             return "excluded", "freshness_expired", {}
-        if any(term in title for term in RISK_BLOCK_TERMS[domain_label]):
-            return "excluded", "risk_blocked", {"matched_terms": [term for term in RISK_BLOCK_TERMS[domain_label] if term in title]}
-        if domain_label == "fan_kepu_social_life":
-            title_folded = title.casefold()
-            matched_terms = [term for term in FAN_KEPU_SOCIAL_LIFE_EXCLUDE_TERMS if term.casefold() in title_folded]
-            if matched_terms:
-                return "excluded", "outside_social_life_domain", {"matched_terms": matched_terms}
+        policy = get_discovery_policy(domain_label)
+        risk_terms = tuple(str(term) for term in policy.get("risk_block_terms", []))
+        if any(term in title for term in risk_terms):
+            return "excluded", "risk_blocked", {"matched_terms": [term for term in risk_terms if term in title]}
+        title_folded = title.casefold()
+        exclude_terms = tuple(str(term) for term in policy.get("exclude_terms", []))
+        matched_terms = [term for term in exclude_terms if term.casefold() in title_folded]
+        if matched_terms:
+            return "excluded", "outside_domain_policy", {"matched_terms": matched_terms}
+        if source["source_type"] == "hotspot":
+            match_terms = tuple(str(term) for term in policy.get("hotspot_match_terms", []))
+            if not match_terms or not any(term.casefold() in title_folded for term in match_terms):
+                return "excluded", "hotspot_domain_mismatch", {}
         normalized_title = _normalize_title(title)
         if self.core.discovery_source_seen(source_type=source["source_type"], source_object_id=source["source_object_id"], source_object_version=source["source_object_version"]):
             return "excluded", "source_already_processed", {}
@@ -482,7 +533,7 @@ class Stage1BDailyDiscoveryService:
             "domain": domain_label,
             "source_version_id": source_version_id,
             "source_type": source["source_type"],
-            "source_object": {"id": source["source_object_id"], "version": source["source_object_version"], "time": source["source_time"], "title": payload["title"], "url": payload["url"], "account_name": payload.get("account_name", "")},
+            "source_object": {"id": source["source_object_id"], "version": source["source_object_version"], "time": source["source_time"], "title": payload["title"], "url": payload.get("url", ""), "account_name": payload.get("account_name", "")},
             "user_requirements": "daily discovery only; do not create a formal topic",
             "materials_and_facts": [{"kind": "source_clue", "reference": source_version_id}],
             "considered_experience": [], "adopted_experience": [], "rejected_experience": [], "omitted_materials": [],
@@ -495,6 +546,12 @@ def main(argv: list[str] | None = None) -> int:
     """Run one Core-owned Stage 1B batch, or classify a prior live validation."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--domain", choices=APPROVED_DOMAINS, help="one authorized formal domain for a new batch")
+    parser.add_argument(
+        "--source-type",
+        action="append",
+        choices=SOURCE_TYPES,
+        help="source type to run; validation_live requires exactly one, production_daily always uses all six",
+    )
     parser.add_argument("--actor", required=True, help="audited actor for the explicit user authorization")
     parser.add_argument("--idempotency-key", required=True, help="stable key for this exact authorized run")
     parser.add_argument("--mode", required=True, choices=EXECUTION_MODES, help="explicit execution identity; no mode can be promoted automatically")
@@ -509,6 +566,7 @@ def main(argv: list[str] | None = None) -> int:
     elif not args.domain:
         parser.error("a new batch requires --domain")
 
+    selected_source_types = tuple(args.source_type or SOURCE_TYPES)
     core = Stage0ContentProductionCore.open(FORMAL_DB_PATH, data_identity="production")
     try:
         if args.reclassify_run:
@@ -520,7 +578,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(_canonical(result))
             return 0
-        source_acquirer = build_production_source_acquirer(core)
+        source_acquirer = (
+            build_production_source_acquirer(core, source_types=selected_source_types)
+            if {"hotspot", "tag_discovery"} & set(selected_source_types)
+            else None
+        )
         gateway = build_production_daily_discovery_gateway(core)
         service = Stage1BDailyDiscoveryService(core=core, gateway=gateway, source_acquirer=source_acquirer)
         result = service.run_daily_discovery(
@@ -530,6 +592,7 @@ def main(argv: list[str] | None = None) -> int:
             execution_mode=args.mode,
             batch_timeout_seconds=args.batch_timeout_seconds,
             domains=(args.domain,),
+            source_types=selected_source_types,
         )
         snapshot = service.view_daily_snapshot(run_id=result["run_id"], domains=(args.domain,))
         print(_canonical({**result, "snapshot": snapshot}))

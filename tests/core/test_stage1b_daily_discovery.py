@@ -90,6 +90,8 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         self.service = Stage1BDailyDiscoveryService(core=self.core, gateway=self.gateway)
 
     def tearDown(self) -> None:
+        if hasattr(self, "production_core"):
+            self.production_core.close()
         self.core.close()
         self.tempdir.cleanup()
 
@@ -134,11 +136,18 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         )
         self.core.conn.commit()
 
-    def _insert_hotspot(self, *, observation_id: str = "hotspot-1", title: str = "养老服务为什么引发普通家庭讨论") -> None:
-        seed_active_tags_from_sources_yaml(
-            self.core.conn,
-            {"domain_label": "fan_kepu_social_life", "active_tags": ["养老"]},
-        )
+    def _insert_hotspot(
+        self,
+        *,
+        observation_id: str = "hotspot-1",
+        title: str = "养老服务为什么引发普通家庭讨论",
+        seed_search_tag: bool = True,
+    ) -> None:
+        if seed_search_tag:
+            seed_active_tags_from_sources_yaml(
+                self.core.conn,
+                {"domain_label": "fan_kepu_social_life", "active_tags": ["养老"]},
+            )
         self.core.conn.execute(
             """
             INSERT INTO trendradar_collection_run(
@@ -212,6 +221,42 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         }
         self.assertEqual(recorded_types, {"hotspot", "tag_discovery"})
 
+    def test_hotspot_domain_matching_does_not_depend_on_the_topic_search_library(self) -> None:
+        self._insert_hotspot(seed_search_tag=False)
+        self.assertEqual(self.core.conn.execute("SELECT COUNT(*) FROM domain_search_tags").fetchone()[0], 0)
+        sources = self.core.load_real_discovery_sources(
+            domain_label="fan_kepu_social_life",
+            daily_since="2026-07-11T12:00:00+00:00",
+            per_source_limit=6,
+        )
+        self.assertEqual([source["source_type"] for source in sources], ["hotspot"])
+
+    def test_completed_expansion_and_saved_user_direction_are_real_source_types(self) -> None:
+        self.core.register_question_expansion_source(
+            expansion_id="expansion-1",
+            domain_label="fan_kepu_social_life",
+            core_question="为什么养老服务会改变普通家庭的日常选择？",
+            parent_source_ref={"source_type": "hotspot", "source_id": "parent-1"},
+            actor="test-user",
+        )
+        self.core.register_saved_user_direction_source(
+            direction_id="direction-1",
+            domain_label="fan_kepu_social_life",
+            core_question="为什么预付消费退款总让普通人陷入被动？",
+            submitted_by="test-user",
+        )
+        sources = self.core.load_real_discovery_sources(
+            domain_label="fan_kepu_social_life",
+            daily_since="2026-07-11T12:00:00+00:00",
+            per_source_limit=6,
+        )
+        self.assertEqual(
+            [source["source_type"] for source in sources],
+            ["question_expansion", "saved_user_direction"],
+        )
+        result = self._run("internal-sources")
+        self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 2)
+
     def test_runtime_collects_hotspot_then_converts_it_before_starting_tag_search(self) -> None:
         test_case = self
 
@@ -242,6 +287,54 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         self.assertEqual(acquirer.calls, ["trendradar", "tag_search"])
         self.assertEqual(result["summary"]["acquisition"]["execution_order"][:2], ["trendradar_hotspot", "hotspot_conversion"])
 
+    def test_batch_interruption_is_finalized_without_retry(self) -> None:
+        class InterruptingAcquirer:
+            def collect_hotspots(self, **kwargs: object) -> dict:
+                raise KeyboardInterrupt
+
+        service = Stage1BDailyDiscoveryService(
+            core=self.core,
+            gateway=self.gateway,
+            source_acquirer=InterruptingAcquirer(),  # type: ignore[arg-type]
+        )
+        result = service.run_daily_discovery(
+            discovery_date="2026-07-14",
+            actor="test-worker",
+            idempotency_key="interrupted-runtime",
+            execution_mode="test_isolated",
+            now=self.NOW,
+            domains=("fan_kepu_social_life",),
+        )
+        self.assertEqual(result["status"], "interrupted")
+        self.assertEqual(self.provider.calls, 0)
+        self.assertEqual(self.core.conn.execute(
+            "SELECT lifecycle_status FROM stage1b_run_execution_context"
+        ).fetchone()[0], "interrupted")
+
+    def test_partial_source_failure_is_not_reported_as_full_success(self) -> None:
+        class PartialAcquirer:
+            def collect_hotspots(self, **kwargs: object) -> dict:
+                return {"status": "completed_with_failures", "item_count": 1, "invalid_items": 1}
+
+            def search_tags(self, **kwargs: object) -> dict:
+                return {"status": "completed_with_failures", "failed": 1, "results": []}
+
+        service = Stage1BDailyDiscoveryService(
+            core=self.core,
+            gateway=self.gateway,
+            source_acquirer=PartialAcquirer(),  # type: ignore[arg-type]
+        )
+        result = service.run_daily_discovery(
+            discovery_date="2026-07-14",
+            actor="test-worker",
+            idempotency_key="partial-runtime",
+            execution_mode="test_isolated",
+            now=self.NOW,
+            domains=("fan_kepu_social_life",),
+        )
+        self.assertEqual(result["status"], "completed_with_failures")
+        self.assertGreaterEqual(result["summary"]["technical_failures"], 2)
+
     def test_explicit_single_domain_never_reads_or_snapshots_music_entertainment(self) -> None:
         self._insert_video()
         result = self.service.run_daily_discovery(
@@ -262,6 +355,18 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
             ).fetchall()
         ]
         self.assertEqual(snapshot_domains, ["fan_kepu_social_life"])
+
+    def test_validation_live_requires_exactly_one_source_type(self) -> None:
+        with self.assertRaisesRegex(StateTransitionError, "exactly one source type"):
+            self.service.run_daily_discovery(
+                discovery_date="2026-07-14",
+                actor="validator",
+                idempotency_key="multi-source-validation",
+                execution_mode="validation_live",
+                now=self.NOW,
+                domains=("fan_kepu_social_life",),
+                source_types=("daily_competitor_content", "historical_high_signal"),
+            )
 
     def test_unregistered_or_stale_source_cannot_be_recorded(self) -> None:
         self._insert_video()
@@ -370,7 +475,72 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
                 self._insert_video(video_id=f"excluded-{index}", title=title)
                 result = self._run(f"excluded-{index}")
                 self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 0)
-                self.assertEqual(result["summary"]["filtered"]["fan_kepu_social_life"]["outside_social_life_domain"], index + 1)
+                self.assertEqual(result["summary"]["filtered"]["fan_kepu_social_life"]["outside_domain_policy"], index + 1)
+
+    def test_physically_purges_only_the_confirmed_validation_run(self) -> None:
+        production_db = Path(self.tempdir.name) / "formal-production.sqlite3"
+        with patch("scripts.core.production.stage0_content_core.FORMAL_DB_PATH", production_db):
+            production_core = Stage0ContentProductionCore.open(production_db, data_identity="production")
+        self.production_core = production_core
+        production_provider = FakeDiscoveryProvider()
+        production_gateway = ModelGateway(
+            routes={self.route.route_name: self.route},
+            providers={production_provider.provider_name: production_provider},
+            materializer=CoreDiscoveryModelRunMaterializer(production_core),
+        )
+        production_core.register_saved_user_direction_source(
+            direction_id="bad-direction",
+            domain_label="fan_kepu_social_life",
+            core_question="为什么这个错误验证问题不应继续保留？",
+            submitted_by="user",
+        )
+        service = Stage1BDailyDiscoveryService(core=production_core, gateway=production_gateway)
+        result = service.run_daily_discovery(
+            discovery_date="2026-07-14",
+            actor="validator",
+            idempotency_key="bad-validation",
+            execution_mode="validation_live",
+            now=self.NOW,
+            domains=("fan_kepu_social_life",),
+            source_types=("saved_user_direction",),
+        )
+        snapshot = service.view_daily_snapshot(
+            run_id=result["run_id"], domains=("fan_kepu_social_life",)
+        )["fan_kepu_social_life"]
+        self.assertFalse(snapshot[0]["formal_candidate_pool"])
+        with self.assertRaisesRegex(StateTransitionError, "production_daily"):
+            service.handoff_selected_candidate(
+                candidate_version_id=snapshot[0]["candidate_version_id"],
+                actor="user",
+                reason="validation must not be promoted",
+                idempotency_key="validation-handoff",
+            )
+        unrelated = production_core.create_discovery_run(
+            discovery_date="2026-07-14",
+            actor="validator",
+            execution_mode="validation_live",
+            idempotency_key="unrelated-validation",
+        )
+        purge = production_core.purge_validation_live_run(
+            run_id=result["run_id"],
+            actor="user",
+            reason="explicitly approved erroneous validation result deletion",
+            expected_candidate_count=1,
+            confirmation=f"DELETE_VALIDATION_LIVE_RUN:{result['run_id']}",
+        )
+        self.assertEqual(purge["result"], "physically_deleted")
+        self.assertEqual(purge["deleted"]["stage1b_candidate_version"], 1)
+        self.assertIsNone(production_core.conn.execute(
+            "SELECT 1 FROM stage1b_discovery_run WHERE run_id=?", (result["run_id"],)
+        ).fetchone())
+        self.assertIsNotNone(production_core.conn.execute(
+            "SELECT 1 FROM stage1b_discovery_run WHERE run_id=?", (unrelated["run_id"],)
+        ).fetchone())
+        for table in ("stage0_audit_event", "stage0_command_receipt"):
+            column = "payload_json" if table == "stage0_audit_event" else "result_json"
+            self.assertEqual(production_core.conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {column} LIKE ?", (f"%{result['run_id']}%",)
+            ).fetchone()[0], 0)
 
     def test_zero_candidate_remains_valid_when_batch_times_out_before_any_request(self) -> None:
         self._insert_video()

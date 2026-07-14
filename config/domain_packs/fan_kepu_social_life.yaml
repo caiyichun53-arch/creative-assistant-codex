@@ -1,0 +1,52 @@
+name: 泛科普-社会与生活
+formal_domain_label: fan_kepu_social_life
+activation_status: approved
+discovery:
+  hotspot_match_terms: [社会, 生活, 家庭, 养老, 教育, 职场, 就业, 消费, 住房, 房产, 婚姻, 人际, 规则, 民生, 经济, 社保]
+  risk_block_terms: [处方, 诊断, 偏方, 急救]
+  exclude_terms:
+    - 编程
+    - 代码
+    - 程序员
+    - 软件开发
+    - 算法
+    - 数据库
+    - 服务器
+    - 芯片
+    - 硬件
+    - 火箭
+    - 航天器
+    - 卫星
+    - 航空航天
+    - 材料科学
+    - 材料技术
+    - 合金
+    - 半导体
+    - 工程技术
+    - 机械工程
+    - 土木工程
+    - 音乐
+    - 歌曲
+    - 歌手
+    - 专辑
+    - 乐队
+    - 演唱会
+    - 乐理
+    - 编曲
+    - 娱乐圈
+    - 综艺
+    - 明星
+    - programming
+    - software
+    - algorithm
+    - database
+    - rocket
+    - aerospace
+    - material science
+    - music
+    - entertainment
+  topic_search:
+    active_tags: [科普, 知识]
+    broad_domain_tags: [科普, 知识, 涨知识, 生活, 干货]
+    generic_tags: [热点, 热门, 推荐, 上热门]
+    activity_review_terms: [挑战赛, 挑战, 活动, 打卡, 创作季, 征集, 大赛, 任务, 话题活动]

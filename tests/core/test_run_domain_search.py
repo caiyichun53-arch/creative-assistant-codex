@@ -8,12 +8,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from scripts.core.business_data.register_competitor_accounts import install_schema as install_competitor_schema
+from scripts.core.business_data.domain_labels import load_domain_packs
 from scripts.core.business_data.run_domain_search import (
     CONSECUTIVE_CYCLES_BEFORE_PAUSE,
     deterministic_filter,
     extract_hashtags,
     install_schema,
     load_sources_yaml,
+    register_activity_tag_exclusion,
     run_daily_tag_searches,
     record_search_cycle_result,
     search_one_tag,
@@ -82,12 +84,33 @@ class LoadSourcesYamlTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_sources_yaml(path)
 
+    def test_loads_active_tags_from_the_versioned_domain_pack(self) -> None:
+        data = load_sources_yaml(Path("config/domain_packs/fan_kepu_social_life.yaml"))
+        self.assertEqual(data["domain_label"], "fan_kepu_social_life")
+        self.assertEqual(data["active_tags"], ["科普", "知识"])
+
     def test_missing_active_tags_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "sources.yaml"
             path.write_text("domain_label: fan_kepu_social_life\n", encoding="utf-8")
             with self.assertRaises(ValueError):
                 load_sources_yaml(path)
+
+    def test_a_new_domain_pack_is_discovered_without_editing_common_code(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "new-domain.yaml"
+            path.write_text(
+                "formal_domain_label: new_social_domain\n"
+                "activation_status: approved\n"
+                "discovery:\n"
+                "  hotspot_match_terms: [新领域对象]\n"
+                "  topic_search:\n"
+                "    active_tags: [新领域标签]\n",
+                encoding="utf-8",
+            )
+            packs = load_domain_packs(Path(tmp))
+        self.assertEqual(set(packs), {"new_social_domain"})
+        self.assertEqual(packs["new_social_domain"]["discovery"]["topic_search"]["active_tags"], ["新领域标签"])
 
 
 class SeedActiveTagsTests(unittest.TestCase):
@@ -130,21 +153,22 @@ class ExtractHashtagsTests(unittest.TestCase):
 
 
 class SuggestTagsFromHitLibraryTests(unittest.TestCase):
-    def test_long_tags_are_filtered_as_campaign_tags(self) -> None:
+    def test_activity_words_only_mark_a_tag_pending_review(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
                 _insert_account(conn, "acc1")
                 _insert_video(conn, "v1", "acc1", desc="标题 #房产中介 #知识挑战赛")
                 result = suggest_tags_from_hit_library(conn, domain_label="fan_kepu_social_life", run_id="run1")
-                tags = {r["tag"] for r in conn.execute("SELECT tag FROM domain_search_tags").fetchall()}
-                self.assertIn("房产中介", tags)
-                self.assertNotIn("知识挑战赛", tags)
+                rows = {r["tag"]: r for r in conn.execute("SELECT * FROM domain_search_tags").fetchall()}
+                self.assertIn("房产中介", rows)
+                self.assertEqual(rows["知识挑战赛"]["status"], "pending_review")
                 self.assertEqual(result["suggested"], 1)
+                self.assertEqual(result["pending_review"], 1)
             finally:
                 conn.close()
 
-    def test_high_frequency_tags_are_filtered_as_too_generic(self) -> None:
+    def test_broad_domain_tag_is_not_filtered_for_high_frequency(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
@@ -155,7 +179,7 @@ class SuggestTagsFromHitLibraryTests(unittest.TestCase):
                 _insert_video(conn, "v_distinct", "acc1", desc="#房产中介")
                 suggest_tags_from_hit_library(conn, domain_label="fan_kepu_social_life", run_id="run1")
                 tags = {r["tag"] for r in conn.execute("SELECT tag FROM domain_search_tags").fetchall()}
-                self.assertNotIn("科普", tags, "high-frequency generic tag must be filtered out")
+                self.assertIn("科普", tags, "科普是领域标签，不能因高频或较宽而误删")
                 self.assertIn("房产中介", tags)
             finally:
                 conn.close()
@@ -178,11 +202,42 @@ class SuggestTagsFromHitLibraryTests(unittest.TestCase):
             conn = _connect(tmp)
             try:
                 _insert_account(conn, "acc1")
-                _insert_video(conn, "v1", "acc1", desc="#科普 #房产中介避坑")
+                _insert_video(conn, "v1", "acc1", desc="#热门 #科普 #房产中介避坑")
                 suggest_tags_from_hit_library(conn, domain_label="fan_kepu_social_life", run_id="run1")
                 tags = {r["tag"] for r in conn.execute("SELECT tag FROM domain_search_tags").fetchall()}
-                self.assertNotIn("科普", tags)
+                self.assertNotIn("热门", tags)
+                self.assertIn("科普", tags)
                 self.assertIn("房产中介避坑", tags, "specific longer tags must not be rejected only for their length")
+            finally:
+                conn.close()
+
+    def test_exact_current_platform_activity_evidence_excludes_the_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = _connect(tmp)
+            try:
+                _insert_account(conn, "acc1")
+                _insert_video(conn, "v1", "acc1", desc="#知识挑战赛 #房产中介")
+                register_activity_tag_exclusion(
+                    conn,
+                    registry_id="activity-1",
+                    domain_label="fan_kepu_social_life",
+                    tag="知识挑战赛",
+                    platform="douyin",
+                    activity_identity="douyin-campaign-2026-knowledge",
+                    evidence_ref="https://example.test/platform-campaign",
+                    valid_from="2026-07-01T00:00:00+00:00",
+                    valid_until="2026-07-31T23:59:59+00:00",
+                    exclusion_reason="抖音短期征集活动",
+                )
+                suggest_tags_from_hit_library(
+                    conn,
+                    domain_label="fan_kepu_social_life",
+                    run_id="run1",
+                    now=datetime(2026, 7, 14, tzinfo=timezone.utc),
+                )
+                tags = {r["tag"] for r in conn.execute("SELECT tag FROM domain_search_tags").fetchall()}
+                self.assertNotIn("知识挑战赛", tags)
+                self.assertIn("房产中介", tags)
             finally:
                 conn.close()
 
@@ -357,7 +412,7 @@ class RecordSearchCycleResultTests(unittest.TestCase):
                     result = record_search_cycle_result(conn, tag_id=tag_id, run_id=f"run{i}", produced_validated_topic=False)
                 self.assertTrue(result["paused"])
                 row = conn.execute("SELECT * FROM domain_search_tags WHERE tag_id=?", (tag_id,)).fetchone()
-                self.assertEqual(row["status"], "suggested_pause")
+                self.assertEqual(row["status"], "paused")
             finally:
                 conn.close()
 

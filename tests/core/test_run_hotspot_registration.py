@@ -9,7 +9,7 @@ from pathlib import Path
 from scripts.core.business_data.register_competitor_accounts import install_schema as install_competitor_schema
 from scripts.core.business_data.run_domain_search import install_schema as install_domain_search_schema
 from scripts.core.business_data.run_hotspot_registration import (
-    match_domain_tags,
+    match_domain_policy_terms,
     register_hotspot_event,
     validate_hotspot_registration_execution_contract,
 )
@@ -38,30 +38,26 @@ class ValidateExecutionContractTests(unittest.TestCase):
         self.assertTrue({"3", "17"}.issubset(contract))
 
 
-class MatchDomainTagsTests(unittest.TestCase):
-    def test_matches_only_active_tags_present_in_the_text(self) -> None:
+class MatchDomainPolicyTests(unittest.TestCase):
+    def test_matches_the_versioned_domain_policy_without_search_tags(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
-                _insert_active_tag(conn, "房产中介")
-                _insert_active_tag(conn, "运动鞋")
-                matched = match_domain_tags(conn, domain_label="fan_kepu_social_life", raw_text="最近房产中介行业很多新闻")
-                self.assertEqual(matched, ["房产中介"])
+                matched = match_domain_policy_terms(conn, domain_label="fan_kepu_social_life", raw_text="最近房产中介行业很多新闻")
+                self.assertEqual(matched, ["房产"])
             finally:
                 conn.close()
 
-    def test_suggested_tags_are_never_matched(self) -> None:
-        # Reverse case: an unconfirmed suggested tag must not count as a real
-        # domain-relevance signal.
+    def test_search_tags_never_change_hotspot_domain_matching(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
                 conn.execute(
                     "INSERT INTO domain_search_tags(tag_id, tag, domain_label, status, source) "
-                    "VALUES ('t1', '房产中介', 'fan_kepu_social_life', 'suggested', 'discovered')"
+                    "VALUES ('t1', '火星科技', 'fan_kepu_social_life', 'active', 'sources_yaml')"
                 )
                 conn.commit()
-                matched = match_domain_tags(conn, domain_label="fan_kepu_social_life", raw_text="房产中介最新动态")
+                matched = match_domain_policy_terms(conn, domain_label="fan_kepu_social_life", raw_text="火星科技最新动态")
                 self.assertEqual(matched, [])
             finally:
                 conn.close()
@@ -70,8 +66,7 @@ class MatchDomainTagsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
-                _insert_active_tag(conn, "房产中介")
-                matched = match_domain_tags(conn, domain_label="fan_kepu_social_life", raw_text="完全无关的内容")
+                matched = match_domain_policy_terms(conn, domain_label="fan_kepu_social_life", raw_text="完全无关的内容")
                 self.assertEqual(matched, [])
             finally:
                 conn.close()
@@ -82,15 +77,14 @@ class RegisterHotspotEventTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             conn = _connect(tmp)
             try:
-                _insert_active_tag(conn, "房产中介")
                 result = register_hotspot_event(
                     conn, domain_label="fan_kepu_social_life", raw_text="房产中介行业最近有新政策", created_by="用户本人"
                 )
-                self.assertEqual(result["matched_tags"], ["房产中介"])
+                self.assertEqual(result["matched_tags"], ["房产"])
                 row = conn.execute("SELECT * FROM hotspot_events WHERE event_id=?", (result["event_id"],)).fetchone()
                 self.assertEqual(row["raw_text"], "房产中介行业最近有新政策")
                 self.assertEqual(row["created_by"], "用户本人")
-                self.assertEqual(json.loads(row["matched_tags"]), ["房产中介"])
+                self.assertEqual(json.loads(row["matched_tags"]), ["房产"])
                 self.assertEqual(row["source"], "feishu_manual")
             finally:
                 conn.close()

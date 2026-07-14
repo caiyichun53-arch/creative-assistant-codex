@@ -24,7 +24,11 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.core.business_data.domain_labels import ALLOWED_DOMAIN_LABELS  # noqa: E402
+from scripts.core.business_data.domain_labels import (  # noqa: E402
+    ALLOWED_DOMAIN_LABELS,
+    FORMAL_DOMAIN_LABELS,
+    get_discovery_policy,
+)
 from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.external_adapters import ExternalAdapterCommand, ExternalCommandExecutor  # noqa: E402
 
@@ -36,8 +40,6 @@ SEARCH_PAGE_COUNT = 1
 DOUYIN_FIRST_PAGE_MAX_ITEMS = 10
 CONSECUTIVE_CYCLES_BEFORE_PAUSE = 3
 _HASHTAG_PATTERN = re.compile(r"#([^#\s]+)")
-_GENERIC_TAGS = frozenset({"科普", "知识", "涨知识", "生活", "热点", "热门", "推荐", "上热门", "干货"})
-_ACTIVITY_TAG_TERMS = ("挑战赛", "挑战", "活动", "打卡", "创作季", "征集", "大赛", "任务", "话题活动")
 
 
 def validate_domain_search_execution_contract(domain_search_cfg: dict[str, Any]) -> dict[str, Any]:
@@ -64,11 +66,68 @@ def install_schema(conn: sqlite3.Connection) -> None:
 
 def load_sources_yaml(path: Path) -> dict[str, Any]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    if "domain_label" not in data or "active_tags" not in data:
-        raise ValueError(f"{path} must have domain_label and active_tags")
-    if data["domain_label"] not in ALLOWED_DOMAIN_LABELS:
-        raise ValueError(f"{path} domain_label {data['domain_label']!r} is not a real domain_label")
-    return data
+    domain_label = str(data.get("formal_domain_label") or data.get("domain_label") or "").strip()
+    topic_search = ((data.get("discovery") or {}).get("topic_search") or {})
+    active_tags = data.get("active_tags", topic_search.get("active_tags"))
+    if not domain_label or not isinstance(active_tags, list):
+        raise ValueError(f"{path} must define formal_domain_label and discovery.topic_search.active_tags")
+    if domain_label not in FORMAL_DOMAIN_LABELS:
+        raise ValueError(f"{path} domain_label {domain_label!r} is not a configured formal domain")
+    return {**data, "domain_label": domain_label, "active_tags": active_tags}
+
+
+def register_activity_tag_exclusion(
+    conn: sqlite3.Connection,
+    *,
+    registry_id: str,
+    domain_label: str,
+    tag: str,
+    platform: str,
+    activity_identity: str,
+    evidence_ref: str,
+    valid_from: str,
+    valid_until: str,
+    exclusion_reason: str,
+) -> None:
+    """Register the evidence required for an exact platform-activity exclusion."""
+    if domain_label not in FORMAL_DOMAIN_LABELS:
+        raise ValueError("activity tag exclusion requires a configured formal domain")
+    required = (registry_id, tag, platform, activity_identity, evidence_ref, valid_from, valid_until, exclusion_reason)
+    if any(not str(value).strip() for value in required):
+        raise ValueError("activity tag exclusion requires identity, evidence, dates, and reason")
+    if datetime.fromisoformat(valid_until) < datetime.fromisoformat(valid_from):
+        raise ValueError("activity tag exclusion valid_until must not precede valid_from")
+    conn.execute(
+        """
+        INSERT INTO domain_search_activity_tag_registry(
+            registry_id, domain_label, tag, platform, activity_identity, evidence_ref,
+            valid_from, valid_until, exclusion_reason, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+        """,
+        (registry_id, domain_label, tag, platform, activity_identity, evidence_ref,
+         valid_from, valid_until, exclusion_reason),
+    )
+    conn.commit()
+
+
+def _has_active_activity_evidence(
+    conn: sqlite3.Connection,
+    *,
+    domain_label: str,
+    tag: str,
+    platform: str,
+    now: datetime,
+) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1 FROM domain_search_activity_tag_registry
+         WHERE domain_label=? AND tag=? AND platform=? AND status='active'
+           AND valid_from<=? AND valid_until>=?
+         LIMIT 1
+        """,
+        (domain_label, tag, platform, now.isoformat(), now.isoformat()),
+    ).fetchone()
+    return row is not None
 
 
 def seed_active_tags_from_sources_yaml(conn: sqlite3.Connection, sources_config: dict[str, Any]) -> dict[str, Any]:
@@ -97,8 +156,21 @@ def extract_hashtags(text: str) -> list[str]:
     return [tag for tag in _HASHTAG_PATTERN.findall(text) if tag.strip()]
 
 
-def suggest_tags_from_hit_library(conn: sqlite3.Connection, *, domain_label: str, run_id: str) -> dict[str, Any]:
-    """只从本领域正式爆款样本提取标签，过滤泛类和时效活动标签。"""
+def suggest_tags_from_hit_library(
+    conn: sqlite3.Connection,
+    *,
+    domain_label: str,
+    run_id: str,
+    platform: str = "douyin",
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Extract domain tags; activity words only trigger review, never exclusion."""
+    del run_id
+    policy = get_discovery_policy(domain_label)
+    topic_policy = policy.get("topic_search") or {}
+    generic_tags = frozenset(str(tag) for tag in topic_policy.get("generic_tags", []))
+    activity_review_terms = tuple(str(term) for term in topic_policy.get("activity_review_terms", []))
+    now = now or datetime.now(timezone.utc)
     rows = conn.execute(
         """
         SELECT competitor_videos.video_id, competitor_videos.raw_json
@@ -117,35 +189,42 @@ def suggest_tags_from_hit_library(conn: sqlite3.Connection, *, domain_label: str
         text = raw.get("desc") or raw.get("title") or ""
         for tag in extract_hashtags(text):
             tag = tag.strip("，。！？、,.!? ")
-            if not tag or tag in _GENERIC_TAGS or any(term in tag for term in _ACTIVITY_TAG_TERMS):
+            if not tag or tag in generic_tags:
+                continue
+            if _has_active_activity_evidence(
+                conn, domain_label=domain_label, tag=tag, platform=platform, now=now
+            ):
                 continue
             tag_counts[tag] = tag_counts.get(tag, 0) + 1
             tag_video_ids.setdefault(tag, row["video_id"])
 
     if not tag_counts:
-        return {"domain_label": domain_label, "suggested": 0, "candidates_scanned": len(rows)}
-
-    sorted_counts = sorted(tag_counts.values(), reverse=True)
-    dominant_generic_count = None
-    if len(sorted_counts) > 1 and sorted_counts[0] >= 3 and sorted_counts[0] >= sorted_counts[1] * 3:
-        dominant_generic_count = sorted_counts[0]
+        return {"domain_label": domain_label, "suggested": 0, "pending_review": 0, "candidates_scanned": len(rows)}
 
     inserted = 0
+    pending_review = 0
     for tag, count in tag_counts.items():
-        if dominant_generic_count is not None and count == dominant_generic_count:
-            continue
+        del count
+        requires_activity_review = any(term in tag for term in activity_review_terms)
+        status = "pending_review" if requires_activity_review else "suggested"
         tag_id = f"{domain_label}_{tag}"
         cur = conn.execute(
             """
             INSERT OR IGNORE INTO domain_search_tags(tag_id, tag, domain_label, status, source, source_video_id)
-            VALUES (?, ?, ?, 'suggested', 'discovered', ?)
+            VALUES (?, ?, ?, ?, 'discovered', ?)
             """,
-            (tag_id, tag, domain_label, tag_video_ids[tag]),
+            (tag_id, tag, domain_label, status, tag_video_ids[tag]),
         )
         if cur.rowcount:
             inserted += 1
+            pending_review += int(requires_activity_review)
     conn.commit()
-    return {"domain_label": domain_label, "suggested": inserted, "candidates_scanned": len(rows)}
+    return {
+        "domain_label": domain_label,
+        "suggested": inserted - pending_review,
+        "pending_review": pending_review,
+        "candidates_scanned": len(rows),
+    }
 
 
 def select_tags_due_for_search(conn: sqlite3.Connection, *, domain_label: str, limit: int = DAILY_TAG_SEARCH_COUNT, now: datetime | None = None) -> list[sqlite3.Row]:
@@ -217,7 +296,7 @@ def record_search_cycle_result(
         paused = new_count >= CONSECUTIVE_CYCLES_BEFORE_PAUSE
         conn.execute(
             "UPDATE domain_search_tags SET consecutive_cycles_without_validated_topic = ?, status = ? WHERE tag_id = ?",
-            (new_count, "suggested_pause" if paused else "active", tag_id),
+            (new_count, "paused" if paused else "active", tag_id),
         )
     conn.commit()
     return {"tag_id": tag_id, "consecutive_cycles_without_validated_topic": new_count, "paused": paused}

@@ -1,0 +1,12 @@
+name: 音乐娱乐
+formal_domain_label: music_entertainment
+activation_status: pending_business_input
+discovery:
+  hotspot_match_terms: [音乐, 歌曲, 歌手, 专辑, 乐队, 演唱会]
+  risk_block_terms: [八卦, 绯闻, 恋情, 私生活, 粉圈, 撕]
+  exclude_terms: []
+  topic_search:
+    active_tags: []
+    broad_domain_tags: [音乐, 歌曲]
+    generic_tags: [热点, 热门, 推荐, 上热门]
+    activity_review_terms: [挑战赛, 挑战, 活动, 打卡, 创作季, 征集, 大赛, 任务, 话题活动]

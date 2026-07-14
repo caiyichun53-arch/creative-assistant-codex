@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS domain_search_tags (
     tag_id TEXT PRIMARY KEY,
     tag TEXT NOT NULL,
     domain_label TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'suggested', 'suggested_pause')),
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'suggested', 'pending_review', 'paused', 'closed')),
     source TEXT NOT NULL CHECK(source IN ('sources_yaml', 'discovered')),
     source_video_id TEXT,
     human_review_status TEXT NOT NULL DEFAULT 'pending_review'
@@ -39,6 +39,26 @@ END;
 
 CREATE INDEX IF NOT EXISTS idx_domain_search_tags_domain_status
 ON domain_search_tags(domain_label, status);
+
+-- 只有这里存在一条当前有效、可追溯的精确登记时，短期平台活动标签才会被
+-- 确定性排除。词面关键词不写入此表，也不能自行构成排除证据。
+CREATE TABLE IF NOT EXISTS domain_search_activity_tag_registry (
+    registry_id TEXT PRIMARY KEY,
+    domain_label TEXT NOT NULL,
+    tag TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    activity_identity TEXT NOT NULL,
+    evidence_ref TEXT NOT NULL,
+    valid_from TEXT NOT NULL,
+    valid_until TEXT NOT NULL,
+    exclusion_reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'closed')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(domain_label, tag, platform, activity_identity)
+);
+
+CREATE INDEX IF NOT EXISTS idx_domain_search_activity_tag_lookup
+ON domain_search_activity_tag_registry(domain_label, tag, platform, status, valid_from, valid_until);
 
 -- 每日轮换调度游标。last_searched_at IS NULL 表示从没搜过,永远排在最前面。
 -- Runtime 每个领域每天最多选择三个最久未搜索的活跃标签；不足三个不补位。
