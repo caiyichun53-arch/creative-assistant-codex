@@ -1,16 +1,18 @@
 ---
 mode: DESIGN_RECOVERY
-stage: STAGE_1_SOURCE_READINESS_REVIEW
+stage: STAGE_1_DESIGN_RECOVERY
 design_complete: false
 baseline_sha256: 03d1a9950f86d379368b4c00b607c6ebfde6e03d18d2d2658d20025063895001
-base_commit: a6306535c7cea56babd31541723eaf9288c1ea83
+base_commit: 6c24cd2d7018f1727446351e69d5f21cd2ed4ea7
 requirements:
-  - id: STAGE1-SOURCE-STATUS-CLOSE-001
-    description: 必须关闭外部授权并把TrendRadar真实结果及Stage 1全部来源六级状态据实写回执行基线。
+  - id: STAGE1-DESIGN-RECOVERY-001
+    description: 必须把用户确认的Stage 1来源设计、领域扩展、话题标签分类和旧错误结果清理边界写入唯一有效设计基线。
     baseline_refs:
-      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#Stage 1 来源六级状态
+      - docs/EFFECTIVE_DESIGN_BASELINE.md#3.5 对标观察、发现处理与采集记录
+      - docs/EFFECTIVE_DESIGN_BASELINE.md#16.7 每日发现、产能、日报与冷却
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#当前执行指针
     tests:
-      - [python, -m, pytest, tests/core/test_local_trendradar_executor.py, -q]
+      - [python, -m, pytest, tests/test_workflow_guard.py, -q]
   - id: WF-GUARD-001
     description: 安装、实现、测试、finish、提交和真实调用仍必须经过仓库工作流门禁。
     baseline_refs:
@@ -19,6 +21,7 @@ requirements:
     tests:
       - [python, -m, pytest, tests/test_workflow_guard.py, -q]
 allowed_paths:
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
 forbidden_actions:
   - business_code_change
