@@ -31,6 +31,15 @@
 - 普通技术步骤、同一阶段内的失败修复、测试和提交不重复询问下一步。只有需要业务选择、存在两个以上无法裁决的方案、与有效设计基线冲突、涉及正式数据删除/迁移/不可逆操作、模型/Provider/凭证/费用不明确，或当前阶段验收完成而需批准进入下一阶段时，才必须停止。
 - 不生成、不读取也不依赖 `CLAUDE.md`；`.claude/` 不是当前执行依据。`AGENTS.md` 是唯一仓库执行章程的手工维护入口。
 
+## 强制工作流门禁
+
+- 任何代码任务在读取两份基线并核对 Git 事实后、修改文件前，必须运行 `python scripts/workflow_guard.py start`。只有返回 `PASS` 才能开始业务代码；返回 `BASELINE_GAP` 时只允许按机器基线的 `DESIGN_RECOVERY` 白名单修复设计或门禁，不得修改业务代码。
+- 工作中可随时运行 `python scripts/workflow_guard.py check`。出现 `SCOPE_MISMATCH`、`USER_AUTH_REQUIRED`、`BASELINE_GAP`、需求映射缺失或基线哈希不一致时必须立即停止，不得通过移动文件、改写 Git 状态或删除检查规避。
+- 完成前必须先暂存本轮全部文件，保证没有未暂存和未跟踪文件，再运行 `python scripts/workflow_guard.py finish`。只有 `finish` 返回 `PASS` 并为当前 Git 索引生成凭证后才允许提交。
+- Git 提交必须通过仓库 `.githooks/pre-commit` 对 finish 凭证的校验。禁止 `--no-verify`、禁用或替换 `core.hooksPath`、删除钩子、伪造凭证、修改门禁输出来绕过检查。
+- 真实数据库写入、真实网络/来源、安装、付费服务和模型调用必须在机器基线中 `external_call_authorized: true`，并在命令执行前以 `--external-call` 通过门禁；未授权必须返回 `USER_AUTH_REQUIRED`。不得先调用后补授权。
+- 每项 requirement 必须同时指向现行基线位置和直接测试；缺少任一项时 `finish` 不得通过。任何业务实现恢复前还必须把 `design_complete` 明确改为 `true` 并由用户确认对应 Stage 详细设计。
+
 ## 交付纪律
 
 - 每个改动以 `docs/EFFECTIVE_DESIGN_BASELINE.md` 为验收依据，并运行与改动相称的测试或闸门。

@@ -1,14 +1,80 @@
+---
+mode: DESIGN_RECOVERY
+stage: STAGE_1_TOPIC_DISCOVERY
+design_complete: false
+baseline_sha256: 03d1a9950f86d379368b4c00b607c6ebfde6e03d18d2d2658d20025063895001
+base_commit: 086630c635af00e4662f51348d4b03dac4cafd41
+requirements:
+  - id: WF-GUARD-001
+    description: 实施执行基线顶部必须提供完整且可校验的机器可读状态。
+    baseline_refs:
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#机器可读工作流状态
+    tests:
+      - [python, -m, pytest, tests/test_workflow_guard.py, -q]
+  - id: WF-GUARD-002
+    description: start、check、finish 必须稳定返回门禁结果并阻断越界、未授权外部调用和缺失设计。
+    baseline_refs:
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#工作流硬门禁
+    tests:
+      - [python, -m, pytest, tests/test_workflow_guard.py, -q]
+  - id: WF-GUARD-003
+    description: 任何代码任务必须执行 start 和 finish，提交必须持有当前索引对应的 finish 凭证。
+    baseline_refs:
+      - AGENTS.md#强制工作流门禁
+    tests:
+      - [python, -m, pytest, tests/test_workflow_guard.py, -q]
+  - id: WF-GUARD-004
+    description: 当前只允许建立工作流门禁，不得修改业务代码、调用外部来源或模型。
+    baseline_refs:
+      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#DESIGN_RECOVERY 当前边界
+    tests:
+      - [python, -m, pytest, tests/test_workflow_guard.py, -q]
+allowed_paths:
+  - AGENTS.md
+  - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
+  - scripts/workflow_guard.py
+  - tests/test_workflow_guard.py
+  - .githooks/pre-commit
+forbidden_actions:
+  - business_code_change
+  - production_data_write
+  - external_source_call
+  - model_call
+  - discovery_run
+  - research_stage_entry
+  - workflow_guard_bypass
+external_call_authorized: false
+---
+
 # V1.3 实施执行基线
 
 > 本文件是当前项目唯一的实施执行基线：它把 [`EFFECTIVE_DESIGN_BASELINE.md`](EFFECTIVE_DESIGN_BASELINE.md) 映射到已核实的 Git、代码、数据与测试事实，并规定唯一续写动作。它不重定义、补充或覆盖任何业务设计；发生冲突时，有效设计基线优先。
+
+## 机器可读工作流状态
+
+文件顶部 YAML front matter 是 `scripts/workflow_guard.py` 唯一读取的当前工作流状态。`baseline_sha256` 固定校验 `docs/EFFECTIVE_DESIGN_BASELINE.md` 的完整文件 SHA-256；`base_commit` 是本轮允许改动相对于的冻结提交。每项 `requirements` 必须同时提供现行文件中的 `baseline_refs` 和可执行 `tests`，缺一即不允许完成。
+
+## 工作流硬门禁
+
+- `start` 在任何代码修改前校验机器状态、设计完整性、基线哈希、需求映射、允许路径和外部调用授权。`design_complete: false` 必须返回 `BASELINE_GAP`，业务代码不得开始。
+- `check` 校验当前改动范围；任何不在 `allowed_paths` 的改动返回 `SCOPE_MISMATCH`。声明或检测到未经授权的外部调用请求时返回 `USER_AUTH_REQUIRED`。
+- `finish` 只接受全部已暂存、没有未暂存或未跟踪文件的确定版本，运行每项 requirement 的去重测试命令并生成与当前 Git 索引绑定的 finish 凭证。测试、范围、哈希、需求映射或授权任一未通过，不得提交。
+- Git pre-commit 钩子只接受与当前索引完全一致的 finish 凭证。`--no-verify`、移除钩子、伪造凭证、直接调用真实来源/模型或修改门禁结果均属于 `workflow_guard_bypass`。
+- `DESIGN_RECOVERY` 且改动完全位于治理白名单时，`finish` 可以完成门禁或设计文档本身的受控变更，但输出仍保留 `baseline_status: BASELINE_GAP`；这不表示业务设计完整，也不授权任何业务实现。
+
+机器状态码固定为：`PASS=0`、`BASELINE_GAP=10`、`SCOPE_MISMATCH=11`、`USER_AUTH_REQUIRED=12`、`REQUIREMENT_GAP=13`、`TEST_FAILED=14`、`FINISH_REQUIRED=15`、`WORKTREE_NOT_READY=16`。调用方必须按状态码失败关闭，不得只解析自然语言。
+
+## DESIGN_RECOVERY 当前边界
+
+当前 Stage 为 `STAGE_1_TOPIC_DISCOVERY`，`design_complete: false`。本轮只允许修改机器执行基线、仓库章程、工作流门禁、提交钩子及其直接测试。不得修改 Stage 1 或其他阶段业务代码，不得写正式业务数据，不得运行发现，不得调用真实来源、TrendRadar、MediaCrawler、Mimo 或其他模型，不得进入研究阶段。完成本轮治理提交后必须停止，等待用户确认需要恢复的 Stage 1 详细设计。
 
 ## 当前执行指针
 
 | 项目 | 当前事实 |
 | --- | --- |
-| 当前阶段 | Stage 1——真实日常发现与候选选择 |
-| 当前状态 | Stage 1B 来源补齐已实现：项目 Runtime 按 TrendRadar 热点采集→热点转化→对标日常→对标历史→标签搜索→标签转化执行；标签库只从正式爆款标签形成建议并过滤通用/活动标签，每日最多轮换 3 个活跃标签、每标签只采集第 1 页并完整留存实际返回记录；本轮仅使用 fake/fixture，没有调用真实来源、TrendRadar 或 Mimo，没有运行发现或进入研究；`python -m pytest tests -q` 为 `743 passed` |
-| 当前动作 | 停止在下一次真实来源验收门禁；当前代码补齐和测试已完成，本轮不运行真实采集或模型 |
+| 当前阶段 | Stage 1——选题发现设计恢复；业务实现暂停 |
+| 当前状态 | `DESIGN_RECOVERY`，Stage 1 选题发现详细设计尚未重新确认，`design_complete: false`；仓库工作流硬门禁、提交钩子和直接测试已建立，本提交以真实 `finish=PASS` 和 pre-commit 凭证为提交条件 |
+| 当前动作 | 仅实现并验证 `scripts/workflow_guard.py`、机器可读执行基线、AGENTS 强制规则、pre-commit 提交阻断和直接测试；完成提交后停止等待用户确认 Stage 1 详细设计 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `6693d3acab913a6845ad1c7665ff15cc4da6aefa` |
@@ -18,8 +84,8 @@
 | Stage 1B | 定向修正已提交：`be42e27e1909bb97afa14cfe25beb1f32a82b169`；单领域受控入口已提交：`e85b1e61e85973042c9aca9a4e4bda6cd5de0313`；本次真实链路验收修正已由当前 HEAD `fix: separate live validation from daily production discovery` 记录：既有真实社会生活运行及 9 个候选认定为 `validation_live`，只保留审计且不可进入正式日常生产；stash `wip-stage1b-before-execution-baseline` 已完成比较，未含当前提交之外仍需保留的独有有效内容，已安全删除；当前 `git stash list` 为空，不需要恢复或重新创建该 stash |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
 | 真实来源状态 | 社会生活领域已完成第一次受控真实发现；音乐娱乐领域没有可用真实来源，本轮未运行，禁止用 fixture 或人工编造补齐 |
-| 当前阻断 | TrendRadar 与各来源类型尚未按用户批准逐类完成新的真实 `validation_live` 验收；既有 `validation_live` 结果不能充当本次来源验收或正式日产替代品 |
-| 下一唯一动作 | 用户明确批准后，按来源类型逐个执行一次受控 `validation_live`，逐类确认是否能真实形成合格选题或合规的零候选；全部通过前不得进入新的 `production_daily` |
+| 当前阻断 | Stage 1 选题发现详细设计未确认；所有业务实现、真实来源、模型、发现运行和研究阶段均被门禁阻断 |
+| 下一唯一动作 | 完成工作流硬门禁提交后停止，等待用户确认需要恢复的 Stage 1 详细设计；不得自行恢复业务实现 |
 
 ### 创建本文件时的 Git 事实
 
