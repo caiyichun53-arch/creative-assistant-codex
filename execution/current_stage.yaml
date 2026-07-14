@@ -1,18 +1,18 @@
-mode: baseline_gap_resolution
+mode: implementation
 stage: stage_1_daily_discovery
-design_complete: false
-implementation_authorized: false
+design_complete: true
+implementation_authorized: true
 external_calls_authorized: false
 environment_changes_authorized: false
 formal_data_writes_authorized: false
 production_authorized: false
-completion_status: REJECTED_HOTSPOT_VALIDATION_DESIGN_MISMATCH
-stage_status: BASELINE_GAP
+completion_status: SOURCE_TO_TOPIC_SKILL_CONTRACT_REVISION_AUTHORIZED
+stage_status: DESIGN_CONFIRMED_PENDING_SKILL_CONTRACT
 source_evidence_level: LIVE_RUN_REJECTED
 claimed_source_level: NONE
-next_action: user_review_source_to_topic_skill_and_confirm_hotspot_search_design
-baseline_sha256: 19a7be8a7938c1889a79a8317609d558920fa8ad9adf370d643f0ba2c1defac3
-base_commit: 9c5b4a8130deb7b5f1990ca66053817614f5793f
+next_action: revise_source_to_topic_skill_contract_without_external_calls
+baseline_sha256: 6822f5e121073f321b2a7d5a2ae1043d1bb46c001ca72edc8263371f2d2b70e8
+base_commit: eb921e3226b7ca9e0a7e4ca4fdffeb0ffd549abc
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
 execution_state_sources:
@@ -29,23 +29,24 @@ prohibited_design_sources:
   - old code comments business rules
 requirements:
   - id: STAGE1-HOTSPOT-DESIGN-CORRECTION-001
-    description: Stage 1 hotspot-to-topic design requires event clustering, deterministic prefilters, controlled search material packets, and user-reviewed atomic source-to-topic Skill before any further live validation.
+    description: "User confirmed Stage 1 hotspot-to-topic design split: controlled material packet before source_to_topic, and source_to_topic must be revised into an atomic good-topic discovery Skill before live validation."
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3.1 热点转选题的受控搜索与 Skill 审核
       - docs/EFFECTIVE_DESIGN_BASELINE.md#20.1 来源与选题 Skill
       - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#当前执行指针
     tests:
-      - [python, -m, pytest, tests/test_workflow_guard.py, tests/core/test_stage1b_daily_discovery.py, -q]
+      - [python, -m, pytest, tests/test_workflow_guard.py, tests/core/test_stage1b_daily_discovery.py, tests/core/test_source_to_topic_skill.py, -q]
 allowed_paths:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
   - execution/current_stage.yaml
+  - runtime_skills/source_to_topic/**
+  - tests/core/test_source_to_topic_skill.py
 frozen_acceptance_tests:
   - tests/core/test_local_trendradar_executor.py
 frozen_contracts:
   - BUSINESS_MODEL_ROUTE_REGISTRY.yaml
   - '*_BUSINESS_CONTRACT.yaml'
-  - runtime_skills/**
 forbidden_actions:
   - business_code_change
   - stage1_acceptance_test_change
