@@ -8,9 +8,9 @@ formal_data_writes_authorized: false
 production_authorized: false
 completion_status: REJECTED_DESIGN_MISMATCH
 stage_status: BASELINE_GAP
-next_action: wait_for_user_provided_or_confirmed_stage_1_criteria
-baseline_sha256: 24e4312ea025708e3d01ec2940868a3ee0efc89a9370835b77167cf0a06c5a22
-base_commit: 7f444375efc69ca5dad7fe6e32bbb39b273fe1e2
+next_action: confirm_stage_1_design_complete_and_authorize_acceptance_tests
+baseline_sha256: 08d38a9ed9c674104f9d416a816203e80e387115fd2b7199c49c63616a9ff1ab
+base_commit: f9dd3c86ae345ed0062f651315160ec6e55c7c72
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
 execution_state_sources:
@@ -36,6 +36,7 @@ requirements:
       - [python, -m, pytest, tests/test_workflow_guard.py, -q]
 allowed_paths:
   - AGENTS.md
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
   - execution/current_stage.yaml
   - scripts/workflow_guard.py

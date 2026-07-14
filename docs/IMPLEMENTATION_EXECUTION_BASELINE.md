@@ -9,9 +9,9 @@ formal_data_writes_authorized: false
 production_authorized: false
 completion_status: REJECTED_DESIGN_MISMATCH
 stage_status: BASELINE_GAP
-next_action: wait_for_user_provided_or_confirmed_stage_1_criteria
-baseline_sha256: 24e4312ea025708e3d01ec2940868a3ee0efc89a9370835b77167cf0a06c5a22
-base_commit: 7f444375efc69ca5dad7fe6e32bbb39b273fe1e2
+next_action: confirm_stage_1_design_complete_and_authorize_acceptance_tests
+baseline_sha256: 08d38a9ed9c674104f9d416a816203e80e387115fd2b7199c49c63616a9ff1ab
+base_commit: f9dd3c86ae345ed0062f651315160ec6e55c7c72
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
 execution_state_sources:
@@ -37,6 +37,7 @@ requirements:
       - [python, -m, pytest, tests/test_workflow_guard.py, -q]
 allowed_paths:
   - AGENTS.md
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
   - execution/current_stage.yaml
   - scripts/workflow_guard.py
@@ -77,7 +78,7 @@ forbidden_actions:
 - `check` 校验当前改动范围；任何不在 `allowed_paths` 的改动、未授权业务代码改动或冻结验收测试改动返回 `SCOPE_MISMATCH`。声明或检测到未经授权的外部调用、安装或环境改动请求时返回 `USER_AUTH_REQUIRED`。
 - `finish` 只接受全部已暂存、没有未暂存或未跟踪文件的确定版本，运行每项 requirement 的去重测试命令并生成与当前 Git 索引绑定的 finish 凭证。测试、范围、哈希、需求映射或授权任一未通过，不得提交；`design_complete: false` 时即使本次治理任务允许提交，也必须输出 `task_finish_status: PASS` 与 `stage_status: BASELINE_GAP`，不得宣布业务完成。
 - Git pre-commit 钩子只接受与当前索引完全一致的 finish 凭证。`--no-verify`、移除钩子、伪造凭证、直接调用真实来源/模型或修改门禁结果均属于 `workflow_guard_bypass`。
-- `baseline_gap_resolution` 且改动完全位于治理白名单时，`finish` 可以完成门禁、章程或执行状态本身的受控变更，但输出仍保留 `stage_status: BASELINE_GAP`、`implementation_authorized: false`、`production_authorized: false` 和 `next_action: wait_for_user_provided_or_confirmed_stage_1_criteria`；这不表示业务设计完整，也不授权任何业务实现。
+- `baseline_gap_resolution` 且改动完全位于治理白名单时，`finish` 可以完成门禁、章程、执行状态或已确认有效基线条款本身的受控变更，但输出仍保留 `stage_status: BASELINE_GAP`、`implementation_authorized: false`、`production_authorized: false`；这不表示业务 Stage 已通过，也不授权任何业务实现。若用户已确认新口径并写入唯一有效基线，`next_action` 可以指向设计完成确认与验收测试授权。
 
 机器状态码固定为：`PASS=0`、`BASELINE_GAP=10`、`SCOPE_MISMATCH=11`、`USER_AUTH_REQUIRED=12`、`REQUIREMENT_GAP=13`、`TEST_FAILED=14`、`FINISH_REQUIRED=15`、`WORKTREE_NOT_READY=16`。调用方必须按状态码失败关闭，不得只解析自然语言。
 
