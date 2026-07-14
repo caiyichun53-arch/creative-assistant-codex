@@ -6,13 +6,13 @@ external_calls_authorized: false
 environment_changes_authorized: false
 formal_data_writes_authorized: false
 production_authorized: false
-completion_status: SOURCE_TO_TOPIC_STAGE1B_ENTRYPOINT_FIX_AUTHORIZED
-stage_status: IMPLEMENTATION_FIX_AUTHORIZED
+completion_status: SOURCE_TO_TOPIC_STAGE1B_ENTRYPOINT_FIX_IMPLEMENTED
+stage_status: TECH_TESTED_PENDING_LIVE_VALIDATION_AUTHORIZATION
 source_evidence_level: LIVE_RUN_REJECTED
 claimed_source_level: NONE
-next_action: implement_stage1b_entrypoint_source_to_topic_skill_wiring_without_live_calls
+next_action: close_entrypoint_fix_authorization_after_commit_and_wait_for_user_live_validation_decision
 baseline_sha256: 6822f5e121073f321b2a7d5a2ae1043d1bb46c001ca72edc8263371f2d2b70e8
-base_commit: f5adadacac4b19677ecf023e1061798f82b3825d
+base_commit: 0dff7265d5ca424339b1a0db397dc88461634bc9
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
 execution_state_sources:
@@ -29,7 +29,7 @@ prohibited_design_sources:
   - old code comments business rules
 requirements:
   - id: STAGE1-HOTSPOT-DESIGN-CORRECTION-001
-    description: "User authorized a code-only repair to wire the Stage 1B real entrypoint to the confirmed source_to_topic atomic Skill path. Real sources, model calls, formal data writes, production_daily, and validation_live remain unauthorized."
+    description: "Stage 1B now wires eligible discovery sources through the confirmed source_to_topic atomic Skill contract in code and direct tests. Real sources, model calls, formal data writes, production_daily, and validation_live remain unauthorized."
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3.1 热点转选题的受控搜索与 Skill 审核
       - docs/EFFECTIVE_DESIGN_BASELINE.md#20.1 来源与选题 Skill
@@ -40,6 +40,7 @@ allowed_paths:
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
   - execution/current_stage.yaml
   - scripts/core/production/stage1b_daily_discovery.py
+  - scripts/core/production/stage0_content_core.py
   - tests/core/test_stage1b_daily_discovery.py
   - TECHNICAL_MANUAL.md
 frozen_acceptance_tests:

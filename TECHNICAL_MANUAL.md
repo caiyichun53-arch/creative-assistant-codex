@@ -61,7 +61,7 @@ Input Assembly、ModelGateway 运行记录和审计边界，不执行真实内�
 
 领域包的 `discovery.topic_search` 区分领域宽标签、通用流量标签和活动待复核词。`科普`、`知识`在泛科普领域保留；活动词只进入 `pending_review`。只有 `domain_search_activity_tag_registry` 中存在当前有效、带平台、活动身份、证据链接、有效期和理由的精确登记时，才会排除对应平台活动标签。新增领域通过新增领域包接入，通用 Stage 1 代码不增加领域枚举或复制流水线。
 
-候选判断输入同时携带当前版本领域包中的热点匹配词和排除词。模型把娱乐人物、偶像、粉丝等内容换写成“社会公平”或“公众情绪”角度时，Core 会按领域包再次拒绝并保存为确定性零候选；模型自述材料严重不足或事实无法确认时同样不得建立候选。候选输出首选裸 JSON；Runtime 只额外兼容一个完整的 JSON Markdown 代码块，不接受代码块外说明、多个对象或其他自由文本。
+候选判断输入按 `source_to_topic.input.v1` 组装，必须通过 `runtime_skills/source_to_topic` 的原子 Skill 合同和 `business.source_to_topic` 运行期模型节点；`stage1b_model_run` 记录该 Skill 的 route、provider、model、binding、usage 和校验状态。Codex/Claude 只用于修改工程代码，不是这里的运行期业务模型。Core 在 Skill 返回后仍按领域包做确定性复核：模型把娱乐人物、偶像、粉丝等内容换写成“社会公平”或“公众情绪”角度时，会保存为确定性零候选；模型自述材料严重不足或事实无法确认时同样不得建立候选。Skill 输出必须符合 `source_to_topic.output.v1`；Runtime 只额外兼容一个完整的 JSON Markdown 代码块，不接受代码块外说明、多个对象或其他自由文本。
 
 真实采集默认关闭。启用前分别核实所运行来源的 `live_enabled: true`；单独验收热点不要求同时启用标签搜索。官方 TrendRadar 固定安装在仓库内 `vendor/TrendRadar`，使用其锁定环境的命令为 `vendor/TrendRadar/.venv/Scripts/python.exe -m trendradar`。项目 Runtime 直接入口为 `python scripts/integrations/trendradar_runtime.py --trendradar-dir vendor/TrendRadar --output outputs/stage1/trendradar/latest.json --evidence-root validation_evidence/stage1/trendradar --timeout-seconds 300`。入口只运行一次官方命令，从本次更新的 `output/news/YYYY-MM-DD.db` 转换标准对象，并保存 stdout、stderr、命令、官方提交、原始数据库、输出、错误和耗时；不调用模型、不自动重试、不补造 URL 或数量。
 

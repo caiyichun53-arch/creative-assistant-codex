@@ -23,9 +23,19 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelGatewayError
+from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelGatewayError, ModelRequest
 from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig
 from scripts.core.model_gateway.model_router import DEFAULT_MODEL_ENV_PATH, ModelRouter, ModelRouterError
+from scripts.core.model_gateway.formal_skill_adapter import (
+    FormalSkillContract,
+    FormalSkillValidationError,
+    SOURCE_TO_TOPIC_CONTRACT_PATH,
+    apply_binding,
+    parse_model_json,
+    preprocess_formal_skill_input,
+    validate_payload,
+    validate_source_to_topic_output_semantics,
+)
 from scripts.core.production.stage0_content_core import (
     CoreDiscoveryModelRunMaterializer,
     DataIdentityError,
@@ -59,8 +69,8 @@ DAILY_REPORT_SOURCE_TYPES = (
 HOTSPOT_DAILY_PROCESS_LIMIT = 3
 DAILY_SOURCE_VALIDITY_HOURS = 72
 SOURCE_READ_LIMIT = 6
-DISCOVERY_PROMPT_VERSION = "stage1b.daily_discovery.prompt.v1"
-DISCOVERY_SKILL_VERSION = "stage1b.source_to_topic.skill.v1"
+DISCOVERY_PROMPT_VERSION = "source_to_topic.prompt.v1"
+DISCOVERY_SKILL_VERSION = "source_to_topic.skill.v1"
 ORIGINALITY_RELATIONSHIPS = frozenset({"same_topic_original_reconstruction", "problem_expansion", "independent_research"})
 SETTINGS_PATH = ROOT / "config" / "settings.yaml"
 
@@ -138,18 +148,18 @@ def parse_candidate_judgement_output(output_text: str) -> dict[str, Any]:
 
 def candidate_rejection(domain_label: str, judgement: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
     """Apply deterministic post-model domain and material gates before candidate storage."""
-    if judgement.get("outcome") != "candidate":
+    if judgement.get("topic_status") not in {"generated", "generated_good_candidate", "valid_but_weak", "needs_review"}:
         return None
     policy = get_discovery_policy(domain_label)
     candidate_text = "\n".join(
         str(judgement.get(key) or "")
-        for key in ("title", "core_question", "why_attention", "new_angle")
+        for key in ("candidate_topic", "core_question", "audience_relation", "content_increment", "topic_angle")
     ).casefold()
     exclude_terms = tuple(str(term) for term in policy.get("exclude_terms", []))
     matched_terms = sorted({term for term in exclude_terms if term.casefold() in candidate_text})
     if matched_terms:
         return "candidate_outside_domain_policy", {"matched_terms": matched_terms}
-    material_readiness = str(judgement.get("material_readiness") or "")
+    material_readiness = "；".join(str(item) for item in judgement.get("material_gaps", []))
     insufficient_markers = ("材料严重不足", "事实无法确认", "无法确认事实", "无法核实事实")
     matched_markers = [marker for marker in insufficient_markers if marker in material_readiness]
     if matched_markers:
@@ -194,25 +204,25 @@ def _configured_environment_value(reference: str, *, env_path: Path = DEFAULT_MO
 
 
 def build_production_daily_discovery_gateway(core: Stage0ContentProductionCore) -> ModelGateway:
-    """Build the explicitly configured candidate-judgement route."""
+    """Build the explicitly configured source_to_topic route."""
     if core.data_identity != "production":
         raise StateTransitionError("production daily-discovery gateway requires production data identity")
     router = ModelRouter.from_file()
     definition = router.routes.get("business_analysis")
     if definition is None or definition.fallback != "none" or "topic_screening" not in definition.allowed_task_types:
-        raise ModelRouterError("daily discovery requires an explicit business topic_screening route with fallback none")
+        raise ModelRouterError("source_to_topic requires an explicit business topic_screening route with fallback none")
     provider = router.providers.get(definition.provider_ref)
     if provider is None or provider.provider_type != "mimo":
-        raise ModelRouterError("configured candidate-judgement provider is unsupported by the current adapter")
-    route = router.resolve_bound_route("business_analysis", route_name="stage1b.daily_discovery")
+        raise ModelRouterError("configured source_to_topic provider is unsupported by the current adapter")
+    route = router.resolve_bound_route("business_analysis", route_name="business.source_to_topic")
     if route.provider_name != "hermes":
-        raise ModelRouterError("daily discovery route has an unexpected provider adapter")
+        raise ModelRouterError("source_to_topic route has an unexpected provider adapter")
     auth_ref, endpoint_ref = str(provider.settings.get("auth_ref") or ""), str(provider.settings.get("endpoint_ref") or "")
     if not auth_ref or not endpoint_ref:
-        raise ModelRouterError("configured candidate-judgement provider lacks auth_ref or endpoint_ref")
+        raise ModelRouterError("configured source_to_topic provider lacks auth_ref or endpoint_ref")
     api_key, base_url = _configured_environment_value(auth_ref), _configured_environment_value(endpoint_ref)
     if not base_url.startswith(("https://", "http://")):
-        raise ModelRouterError("configured candidate-judgement endpoint must be an HTTP(S) URL")
+        raise ModelRouterError("configured source_to_topic endpoint must be an HTTP(S) URL")
     adapter = HermesModelProviderAdapter(HermesModelProviderConfig(api_key=api_key, base_url=base_url, model=route.model_name, timeout_seconds=90, max_retries=0))
     return ModelGateway(routes={route.route_name: route}, providers={adapter.provider_name: adapter}, materializer=CoreDiscoveryModelRunMaterializer(core))
 
@@ -258,10 +268,18 @@ def build_production_source_acquirer(
 class Stage1BDailyDiscoveryService:
     """The controlled real-source -> candidate snapshot -> user decision path."""
 
-    def __init__(self, *, core: Stage0ContentProductionCore, gateway: ModelGateway, source_acquirer: DailyDiscoverySourceAcquirer | None = None):
+    def __init__(
+        self,
+        *,
+        core: Stage0ContentProductionCore,
+        gateway: ModelGateway,
+        source_acquirer: DailyDiscoverySourceAcquirer | None = None,
+        source_to_topic_contract: FormalSkillContract | None = None,
+    ):
         self.core = core
         self.gateway = gateway
         self.source_acquirer = source_acquirer
+        self.source_to_topic_contract = source_to_topic_contract or FormalSkillContract.from_yaml(SOURCE_TO_TOPIC_CONTRACT_PATH)
 
     def run_daily_discovery(
         self,
@@ -451,19 +469,25 @@ class Stage1BDailyDiscoveryService:
                             source_evidence[source["source_type"]]["status"] = "no_candidate"
                             source_evidence[source["source_type"]]["reason"] = reason_code
                         continue
-                    assembly_payload = self._assembly_payload(domain_label=domain_label, source=source, source_version_id=source_result["source_version_id"])
+                    assembly_payload = self._assembly_payload(
+                        run_id=run["run_id"],
+                        domain_label=domain_label,
+                        source=source,
+                        source_version_id=source_result["source_version_id"],
+                    )
                     assembly = self.core.create_discovery_input_assembly(
                         run_id=run["run_id"], source_version_id=source_result["source_version_id"], payload=assembly_payload,
                         prompt_version=DISCOVERY_PROMPT_VERSION, skill_version=DISCOVERY_SKILL_VERSION,
                         idempotency_key=f"{idempotency_key}:{domain_label}:assembly:{index}",
                     )
-                    model_request = self.core.prepare_discovery_model_request(
-                        run_id=run["run_id"], source_version_id=source_result["source_version_id"], assembly_id=assembly["assembly_id"],
-                        prompt=daily_discovery_prompt(assembly_payload),
-                    )
+                    model_result = None
                     try:
-                        model_result = self.gateway.complete(model_request)
-                        judgement = parse_candidate_judgement_output(model_result.output_text)
+                        model_result, judgement = self._run_source_to_topic_skill(
+                            run_id=run["run_id"],
+                            source_version_id=source_result["source_version_id"],
+                            assembly_id=assembly["assembly_id"],
+                            input_payload=assembly_payload,
+                        )
                     except ModelGatewayError as exc:
                         self.core.record_discovery_no_candidate(
                             run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=None,
@@ -476,9 +500,11 @@ class Stage1BDailyDiscoveryService:
                             source_evidence[source["source_type"]]["status"] = "no_candidate"
                             source_evidence[source["source_type"]]["reason"] = "model_gateway_failed"
                         continue
-                    except (json.JSONDecodeError, DailyDiscoveryValidationError) as exc:
+                    except (json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
                         self.core.record_discovery_no_candidate(
-                            run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
+                            run_id=run["run_id"],
+                            source_version_id=source_result["source_version_id"],
+                            model_run_id=model_result.envelope_version_id if model_result is not None else None,
                             reason_code="model_output_invalid", detail={"reason": str(exc), "retry": "forbidden_after_uncertain_request"},
                             idempotency_key=f"{idempotency_key}:{domain_label}:absence:{index}",
                         )
@@ -488,10 +514,15 @@ class Stage1BDailyDiscoveryService:
                             source_evidence[source["source_type"]]["status"] = "no_candidate"
                             source_evidence[source["source_type"]]["reason"] = "model_output_invalid"
                         continue
-                    if judgement["outcome"] == "no_candidate":
+                    if judgement["topic_status"] == "no_result":
                         self.core.record_discovery_no_candidate(
                             run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
-                            reason_code="model_returned_no_candidate", detail={"reason": judgement["reason"]},
+                            reason_code="model_returned_no_candidate",
+                            detail={
+                                "reason": judgement["no_result_reason"],
+                                "material_gaps": judgement.get("material_gaps", []),
+                                "source_constraints": judgement.get("source_constraints", []),
+                            },
                             idempotency_key=f"{idempotency_key}:{domain_label}:absence:{index}",
                         )
                         filtered["model_returned_no_candidate"] = filtered.get("model_returned_no_candidate", 0) + 1
@@ -514,7 +545,13 @@ class Stage1BDailyDiscoveryService:
                         continue
                     candidate_payload = {
                         **judgement,
-                        "normalized_title": _normalize_title(judgement["title"]),
+                        "title": judgement["candidate_topic"],
+                        "why_attention": judgement["audience_relation"],
+                        "new_angle": f"{judgement['topic_angle']}；{judgement['content_increment']}",
+                        "material_readiness": "；".join(judgement.get("material_gaps", [])) or "来源转选题 Skill 未列出材料缺口；正式研究仍需独立补证。",
+                        "risk_limits": "；".join(judgement.get("risks", [])) or "来源仅作发现线索，不作为正式研究证据。",
+                        "originality_relation": "problem_expansion",
+                        "normalized_title": _normalize_title(judgement["candidate_topic"]),
                         "normalized_source_title": _normalize_title(str(source["payload"]["title"])),
                         "domain": domain_label,
                         "source_reference": {"source_version_id": source_result["source_version_id"], "source_type": source["source_type"], "source_object_id": source["source_object_id"], "source_object_version": source["source_object_version"], "source_time": source["source_time"], "url": source["payload"].get("url", "")},
@@ -581,6 +618,42 @@ class Stage1BDailyDiscoveryService:
             idempotency_key=idempotency_key,
         )
 
+    def _run_source_to_topic_skill(
+        self,
+        *,
+        run_id: str,
+        source_version_id: str,
+        assembly_id: str,
+        input_payload: dict[str, Any],
+    ):
+        contract = self.source_to_topic_contract
+        contract.validate_contract()
+        validate_payload(input_payload, contract.input_schema)
+        preprocessed = preprocess_formal_skill_input(contract.formal_skill_id, input_payload)
+        model_input = apply_binding(contract.input_map, input_payload, {}, preprocessed)
+        validate_payload(model_input, contract.model_input_schema)
+        prompt = contract.portable_skill().render_prompt(model_input)
+        request = self.core.prepare_discovery_model_request(
+            run_id=run_id,
+            source_version_id=source_version_id,
+            assembly_id=assembly_id,
+            prompt=prompt,
+            skill_name=contract.formal_skill_id,
+            skill_version=contract.version,
+            skill_hash=contract.skill_hash,
+            binding_name=contract.binding_name,
+            binding_version=contract.binding_version,
+            binding_hash=contract.binding_hash,
+            model_input_payload=model_input,
+        )
+        model_result = self.gateway.complete(request)
+        model_output = parse_model_json(model_result.output_text)
+        validate_payload(model_output, contract.model_output_schema)
+        output_payload = apply_binding(contract.output_map, input_payload, model_output, preprocessed)
+        validate_payload(output_payload, contract.output_schema)
+        validate_source_to_topic_output_semantics(input_payload, output_payload)
+        return model_result, output_payload
+
     def _deterministic_filter(self, *, domain_label: str, source: dict[str, Any], now: datetime) -> tuple[str, str, dict[str, Any]]:
         if source["source_type"] not in {
             "hotspot", "daily_competitor_content", "historical_high_signal", "tag_discovery",
@@ -623,23 +696,77 @@ class Stage1BDailyDiscoveryService:
         return (_parse_time(source["source_time"]) + timedelta(hours=DAILY_SOURCE_VALIDITY_HOURS)).isoformat()
 
     @staticmethod
-    def _assembly_payload(*, domain_label: str, source: dict[str, Any], source_version_id: str) -> dict[str, Any]:
+    def _assembly_payload(*, run_id: str, domain_label: str, source: dict[str, Any], source_version_id: str) -> dict[str, Any]:
         payload = source["payload"]
         policy = get_discovery_policy(domain_label)
+        title = str(payload["title"]).strip()
+        url = str(payload.get("url") or "").strip()
+        account_name = str(payload.get("account_name") or "").strip()
+        source_kind_map = {
+            "hotspot": "hotspot_event_cluster",
+            "daily_competitor_content": "benchmark_daily",
+            "historical_high_signal": "benchmark_historical",
+            "tag_discovery": "tag_search",
+            "question_expansion": "question_expansion",
+            "saved_user_direction": "user_direction",
+        }
+        source_kind = source_kind_map[source["source_type"]]
+        source_content_parts = [title]
+        if account_name:
+            source_content_parts.append(f"来源账号/渠道：{account_name}")
+        if url:
+            source_content_parts.append(f"来源链接：{url}")
+        source_content = "；".join(source_content_parts)
+        evidence_items = [title]
+        if url:
+            evidence_items.append(url)
+        if account_name:
+            evidence_items.append(account_name)
+        domain_summary = (
+            f"当前领域为 {domain_label}。排除类型/词包括：{', '.join(str(term) for term in policy.get('exclude_terms', [])) or '无'}。"
+            f"热点匹配词包括：{', '.join(str(term) for term in policy.get('hotspot_match_terms', [])) or '无'}。"
+        )
         return {
-            "domain": domain_label,
-            "source_version_id": source_version_id,
-            "source_type": source["source_type"],
-            "domain_policy": {
-                "exclude_terms": list(policy.get("exclude_terms", [])),
-                "hotspot_match_terms": list(policy.get("hotspot_match_terms", [])),
+            "request_id": f"source_to_topic_{source_version_id}",
+            "correlation_id": run_id,
+            "source_id": source_version_id,
+            "source_content": source_content,
+            "source_evidence_items": evidence_items[:63],
+            "domain_label": domain_label,
+            "relation_summary": "deterministic prefilter passed; duplicate, cooldown and prior production checks are clear for this source version.",
+            "source_kind": source_kind,
+            "event_cluster_summary": {
+                "cluster_id": source_version_id,
+                "representative_source": title,
+                "merged_sources": [],
+                "dedupe_reason": "single currently recorded source version; upstream event clustering must be supplied before live validation can be upgraded.",
             },
-            "source_object": {"id": source["source_object_id"], "version": source["source_object_version"], "time": source["source_time"], "title": payload["title"], "url": payload.get("url", ""), "account_name": payload.get("account_name", "")},
-            "user_requirements": "daily discovery only; do not create a formal topic",
-            "materials_and_facts": [{"kind": "source_clue", "reference": source_version_id}],
-            "considered_experience": [], "adopted_experience": [], "rejected_experience": [], "omitted_materials": [],
-            "input_completeness": "source_clue_only",
-            "prompt_version": DISCOVERY_PROMPT_VERSION, "skill_version": DISCOVERY_SKILL_VERSION,
+            "deterministic_prefilter": {
+                "passed": True,
+                "reasons": ["source_traceable", "freshness_checked", "domain_prefilter_passed", "duplicate_and_cooling_clear"],
+                "risk_flags": [],
+                "domain_precheck": domain_label,
+            },
+            "material_packet": {
+                "fact_summary": source_content,
+                "key_source_refs": evidence_items[:8],
+                "audience_relation": "该来源只提供发现线索；是否与目标受众有强关系需由来源转选题 Skill 基于输入材料判断。",
+                "domain_fit": f"确定性前置过滤已判定该来源可进入 {domain_label} 的选题转化尝试。",
+                "possible_questions": [title],
+                "uncertainty": "当前 Stage 1B 入口只传入已记录来源材料；正式研究证据尚未开始。",
+                "material_gaps": ["尚未进入正式深度研究；不得把来源标题当作事实证据。"],
+                "risks": [],
+                "stop_reason": "none",
+            },
+            "duplicate_cooling_status": {
+                "duplicate_status": "clear",
+                "cooling_status": "clear",
+                "related_refs": [],
+            },
+            "domain_rule_summary": domain_summary,
+            "experience_cards": [],
+            "user_direction": "",
+            "schema_version": "source_to_topic.input.v1",
         }
 
 

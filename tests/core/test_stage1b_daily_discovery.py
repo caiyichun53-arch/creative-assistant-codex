@@ -38,10 +38,53 @@ VALID_JUDGEMENT = {
 }
 
 
+VALID_SOURCE_TO_TOPIC_OUTPUT = {
+    "topic_status": "generated_good_candidate",
+    "candidate_topic": "养老服务为什么影响普通家庭的日常选择",
+    "topic_angle": "生活机制解释",
+    "core_question": "养老服务为什么影响普通家庭的日常选择",
+    "audience_relation": "它直接关系到普通家庭的照护安排和消费判断。",
+    "content_increment": "从服务供给、家庭决策和现实约束之间的关系切入。",
+    "supporting_evidence": ["养老服务为什么引发普通家庭讨论"],
+    "source_constraints": ["来源仅作发现线索，不作为事实证据。"],
+    "no_result_reason": "none",
+    "confidence": "high",
+    "angle_discovery": {
+        "problem_angle": {"found": True, "direction": "养老服务影响家庭选择", "reason": "输入材料包含具体生活问题。"},
+        "audience_relevance_angle": {"found": True, "direction": "普通家庭照护压力", "reason": "与目标受众生活经验相关。"},
+        "content_increment_angle": {"found": True, "direction": "解释服务与家庭决策关系", "reason": "不只复述热点标题。"},
+        "tension_angle": {"found": True, "direction": "需求增长与服务理解不足", "reason": "存在现实张力。"},
+        "distinct_angle": {"found": True, "direction": "从家庭选择机制切入", "reason": "不同于纯新闻复述。"},
+        "producible_angle": {"found": True, "direction": "可做单条口播", "reason": "有核心问题。"},
+        "durable_value_angle": {"found": True, "direction": "热点后仍有生活解释价值", "reason": "不只依赖实时热度。"},
+    },
+    "candidate_selection": {
+        "selected_direction": "养老服务影响家庭选择",
+        "why_selected": "受众关系和内容增量最清楚。",
+        "rejected_directions": [],
+    },
+    "risks": ["不得声称未研究过的政策事实。"],
+    "material_gaps": ["正式研究仍需补充政策与案例材料。"],
+    "user_review_required": False,
+    "user_review_reasons": [],
+    "execution_review": {
+        "used_only_supplied_material": True,
+        "did_not_search_by_itself": True,
+        "did_not_invent_facts": True,
+        "respected_domain_boundary": True,
+        "respected_risk_boundary": True,
+        "did_not_force_candidate": True,
+        "no_score_rank_weight": True,
+    },
+    "experience_usage": {"used_experience_ids": [], "unused_experience_ids": [], "rationale": "测试不引用经验。"},
+    "schema_version": "source_to_topic.output.v1",
+}
+
+
 class FakeDiscoveryProvider:
     """Explicit test-only provider; it never represents Mimo or a live source."""
 
-    def __init__(self, *, provider_name: str = "test-mimo", output: object = VALID_JUDGEMENT, fail: bool = False) -> None:
+    def __init__(self, *, provider_name: str = "test-mimo", output: object = VALID_SOURCE_TO_TOPIC_OUTPUT, fail: bool = False) -> None:
         self.provider_name = provider_name
         self.output = output
         self.fail = fail
@@ -51,8 +94,14 @@ class FakeDiscoveryProvider:
         self.calls += 1
         if self.fail:
             raise RuntimeError("test-only provider failure")
+        output = self.output
+        if isinstance(output, dict):
+            output = dict(output)
+            evidence = list(request.input_payload.get("source_evidence_refs") or [])
+            if output.get("topic_status") != "no_result" and evidence:
+                output["supporting_evidence"] = evidence[:2]
         return ModelProviderResult(
-            output_text=self.output if isinstance(self.output, str) else json.dumps(self.output),
+            output_text=output if isinstance(output, str) else json.dumps(output),
             usage=ModelUsage(prompt_tokens=7, completion_tokens=9, total_tokens=16),
             cost={"status": "test-only"},
             metadata={"test_identity": True},
@@ -64,8 +113,13 @@ class FakeRouter:
         self.route = route
         self.routes = {"business_analysis": type("Definition", (), {"fallback": "none", "allowed_task_types": ("topic_screening",)})()}
 
+    def resolve(self, route_id: str, *, route_name: str | None = None, **kwargs: object):  # type: ignore[no-untyped-def]
+        if route_id != "business_analysis" or route_name != "business.source_to_topic":
+            raise RuntimeError("unexpected test route")
+        return self.route
+
     def resolve_bound_route(self, route_id: str, *, route_name: str):  # type: ignore[no-untyped-def]
-        if route_id != "business_analysis" or route_name != "stage1b.daily_discovery":
+        if route_id != "business_analysis" or route_name != "business.source_to_topic":
             raise RuntimeError("unexpected test route")
         return self.route
 
@@ -88,7 +142,7 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         self._install_formal_source_fixture_tables()
         self.provider = FakeDiscoveryProvider()
         self.route = ModelRoute(
-            route_name="stage1b.daily_discovery", provider_name=self.provider.provider_name,
+            route_name="business.source_to_topic", provider_name=self.provider.provider_name,
             model_name="test-mimo-v1", config_version="test.v1", config_hash="test-config",
             route_id="business_analysis", provider_ref="test_mimo",
         )
@@ -509,7 +563,7 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
     def test_model_route_mismatch_fails_closed(self) -> None:
         self._insert_video()
         wrong_provider = FakeDiscoveryProvider(provider_name="wrong-provider")
-        wrong_route = ModelRoute("stage1b.daily_discovery", "wrong-provider", "wrong-model", "wrong.v1", "wrong-config", route_id="business_analysis", provider_ref="wrong")
+        wrong_route = ModelRoute("business.source_to_topic", "wrong-provider", "wrong-model", "wrong.v1", "wrong-config", route_id="business_analysis", provider_ref="wrong")
         service = Stage1BDailyDiscoveryService(
             core=self.core,
             gateway=ModelGateway(routes={wrong_route.route_name: wrong_route}, providers={wrong_provider.provider_name: wrong_provider}, materializer=CoreDiscoveryModelRunMaterializer(self.core)),
@@ -531,7 +585,21 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
 
     def test_zero_candidate_output_is_a_valid_recorded_outcome(self) -> None:
         self._insert_video()
-        self.provider.output = {"outcome": "no_candidate", "reason": "测试来源不足以形成具体问题"}
+        self.provider.output = {
+            **VALID_SOURCE_TO_TOPIC_OUTPUT,
+            "topic_status": "no_result",
+            "candidate_topic": "",
+            "topic_angle": "",
+            "core_question": "",
+            "audience_relation": "",
+            "content_increment": "",
+            "supporting_evidence": [],
+            "source_constraints": ["测试来源不足以形成具体问题"],
+            "no_result_reason": "insufficient_source_evidence",
+            "confidence": "none",
+            "candidate_selection": {**VALID_SOURCE_TO_TOPIC_OUTPUT["candidate_selection"], "selected_direction": "", "why_selected": ""},
+            "material_gaps": ["测试来源不足以形成具体问题"],
+        }
         result = self._run("zero-candidate")
         self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 0)
         self.assertEqual(self.core.conn.execute("SELECT reason_code FROM stage1b_candidate_absence").fetchone()[0], "model_returned_no_candidate")
@@ -544,7 +612,11 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
 
     def test_fenced_json_can_complete_without_becoming_a_format_failure(self) -> None:
         self._insert_video()
-        self.provider.output = f"```json\n{json.dumps(VALID_JUDGEMENT, ensure_ascii=False)}\n```"
+        output = {
+            **VALID_SOURCE_TO_TOPIC_OUTPUT,
+            "supporting_evidence": ["常见生活现象为什么容易被误解"],
+        }
+        self.provider.output = f"```json\n{json.dumps(output, ensure_ascii=False)}\n```"
         result = self._run("fenced-json")
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 1)
@@ -553,9 +625,11 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
     def test_entertainment_angle_cannot_be_repackaged_as_social_life_candidate(self) -> None:
         self._insert_video(title="住房申购为什么引发公众讨论")
         self.provider.output = {
-            **VALID_JUDGEMENT,
-            "title": "住房申购争议背后的社会讨论",
-            "new_angle": "从偶像粉丝社群反应切入讨论公众情绪。",
+            **VALID_SOURCE_TO_TOPIC_OUTPUT,
+            "candidate_topic": "住房申购争议背后的社会讨论",
+            "core_question": "住房申购争议背后的社会讨论",
+            "topic_angle": "从偶像粉丝社群反应切入讨论公众情绪。",
+            "content_increment": "偶像粉丝社群反应",
         }
         result = self._run("entertainment-angle")
         self.assertEqual(result["status"], "completed")
@@ -568,8 +642,8 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
     def test_self_declared_severe_material_gap_becomes_zero_candidate(self) -> None:
         self._insert_video(title="养老服务为什么引发普通家庭讨论")
         self.provider.output = {
-            **VALID_JUDGEMENT,
-            "material_readiness": "材料严重不足，仅有标题线索，无法确认事实准确性。",
+            **VALID_SOURCE_TO_TOPIC_OUTPUT,
+            "material_gaps": ["材料严重不足，仅有标题线索，无法确认事实准确性。"],
         }
         result = self._run("severe-material-gap")
         self.assertEqual(result["status"], "completed")
@@ -581,8 +655,9 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         self._insert_video()
         self._run("domain-policy-input")
         payload = json.loads(self.core.conn.execute("SELECT payload_json FROM stage1b_input_assembly").fetchone()[0])
-        self.assertIn("粉丝", payload["domain_policy"]["exclude_terms"])
-        self.assertIn("住房", payload["domain_policy"]["hotspot_match_terms"])
+        self.assertEqual(payload["schema_version"], "source_to_topic.input.v1")
+        self.assertIn("粉丝", payload["domain_rule_summary"])
+        self.assertIn("住房", payload["domain_rule_summary"])
 
     def test_test_isolated_candidate_is_never_a_formal_candidate_pool_entry(self) -> None:
         self._insert_video()

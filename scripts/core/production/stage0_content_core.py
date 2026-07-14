@@ -982,7 +982,7 @@ class Stage0ContentProductionCore:
         if definition is None or definition.fallback != "none" or "topic_screening" not in definition.allowed_task_types:
             raise ModelBindingUnavailableError("daily discovery requires the explicit business topic_screening route")
         try:
-            return router.resolve_bound_route("business_analysis", route_name="stage1b.daily_discovery")
+            return router.resolve_bound_route("business_analysis", route_name="business.source_to_topic")
         except Exception as exc:
             raise ModelBindingUnavailableError("daily discovery has no explicit resolved model binding") from exc
 
@@ -1524,7 +1524,21 @@ class Stage0ContentProductionCore:
             self._audit(run_id, "stage1b_input_assembly_created", result)
         return result
 
-    def prepare_discovery_model_request(self, *, run_id: str, source_version_id: str, assembly_id: str, prompt: str) -> ModelRequest:
+    def prepare_discovery_model_request(
+        self,
+        *,
+        run_id: str,
+        source_version_id: str,
+        assembly_id: str,
+        prompt: str,
+        skill_name: str = "source_to_topic",
+        skill_version: str | None = None,
+        skill_hash: str | None = None,
+        binding_name: str | None = None,
+        binding_version: str | None = None,
+        binding_hash: str | None = None,
+        model_input_payload: dict[str, Any] | None = None,
+    ) -> ModelRequest:
         run, source = self._discovery_run(run_id), self._discovery_source(source_version_id)
         assembly = self._discovery_assembly(assembly_id)
         if run["status"] != "processing" or source["run_id"] != run_id or assembly["run_id"] != run_id or assembly["source_version_id"] != source_version_id:
@@ -1541,17 +1555,21 @@ class Stage0ContentProductionCore:
         }
         if payload.get("model_binding") != expected_binding or assembly["model_config_version"] != route.config_version:
             raise StaleResultError("discovery input assembly no longer matches the explicit model binding")
+        binding_name = binding_name or route.route_name
+        binding_version = binding_version or route.config_version
+        binding_hash = binding_hash or route.config_hash
         return ModelRequest(
             route_name=route.route_name,
             prompt=prompt,
-            input_payload=payload,
+            input_payload=model_input_payload or payload,
             correlation_id=run_id,
-            skill_name="stage1b.source_to_topic",
-            skill_version=assembly["skill_version"],
-            binding_name="business_analysis",
-            binding_version=route.config_version,
-            binding_hash=route.config_hash,
-            metadata={"stage1b_core": {"run_id": run_id, "source_version_id": source_version_id, "input_assembly_id": assembly_id, "data_identity": self.data_identity, "prompt_version": assembly["prompt_version"], "skill_version": assembly["skill_version"], "expected_binding": expected_binding}},
+            skill_name=skill_name,
+            skill_version=skill_version or assembly["skill_version"],
+            skill_hash=skill_hash,
+            binding_name=binding_name,
+            binding_version=binding_version,
+            binding_hash=binding_hash,
+            metadata={"stage1b_core": {"run_id": run_id, "source_version_id": source_version_id, "input_assembly_id": assembly_id, "data_identity": self.data_identity, "prompt_version": assembly["prompt_version"], "skill_version": skill_version or assembly["skill_version"], "expected_binding": {**expected_binding, "binding_name": binding_name, "binding_version": binding_version, "binding_hash": binding_hash}}},
         )
 
     def persist_discovery_model_envelope(self, envelope: ModelRunEnvelope, binding: dict[str, Any]) -> str:
@@ -1572,8 +1590,13 @@ class Stage0ContentProductionCore:
             "config_version": route.config_version,
             "config_hash": route.config_hash,
         }
-        if binding.get("expected_binding") != expected_binding:
+        expected_request_binding = dict(binding.get("expected_binding") or {})
+        expected_model_binding = {key: expected_request_binding.get(key) for key in expected_binding}
+        if expected_model_binding != expected_binding:
             raise ModelGatewayRequiredError("discovery ModelGateway request lacks the current explicit binding")
+        expected_binding_name = str(expected_request_binding.get("binding_name") or route.route_name)
+        expected_binding_version = str(expected_request_binding.get("binding_version") or route.config_version)
+        expected_binding_hash = str(expected_request_binding.get("binding_hash") or route.config_hash)
         if (
             envelope.route_name != route.route_name
             or envelope.route_id != route.route_id
@@ -1582,11 +1605,11 @@ class Stage0ContentProductionCore:
             or envelope.model_name != route.model_name
             or envelope.config_version != route.config_version
             or envelope.config_hash != route.config_hash
-            or envelope.binding_name != "business_analysis"
-            or envelope.binding_version != route.config_version
-            or envelope.binding_hash != route.config_hash
+            or envelope.binding_name != expected_binding_name
+            or envelope.binding_version != expected_binding_version
+            or envelope.binding_hash != expected_binding_hash
         ):
-            raise ModelGatewayRequiredError("discovery ModelGateway envelope does not match business_analysis binding")
+            raise ModelGatewayRequiredError("discovery ModelGateway envelope does not match source_to_topic binding")
         model_run_id = _id("discovery_model_run")
         with self.conn:
             self.conn.execute(
