@@ -17,7 +17,7 @@ from scripts.core.production.stage0_content_core import (
     StateTransitionError,
     StaleResultError,
 )
-from scripts.core.production.stage1b_daily_discovery import Stage1BDailyDiscoveryService
+from scripts.core.production.stage1b_daily_discovery import Stage1BDailyDiscoveryService, validate_candidate_judgement
 
 
 VALID_JUDGEMENT = {
@@ -53,7 +53,7 @@ class FakeDiscoveryProvider:
         )
 
 
-class TestRouter:
+class FakeRouter:
     def __init__(self, route: ModelRoute) -> None:
         self.route = route
         self.routes = {"business_analysis": type("Definition", (), {"fallback": "none", "allowed_task_types": ("topic_screening",)})()}
@@ -78,7 +78,7 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
             model_name="test-mimo-v1", config_version="test.v1", config_hash="test-config",
             route_id="business_analysis", provider_ref="test_mimo",
         )
-        self.router_patch = patch("scripts.core.production.stage0_content_core.ModelRouter.from_file", return_value=TestRouter(self.route))
+        self.router_patch = patch("scripts.core.production.stage0_content_core.ModelRouter.from_file", return_value=FakeRouter(self.route))
         self.router_patch.start()
         self.addCleanup(self.router_patch.stop)
         self.gateway = ModelGateway(
@@ -133,8 +133,15 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         )
         self.core.conn.commit()
 
-    def _run(self, key: str = "daily-1") -> dict:
-        return self.service.run_daily_discovery(discovery_date="2026-07-14", actor="test-worker", idempotency_key=key, now=self.NOW)
+    def _run(self, key: str = "daily-1", **kwargs: object) -> dict:
+        return self.service.run_daily_discovery(
+            discovery_date="2026-07-14",
+            actor="test-worker",
+            idempotency_key=key,
+            execution_mode="test_isolated",
+            now=self.NOW,
+            **kwargs,
+        )
 
     def _first_candidate(self, result: dict) -> dict:
         return self.service.view_daily_snapshot(run_id=result["run_id"])["fan_kepu_social_life"][0]
@@ -151,6 +158,7 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
             discovery_date="2026-07-14",
             actor="test-worker",
             idempotency_key="social-only",
+            execution_mode="test_isolated",
             now=self.NOW,
             domains=("fan_kepu_social_life",),
         )
@@ -167,7 +175,7 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
 
     def test_unregistered_or_stale_source_cannot_be_recorded(self) -> None:
         self._insert_video()
-        run = self.core.create_discovery_run(discovery_date="2026-07-14", actor="test-worker", idempotency_key="source-run")
+        run = self.core.create_discovery_run(discovery_date="2026-07-14", actor="test-worker", execution_mode="test_isolated", idempotency_key="source-run")
         source = self.core.load_real_discovery_sources(domain_label="fan_kepu_social_life", daily_since="2026-07-11T12:00:00+00:00", per_source_limit=1)[0]
         missing = {**source, "source_object_id": "not-registered", "payload": {**source["payload"], "formal_source": {**source["payload"]["formal_source"], "object_id": "not-registered"}}}
         with self.assertRaisesRegex(StateTransitionError, "not registered"):
@@ -185,7 +193,7 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
             gateway=ModelGateway(routes={wrong_route.route_name: wrong_route}, providers={wrong_provider.provider_name: wrong_provider}, materializer=CoreDiscoveryModelRunMaterializer(self.core)),
         )
         with self.assertRaises(ModelGatewayRequiredError):
-            service.run_daily_discovery(discovery_date="2026-07-14", actor="test-worker", idempotency_key="wrong-route", now=self.NOW)
+            service.run_daily_discovery(discovery_date="2026-07-14", actor="test-worker", idempotency_key="wrong-route", execution_mode="test_isolated", now=self.NOW)
         self.assertEqual(self.core.conn.execute("SELECT COUNT(*) FROM stage1b_candidate_version").fetchone()[0], 0)
 
     def test_model_failure_records_zero_candidate_without_reusing_a_result(self) -> None:
@@ -196,6 +204,8 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         self.assertEqual(self.core.conn.execute("SELECT COUNT(*) FROM stage1b_candidate_version").fetchone()[0], 0)
         self.assertEqual(self.core.conn.execute("SELECT reason_code FROM stage1b_candidate_absence").fetchone()[0], "model_gateway_failed")
         self.assertEqual(self.core.conn.execute("SELECT status FROM stage1b_model_run").fetchone()[0], "failed")
+        self.assertEqual(self.provider.calls, 1)
+        self.assertEqual(result["status"], "completed_with_failures")
 
     def test_zero_candidate_output_is_a_valid_recorded_outcome(self) -> None:
         self._insert_video()
@@ -204,11 +214,15 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 0)
         self.assertEqual(self.core.conn.execute("SELECT reason_code FROM stage1b_candidate_absence").fetchone()[0], "model_returned_no_candidate")
 
-    def test_candidate_stays_awaiting_user_decision_and_fake_identity_is_not_formal(self) -> None:
+    def test_test_isolated_candidate_is_never_a_formal_candidate_pool_entry(self) -> None:
         self._insert_video()
         candidate = self._first_candidate(self._run())
         self.assertEqual(self.core.get_discovery_candidate(candidate["candidate_version_id"])["status"], "awaiting_user_decision")
         self.assertEqual(self.core.get_discovery_candidate(candidate["candidate_version_id"])["data_identity"], "test")
+        self.assertEqual(candidate["execution_mode"], "test_isolated")
+        self.assertFalse(candidate["formal_candidate_pool"])
+        with self.assertRaisesRegex(StateTransitionError, "production_daily"):
+            self.service.handoff_selected_candidate(candidate_version_id=candidate["candidate_version_id"], actor="user", reason="test selection", idempotency_key="test-select")
         with self.assertRaises(DataIdentityError):
             Stage0ContentProductionCore.open(FORMAL_DB_PATH, data_identity="fixture")
 
@@ -228,30 +242,25 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         third = self._run("historic-three")
         self.assertEqual(third["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 1)
 
-    def test_selection_is_atomic_waits_for_stage1a_confirmation_and_checks_capacity(self) -> None:
+    def test_test_isolated_selection_cannot_cross_into_stage1a(self) -> None:
         self._insert_video()
         candidate = self._first_candidate(self._run())
         with self.assertRaisesRegex(StateTransitionError, "select through"):
             self.service.record_user_decision(candidate_version_id=candidate["candidate_version_id"], decision="selected", actor="user", reason="select", idempotency_key="wrong-select")
-        selected = self.service.handoff_selected_candidate(candidate_version_id=candidate["candidate_version_id"], actor="user", reason="I choose this", idempotency_key="select")
-        task = self.core.get_task(selected["task_id"])
-        self.assertEqual(task["current_node"], "formal_topic")
-        self.assertEqual(task["current_status"], "awaiting_human_review")
-        self.assertEqual(self.core.conn.execute("SELECT decision FROM stage1b_candidate_decision").fetchone()[0], "selected")
+        with self.assertRaisesRegex(StateTransitionError, "production_daily"):
+            self.service.handoff_selected_candidate(candidate_version_id=candidate["candidate_version_id"], actor="user", reason="I choose this", idempotency_key="select")
 
-    def test_daily_capacity_is_checked_inside_selection_action(self) -> None:
+    def test_test_identity_cannot_masquerade_as_production_daily(self) -> None:
         self._insert_video()
-        candidate = self._first_candidate(self._run())
-        self.core.submit_formal_topic(
-            topic_payload={"title": "already used capacity", "core_question": "test", "domain": "fan_kepu_social_life", "source_refs": []},
-            actor="user", actor_kind="user", reason="test capacity", idempotency_key="capacity-topic",
-        )
-        with self.assertRaisesRegex(StateTransitionError, "daily capacity"):
-            self.service.handoff_selected_candidate(candidate_version_id=candidate["candidate_version_id"], actor="user", reason="select", idempotency_key="capacity-select")
+        with self.assertRaises(DataIdentityError):
+            self.service.run_daily_discovery(
+                discovery_date="2026-07-14", actor="test-worker", idempotency_key="wrong-mode",
+                execution_mode="production_daily", now=self.NOW, domains=("fan_kepu_social_life",),
+            )
 
     def test_core_rejects_business_ranking_fields(self) -> None:
         self._insert_video()
-        run = self.core.create_discovery_run(discovery_date="2026-07-14", actor="test-worker", idempotency_key="rank-run")
+        run = self.core.create_discovery_run(discovery_date="2026-07-14", actor="test-worker", execution_mode="test_isolated", idempotency_key="rank-run")
         source = self.core.load_real_discovery_sources(domain_label="fan_kepu_social_life", daily_since="2026-07-11T12:00:00+00:00", per_source_limit=1)[0]
         stored = self.core.record_discovery_source(run_id=run["run_id"], domain_label="fan_kepu_social_life", idempotency_key="rank-source", **source)
         self.core.record_discovery_filter(source_version_id=stored["source_version_id"], outcome="eligible", reason_code="eligible", detail={}, idempotency_key="rank-filter")
@@ -259,6 +268,26 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         model_result = self.gateway.complete(self.core.prepare_discovery_model_request(run_id=run["run_id"], source_version_id=stored["source_version_id"], assembly_id=assembly["assembly_id"], prompt="test prompt"))
         with self.assertRaisesRegex(StateTransitionError, "business-ranking"):
             self.core.create_discovery_candidate(run_id=run["run_id"], source_version_id=stored["source_version_id"], model_run_id=model_result.envelope_version_id, candidate_id="rank-candidate", payload={"title": "test", "score": 99}, idempotency_key="rank-candidate")
+
+    def test_user_facing_fields_must_be_natural_chinese(self) -> None:
+        english = {**VALID_JUDGEMENT, "title": "A daily problem"}
+        with self.assertRaisesRegex(Exception, "natural Chinese"):
+            validate_candidate_judgement(english)
+
+    def test_social_life_filter_excludes_programming_engineering_rockets_materials_and_music(self) -> None:
+        for index, title in enumerate(("Python 编程入门", "火箭发动机工程技术", "新型材料技术突破", "歌手音乐专辑盘点")):
+            with self.subTest(title=title):
+                self._insert_video(video_id=f"excluded-{index}", title=title)
+                result = self._run(f"excluded-{index}")
+                self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 0)
+                self.assertEqual(result["summary"]["filtered"]["fan_kepu_social_life"]["outside_social_life_domain"], index + 1)
+
+    def test_zero_candidate_remains_valid_when_batch_times_out_before_any_request(self) -> None:
+        self._insert_video()
+        result = self._run("batch-timeout", batch_timeout_seconds=0)
+        self.assertEqual(result["status"], "timed_out")
+        self.assertEqual(self.provider.calls, 0)
+        self.assertEqual(self.core.conn.execute("SELECT lifecycle_status FROM stage1b_run_execution_context").fetchone()[0], "timed_out")
 
 
 if __name__ == "__main__":

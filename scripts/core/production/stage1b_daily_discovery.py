@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,7 @@ from scripts.core.production.stage0_content_core import (
 
 
 APPROVED_DOMAINS = ("fan_kepu_social_life", "music_entertainment")
+EXECUTION_MODES = ("test_isolated", "validation_live", "production_daily")
 DAILY_SOURCE_VALIDITY_HOURS = 72
 SOURCE_READ_LIMIT = 6
 DISCOVERY_PROMPT_VERSION = "stage1b.daily_discovery.prompt.v1"
@@ -41,6 +43,13 @@ RISK_BLOCK_TERMS = {
     "fan_kepu_social_life": ("处方", "诊断", "偏方", "急救"),
     "music_entertainment": ("八卦", "绯闻", "恋情", "私生活", "粉圈", "撕"),
 }
+FAN_KEPU_SOCIAL_LIFE_EXCLUDE_TERMS = (
+    "编程", "代码", "程序员", "软件开发", "算法", "数据库", "服务器", "芯片", "硬件",
+    "火箭", "航天器", "卫星", "航空航天", "材料科学", "材料技术", "合金", "半导体",
+    "工程技术", "机械工程", "土木工程", "音乐", "歌曲", "歌手", "专辑", "乐队", "演唱会",
+    "乐理", "编曲", "娱乐圈", "综艺", "明星", "programming", "software", "algorithm",
+    "database", "rocket", "aerospace", "material science", "music", "entertainment",
+)
 
 
 class DailyDiscoveryValidationError(StateTransitionError):
@@ -71,6 +80,15 @@ def _required_text(payload: dict[str, Any], key: str) -> str:
     return value.strip()
 
 
+def _required_natural_chinese(payload: dict[str, Any], key: str) -> str:
+    value = _required_text(payload, key)
+    han_count = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", value))
+    latin_words = re.findall(r"[A-Za-z]{3,}", value)
+    if han_count < 4 or latin_words:
+        raise DailyDiscoveryValidationError(f"candidate {key} must be natural Chinese for user display")
+    return value
+
+
 def validate_candidate_judgement(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise DailyDiscoveryValidationError("candidate judgement must be an object")
@@ -85,7 +103,7 @@ def validate_candidate_judgement(payload: dict[str, Any]) -> dict[str, Any]:
     if outcome != "candidate":
         raise DailyDiscoveryValidationError("candidate outcome is unsupported")
     normalized = {
-        key: _required_text(payload, key)
+        key: _required_natural_chinese(payload, key)
         for key in ("title", "core_question", "why_attention", "new_angle", "material_readiness", "risk_limits")
     }
     relation = _required_text(payload, "originality_relation")
@@ -98,15 +116,15 @@ def validate_candidate_judgement(payload: dict[str, Any]) -> dict[str, Any]:
 
 def daily_discovery_prompt(input_payload: dict[str, Any]) -> str:
     return (
-        "You make a limited candidate judgement from one already-qualified source only. "
-        "Do not search, fetch, download, transcribe, analyze a video, or claim facts absent from controlled input. "
-        "The source is only a discovery clue, never research evidence. Do not choose a formal topic. "
-        "Return exactly one JSON object. If no candidate is justified, return only outcome=no_candidate and a non-empty reason. "
-        "Otherwise return outcome=candidate plus title, core_question, why_attention, new_angle, material_readiness, "
-        "risk_limits, originality_relation. originality_relation must be one of same_topic_original_reconstruction, "
-        "problem_expansion, independent_research. Never return score, rank, weight, recommendation_score, or quality_rank. "
-        "Explicitly state uncertainty and material gaps.\n\n"
-        f"Controlled input: {_canonical(input_payload)}"
+        "你只能根据一条已通过确定性筛选的受控来源，作有限的候选判断。不得搜索、抓取、下载、转写、分析视频，"
+        "也不得声称受控输入之外的事实。来源仅是发现线索，绝不是研究证据；不得创建正式选题。"
+        "只返回一个 JSON 对象。若不足以形成候选，只返回 outcome=no_candidate 和非空中文 reason。"
+        "若形成候选，必须返回 outcome=candidate 以及 title、core_question、why_attention、new_angle、"
+        "material_readiness、risk_limits、originality_relation。面向用户的 title（标题）、core_question（核心问题）、"
+        "why_attention（价值）和 risk_limits（风险）必须是自然中文；原始来源标题可保留原语言。"
+        "originality_relation 只能是 same_topic_original_reconstruction、problem_expansion、independent_research。"
+        "不得返回 score、rank、weight、recommendation_score 或 quality_rank。必须说明不确定性和材料缺口。\n\n"
+        f"受控输入：{_canonical(input_payload)}"
     )
 
 
@@ -167,6 +185,8 @@ class Stage1BDailyDiscoveryService:
         discovery_date: str,
         actor: str,
         idempotency_key: str,
+        execution_mode: str,
+        batch_timeout_seconds: int = 600,
         now: datetime | None = None,
         domains: tuple[str, ...] = APPROVED_DOMAINS,
     ) -> dict[str, Any]:
@@ -175,91 +195,132 @@ class Stage1BDailyDiscoveryService:
             raise DailyDiscoveryValidationError("daily discovery requires one or more distinct approved domains")
         if any(domain_label not in APPROVED_DOMAINS for domain_label in requested_domains):
             raise DailyDiscoveryValidationError("daily discovery received an unapproved domain")
+        if execution_mode not in EXECUTION_MODES:
+            raise DailyDiscoveryValidationError("daily discovery requires an explicit execution mode")
+        if batch_timeout_seconds < 0:
+            raise DailyDiscoveryValidationError("batch timeout must be zero or a positive number of seconds")
         now = now or datetime.now(timezone.utc)
-        request = {"discovery_date": discovery_date, "actor": actor, "domains": list(requested_domains)}
+        request = {
+            "discovery_date": discovery_date,
+            "actor": actor,
+            "domains": list(requested_domains),
+            "execution_mode": execution_mode,
+            "batch_timeout_seconds": batch_timeout_seconds,
+        }
         replay = self.core.find_command_replay("stage1b_execute_daily_discovery", idempotency_key, request)
         if replay:
             return {**replay, "replayed": True}
-        run = self.core.create_discovery_run(discovery_date=discovery_date, actor=actor, idempotency_key=f"{idempotency_key}:run")
-        summary: dict[str, Any] = {"run_id": run["run_id"], "discovery_date": discovery_date, "domains": {}, "filtered": {}, "source_readiness": {}}
+        run = self.core.create_discovery_run(
+            discovery_date=discovery_date,
+            actor=actor,
+            execution_mode=execution_mode,
+            idempotency_key=f"{idempotency_key}:run",
+        )
+        summary: dict[str, Any] = {
+            "run_id": run["run_id"],
+            "discovery_date": discovery_date,
+            "execution_mode": execution_mode,
+            "domains": {},
+            "filtered": {},
+            "source_readiness": {},
+            "technical_failures": 0,
+        }
         daily_since = (now - timedelta(hours=DAILY_SOURCE_VALIDITY_HOURS)).isoformat()
-        for domain_label in requested_domains:
-            summary["source_readiness"][domain_label] = self.core.discovery_source_readiness(domain_label=domain_label, daily_since=daily_since)
-            sources = self.core.load_real_discovery_sources(domain_label=domain_label, daily_since=daily_since, per_source_limit=SOURCE_READ_LIMIT)
-            filtered: dict[str, int] = {}
-            candidate_count = 0
-            for index, source in enumerate(sources):
-                outcome, reason_code, detail = self._deterministic_filter(
-                    domain_label=domain_label, source=source, now=now
-                )
-                source_result = self.core.record_discovery_source(
-                    run_id=run["run_id"], domain_label=domain_label, source_type=source["source_type"],
-                    source_object_id=source["source_object_id"], source_object_version=source["source_object_version"],
-                    source_time=source["source_time"], expires_at=self._expires_at(source, now=now), payload=source["payload"],
-                    idempotency_key=f"{idempotency_key}:{domain_label}:source:{index}",
-                )
-                self.core.record_discovery_filter(
-                    source_version_id=source_result["source_version_id"], outcome=outcome, reason_code=reason_code, detail=detail,
-                    idempotency_key=f"{idempotency_key}:{domain_label}:filter:{index}",
-                )
-                if outcome != "eligible":
-                    filtered[reason_code] = filtered.get(reason_code, 0) + 1
-                    continue
-                assembly_payload = self._assembly_payload(domain_label=domain_label, source=source, source_version_id=source_result["source_version_id"])
-                assembly = self.core.create_discovery_input_assembly(
-                    run_id=run["run_id"], source_version_id=source_result["source_version_id"], payload=assembly_payload,
-                    prompt_version=DISCOVERY_PROMPT_VERSION, skill_version=DISCOVERY_SKILL_VERSION,
-                    idempotency_key=f"{idempotency_key}:{domain_label}:assembly:{index}",
-                )
-                model_request = self.core.prepare_discovery_model_request(
-                    run_id=run["run_id"], source_version_id=source_result["source_version_id"], assembly_id=assembly["assembly_id"],
-                    prompt=daily_discovery_prompt(assembly_payload),
-                )
-                try:
-                    model_result = self.gateway.complete(model_request)
-                    judgement = validate_candidate_judgement(json.loads(model_result.output_text))
-                except ModelGatewayError as exc:
-                    self.core.record_discovery_no_candidate(
-                        run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=None,
-                        reason_code="model_gateway_failed", detail={"reason": str(exc)},
-                        idempotency_key=f"{idempotency_key}:{domain_label}:absence:{index}",
+        deadline = time.monotonic() + batch_timeout_seconds
+        lifecycle_status, failure_reason = "completed", None
+        try:
+            for domain_label in requested_domains:
+                summary["source_readiness"][domain_label] = self.core.discovery_source_readiness(domain_label=domain_label, daily_since=daily_since)
+                sources = self.core.load_real_discovery_sources(domain_label=domain_label, daily_since=daily_since, per_source_limit=SOURCE_READ_LIMIT)
+                filtered: dict[str, int] = {}
+                candidate_count = 0
+                for index, source in enumerate(sources):
+                    if time.monotonic() >= deadline:
+                        lifecycle_status, failure_reason = "timed_out", "batch deadline reached before the next source; no request was retried"
+                        break
+                    outcome, reason_code, detail = self._deterministic_filter(domain_label=domain_label, source=source, now=now)
+                    source_result = self.core.record_discovery_source(
+                        run_id=run["run_id"], domain_label=domain_label, source_type=source["source_type"],
+                        source_object_id=source["source_object_id"], source_object_version=source["source_object_version"],
+                        source_time=source["source_time"], expires_at=self._expires_at(source, now=now), payload=source["payload"],
+                        idempotency_key=f"{idempotency_key}:{domain_label}:source:{index}",
                     )
-                    filtered["model_gateway_failed"] = filtered.get("model_gateway_failed", 0) + 1
-                    continue
-                except (json.JSONDecodeError, DailyDiscoveryValidationError) as exc:
-                    self.core.record_discovery_no_candidate(
+                    self.core.record_discovery_filter(
+                        source_version_id=source_result["source_version_id"], outcome=outcome, reason_code=reason_code, detail=detail,
+                        idempotency_key=f"{idempotency_key}:{domain_label}:filter:{index}",
+                    )
+                    if outcome != "eligible":
+                        filtered[reason_code] = filtered.get(reason_code, 0) + 1
+                        continue
+                    assembly_payload = self._assembly_payload(domain_label=domain_label, source=source, source_version_id=source_result["source_version_id"])
+                    assembly = self.core.create_discovery_input_assembly(
+                        run_id=run["run_id"], source_version_id=source_result["source_version_id"], payload=assembly_payload,
+                        prompt_version=DISCOVERY_PROMPT_VERSION, skill_version=DISCOVERY_SKILL_VERSION,
+                        idempotency_key=f"{idempotency_key}:{domain_label}:assembly:{index}",
+                    )
+                    model_request = self.core.prepare_discovery_model_request(
+                        run_id=run["run_id"], source_version_id=source_result["source_version_id"], assembly_id=assembly["assembly_id"],
+                        prompt=daily_discovery_prompt(assembly_payload),
+                    )
+                    try:
+                        model_result = self.gateway.complete(model_request)
+                        judgement = validate_candidate_judgement(json.loads(model_result.output_text))
+                    except ModelGatewayError as exc:
+                        self.core.record_discovery_no_candidate(
+                            run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=None,
+                            reason_code="model_gateway_failed", detail={"reason": str(exc), "retry": "forbidden_after_uncertain_request"},
+                            idempotency_key=f"{idempotency_key}:{domain_label}:absence:{index}",
+                        )
+                        filtered["model_gateway_failed"] = filtered.get("model_gateway_failed", 0) + 1
+                        summary["technical_failures"] += 1
+                        continue
+                    except (json.JSONDecodeError, DailyDiscoveryValidationError) as exc:
+                        self.core.record_discovery_no_candidate(
+                            run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
+                            reason_code="model_output_invalid", detail={"reason": str(exc), "retry": "forbidden_after_uncertain_request"},
+                            idempotency_key=f"{idempotency_key}:{domain_label}:absence:{index}",
+                        )
+                        filtered["model_output_invalid"] = filtered.get("model_output_invalid", 0) + 1
+                        summary["technical_failures"] += 1
+                        continue
+                    if judgement["outcome"] == "no_candidate":
+                        self.core.record_discovery_no_candidate(
+                            run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
+                            reason_code="model_returned_no_candidate", detail={"reason": judgement["reason"]},
+                            idempotency_key=f"{idempotency_key}:{domain_label}:absence:{index}",
+                        )
+                        filtered["model_returned_no_candidate"] = filtered.get("model_returned_no_candidate", 0) + 1
+                        continue
+                    candidate_payload = {
+                        **judgement,
+                        "normalized_title": _normalize_title(judgement["title"]),
+                        "normalized_source_title": _normalize_title(str(source["payload"]["title"])),
+                        "domain": domain_label,
+                        "source_reference": {"source_version_id": source_result["source_version_id"], "source_type": source["source_type"], "source_object_id": source["source_object_id"], "source_object_version": source["source_object_version"], "source_time": source["source_time"], "url": source["payload"]["url"]},
+                    }
+                    self.core.create_discovery_candidate(
                         run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
-                        reason_code="model_output_invalid", detail={"reason": str(exc)},
-                        idempotency_key=f"{idempotency_key}:{domain_label}:absence:{index}",
+                        candidate_id=f"candidate_{_stable_id({domain_label: source_result['source_version_id'], 'title': candidate_payload['normalized_title']})}",
+                        payload=candidate_payload, idempotency_key=f"{idempotency_key}:{domain_label}:candidate:{index}",
                     )
-                    filtered["model_output_invalid"] = filtered.get("model_output_invalid", 0) + 1
-                    continue
-                if judgement["outcome"] == "no_candidate":
-                    self.core.record_discovery_no_candidate(
-                        run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
-                        reason_code="model_returned_no_candidate", detail={"reason": judgement["reason"]},
-                        idempotency_key=f"{idempotency_key}:{domain_label}:absence:{index}",
-                    )
-                    filtered["model_returned_no_candidate"] = filtered.get("model_returned_no_candidate", 0) + 1
-                    continue
-                candidate_payload = {
-                    **judgement,
-                    "normalized_title": _normalize_title(judgement["title"]),
-                    "normalized_source_title": _normalize_title(str(source["payload"]["title"])),
-                    "domain": domain_label,
-                    "source_reference": {"source_version_id": source_result["source_version_id"], "source_type": source["source_type"], "source_object_id": source["source_object_id"], "source_object_version": source["source_object_version"], "source_time": source["source_time"], "url": source["payload"]["url"]},
-                }
-                self.core.create_discovery_candidate(
-                    run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
-                    candidate_id=f"candidate_{_stable_id({domain_label: source_result['source_version_id'], 'title': candidate_payload['normalized_title']})}",
-                    payload=candidate_payload, idempotency_key=f"{idempotency_key}:{domain_label}:candidate:{index}",
-                )
-                candidate_count += 1
-            summary["domains"][domain_label] = {"sources_read": len(sources), "candidates": candidate_count}
-            summary["filtered"][domain_label] = filtered
-        self.core.complete_discovery_run(run_id=run["run_id"], domains=requested_domains, idempotency_key=f"{idempotency_key}:snapshot")
-        result = {"run_id": run["run_id"], "discovery_date": discovery_date, "status": "completed", "summary": summary}
-        self.core.record_completed_command(command="stage1b_execute_daily_discovery", idempotency_key=idempotency_key, request=request, task_id=run["run_id"], event="stage1b_daily_discovery_completed", result={"run_id": run["run_id"], "status": "completed"})
+                    candidate_count += 1
+                summary["domains"][domain_label] = {"sources_read": len(sources), "candidates": candidate_count}
+                summary["filtered"][domain_label] = filtered
+                if lifecycle_status == "timed_out":
+                    break
+        except KeyboardInterrupt:
+            lifecycle_status, failure_reason = "interrupted", "batch interrupted; no uncertain request was retried"
+        if lifecycle_status == "completed" and summary["technical_failures"]:
+            lifecycle_status, failure_reason = "completed_with_failures", "one or more sources failed and were retained without retry"
+        finalization = self.core.complete_discovery_run(
+            run_id=run["run_id"], domains=requested_domains, lifecycle_status=lifecycle_status,
+            failure_reason=failure_reason, idempotency_key=f"{idempotency_key}:snapshot",
+        )
+        result = {"run_id": run["run_id"], "discovery_date": discovery_date, "status": lifecycle_status, "execution_mode": execution_mode, "summary": summary}
+        self.core.record_completed_command(
+            command="stage1b_execute_daily_discovery", idempotency_key=idempotency_key, request=request, task_id=run["run_id"],
+            event="stage1b_daily_discovery_finalized", result={**finalization, "technical_failures": str(summary["technical_failures"])},
+        )
         return result
 
     def view_daily_snapshot(
@@ -306,6 +367,11 @@ class Stage1BDailyDiscoveryService:
             return "excluded", "freshness_expired", {}
         if any(term in title for term in RISK_BLOCK_TERMS[domain_label]):
             return "excluded", "risk_blocked", {"matched_terms": [term for term in RISK_BLOCK_TERMS[domain_label] if term in title]}
+        if domain_label == "fan_kepu_social_life":
+            title_folded = title.casefold()
+            matched_terms = [term for term in FAN_KEPU_SOCIAL_LIFE_EXCLUDE_TERMS if term.casefold() in title_folded]
+            if matched_terms:
+                return "excluded", "outside_social_life_domain", {"matched_terms": matched_terms}
         normalized_title = _normalize_title(title)
         if self.core.discovery_source_seen(source_type=source["source_type"], source_object_id=source["source_object_id"], source_object_version=source["source_object_version"]):
             return "excluded", "source_already_processed", {}
@@ -338,16 +404,34 @@ class Stage1BDailyDiscoveryService:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run one explicitly authorized formal-domain discovery through the Core boundary."""
+    """Run one Core-owned Stage 1B batch, or classify a prior live validation."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--domain", required=True, choices=APPROVED_DOMAINS, help="one authorized formal domain")
+    parser.add_argument("--domain", choices=APPROVED_DOMAINS, help="one authorized formal domain for a new batch")
     parser.add_argument("--actor", required=True, help="audited actor for the explicit user authorization")
     parser.add_argument("--idempotency-key", required=True, help="stable key for this exact authorized run")
+    parser.add_argument("--mode", required=True, choices=EXECUTION_MODES, help="explicit execution identity; no mode can be promoted automatically")
     parser.add_argument("--discovery-date", default=datetime.now(timezone.utc).date().isoformat(), help="YYYY-MM-DD (defaults to UTC today)")
+    parser.add_argument("--batch-timeout-seconds", type=int, default=600, help="bounded batch deadline; timed-out or interrupted batches are not retried")
+    parser.add_argument("--reclassify-run", help="existing run to mark as validation_live without re-running sources or models")
+    parser.add_argument("--reason", help="required audit reason when reclassifying an existing run")
     args = parser.parse_args(argv)
+    if args.reclassify_run:
+        if args.mode != "validation_live" or not args.reason or args.domain:
+            parser.error("reclassification requires --reclassify-run, --mode validation_live, --actor, --reason, and no --domain")
+    elif not args.domain:
+        parser.error("a new batch requires --domain")
 
     core = Stage0ContentProductionCore.open(FORMAL_DB_PATH, data_identity="production")
     try:
+        if args.reclassify_run:
+            result = core.classify_existing_discovery_run_as_validation_live(
+                run_id=args.reclassify_run,
+                actor=args.actor,
+                reason=args.reason,
+                idempotency_key=args.idempotency_key,
+            )
+            print(_canonical(result))
+            return 0
         service = Stage1BDailyDiscoveryService(
             core=core,
             gateway=build_production_daily_discovery_gateway(core),
@@ -356,11 +440,13 @@ def main(argv: list[str] | None = None) -> int:
             discovery_date=args.discovery_date,
             actor=args.actor,
             idempotency_key=args.idempotency_key,
+            execution_mode=args.mode,
+            batch_timeout_seconds=args.batch_timeout_seconds,
             domains=(args.domain,),
         )
         snapshot = service.view_daily_snapshot(run_id=result["run_id"], domains=(args.domain,))
         print(_canonical({**result, "snapshot": snapshot}))
-        return 0
+        return 0 if result["status"] == "completed" else 2
     finally:
         core.close()
 

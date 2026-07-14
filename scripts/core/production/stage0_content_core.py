@@ -24,6 +24,10 @@ ROOT = Path(__file__).resolve().parents[3]
 FORMAL_DB_PATH = ROOT / "data" / "formal" / "production_activation.sqlite3"
 DataIdentity = Literal["production", "test", "fixture", "synthetic", "replay", "mock"]
 NON_PRODUCTION_IDENTITIES = frozenset({"test", "fixture", "synthetic", "replay", "mock"})
+DISCOVERY_EXECUTION_MODES = frozenset({"test_isolated", "validation_live", "production_daily"})
+DISCOVERY_RUN_OUTCOMES = frozenset(
+    {"processing", "completed", "completed_with_failures", "timed_out", "interrupted", "failed", "cancelled"}
+)
 
 CHAIN_NODES = (
     "formal_topic",
@@ -368,6 +372,15 @@ class Stage0ContentProductionCore:
                 completed_at TEXT,
                 failure_reason TEXT
             );
+            CREATE TABLE IF NOT EXISTS stage1b_run_execution_context (
+                run_id TEXT PRIMARY KEY REFERENCES stage1b_discovery_run(run_id),
+                execution_mode TEXT NOT NULL CHECK(execution_mode IN ('test_isolated', 'validation_live', 'production_daily')),
+                lifecycle_status TEXT NOT NULL CHECK(lifecycle_status IN ('processing', 'completed', 'completed_with_failures', 'timed_out', 'interrupted', 'failed', 'cancelled')),
+                classification_reason TEXT NOT NULL,
+                classified_by TEXT NOT NULL,
+                classified_at TEXT NOT NULL,
+                data_identity TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS stage1b_source_version (
                 source_version_id TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL REFERENCES stage1b_discovery_run(run_id),
@@ -503,6 +516,9 @@ class Stage0ContentProductionCore:
             CREATE TRIGGER IF NOT EXISTS stage1b_candidate_version_immutable_delete
             BEFORE DELETE ON stage1b_candidate_version
             BEGIN SELECT RAISE(ABORT, 'stage1b candidate versions are immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS stage1b_run_execution_context_mode_immutable
+            BEFORE UPDATE OF execution_mode ON stage1b_run_execution_context
+            BEGIN SELECT RAISE(ABORT, 'stage1b execution mode is immutable; create a new run instead'); END;
             """
         )
         self.conn.commit()
@@ -886,6 +902,30 @@ class Stage0ContentProductionCore:
             raise StateTransitionError("discovery run does not exist in this data identity")
         return row
 
+    def _validate_discovery_execution_mode(self, execution_mode: str) -> None:
+        if execution_mode not in DISCOVERY_EXECUTION_MODES:
+            raise StateTransitionError("discovery execution mode is invalid")
+        if self.data_identity in NON_PRODUCTION_IDENTITIES and execution_mode != "test_isolated":
+            raise DataIdentityError("non-production discovery data must use test_isolated mode")
+        if self.data_identity == "production" and execution_mode == "test_isolated":
+            raise DataIdentityError("production discovery data cannot use test_isolated mode")
+
+    def _discovery_context_optional(self, run_id: str) -> sqlite3.Row | None:
+        row = self.conn.execute(
+            "SELECT * FROM stage1b_run_execution_context WHERE run_id=?", (run_id,)
+        ).fetchone()
+        if row is not None and row["data_identity"] != self.data_identity:
+            raise StateTransitionError("discovery execution context does not exist in this data identity")
+        return row
+
+    def _discovery_context(self, run_id: str) -> sqlite3.Row:
+        row = self._discovery_context_optional(run_id)
+        if row is None:
+            raise StateTransitionError(
+                "discovery run has no execution classification; classify it as validation_live before it can be viewed or used"
+            )
+        return row
+
     def _discovery_source(self, source_version_id: str) -> sqlite3.Row:
         row = self.conn.execute("SELECT * FROM stage1b_source_version WHERE source_version_id=?", (source_version_id,)).fetchone()
         if row is None or row["data_identity"] != self.data_identity:
@@ -1030,9 +1070,15 @@ class Stage0ContentProductionCore:
             self._audit(task_id, "model_output_validation_failed", {"model_run_id": model_run_id, "reason": reason})
 
     def create_discovery_run(
-        self, *, discovery_date: str, actor: str, idempotency_key: str
+        self, *, discovery_date: str, actor: str, execution_mode: str, idempotency_key: str
     ) -> dict[str, str]:
-        request = {"discovery_date": discovery_date, "actor": actor, "data_identity": self.data_identity}
+        self._validate_discovery_execution_mode(execution_mode)
+        request = {
+            "discovery_date": discovery_date,
+            "actor": actor,
+            "execution_mode": execution_mode,
+            "data_identity": self.data_identity,
+        }
         replay = self._replay("stage1b_create_discovery_run", idempotency_key, request)
         if replay:
             return replay
@@ -1042,9 +1088,50 @@ class Stage0ContentProductionCore:
                 "INSERT INTO stage1b_discovery_run VALUES (?, ?, 'processing', ?, ?, ?, NULL, NULL)",
                 (run_id, discovery_date, self.data_identity, actor, _now()),
             )
+            self.conn.execute(
+                "INSERT INTO stage1b_run_execution_context VALUES (?, ?, 'processing', ?, ?, ?, ?)",
+                (run_id, execution_mode, "run created with explicit execution mode", actor, _now(), self.data_identity),
+            )
             result = {"run_id": run_id, "discovery_date": discovery_date}
             self._receipt("stage1b_create_discovery_run", idempotency_key, request, result)
-            self._audit(run_id, "stage1b_discovery_run_started", result)
+            self._audit(run_id, "stage1b_discovery_run_started", {**result, "execution_mode": execution_mode})
+        return result
+
+    def classify_existing_discovery_run_as_validation_live(
+        self, *, run_id: str, actor: str, reason: str, idempotency_key: str
+    ) -> dict[str, str]:
+        """One-way classification for an already-recorded live validation run.
+
+        This preserves immutable source/model/candidate records while explicitly
+        preventing them from entering the formal daily candidate path.
+        """
+        if self.data_identity != "production":
+            raise DataIdentityError("live validation classification requires production data identity")
+        if not actor.strip() or not reason.strip():
+            raise StateTransitionError("live validation classification requires an audited actor and reason")
+        run = self._discovery_run(run_id)
+        if self._discovery_context_optional(run_id) is not None:
+            raise StateTransitionError("discovery run already has an immutable execution classification")
+        decision = self.conn.execute(
+            "SELECT 1 FROM stage1b_candidate_decision WHERE candidate_version_id IN "
+            "(SELECT candidate_version_id FROM stage1b_candidate_version WHERE run_id=?) LIMIT 1",
+            (run_id,),
+        ).fetchone()
+        if decision is not None:
+            raise StateTransitionError("a run with candidate decisions cannot be retroactively classified")
+        request = {"run_id": run_id, "execution_mode": "validation_live", "actor": actor, "reason": reason}
+        replay = self._replay("stage1b_classify_existing_validation_live", idempotency_key, request)
+        if replay:
+            return replay
+        lifecycle_status = "completed" if run["status"] == "completed" else "failed"
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage1b_run_execution_context VALUES (?, 'validation_live', ?, ?, ?, ?, ?)",
+                (run_id, lifecycle_status, reason, actor, _now(), self.data_identity),
+            )
+            result = {"run_id": run_id, "execution_mode": "validation_live", "lifecycle_status": lifecycle_status}
+            self._receipt("stage1b_classify_existing_validation_live", idempotency_key, request, result)
+            self._audit(run_id, "stage1b_run_classified_validation_live", {**result, "reason": reason})
         return result
 
     def record_discovery_source(
@@ -1313,13 +1400,29 @@ class Stage0ContentProductionCore:
             self._audit(run_id, "stage1b_candidate_created", result)
         return result
 
-    def complete_discovery_run(self, *, run_id: str, domains: tuple[str, ...], idempotency_key: str) -> dict[str, str]:
+    def complete_discovery_run(
+        self,
+        *,
+        run_id: str,
+        domains: tuple[str, ...],
+        lifecycle_status: str = "completed",
+        failure_reason: str | None = None,
+        idempotency_key: str,
+    ) -> dict[str, str]:
         run = self._discovery_run(run_id)
+        context = self._discovery_context(run_id)
+        if lifecycle_status not in DISCOVERY_RUN_OUTCOMES - {"processing"}:
+            raise StateTransitionError("discovery lifecycle status is invalid")
         if run["status"] == "completed":
-            return {"run_id": run_id, "status": "completed"}
+            return {"run_id": run_id, "status": context["lifecycle_status"]}
         if run["status"] != "processing":
             raise StateTransitionError("only a processing discovery run can complete")
-        request = {"run_id": run_id, "domains": list(domains)}
+        request = {
+            "run_id": run_id,
+            "domains": list(domains),
+            "lifecycle_status": lifecycle_status,
+            "failure_reason": failure_reason,
+        }
         replay = self._replay("stage1b_complete_discovery_run", idempotency_key, request)
         if replay:
             return replay
@@ -1340,14 +1443,24 @@ class Stage0ContentProductionCore:
                             )
                 else:
                     self.conn.execute("INSERT INTO stage1b_daily_snapshot VALUES (?, ?, ?, NULL, 0, ?, ?)", (_id("snapshot"), run_id, domain_label, self.data_identity, _now()))
-            self.conn.execute("UPDATE stage1b_discovery_run SET status='completed', completed_at=? WHERE run_id=?", (_now(), run_id))
-            result = {"run_id": run_id, "status": "completed"}
+            core_status = "completed" if lifecycle_status in {"completed", "completed_with_failures"} else "failed"
+            completed_at = _now()
+            self.conn.execute(
+                "UPDATE stage1b_discovery_run SET status=?, completed_at=?, failure_reason=? WHERE run_id=?",
+                (core_status, completed_at, failure_reason, run_id),
+            )
+            self.conn.execute(
+                "UPDATE stage1b_run_execution_context SET lifecycle_status=? WHERE run_id=?",
+                (lifecycle_status, run_id),
+            )
+            result = {"run_id": run_id, "status": lifecycle_status, "execution_mode": context["execution_mode"]}
             self._receipt("stage1b_complete_discovery_run", idempotency_key, request, result)
-            self._audit(run_id, "stage1b_daily_snapshot_completed", result)
+            self._audit(run_id, "stage1b_daily_snapshot_finalized", {**result, "failure_reason": failure_reason})
         return result
 
     def get_discovery_snapshot(self, *, run_id: str, domain_label: str) -> list[dict[str, Any]]:
         self._discovery_run(run_id)
+        context = self._discovery_context(run_id)
         rows = self.conn.execute(
             "SELECT snapshot.display_position, candidate.candidate_version_id, candidate.candidate_id, candidate.payload_json, source.source_type, source.source_time, source.expires_at, source.payload_json AS source_payload_json FROM stage1b_daily_snapshot snapshot LEFT JOIN stage1b_candidate_version candidate ON candidate.candidate_version_id=snapshot.candidate_version_id LEFT JOIN stage1b_source_version source ON source.source_version_id=candidate.source_version_id WHERE snapshot.run_id=? AND snapshot.domain_label=? ORDER BY snapshot.display_position, snapshot.snapshot_id",
             (run_id, domain_label),
@@ -1356,7 +1469,7 @@ class Stage0ContentProductionCore:
         for row in rows:
             if row["candidate_version_id"] is None:
                 continue
-            result.append({"display_position": row["display_position"], "candidate_version_id": row["candidate_version_id"], "candidate_id": row["candidate_id"], "candidate": json.loads(row["payload_json"]), "source_type": row["source_type"], "source_time": row["source_time"], "expires_at": row["expires_at"], "source": json.loads(row["source_payload_json"])})
+            result.append({"display_position": row["display_position"], "candidate_version_id": row["candidate_version_id"], "candidate_id": row["candidate_id"], "candidate": json.loads(row["payload_json"]), "source_type": row["source_type"], "source_time": row["source_time"], "expires_at": row["expires_at"], "source": json.loads(row["source_payload_json"]), "execution_mode": context["execution_mode"], "lifecycle_status": context["lifecycle_status"], "formal_candidate_pool": context["execution_mode"] == "production_daily" and context["lifecycle_status"] == "completed"})
         return result
 
     def record_discovery_decision(
@@ -1408,6 +1521,9 @@ class Stage0ContentProductionCore:
             raise StateTransitionError("candidate selection requires an explicit user and reason")
         candidate = self._discovery_candidate(candidate_version_id)
         run = self._discovery_run(candidate["run_id"])
+        context = self._discovery_context(candidate["run_id"])
+        if context["execution_mode"] != "production_daily" or context["lifecycle_status"] != "completed":
+            raise StateTransitionError("only a completed production_daily candidate may enter Stage 1A")
         if run["status"] != "completed" or candidate["status"] != "awaiting_user_decision":
             raise StateTransitionError("only a completed awaiting-user-decision candidate may be selected")
         if self.conn.execute("SELECT 1 FROM stage1b_candidate_decision WHERE candidate_version_id=?", (candidate_version_id,)).fetchone():

@@ -53,10 +53,16 @@ Input Assembly、ModelGateway 运行记录和审计边界，不执行真实内�
 
 ### Stage 1B：受控日常发现
 
-`scripts/core/production/stage1b_daily_discovery.py` 是一次正式日常发现的受控入口。必须显式给出一个已获授权的领域、审计主体和幂等键；入口只读取已登记的正式来源，经过确定性过滤后才通过显式 `business_analysis` Mimo 路由判断候选，并将来源、过滤、模型运行、候选和日报快照写入 `data/formal/production_activation.sqlite3`。它不自动选择候选、不创建正式生产任务、不进入研究。单次运行只处理传入的领域；没有真实来源的领域不得作为补位运行。
+`scripts/core/production/stage1b_daily_discovery.py` 是由项目 Core Runtime 直接执行的一次性 Stage 1B 批处理入口；它不是由 Codex 轮询的业务进程。每次必须显式给出一个领域、审计主体、幂等键和运行模式：`test_isolated` 只能使用非生产数据身份，`validation_live` 只保留真实验证审计，`production_daily` 才可能形成正式日产候选池。前两种模式不可自动升级，也不能进入日产能、Stage 1A、研究或经验系统。入口只读取已登记的正式来源，经过确定性过滤后才通过显式 `business_analysis` Mimo 路由判断候选，并将来源、过滤、模型运行、候选和快照写入 `data/formal/production_activation.sqlite3`。它不自动选择候选、不创建正式生产任务、不进入研究；没有真实来源或没有合格候选时保留零候选，不得补位。
 
 ```powershell
-python scripts/core/production/stage1b_daily_discovery.py --domain fan_kepu_social_life --actor <audited-user> --idempotency-key <stable-authorized-run-key>
+python scripts/core/production/stage1b_daily_discovery.py --domain fan_kepu_social_life --mode production_daily --actor <audited-user> --idempotency-key <stable-authorized-run-key> --batch-timeout-seconds 600
+```
+
+批处理在截止时间、中断或部分失败时会写入实际生命周期和审计，不伪装为完整成功；模型请求状态不确定、可能已消耗 token 或已离开明确失败状态时禁止自动重试。对既有真实验证运行，仅可通过同一受控入口一次性重分类，且必须显式标为 `validation_live`，不会重新读取来源或调用模型：
+
+```powershell
+python scripts/core/production/stage1b_daily_discovery.py --reclassify-run <run-id> --mode validation_live --actor <audited-user> --reason <audited-reclassification-reason> --idempotency-key <stable-reclassification-key>
 ```
 
 ### 外部适配器
