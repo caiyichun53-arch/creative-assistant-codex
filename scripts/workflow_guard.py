@@ -57,6 +57,7 @@ BUSINESS_CODE_PATTERNS = (
     "config/model_routes.yaml",
 )
 SUCCESSFUL_SOURCE_LEVELS = {"LIVE_VALIDATED", "PRODUCTION_READY"}
+BASELINE_GAP_RESOLUTION_MODE = "baseline_gap_resolution"
 
 
 class GuardFailure(RuntimeError):
@@ -171,8 +172,8 @@ def _validate_state(root: Path) -> tuple[dict[str, Any], list[list[str]]]:
     ):
         if not isinstance(state[field], bool):
             raise GuardFailure("BASELINE_GAP", f"{field} must be a boolean")
-    if str(state["mode"]).casefold() == "design_recovery" and state["implementation_authorized"]:
-        raise GuardFailure("BASELINE_GAP", "design_recovery must not authorize business implementation")
+    if str(state["mode"]).casefold() == BASELINE_GAP_RESOLUTION_MODE and state["implementation_authorized"]:
+        raise GuardFailure("BASELINE_GAP", "baseline_gap_resolution must not authorize business implementation")
     if str(state["stage_status"]).strip() == "BASELINE_GAP" and state["design_complete"]:
         raise GuardFailure("BASELINE_GAP", "stage_status and design_complete disagree")
     if state["production_authorized"] and (not state["implementation_authorized"] or str(state["stage_status"]).strip() != "PASS"):
@@ -404,7 +405,7 @@ def run(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int:
             _verify_attestation(root, state)
             _emit(
                 "PASS",
-                "finish attestation matches the current index; only governance/design-recovery commit is allowed, this does not mean Stage 1 has passed",
+                "finish attestation matches the current index; only governance/baseline-gap-resolution commit is allowed, this does not mean Stage 1 has passed",
                 **_finish_status_payload(state, task_finish_status="PASS"),
             )
             return EXIT_CODES["PASS"]
@@ -427,15 +428,15 @@ def run(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int:
 
         _ensure_staged_only(root)
         changed_paths = _validate_scope(root, state, cached=True)
-        if not state["design_complete"] and str(state["mode"]).casefold() != "design_recovery":
-            raise GuardFailure("BASELINE_GAP", "incomplete design may finish only in design_recovery")
-        if str(state["mode"]).casefold() != "design_recovery" and str(state["stage_status"]).strip() == "BASELINE_GAP":
+        if not state["design_complete"] and str(state["mode"]).casefold() != BASELINE_GAP_RESOLUTION_MODE:
+            raise GuardFailure("BASELINE_GAP", "incomplete design may finish only in baseline_gap_resolution")
+        if str(state["mode"]).casefold() != BASELINE_GAP_RESOLUTION_MODE and str(state["stage_status"]).strip() == "BASELINE_GAP":
             raise GuardFailure("BASELINE_GAP", "implementation mode cannot finish while the stage has BASELINE_GAP")
         tests = _run_tests(root, test_commands)
         attestation = _write_attestation(root, state, changed_paths, tests)
         _emit(
             "PASS",
-            "workflow task finish passed; only governance/design-recovery commit is allowed, this does not mean Stage 1 has passed",
+            "workflow task finish passed; only governance/baseline-gap-resolution commit is allowed, this does not mean Stage 1 has passed",
             **_finish_status_payload(state, task_finish_status="PASS"),
             mode=state["mode"],
             stage=state["stage"],

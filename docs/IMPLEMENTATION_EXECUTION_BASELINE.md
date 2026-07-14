@@ -1,5 +1,5 @@
 ---
-mode: design_recovery
+mode: baseline_gap_resolution
 stage: stage_1_daily_discovery
 design_complete: false
 implementation_authorized: false
@@ -9,9 +9,23 @@ formal_data_writes_authorized: false
 production_authorized: false
 completion_status: REJECTED_DESIGN_MISMATCH
 stage_status: BASELINE_GAP
-next_action: recover_and_confirm_stage_1_design
+next_action: wait_for_user_provided_or_confirmed_stage_1_criteria
 baseline_sha256: 24e4312ea025708e3d01ec2940868a3ee0efc89a9370835b77167cf0a06c5a22
-base_commit: e5268c2aac6b169a2c18bb8b864049324415dc0d
+base_commit: 7f444375efc69ca5dad7fe6e32bbb39b273fe1e2
+allowed_design_sources:
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
+execution_state_sources:
+  - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
+  - execution/current_stage.yaml
+prohibited_design_sources:
+  - V0.x documents
+  - CURRENT_DESIGN_BASELINE.md
+  - DESIGN_AUDIT.md
+  - old Goal documents
+  - ROADMAP
+  - BUILD_PLAN
+  - Git history old designs
+  - old code comments business rules
 requirements:
   - id: WF-GUARD-DESIGN-RECOVERY-001
     description: 统一实施门禁状态位于 execution/current_stage.yaml；Stage 1 设计不完整期间阻断业务实现、真实运行、外部调用和环境改动。
@@ -63,13 +77,15 @@ forbidden_actions:
 - `check` 校验当前改动范围；任何不在 `allowed_paths` 的改动、未授权业务代码改动或冻结验收测试改动返回 `SCOPE_MISMATCH`。声明或检测到未经授权的外部调用、安装或环境改动请求时返回 `USER_AUTH_REQUIRED`。
 - `finish` 只接受全部已暂存、没有未暂存或未跟踪文件的确定版本，运行每项 requirement 的去重测试命令并生成与当前 Git 索引绑定的 finish 凭证。测试、范围、哈希、需求映射或授权任一未通过，不得提交；`design_complete: false` 时即使本次治理任务允许提交，也必须输出 `task_finish_status: PASS` 与 `stage_status: BASELINE_GAP`，不得宣布业务完成。
 - Git pre-commit 钩子只接受与当前索引完全一致的 finish 凭证。`--no-verify`、移除钩子、伪造凭证、直接调用真实来源/模型或修改门禁结果均属于 `workflow_guard_bypass`。
-- `design_recovery` 且改动完全位于治理白名单时，`finish` 可以完成门禁或设计文档本身的受控变更，但输出仍保留 `stage_status: BASELINE_GAP`、`implementation_authorized: false`、`production_authorized: false` 和 `next_action: recover_and_confirm_stage_1_design`；这不表示业务设计完整，也不授权任何业务实现。
+- `baseline_gap_resolution` 且改动完全位于治理白名单时，`finish` 可以完成门禁、章程或执行状态本身的受控变更，但输出仍保留 `stage_status: BASELINE_GAP`、`implementation_authorized: false`、`production_authorized: false` 和 `next_action: wait_for_user_provided_or_confirmed_stage_1_criteria`；这不表示业务设计完整，也不授权任何业务实现。
 
 机器状态码固定为：`PASS=0`、`BASELINE_GAP=10`、`SCOPE_MISMATCH=11`、`USER_AUTH_REQUIRED=12`、`REQUIREMENT_GAP=13`、`TEST_FAILED=14`、`FINISH_REQUIRED=15`、`WORKTREE_NOT_READY=16`。调用方必须按状态码失败关闭，不得只解析自然语言。
 
-## DESIGN_RECOVERY 默认边界
+## BASELINE_GAP_RESOLUTION 默认边界
 
-未获得具体单次恢复授权时，默认 Stage 为 `stage_1_daily_discovery`，`design_complete: false`。当前治理任务只允许修改 `execution/current_stage.yaml`、机器执行基线、仓库章程、工作流门禁及其直接测试。后续真正恢复设计时，只能修改 `docs/EFFECTIVE_DESIGN_BASELINE.md` 并等待用户确认 Stage 1 完整设计；不得让旧 Goal、旧迁移计划、历史报告、交接状态、聊天记忆或旧代码直接影响业务代码。当前暂停 Stage 1 业务实现、安装、外部调用、真实来源、真实模型、真实运行、`production_daily`、`validation_live`、Stage 1A 交接、研究阶段和经验系统。
+默认 Stage 为 `stage_1_daily_discovery`，`design_complete: false`，`stage_status: BASELINE_GAP`。该模式只允许根据 `docs/EFFECTIVE_DESIGN_BASELINE.md` 识别具体缺口、说明缺口影响、输出 `BASELINE_GAP` 并等待用户提供或确认新口径；`docs/IMPLEMENTATION_EXECUTION_BASELINE.md` 只用于执行状态，不得用于补造业务设计。禁止搜索或读取旧材料寻找答案，禁止自行提出旧规则恢复方案，禁止修改业务代码、配置、数据库、业务测试、真实来源、真实模型、安装或正式运行。
+
+禁止作为当前设计恢复来源的材料包括但不限于：V0.x 文档、`CURRENT_DESIGN_BASELINE.md`、`DESIGN_AUDIT.md`、旧 Goal、ROADMAP、BUILD_PLAN、Git 历史中的旧设计和旧代码注释中的业务规则。任何来自这些材料的内容不得据此修改有效基线或代码。
 
 ## Stage 1 热点源单次真实验收授权
 
@@ -99,7 +115,7 @@ forbidden_actions:
 
 安装必须位于仓库内 `vendor/TrendRadar`，不得把仓库外目录作为正式运行位置。接入不得修改 TrendRadar 上游业务源码，不得使用非官方分发、其他热点源、浏览器临时抓取、旧热点、fixture 或人工伪造输出。项目转换入口只能读取 TrendRadar 本次真实运行产生的本地 SQLite 结果并输出规范化 JSON，不作业务判断、不调用模型、不补造 URL 或数量。真实验收只允许热点来源，不得同时启动标签搜索、对标来源、候选生成、`production_daily`、Stage 1A、研究或经验系统；超时、部分失败和不确定请求不得自动重试。
 
-完成后必须记录官方来源版本、本机安装位置、真实运行命令、规范化输出、原始数据库、标准输出、标准错误、开始/结束时间和耗时。随后立即关闭外部调用授权并恢复 `DESIGN_RECOVERY`；任何实际无法完成的环节必须标记 `ENV_NOT_READY` 并停止，不得再次把接口、测试或安装文件存在称为“已接通”。
+完成后必须记录官方来源版本、本机安装位置、真实运行命令、规范化输出、原始数据库、标准输出、标准错误、开始/结束时间和耗时。随后立即关闭外部调用授权并恢复 `baseline_gap_resolution`；任何实际无法完成的环节必须标记 `ENV_NOT_READY` 并停止，不得再次把接口、测试或安装文件存在称为“已接通”。
 
 Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`TECH_TESTED`、`ENV_READY`、`LIVE_VALIDATED`、`PRODUCTION_READY`。等级必须逐级满足；Mock、fixture、fake provider、文件存在或 pytest 通过最高只能达到 `TECH_TESTED`。`ENV_READY` 必须有项目内安装、依赖、正式本机配置和可执行命令。上游采集器真实启动并取得原始数据，只能证明运行环境和原始转换可用，仍只到 `ENV_READY`。`LIVE_VALIDATED` 必须让本次真实来源经过当前版本的标准来源对象转换、领域匹配、领域排除规则、时效/风险/重复过滤和热点转具体问题，并形成可审计的合格候选或确定性零候选原因；需要模型判断的节点还必须经过显式模型路由且无技术失败。`PRODUCTION_READY` 还必须通过进入受控日常发现链路的独立验收。只有 `LIVE_VALIDATED` 或 `PRODUCTION_READY` 的来源才能用于之后另行授权的真实候选发现。
 

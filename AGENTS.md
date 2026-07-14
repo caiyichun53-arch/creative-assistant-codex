@@ -38,7 +38,8 @@
 - 完成前必须暂存本轮全部文件，确认没有未暂存和未跟踪文件，再运行 `python scripts/workflow_guard.py finish`。只有 `finish` 的 `task_finish_status: PASS` 并为当前 Git 索引生成凭证后才允许提交；这只表示当前治理/设计恢复任务可提交，不表示业务 Stage 具备实施资格或已经完成。
 - Git 提交必须通过仓库 `.githooks/pre-commit` 对 finish 凭证的校验。禁止 `--no-verify`、禁用或替换 `core.hooksPath`、删除钩子、伪造凭证或绕过门禁。
 - 真实数据库写入、真实网络/来源、安装、环境改动、付费服务和模型调用必须在 `execution/current_stage.yaml` 中显式授权，并在命令执行前以 `--formal-data-write`、`--external-call` 或 `--environment-change` 通过门禁；未授权必须返回 `USER_AUTH_REQUIRED`。不得先调用后补授权。
-- 只有 `mode: design_recovery` 可以恢复设计；设计恢复只能修改 `docs/EFFECTIVE_DESIGN_BASELINE.md`，除非当前执行指针明确把门禁或章程治理文件列入白名单。旧 Goal、旧迁移计划、历史报告、交接状态、聊天记忆和旧代码不得直接影响业务代码。
+- `mode: baseline_gap_resolution` 只能根据 `docs/EFFECTIVE_DESIGN_BASELINE.md` 识别具体缺口、说明缺口影响、输出 `BASELINE_GAP` 并等待用户提供或确认新口径；不得搜索旧材料寻找答案，不得自行提出旧规则恢复方案，不得修改业务代码。`docs/IMPLEMENTATION_EXECUTION_BASELINE.md` 只用于执行状态，不得用于补造业务设计。
+- 任何旧文档或旧材料，包括 V0.x 文档、`CURRENT_DESIGN_BASELINE.md`、`DESIGN_AUDIT.md`、旧 Goal、ROADMAP、BUILD_PLAN、Git 历史中的旧设计和旧代码注释中的业务规则，均不得作为当前设计恢复来源，也不得据此修改基线或代码。
 - 每项 requirement 必须同时指向现行基线位置和直接测试；缺少任一项时 `finish` 不得通过。任何业务实现恢复前必须把 `design_complete` 和 `implementation_authorized` 明确改为 `true`，并由用户确认对应 Stage 详细设计。
 
 ## 交付纪律

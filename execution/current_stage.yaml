@@ -1,4 +1,4 @@
-mode: design_recovery
+mode: baseline_gap_resolution
 stage: stage_1_daily_discovery
 design_complete: false
 implementation_authorized: false
@@ -8,9 +8,23 @@ formal_data_writes_authorized: false
 production_authorized: false
 completion_status: REJECTED_DESIGN_MISMATCH
 stage_status: BASELINE_GAP
-next_action: recover_and_confirm_stage_1_design
+next_action: wait_for_user_provided_or_confirmed_stage_1_criteria
 baseline_sha256: 24e4312ea025708e3d01ec2940868a3ee0efc89a9370835b77167cf0a06c5a22
-base_commit: e5268c2aac6b169a2c18bb8b864049324415dc0d
+base_commit: 7f444375efc69ca5dad7fe6e32bbb39b273fe1e2
+allowed_design_sources:
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
+execution_state_sources:
+  - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
+  - execution/current_stage.yaml
+prohibited_design_sources:
+  - V0.x documents
+  - CURRENT_DESIGN_BASELINE.md
+  - DESIGN_AUDIT.md
+  - old Goal documents
+  - ROADMAP
+  - BUILD_PLAN
+  - Git history old designs
+  - old code comments business rules
 requirements:
   - id: WF-GUARD-DESIGN-RECOVERY-001
     description: Unified workflow guard state lives in execution/current_stage.yaml and blocks business implementation, real execution, external calls, and environment changes while Stage 1 design is incomplete.
