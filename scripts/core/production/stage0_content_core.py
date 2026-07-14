@@ -11,13 +11,13 @@ import json
 import sqlite3
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
 from scripts.core.execution_contract import require_baseline_citations
 from scripts.core.model_gateway.goal07_model_gateway import ModelRequest, ModelRunEnvelope
-from scripts.core.model_gateway.model_router import ModelRouter
+from scripts.core.model_gateway.model_router import ModelRouter, ModelRouterError
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -200,6 +200,19 @@ class CoreModelRunMaterializer:
         return self._core._persist_gateway_envelope(envelope, binding)
 
 
+class CoreDiscoveryModelRunMaterializer:
+    """ModelGateway materializer for Stage 1B candidates; never creates a production task."""
+
+    def __init__(self, core: "Stage0ContentProductionCore") -> None:
+        self._core = core
+
+    def persist_envelope(self, envelope: ModelRunEnvelope) -> str:
+        binding = dict((envelope.metadata or {}).get("stage1b_core") or {})
+        if not binding:
+            raise ModelGatewayRequiredError("ModelGateway request lacks Stage 1B Core binding")
+        return self._core.persist_discovery_model_envelope(envelope, binding)
+
+
 class Stage0ContentProductionCore:
     """The sole formal Core API for Stage 0's first vertical production chain."""
 
@@ -345,6 +358,151 @@ class Stage0ContentProductionCore:
             CREATE TRIGGER IF NOT EXISTS stage1a_artifact_payload_immutable_delete
             BEFORE DELETE ON stage1a_artifact_payload
             BEGIN SELECT RAISE(ABORT, 'stage1a artifact payloads are immutable'); END;
+            CREATE TABLE IF NOT EXISTS stage1b_discovery_run (
+                run_id TEXT PRIMARY KEY,
+                discovery_date TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('processing', 'completed', 'failed', 'cancelled')),
+                data_identity TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                failure_reason TEXT
+            );
+            CREATE TABLE IF NOT EXISTS stage1b_source_version (
+                source_version_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES stage1b_discovery_run(run_id),
+                domain_label TEXT NOT NULL,
+                source_type TEXT NOT NULL CHECK(source_type IN ('daily_competitor_content', 'historical_high_signal', 'hotspot', 'tag_discovery', 'question_expansion', 'saved_user_direction')),
+                source_object_id TEXT NOT NULL,
+                source_object_version TEXT NOT NULL,
+                source_time TEXT NOT NULL,
+                expires_at TEXT,
+                payload_json TEXT NOT NULL,
+                integrity_hash TEXT NOT NULL,
+                data_identity TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(run_id, source_type, source_object_id, source_object_version)
+            );
+            CREATE TABLE IF NOT EXISTS stage1b_filter_result (
+                filter_result_id TEXT PRIMARY KEY,
+                source_version_id TEXT NOT NULL REFERENCES stage1b_source_version(source_version_id),
+                outcome TEXT NOT NULL CHECK(outcome IN ('eligible', 'excluded')),
+                reason_code TEXT NOT NULL,
+                detail_json TEXT NOT NULL,
+                data_identity TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(source_version_id)
+            );
+            CREATE TABLE IF NOT EXISTS stage1b_input_assembly (
+                assembly_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES stage1b_discovery_run(run_id),
+                source_version_id TEXT NOT NULL REFERENCES stage1b_source_version(source_version_id),
+                payload_json TEXT NOT NULL,
+                integrity_hash TEXT NOT NULL,
+                prompt_version TEXT NOT NULL,
+                skill_version TEXT NOT NULL,
+                model_config_version TEXT NOT NULL,
+                data_identity TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(run_id, source_version_id)
+            );
+            CREATE TABLE IF NOT EXISTS stage1b_model_run (
+                model_run_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES stage1b_discovery_run(run_id),
+                source_version_id TEXT NOT NULL REFERENCES stage1b_source_version(source_version_id),
+                input_assembly_id TEXT NOT NULL REFERENCES stage1b_input_assembly(assembly_id),
+                status TEXT NOT NULL,
+                request_id TEXT,
+                prompt_version TEXT NOT NULL,
+                skill_version TEXT NOT NULL,
+                route_id TEXT,
+                route_version TEXT NOT NULL,
+                provider_ref TEXT,
+                provider_name TEXT NOT NULL,
+                model_name TEXT NOT NULL,
+                input_integrity_hash TEXT NOT NULL,
+                output_hash TEXT,
+                validation_status TEXT NOT NULL,
+                error_json TEXT NOT NULL,
+                retry_status TEXT NOT NULL,
+                usage_json TEXT NOT NULL,
+                cost_json TEXT NOT NULL,
+                duration_ms INTEGER NOT NULL,
+                data_identity TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                via_model_gateway INTEGER NOT NULL CHECK(via_model_gateway IN (0, 1)),
+                UNIQUE(run_id, source_version_id, input_assembly_id)
+            );
+            CREATE TABLE IF NOT EXISTS stage1b_candidate_version (
+                candidate_version_id TEXT PRIMARY KEY,
+                candidate_id TEXT NOT NULL,
+                run_id TEXT NOT NULL REFERENCES stage1b_discovery_run(run_id),
+                domain_label TEXT NOT NULL,
+                source_version_id TEXT NOT NULL REFERENCES stage1b_source_version(source_version_id),
+                parent_candidate_version_id TEXT,
+                model_run_id TEXT NOT NULL REFERENCES stage1b_model_run(model_run_id),
+                payload_json TEXT NOT NULL,
+                integrity_hash TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('awaiting_user_decision', 'selected', 'deferred', 'rejected', 'evergreen', 'angle_change_requested')),
+                data_identity TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(run_id, source_version_id)
+            );
+            CREATE TABLE IF NOT EXISTS stage1b_daily_snapshot (
+                snapshot_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES stage1b_discovery_run(run_id),
+                domain_label TEXT NOT NULL,
+                candidate_version_id TEXT REFERENCES stage1b_candidate_version(candidate_version_id),
+                display_position INTEGER NOT NULL,
+                data_identity TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(run_id, domain_label, display_position)
+            );
+            CREATE TABLE IF NOT EXISTS stage1b_candidate_decision (
+                decision_id TEXT PRIMARY KEY,
+                candidate_version_id TEXT NOT NULL REFERENCES stage1b_candidate_version(candidate_version_id),
+                decision TEXT NOT NULL CHECK(decision IN ('selected', 'deferred', 'rejected', 'angle_change_requested', 'evergreen')),
+                actor TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                formal_topic_task_id TEXT,
+                data_identity TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS stage1b_candidate_absence (
+                absence_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES stage1b_discovery_run(run_id),
+                source_version_id TEXT NOT NULL REFERENCES stage1b_source_version(source_version_id),
+                model_run_id TEXT REFERENCES stage1b_model_run(model_run_id),
+                reason_code TEXT NOT NULL,
+                detail_json TEXT NOT NULL,
+                data_identity TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(run_id, source_version_id)
+            );
+            CREATE TABLE IF NOT EXISTS stage1b_candidate_cooldown (
+                cooldown_id TEXT PRIMARY KEY,
+                candidate_version_id TEXT NOT NULL UNIQUE REFERENCES stage1b_candidate_version(candidate_version_id),
+                snapshot_id TEXT NOT NULL REFERENCES stage1b_daily_snapshot(snapshot_id),
+                actor TEXT NOT NULL,
+                actor_kind TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                data_identity TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TRIGGER IF NOT EXISTS stage1b_source_version_immutable_update
+            BEFORE UPDATE ON stage1b_source_version
+            BEGIN SELECT RAISE(ABORT, 'stage1b source versions are immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS stage1b_source_version_immutable_delete
+            BEFORE DELETE ON stage1b_source_version
+            BEGIN SELECT RAISE(ABORT, 'stage1b source versions are immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS stage1b_candidate_version_immutable_update
+            BEFORE UPDATE ON stage1b_candidate_version
+            BEGIN SELECT RAISE(ABORT, 'stage1b candidate versions are immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS stage1b_candidate_version_immutable_delete
+            BEFORE DELETE ON stage1b_candidate_version
+            BEGIN SELECT RAISE(ABORT, 'stage1b candidate versions are immutable'); END;
             """
         )
         self.conn.commit()
@@ -722,6 +880,105 @@ class Stage0ContentProductionCore:
             raise ModelGatewayRequiredError("model run does not exist")
         return row
 
+    def _discovery_run(self, run_id: str) -> sqlite3.Row:
+        row = self.conn.execute("SELECT * FROM stage1b_discovery_run WHERE run_id=?", (run_id,)).fetchone()
+        if row is None or row["data_identity"] != self.data_identity:
+            raise StateTransitionError("discovery run does not exist in this data identity")
+        return row
+
+    def _discovery_source(self, source_version_id: str) -> sqlite3.Row:
+        row = self.conn.execute("SELECT * FROM stage1b_source_version WHERE source_version_id=?", (source_version_id,)).fetchone()
+        if row is None or row["data_identity"] != self.data_identity:
+            raise StateTransitionError("discovery source does not exist in this data identity")
+        return row
+
+    def _discovery_assembly(self, assembly_id: str) -> sqlite3.Row:
+        row = self.conn.execute("SELECT * FROM stage1b_input_assembly WHERE assembly_id=?", (assembly_id,)).fetchone()
+        if row is None or row["data_identity"] != self.data_identity:
+            raise StateTransitionError("discovery input assembly does not exist in this data identity")
+        return row
+
+    def _discovery_model_run(self, model_run_id: str) -> sqlite3.Row:
+        row = self.conn.execute("SELECT * FROM stage1b_model_run WHERE model_run_id=?", (model_run_id,)).fetchone()
+        if row is None or row["data_identity"] != self.data_identity:
+            raise ModelGatewayRequiredError("discovery model run does not exist in this data identity")
+        return row
+
+    def _discovery_candidate(self, candidate_version_id: str) -> sqlite3.Row:
+        row = self.conn.execute("SELECT * FROM stage1b_candidate_version WHERE candidate_version_id=?", (candidate_version_id,)).fetchone()
+        if row is None or row["data_identity"] != self.data_identity:
+            raise StateTransitionError("discovery candidate does not exist in this data identity")
+        return row
+
+    def _resolve_discovery_model_route(self):
+        router = ModelRouter.from_file()
+        definition = router.routes.get("business_analysis")
+        if definition is None or definition.fallback != "none" or "topic_screening" not in definition.allowed_task_types:
+            raise ModelBindingUnavailableError("daily discovery requires the explicit business topic_screening route")
+        try:
+            return router.resolve_bound_route("business_analysis", route_name="stage1b.daily_discovery")
+        except Exception as exc:
+            raise ModelBindingUnavailableError("daily discovery has no explicit resolved model binding") from exc
+
+    def _assert_discovery_source_provenance(
+        self,
+        *,
+        domain_label: str,
+        source_type: str,
+        source_object_id: str,
+        source_object_version: str,
+        source_time: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """Accept only a source whose precise formal origin still matches the Core facts."""
+        origin = payload.get("formal_source")
+        if not isinstance(origin, dict):
+            raise StateTransitionError("daily discovery source requires a formal_source mapping")
+        if source_type == "daily_competitor_content":
+            row = self.conn.execute(
+                "SELECT video.video_id, video.last_checked_at, video.publish_time, video.title, video.url, video.raw_json, "
+                "video.raw_archive_ref, video.excluded_reason, account.domain_label, account.registration_status, "
+                "account.source_config_ref FROM competitor_videos video JOIN competitor_accounts account "
+                "ON account.account_id=video.account_id WHERE video.video_id=?",
+                (source_object_id,),
+            ).fetchone()
+            expected_table, expected_version = "competitor_videos", "last_checked_at"
+        elif source_type == "historical_high_signal":
+            row = self.conn.execute(
+                "SELECT hit.hit_id, hit.promoted_at, hit.publish_time, hit.title, hit.url, hit.judgment_confidence, "
+                "video.raw_json, video.raw_archive_ref, video.excluded_reason, account.domain_label, "
+                "account.registration_status, account.source_config_ref FROM hits hit "
+                "JOIN competitor_videos video ON video.video_id=hit.video_id "
+                "JOIN competitor_accounts account ON account.account_id=hit.account_id WHERE hit.hit_id=?",
+                (source_object_id,),
+            ).fetchone()
+            expected_table, expected_version = "hits", "promoted_at"
+        else:
+            raise StateTransitionError("daily discovery source type is not enabled in this Stage 1B slice")
+        if row is None:
+            raise StateTransitionError("daily discovery source is not registered in the formal source facts")
+        if origin.get("table") != expected_table or origin.get("object_id") != source_object_id:
+            raise StateTransitionError("daily discovery source mapping does not identify the formal origin")
+        formal_version = str(row[expected_version])
+        if origin.get("object_version") != formal_version or source_object_version != formal_version:
+            raise StaleResultError("daily discovery source version does not match the formal origin")
+        if source_time != str(row["publish_time"]) or domain_label != str(row["domain_label"]):
+            raise StateTransitionError("daily discovery source time or domain does not match the formal origin")
+        if row["registration_status"] != "active" or not str(row["source_config_ref"] or "").strip():
+            raise StateTransitionError("daily discovery source account is not qualified")
+        if not str(row["title"] or "").strip() or not str(row["url"] or "").strip() or not str(row["raw_archive_ref"] or "").strip():
+            raise StateTransitionError("daily discovery source lacks required formal material")
+        if row["excluded_reason"] is not None:
+            raise StateTransitionError("daily discovery source is excluded by formal source facts")
+        if source_type == "historical_high_signal" and row["judgment_confidence"] != "formal":
+            raise StateTransitionError("historical source lacks formal high-signal qualification")
+        try:
+            raw_hash = _hash(json.loads(str(row["raw_json"])))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise StateTransitionError("daily discovery source has unreadable formal raw payload") from exc
+        if origin.get("raw_metadata_hash") != raw_hash:
+            raise StaleResultError("daily discovery source raw payload does not match the formal origin")
+
     def get_task(self, task_id: str) -> dict[str, Any]:
         row = self._task(task_id)
         return {key: row[key] for key in row.keys()}
@@ -771,6 +1028,537 @@ class Stage0ContentProductionCore:
                 (_canonical({"validation_error": reason}), model_run_id),
             )
             self._audit(task_id, "model_output_validation_failed", {"model_run_id": model_run_id, "reason": reason})
+
+    def create_discovery_run(
+        self, *, discovery_date: str, actor: str, idempotency_key: str
+    ) -> dict[str, str]:
+        request = {"discovery_date": discovery_date, "actor": actor, "data_identity": self.data_identity}
+        replay = self._replay("stage1b_create_discovery_run", idempotency_key, request)
+        if replay:
+            return replay
+        run_id = _id("discovery_run")
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage1b_discovery_run VALUES (?, ?, 'processing', ?, ?, ?, NULL, NULL)",
+                (run_id, discovery_date, self.data_identity, actor, _now()),
+            )
+            result = {"run_id": run_id, "discovery_date": discovery_date}
+            self._receipt("stage1b_create_discovery_run", idempotency_key, request, result)
+            self._audit(run_id, "stage1b_discovery_run_started", result)
+        return result
+
+    def record_discovery_source(
+        self,
+        *,
+        run_id: str,
+        domain_label: str,
+        source_type: str,
+        source_object_id: str,
+        source_object_version: str,
+        source_time: str,
+        expires_at: str | None = None,
+        payload: dict[str, Any],
+        idempotency_key: str,
+    ) -> dict[str, str]:
+        run = self._discovery_run(run_id)
+        if run["status"] != "processing":
+            raise StateTransitionError("discovery sources may only be recorded while a run is processing")
+        self._assert_discovery_source_provenance(
+            domain_label=domain_label,
+            source_type=source_type,
+            source_object_id=source_object_id,
+            source_object_version=source_object_version,
+            source_time=source_time,
+            payload=payload,
+        )
+        request = {
+            "run_id": run_id, "domain_label": domain_label, "source_type": source_type,
+            "source_object_id": source_object_id, "source_object_version": source_object_version,
+            "source_time": source_time, "expires_at": expires_at, "payload": payload,
+        }
+        replay = self._replay("stage1b_record_discovery_source", idempotency_key, request)
+        if replay:
+            return replay
+        source_version_id = _id("discovery_source")
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage1b_source_version VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (source_version_id, run_id, domain_label, source_type, source_object_id, source_object_version,
+                 source_time, expires_at, _canonical(payload), _hash(payload), self.data_identity, _now()),
+            )
+            result = {"source_version_id": source_version_id, "input_integrity_hash": _hash(payload)}
+            self._receipt("stage1b_record_discovery_source", idempotency_key, request, result)
+            self._audit(run_id, "stage1b_source_recorded", {**result, "source_type": source_type})
+        return result
+
+    def record_discovery_filter(
+        self,
+        *,
+        source_version_id: str,
+        outcome: str,
+        reason_code: str,
+        detail: dict[str, Any],
+        idempotency_key: str,
+    ) -> dict[str, str]:
+        source = self._discovery_source(source_version_id)
+        if outcome not in {"eligible", "excluded"}:
+            raise StateTransitionError("discovery filter outcome is invalid")
+        request = {"source_version_id": source_version_id, "outcome": outcome, "reason_code": reason_code, "detail": detail}
+        replay = self._replay("stage1b_record_discovery_filter", idempotency_key, request)
+        if replay:
+            return replay
+        result_id = _id("discovery_filter")
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage1b_filter_result VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (result_id, source_version_id, outcome, reason_code, _canonical(detail), self.data_identity, _now()),
+            )
+            result = {"filter_result_id": result_id, "source_version_id": source_version_id, "outcome": outcome}
+            self._receipt("stage1b_record_discovery_filter", idempotency_key, request, result)
+            self._audit(source["run_id"], "stage1b_source_filtered", {**result, "reason_code": reason_code})
+        return result
+
+    def create_discovery_input_assembly(
+        self,
+        *,
+        run_id: str,
+        source_version_id: str,
+        payload: dict[str, Any],
+        prompt_version: str,
+        skill_version: str,
+        idempotency_key: str,
+    ) -> dict[str, str]:
+        run, source = self._discovery_run(run_id), self._discovery_source(source_version_id)
+        if run["status"] != "processing" or source["run_id"] != run_id:
+            raise StateTransitionError("discovery input must belong to an active run source")
+        filter_row = self.conn.execute("SELECT outcome FROM stage1b_filter_result WHERE source_version_id=?", (source_version_id,)).fetchone()
+        if filter_row is None or filter_row["outcome"] != "eligible":
+            raise StateTransitionError("LLM input may only be assembled for deterministically eligible sources")
+        route = self._resolve_discovery_model_route()
+        stored_payload = dict(payload)
+        stored_payload["model_binding"] = {
+            "route_id": route.route_id,
+            "provider_name": route.provider_name,
+            "provider_ref": route.provider_ref,
+            "model_name": route.model_name,
+            "config_version": route.config_version,
+            "config_hash": route.config_hash,
+        }
+        request = {"run_id": run_id, "source_version_id": source_version_id, "payload": stored_payload, "prompt_version": prompt_version, "skill_version": skill_version, "model_config_version": route.config_version}
+        replay = self._replay("stage1b_create_discovery_input", idempotency_key, request)
+        if replay:
+            return replay
+        assembly_id, integrity_hash = _id("discovery_assembly"), _hash(stored_payload)
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage1b_input_assembly VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (assembly_id, run_id, source_version_id, _canonical(stored_payload), integrity_hash, prompt_version, skill_version, route.config_version, self.data_identity, _now()),
+            )
+            result = {"assembly_id": assembly_id, "input_integrity_hash": integrity_hash, "model_config_hash": route.config_hash}
+            self._receipt("stage1b_create_discovery_input", idempotency_key, request, result)
+            self._audit(run_id, "stage1b_input_assembly_created", result)
+        return result
+
+    def prepare_discovery_model_request(self, *, run_id: str, source_version_id: str, assembly_id: str, prompt: str) -> ModelRequest:
+        run, source = self._discovery_run(run_id), self._discovery_source(source_version_id)
+        assembly = self._discovery_assembly(assembly_id)
+        if run["status"] != "processing" or source["run_id"] != run_id or assembly["run_id"] != run_id or assembly["source_version_id"] != source_version_id:
+            raise StateTransitionError("discovery model request has stale or mismatched input")
+        route = self._resolve_discovery_model_route()
+        payload = json.loads(assembly["payload_json"])
+        expected_binding = {
+            "route_id": route.route_id,
+            "provider_name": route.provider_name,
+            "provider_ref": route.provider_ref,
+            "model_name": route.model_name,
+            "config_version": route.config_version,
+            "config_hash": route.config_hash,
+        }
+        if payload.get("model_binding") != expected_binding or assembly["model_config_version"] != route.config_version:
+            raise StaleResultError("discovery input assembly no longer matches the explicit model binding")
+        return ModelRequest(
+            route_name=route.route_name,
+            prompt=prompt,
+            input_payload=payload,
+            correlation_id=run_id,
+            skill_name="stage1b.source_to_topic",
+            skill_version=assembly["skill_version"],
+            binding_name="business_analysis",
+            binding_version=route.config_version,
+            binding_hash=route.config_hash,
+            metadata={"stage1b_core": {"run_id": run_id, "source_version_id": source_version_id, "input_assembly_id": assembly_id, "data_identity": self.data_identity, "prompt_version": assembly["prompt_version"], "skill_version": assembly["skill_version"], "expected_binding": expected_binding}},
+        )
+
+    def persist_discovery_model_envelope(self, envelope: ModelRunEnvelope, binding: dict[str, Any]) -> str:
+        if binding.get("data_identity") != self.data_identity:
+            raise DataIdentityError("ModelGateway discovery identity does not match Core identity")
+        run_id = str(binding.get("run_id") or "")
+        source_version_id = str(binding.get("source_version_id") or "")
+        assembly_id = str(binding.get("input_assembly_id") or "")
+        run, source, assembly = self._discovery_run(run_id), self._discovery_source(source_version_id), self._discovery_assembly(assembly_id)
+        if run["status"] != "processing" or source["run_id"] != run_id or assembly["run_id"] != run_id or assembly["source_version_id"] != source_version_id:
+            raise StaleResultError("discovery ModelGateway envelope belongs to stale input")
+        route = self._resolve_discovery_model_route()
+        expected_binding = {
+            "route_id": route.route_id,
+            "provider_name": route.provider_name,
+            "provider_ref": route.provider_ref,
+            "model_name": route.model_name,
+            "config_version": route.config_version,
+            "config_hash": route.config_hash,
+        }
+        if binding.get("expected_binding") != expected_binding:
+            raise ModelGatewayRequiredError("discovery ModelGateway request lacks the current explicit binding")
+        if (
+            envelope.route_name != route.route_name
+            or envelope.route_id != route.route_id
+            or envelope.provider_name != route.provider_name
+            or envelope.provider_ref != route.provider_ref
+            or envelope.model_name != route.model_name
+            or envelope.config_version != route.config_version
+            or envelope.config_hash != route.config_hash
+            or envelope.binding_name != "business_analysis"
+            or envelope.binding_version != route.config_version
+            or envelope.binding_hash != route.config_hash
+        ):
+            raise ModelGatewayRequiredError("discovery ModelGateway envelope does not match business_analysis binding")
+        model_run_id = _id("discovery_model_run")
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage1b_model_run VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (model_run_id, run_id, source_version_id, assembly_id, envelope.status, envelope.correlation_id,
+                 binding["prompt_version"], binding["skill_version"], envelope.route_id or envelope.route_name,
+                 envelope.config_version, envelope.provider_ref, envelope.provider_name, envelope.model_name,
+                 assembly["integrity_hash"], envelope.output_hash, "not_validated", _canonical(envelope.error or {}),
+                 "not_retried", _canonical({"prompt_tokens": envelope.usage.prompt_tokens, "completion_tokens": envelope.usage.completion_tokens, "total_tokens": envelope.usage.total_tokens}),
+                 _canonical(envelope.cost), envelope.duration_ms, self.data_identity, _now(), 1),
+            )
+            self._audit(run_id, "stage1b_model_gateway_envelope_recorded", {"model_run_id": model_run_id, "status": envelope.status})
+        return model_run_id
+
+    def record_discovery_model_validation_failure(self, *, model_run_id: str, reason: str) -> None:
+        model_run = self._discovery_model_run(model_run_id)
+        with self.conn:
+            self.conn.execute("UPDATE stage1b_model_run SET validation_status='failed', error_json=? WHERE model_run_id=?", (_canonical({"validation_error": reason}), model_run_id))
+            self._audit(model_run["run_id"], "stage1b_model_output_validation_failed", {"model_run_id": model_run_id, "reason": reason})
+
+    def record_discovery_no_candidate(
+        self,
+        *,
+        run_id: str,
+        source_version_id: str,
+        model_run_id: str | None,
+        reason_code: str,
+        detail: dict[str, Any],
+        idempotency_key: str,
+    ) -> dict[str, str]:
+        run, source = self._discovery_run(run_id), self._discovery_source(source_version_id)
+        if run["status"] != "processing" or source["run_id"] != run_id:
+            raise StateTransitionError("candidate absence must belong to an active source run")
+        if model_run_id is not None:
+            model_run = self._discovery_model_run(model_run_id)
+            if model_run["run_id"] != run_id or model_run["source_version_id"] != source_version_id:
+                raise ModelGatewayRequiredError("candidate absence model run does not belong to the source")
+        request = {"run_id": run_id, "source_version_id": source_version_id, "model_run_id": model_run_id, "reason_code": reason_code, "detail": detail}
+        replay = self._replay("stage1b_record_candidate_absence", idempotency_key, request)
+        if replay:
+            return replay
+        absence_id = _id("candidate_absence")
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage1b_candidate_absence VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (absence_id, run_id, source_version_id, model_run_id, reason_code, _canonical(detail), self.data_identity, _now()),
+            )
+            if model_run_id is not None:
+                validation_status = "passed" if reason_code == "model_returned_no_candidate" else "failed"
+                self.conn.execute("UPDATE stage1b_model_run SET validation_status=? WHERE model_run_id=?", (validation_status, model_run_id))
+            result = {"absence_id": absence_id, "reason_code": reason_code}
+            self._receipt("stage1b_record_candidate_absence", idempotency_key, request, result)
+            self._audit(run_id, "stage1b_candidate_absent", result)
+        return result
+
+    def create_discovery_candidate(
+        self,
+        *,
+        run_id: str,
+        source_version_id: str,
+        model_run_id: str,
+        candidate_id: str,
+        payload: dict[str, Any],
+        idempotency_key: str,
+    ) -> dict[str, str]:
+        run, source, model_run = self._discovery_run(run_id), self._discovery_source(source_version_id), self._discovery_model_run(model_run_id)
+        if run["status"] != "processing" or source["run_id"] != run_id or model_run["run_id"] != run_id or model_run["source_version_id"] != source_version_id:
+            raise StateTransitionError("candidate does not belong to the active source run")
+        if model_run["status"] != "succeeded" or model_run["via_model_gateway"] != 1 or model_run["validation_status"] != "not_validated":
+            raise ModelGatewayRequiredError("candidate requires one successful unconsumed ModelGateway run")
+        forbidden_fields = {"score", "rank", "weight", "recommendation_score", "quality_rank"}
+        if forbidden_fields & set(payload):
+            raise StateTransitionError("discovery candidates must not contain business-ranking fields")
+        if self.conn.execute("SELECT 1 FROM stage1b_candidate_absence WHERE run_id=? AND source_version_id=?", (run_id, source_version_id)).fetchone():
+            raise StateTransitionError("a source recorded as zero-candidate cannot create a candidate")
+        request = {"run_id": run_id, "source_version_id": source_version_id, "model_run_id": model_run_id, "candidate_id": candidate_id, "payload": payload}
+        replay = self._replay("stage1b_create_discovery_candidate", idempotency_key, request)
+        if replay:
+            return replay
+        candidate_version_id = _id("candidate_version")
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage1b_candidate_version VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 'awaiting_user_decision', ?, ?)",
+                (candidate_version_id, candidate_id, run_id, source["domain_label"], source_version_id, model_run_id, _canonical(payload), _hash(payload), self.data_identity, _now()),
+            )
+            self.conn.execute("UPDATE stage1b_model_run SET validation_status='passed' WHERE model_run_id=?", (model_run_id,))
+            result = {"candidate_version_id": candidate_version_id, "candidate_id": candidate_id}
+            self._receipt("stage1b_create_discovery_candidate", idempotency_key, request, result)
+            self._audit(run_id, "stage1b_candidate_created", result)
+        return result
+
+    def complete_discovery_run(self, *, run_id: str, domains: tuple[str, ...], idempotency_key: str) -> dict[str, str]:
+        run = self._discovery_run(run_id)
+        if run["status"] == "completed":
+            return {"run_id": run_id, "status": "completed"}
+        if run["status"] != "processing":
+            raise StateTransitionError("only a processing discovery run can complete")
+        request = {"run_id": run_id, "domains": list(domains)}
+        replay = self._replay("stage1b_complete_discovery_run", idempotency_key, request)
+        if replay:
+            return replay
+        with self.conn:
+            for domain_label in domains:
+                rows = self.conn.execute("SELECT candidate_version_id FROM stage1b_candidate_version WHERE run_id=? AND domain_label=? ORDER BY created_at, candidate_version_id", (run_id, domain_label)).fetchall()
+                if rows:
+                    for position, row in enumerate(rows, start=1):
+                        snapshot_id = _id("snapshot")
+                        self.conn.execute("INSERT INTO stage1b_daily_snapshot VALUES (?, ?, ?, ?, ?, ?, ?)", (snapshot_id, run_id, domain_label, row["candidate_version_id"], position, self.data_identity, _now()))
+                        source = self.conn.execute("SELECT expires_at FROM stage1b_source_version WHERE source_version_id=(SELECT source_version_id FROM stage1b_candidate_version WHERE candidate_version_id=?)", (row["candidate_version_id"],)).fetchone()
+                        if source is not None and source["expires_at"] is None:
+                            started_at = _now()
+                            expires_at = (datetime.fromisoformat(started_at) + timedelta(days=3)).isoformat()
+                            self.conn.execute(
+                                "INSERT INTO stage1b_candidate_cooldown VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                (_id("candidate_cooldown"), row["candidate_version_id"], snapshot_id, "system", "system", "ordinary_unselected_candidate_displayed", started_at, expires_at, self.data_identity, _now()),
+                            )
+                else:
+                    self.conn.execute("INSERT INTO stage1b_daily_snapshot VALUES (?, ?, ?, NULL, 0, ?, ?)", (_id("snapshot"), run_id, domain_label, self.data_identity, _now()))
+            self.conn.execute("UPDATE stage1b_discovery_run SET status='completed', completed_at=? WHERE run_id=?", (_now(), run_id))
+            result = {"run_id": run_id, "status": "completed"}
+            self._receipt("stage1b_complete_discovery_run", idempotency_key, request, result)
+            self._audit(run_id, "stage1b_daily_snapshot_completed", result)
+        return result
+
+    def get_discovery_snapshot(self, *, run_id: str, domain_label: str) -> list[dict[str, Any]]:
+        self._discovery_run(run_id)
+        rows = self.conn.execute(
+            "SELECT snapshot.display_position, candidate.candidate_version_id, candidate.candidate_id, candidate.payload_json, source.source_type, source.source_time, source.expires_at, source.payload_json AS source_payload_json FROM stage1b_daily_snapshot snapshot LEFT JOIN stage1b_candidate_version candidate ON candidate.candidate_version_id=snapshot.candidate_version_id LEFT JOIN stage1b_source_version source ON source.source_version_id=candidate.source_version_id WHERE snapshot.run_id=? AND snapshot.domain_label=? ORDER BY snapshot.display_position, snapshot.snapshot_id",
+            (run_id, domain_label),
+        ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            if row["candidate_version_id"] is None:
+                continue
+            result.append({"display_position": row["display_position"], "candidate_version_id": row["candidate_version_id"], "candidate_id": row["candidate_id"], "candidate": json.loads(row["payload_json"]), "source_type": row["source_type"], "source_time": row["source_time"], "expires_at": row["expires_at"], "source": json.loads(row["source_payload_json"])})
+        return result
+
+    def record_discovery_decision(
+        self,
+        *,
+        candidate_version_id: str,
+        decision: str,
+        actor: str,
+        reason: str,
+        formal_topic_task_id: str | None,
+        idempotency_key: str,
+    ) -> dict[str, str]:
+        candidate = self._discovery_candidate(candidate_version_id)
+        if decision not in {"selected", "deferred", "rejected", "angle_change_requested", "evergreen"}:
+            raise StateTransitionError("unsupported discovery decision")
+        if decision == "selected":
+            raise StateTransitionError("selected candidates must use select_discovery_candidate")
+        if not reason.strip():
+            raise StateTransitionError("a user decision requires a reason")
+        if formal_topic_task_id is not None:
+            raise StateTransitionError("only the atomic selection action may create a formal-topic link")
+        if candidate["status"] != "awaiting_user_decision":
+            raise StateTransitionError("candidate is not awaiting a user decision")
+        request = {"candidate_version_id": candidate_version_id, "decision": decision, "actor": actor, "reason": reason, "formal_topic_task_id": formal_topic_task_id}
+        replay = self._replay("stage1b_record_discovery_decision", idempotency_key, request)
+        if replay:
+            return replay
+        if self.conn.execute("SELECT 1 FROM stage1b_candidate_decision WHERE candidate_version_id=?", (candidate_version_id,)).fetchone():
+            raise StateTransitionError("candidate already has a user decision")
+        with self.conn:
+            decision_id = _id("candidate_decision")
+            self.conn.execute("INSERT INTO stage1b_candidate_decision VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (decision_id, candidate_version_id, decision, actor, reason, formal_topic_task_id, self.data_identity, _now()))
+            result = {"decision_id": decision_id, "candidate_version_id": candidate_version_id, "decision": decision}
+            self._receipt("stage1b_record_discovery_decision", idempotency_key, request, result)
+            self._audit(candidate["run_id"], "stage1b_candidate_user_decision", result)
+        return result
+
+    def select_discovery_candidate(
+        self,
+        *,
+        candidate_version_id: str,
+        actor: str,
+        actor_kind: str,
+        reason: str,
+        idempotency_key: str,
+    ) -> dict[str, str]:
+        """Atomically hand one exact Stage 1B candidate to Stage 1A awaiting confirmation."""
+        if actor_kind != "user" or not actor.strip() or not reason.strip():
+            raise StateTransitionError("candidate selection requires an explicit user and reason")
+        candidate = self._discovery_candidate(candidate_version_id)
+        run = self._discovery_run(candidate["run_id"])
+        if run["status"] != "completed" or candidate["status"] != "awaiting_user_decision":
+            raise StateTransitionError("only a completed awaiting-user-decision candidate may be selected")
+        if self.conn.execute("SELECT 1 FROM stage1b_candidate_decision WHERE candidate_version_id=?", (candidate_version_id,)).fetchone():
+            raise StateTransitionError("candidate already has a user decision")
+        payload = json.loads(candidate["payload_json"])
+        domain_label = str(candidate["domain_label"])
+        now = _now()
+        if self.domain_formal_topic_count(domain_label=domain_label, current_date=now[:10]) >= 1:
+            raise StateTransitionError("the formal-domain daily capacity has already been used")
+        if self.formal_topic_title_seen(domain_label=domain_label, normalized_title=str(payload.get("normalized_title") or "")):
+            raise StateTransitionError("a matching formal topic already exists in this domain")
+        source_ref = payload.get("source_reference")
+        if not isinstance(source_ref, dict) or source_ref.get("source_version_id") != candidate["source_version_id"]:
+            raise StateTransitionError("candidate source reference is not the exact candidate source version")
+        request = {"candidate_version_id": candidate_version_id, "actor": actor, "actor_kind": actor_kind, "reason": reason}
+        replay = self._replay("stage1b_select_discovery_candidate", idempotency_key, request)
+        if replay:
+            return replay
+        task_id, topic_version_id, decision_id = _id("task"), _id("version"), _id("candidate_decision")
+        topic_payload = {
+            "title": payload["title"],
+            "core_question": payload["core_question"],
+            "domain": domain_label,
+            "source_refs": [source_ref, {"kind": "daily_candidate", "candidate_version_id": candidate_version_id}],
+        }
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage0_content_task VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, NULL)",
+                (task_id, topic_version_id, "formal_topic", topic_version_id, "awaiting_human_review", self.data_identity, actor, now),
+            )
+            self.conn.execute(
+                "INSERT INTO stage0_content_node_version VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)",
+                (topic_version_id, task_id, "formal_topic", "awaiting_human_review", "formal_topic_payload", "topic_submitted", self.data_identity, actor, now, 0),
+            )
+            self._insert_artifact_payload(topic_version_id, "formal_topic", topic_payload)
+            self.conn.execute(
+                "INSERT INTO stage1b_candidate_decision VALUES (?, ?, 'selected', ?, ?, ?, ?, ?)",
+                (decision_id, candidate_version_id, actor, reason, task_id, self.data_identity, now),
+            )
+            result = {"task_id": task_id, "topic_version_id": topic_version_id, "decision_id": decision_id, "candidate_version_id": candidate_version_id}
+            self._receipt("stage1b_select_discovery_candidate", idempotency_key, request, result)
+            self._audit(candidate["run_id"], "stage1b_candidate_selected_for_stage1a_confirmation", result)
+            self._audit(task_id, "formal_topic_submitted_from_stage1b_candidate", result)
+        return result
+
+    def discovery_source_readiness(self, *, domain_label: str, daily_since: str) -> dict[str, Any]:
+        if domain_label not in {"fan_kepu_social_life", "music_entertainment"}:
+            raise StateTransitionError("daily discovery supports only the two approved formal domains")
+        tables = {row["name"] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if not {"competitor_accounts", "competitor_videos", "hits"}.issubset(tables):
+            return {"status": "blocked", "reason": "formal_source_schema_missing", "daily_sources": 0, "historical_sources": 0}
+        active_accounts = self.conn.execute(
+            "SELECT COUNT(*) FROM competitor_accounts WHERE domain_label=? AND registration_status='active' AND COALESCE(source_config_ref, '')<>''",
+            (domain_label,),
+        ).fetchone()[0]
+        if not active_accounts:
+            return {"status": "blocked", "reason": "no_active_registered_account", "daily_sources": 0, "historical_sources": 0}
+        daily_sources = self.conn.execute(
+            "SELECT COUNT(*) FROM competitor_videos video JOIN competitor_accounts account ON account.account_id=video.account_id "
+            "WHERE account.domain_label=? AND account.registration_status='active' AND COALESCE(account.source_config_ref, '')<>'' "
+            "AND video.publish_time>=? AND COALESCE(video.title, '')<>'' AND COALESCE(video.url, '')<>'' "
+            "AND COALESCE(video.raw_archive_ref, '')<>'' AND video.excluded_reason IS NULL",
+            (domain_label, daily_since),
+        ).fetchone()[0]
+        historical_sources = self.conn.execute(
+            "SELECT COUNT(*) FROM hits hit JOIN competitor_videos video ON video.video_id=hit.video_id "
+            "JOIN competitor_accounts account ON account.account_id=hit.account_id WHERE account.domain_label=? "
+            "AND account.registration_status='active' AND COALESCE(account.source_config_ref, '')<>'' "
+            "AND hit.judgment_confidence='formal' AND COALESCE(hit.title, '')<>'' AND COALESCE(hit.url, '')<>'' "
+            "AND COALESCE(video.raw_archive_ref, '')<>'' AND video.excluded_reason IS NULL",
+            (domain_label,),
+        ).fetchone()[0]
+        if not daily_sources and not historical_sources:
+            return {"status": "blocked", "reason": "no_qualified_formal_source", "daily_sources": 0, "historical_sources": 0}
+        return {"status": "ready", "reason": "qualified_formal_source_available", "daily_sources": daily_sources, "historical_sources": historical_sources}
+
+    def load_real_discovery_sources(self, *, domain_label: str, daily_since: str, per_source_limit: int) -> list[dict[str, Any]]:
+        """Read only qualified, already-recorded formal source facts; never collect or invent content."""
+        if self.discovery_source_readiness(domain_label=domain_label, daily_since=daily_since)["status"] != "ready":
+            return []
+        result: list[dict[str, Any]] = []
+        daily_rows = self.conn.execute(
+            "SELECT video.video_id, video.title, video.url, video.publish_time, video.last_checked_at, video.raw_json, account.account_name "
+            "FROM competitor_videos video JOIN competitor_accounts account ON account.account_id=video.account_id "
+            "WHERE account.domain_label=? AND account.registration_status='active' AND COALESCE(account.source_config_ref, '')<>'' "
+            "AND video.publish_time>=? AND COALESCE(video.title, '')<>'' AND COALESCE(video.url, '')<>'' "
+            "AND COALESCE(video.raw_archive_ref, '')<>'' AND video.excluded_reason IS NULL "
+            "ORDER BY video.publish_time DESC, video.video_id ASC LIMIT ?",
+            (domain_label, daily_since, per_source_limit),
+        ).fetchall()
+        for row in daily_rows:
+            raw_hash = _hash(json.loads(row["raw_json"]))
+            result.append({"source_type": "daily_competitor_content", "source_object_id": row["video_id"], "source_object_version": row["last_checked_at"], "source_time": row["publish_time"], "payload": {"source_id": row["video_id"], "title": row["title"], "url": row["url"], "account_name": row["account_name"], "source_time": row["publish_time"], "formal_source": {"table": "competitor_videos", "object_id": row["video_id"], "object_version": row["last_checked_at"], "raw_metadata_hash": raw_hash}}})
+        historical_rows = self.conn.execute(
+            "SELECT hit.hit_id, hit.title, hit.url, hit.publish_time, hit.promoted_at, hit.hit_channel, hit.judgment_confidence, "
+            "video.raw_json, account.account_name FROM hits hit JOIN competitor_videos video ON video.video_id=hit.video_id "
+            "JOIN competitor_accounts account ON account.account_id=hit.account_id WHERE account.domain_label=? "
+            "AND account.registration_status='active' AND COALESCE(account.source_config_ref, '')<>'' "
+            "AND hit.judgment_confidence='formal' AND COALESCE(hit.title, '')<>'' AND COALESCE(hit.url, '')<>'' "
+            "AND COALESCE(video.raw_archive_ref, '')<>'' AND video.excluded_reason IS NULL "
+            "ORDER BY hit.promoted_at DESC, hit.hit_id ASC LIMIT ?",
+            (domain_label, per_source_limit),
+        ).fetchall()
+        for row in historical_rows:
+            raw_hash = _hash(json.loads(row["raw_json"]))
+            result.append({"source_type": "historical_high_signal", "source_object_id": row["hit_id"], "source_object_version": row["promoted_at"], "source_time": row["publish_time"], "payload": {"source_id": row["hit_id"], "title": row["title"], "url": row["url"], "account_name": row["account_name"], "source_time": row["publish_time"], "signal_basis": row["hit_channel"], "signal_confidence": row["judgment_confidence"], "formal_source": {"table": "hits", "object_id": row["hit_id"], "object_version": row["promoted_at"], "raw_metadata_hash": raw_hash}}})
+        return result
+
+    def discovery_source_seen(self, *, source_type: str, source_object_id: str, source_object_version: str) -> bool:
+        row = self.conn.execute("SELECT 1 FROM stage1b_source_version WHERE source_type=? AND source_object_id=? AND source_object_version=? AND data_identity=?", (source_type, source_object_id, source_object_version, self.data_identity)).fetchone()
+        return row is not None
+
+    def discovery_candidate_in_cooldown(self, *, domain_label: str, normalized_title: str, now: str) -> bool:
+        rows = self.conn.execute(
+            "SELECT candidate.payload_json FROM stage1b_candidate_cooldown cooldown JOIN stage1b_candidate_version candidate "
+            "ON candidate.candidate_version_id=cooldown.candidate_version_id WHERE candidate.domain_label=? "
+            "AND candidate.data_identity=? AND cooldown.data_identity=? AND cooldown.expires_at>? "
+            "AND NOT EXISTS (SELECT 1 FROM stage1b_candidate_decision decision WHERE decision.candidate_version_id=candidate.candidate_version_id)",
+            (domain_label, self.data_identity, self.data_identity, now),
+        ).fetchall()
+        return any(
+            normalized_title in {
+                str(json.loads(row["payload_json"]).get("normalized_title", "")),
+                str(json.loads(row["payload_json"]).get("normalized_source_title", "")),
+            }
+            for row in rows
+        )
+
+    def formal_topic_title_seen(self, *, domain_label: str, normalized_title: str) -> bool:
+        tables = {row["name"] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if not {"stage1a_artifact_payload", "stage0_content_node_version"}.issubset(tables):
+            return False
+        rows = self.conn.execute(
+            "SELECT artifact.payload_json FROM stage1a_artifact_payload artifact JOIN stage0_content_node_version version ON version.version_id=artifact.version_id WHERE artifact.artifact_kind='formal_topic' AND artifact.data_identity=?",
+            (self.data_identity,),
+        ).fetchall()
+        return any(json.loads(row["payload_json"]).get("domain") == domain_label and str(json.loads(row["payload_json"]).get("title", "")).casefold() == normalized_title for row in rows)
+
+    def domain_formal_topic_count(self, *, domain_label: str, current_date: str) -> int:
+        tables = {row["name"] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if not {"stage1a_artifact_payload", "stage0_content_node_version"}.issubset(tables):
+            return 0
+        rows = self.conn.execute(
+            "SELECT artifact.payload_json FROM stage1a_artifact_payload artifact JOIN stage0_content_node_version version ON version.version_id=artifact.version_id WHERE artifact.artifact_kind='formal_topic' AND artifact.data_identity=? AND substr(version.created_at, 1, 10)=?",
+            (self.data_identity, current_date),
+        ).fetchall()
+        return sum(1 for row in rows if json.loads(row["payload_json"]).get("domain") == domain_label)
+
+    def get_discovery_candidate(self, candidate_version_id: str) -> dict[str, Any]:
+        row = self._discovery_candidate(candidate_version_id)
+        return {key: row[key] for key in row.keys()} | {"payload": json.loads(row["payload_json"])}
 
     def get_artifact_payload(self, version_id: str) -> dict[str, Any]:
         version = self._version(version_id)
