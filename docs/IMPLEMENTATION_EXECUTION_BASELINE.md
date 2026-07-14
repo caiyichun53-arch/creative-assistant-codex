@@ -1,21 +1,14 @@
 ---
-mode: TECHNICAL_REPAIR
-stage: STAGE_1_HOTSPOT_CANDIDATE_CHAIN_REPAIR
+mode: VALIDATION_AUTHORIZATION_WAIT
+stage: STAGE_1_HOTSPOT_SOURCE_LIVE_VALIDATION
 design_complete: true
 baseline_sha256: 24e4312ea025708e3d01ec2940868a3ee0efc89a9370835b77167cf0a06c5a22
-base_commit: 64946526364b8067fcad04d85a540e0984322636
+base_commit: f62efe07cfdb815d3dc677d2c054c02221be6847
 requirements:
-  - id: STAGE1-HOTSPOT-CANDIDATE-REPAIR-001
-    description: 泛科普—社会生活候选不得把娱乐人物或粉丝内容换成社会角度后混入；模型自认材料严重不足或事实无法确认时必须形成确定性零候选。
+  - id: STAGE1-HOTSPOT-REPAIR-CLOSE-001
+    description: 热点候选领域包装、严重缺料和严格 JSON 处理已完成不联网修复；真实调用必须保持关闭，修复不得冒充 LIVE_VALIDATED。
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3 好选题、线索与热点
-      - docs/EFFECTIVE_DESIGN_BASELINE.md#16.7 每日发现、产能、日报与冷却
-      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#本次热点 validation_live 阻断与修复边界
-    tests:
-      - [python, -m, pytest, tests/core/test_stage1b_daily_discovery.py, -q]
-  - id: STAGE1-HOTSPOT-MODEL-FORMAT-001
-    description: 候选判断只接受裸 JSON 或单一 JSON 代码块；格式归一化不得接受额外自由文本，真正无效输出仍须失败关闭且不得重试。
-    baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#16.7 每日发现、产能、日报与冷却
       - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#本次热点 validation_live 阻断与修复边界
     tests:
@@ -29,12 +22,8 @@ requirements:
       - [python, -m, pytest, tests/test_workflow_guard.py, -q]
 allowed_paths:
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
-  - TECHNICAL_MANUAL.md
-  - config/domain_packs/fan_kepu_social_life.yaml
-  - scripts/core/production/stage0_content_core.py
-  - scripts/core/production/stage1b_daily_discovery.py
-  - tests/core/test_stage1b_daily_discovery.py
 forbidden_actions:
+  - business_code_change
   - any_external_source_call
   - any_model_call
   - candidate_generation
