@@ -5,9 +5,13 @@ design_complete: false
 implementation_authorized: false
 external_calls_authorized: false
 environment_changes_authorized: false
+formal_data_writes_authorized: false
+production_authorized: false
 completion_status: REJECTED_DESIGN_MISMATCH
+stage_status: BASELINE_GAP
+next_action: recover_and_confirm_stage_1_design
 baseline_sha256: 24e4312ea025708e3d01ec2940868a3ee0efc89a9370835b77167cf0a06c5a22
-base_commit: 372607d0586fb8dcb16e62781873ee91c0019ae7
+base_commit: e5268c2aac6b169a2c18bb8b864049324415dc0d
 requirements:
   - id: WF-GUARD-DESIGN-RECOVERY-001
     description: 统一实施门禁状态位于 execution/current_stage.yaml；Stage 1 设计不完整期间阻断业务实现、真实运行、外部调用和环境改动。
@@ -26,6 +30,10 @@ allowed_paths:
 frozen_acceptance_tests:
   - tests/core/test_stage1b_daily_discovery.py
   - tests/core/test_local_trendradar_executor.py
+frozen_contracts:
+  - BUSINESS_MODEL_ROUTE_REGISTRY.yaml
+  - '*_BUSINESS_CONTRACT.yaml'
+  - runtime_skills/**
 forbidden_actions:
   - business_code_change
   - stage1_business_acceptance_test_change
@@ -53,9 +61,9 @@ forbidden_actions:
 
 - `start` 在任何代码修改前校验 `execution/current_stage.yaml`、设计完整性、基线哈希、需求映射、允许路径、实施授权、外部调用授权和环境改动授权。`design_complete: false` 必须返回 `BASELINE_GAP`，业务代码、真实运行、安装和外部调用不得开始。
 - `check` 校验当前改动范围；任何不在 `allowed_paths` 的改动、未授权业务代码改动或冻结验收测试改动返回 `SCOPE_MISMATCH`。声明或检测到未经授权的外部调用、安装或环境改动请求时返回 `USER_AUTH_REQUIRED`。
-- `finish` 只接受全部已暂存、没有未暂存或未跟踪文件的确定版本，运行每项 requirement 的去重测试命令并生成与当前 Git 索引绑定的 finish 凭证。测试、范围、哈希、需求映射或授权任一未通过，不得提交；`design_complete: false` 时即使门禁提交通过，也只能输出 `baseline_status: BASELINE_GAP`，不得宣布业务完成。
+- `finish` 只接受全部已暂存、没有未暂存或未跟踪文件的确定版本，运行每项 requirement 的去重测试命令并生成与当前 Git 索引绑定的 finish 凭证。测试、范围、哈希、需求映射或授权任一未通过，不得提交；`design_complete: false` 时即使本次治理任务允许提交，也必须输出 `task_finish_status: PASS` 与 `stage_status: BASELINE_GAP`，不得宣布业务完成。
 - Git pre-commit 钩子只接受与当前索引完全一致的 finish 凭证。`--no-verify`、移除钩子、伪造凭证、直接调用真实来源/模型或修改门禁结果均属于 `workflow_guard_bypass`。
-- `design_recovery` 且改动完全位于治理白名单时，`finish` 可以完成门禁或设计文档本身的受控变更，但输出仍保留 `baseline_status: BASELINE_GAP`；这不表示业务设计完整，也不授权任何业务实现。
+- `design_recovery` 且改动完全位于治理白名单时，`finish` 可以完成门禁或设计文档本身的受控变更，但输出仍保留 `stage_status: BASELINE_GAP`、`implementation_authorized: false`、`production_authorized: false` 和 `next_action: recover_and_confirm_stage_1_design`；这不表示业务设计完整，也不授权任何业务实现。
 
 机器状态码固定为：`PASS=0`、`BASELINE_GAP=10`、`SCOPE_MISMATCH=11`、`USER_AUTH_REQUIRED=12`、`REQUIREMENT_GAP=13`、`TEST_FAILED=14`、`FINISH_REQUIRED=15`、`WORKTREE_NOT_READY=16`。调用方必须按状态码失败关闭，不得只解析自然语言。
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -23,20 +24,30 @@ def _write_machine_baseline(
     root: Path,
     *,
     base_commit: str,
+    mode: str = "design_recovery",
     design_complete: bool = False,
+    implementation_authorized: bool = False,
+    stage_status: str = "BASELINE_GAP",
+    production_authorized: bool = False,
     effective_hash: str | None = None,
     refs: list[str] | None = None,
     test_command: list[str] | None = None,
+    source_evidence_level: str | None = None,
+    claimed_source_level: str | None = None,
 ) -> None:
     effective = root / "docs" / "EFFECTIVE_DESIGN_BASELINE.md"
     state = {
-        "mode": "design_recovery",
+        "mode": mode,
         "stage": "stage_1_daily_discovery",
         "design_complete": design_complete,
-        "implementation_authorized": False,
+        "implementation_authorized": implementation_authorized,
         "external_calls_authorized": False,
         "environment_changes_authorized": False,
+        "formal_data_writes_authorized": False,
+        "production_authorized": production_authorized,
         "completion_status": "REJECTED_DESIGN_MISMATCH",
+        "stage_status": stage_status,
+        "next_action": "recover_and_confirm_stage_1_design",
         "baseline_sha256": effective_hash or hashlib.sha256(effective.read_bytes()).hexdigest(),
         "base_commit": base_commit,
         "requirements": [
@@ -56,6 +67,7 @@ def _write_machine_baseline(
             ".githooks/pre-commit",
         ],
         "frozen_acceptance_tests": ["tests/core/test_stage1b_daily_discovery.py"],
+        "frozen_contracts": ["BUSINESS_MODEL_ROUTE_REGISTRY.yaml", "*_BUSINESS_CONTRACT.yaml", "runtime_skills/**"],
         "forbidden_actions": [
             "business_code_change",
             "stage1_business_acceptance_test_change",
@@ -65,6 +77,10 @@ def _write_machine_baseline(
             "workflow_guard_bypass",
         ],
     }
+    if source_evidence_level is not None:
+        state["source_evidence_level"] = source_evidence_level
+    if claimed_source_level is not None:
+        state["claimed_source_level"] = claimed_source_level
     (root / "execution").mkdir(exist_ok=True)
     (root / "execution" / "current_stage.yaml").write_text(
         yaml.safe_dump(state, allow_unicode=True, sort_keys=False),
@@ -126,9 +142,22 @@ def test_unapproved_environment_change_returns_user_auth_required(tmp_path: Path
     assert result == workflow_guard.EXIT_CODES["USER_AUTH_REQUIRED"]
 
 
+def test_unapproved_formal_data_write_returns_user_auth_required(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    result = workflow_guard.run(["check", "--formal-data-write"], repo_root=root)
+    assert result == workflow_guard.EXIT_CODES["USER_AUTH_REQUIRED"]
+
+
 def test_frozen_acceptance_test_change_returns_scope_mismatch(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     (root / "tests" / "core" / "test_stage1b_daily_discovery.py").write_text("# changed frozen test\n", encoding="utf-8")
+    result = workflow_guard.run(["check"], repo_root=root)
+    assert result == workflow_guard.EXIT_CODES["SCOPE_MISMATCH"]
+
+
+def test_frozen_contract_change_returns_scope_mismatch(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    (root / "CONTENT_RELATION_JUDGE_BUSINESS_CONTRACT.yaml").write_text("changed: true\n", encoding="utf-8")
     result = workflow_guard.run(["check"], repo_root=root)
     assert result == workflow_guard.EXIT_CODES["SCOPE_MISMATCH"]
 
@@ -155,6 +184,38 @@ def test_finish_runs_requirement_tests_and_commit_check_binds_to_current_index(t
     baseline.write_text(baseline.read_text(encoding="utf-8") + "\nchanged after finish\n", encoding="utf-8")
     _git(root, "add", "docs/IMPLEMENTATION_EXECUTION_BASELINE.md")
     assert workflow_guard.run(["commit-check"], repo_root=root) == workflow_guard.EXIT_CODES["FINISH_REQUIRED"]
+
+
+def test_design_recovery_finish_reports_task_pass_but_stage_baseline_gap(tmp_path: Path, capsys) -> None:
+    root = _repo(tmp_path)
+    _git(root, "add", "AGENTS.md", "docs/IMPLEMENTATION_EXECUTION_BASELINE.md", "execution/current_stage.yaml", "scripts/workflow_guard.py", "tests/test_workflow_guard.py", ".githooks/pre-commit")
+
+    assert workflow_guard.run(["finish"], repo_root=root) == workflow_guard.EXIT_CODES["PASS"]
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert payload["task_finish_status"] == "PASS"
+    assert payload["stage_status"] == "BASELINE_GAP"
+    assert payload["implementation_authorized"] is False
+    assert payload["production_authorized"] is False
+    assert payload["next_action"] == "recover_and_confirm_stage_1_design"
+    assert "does not mean Stage 1 has passed" in payload["message"]
+
+    assert workflow_guard.run(["commit-check"], repo_root=root) == workflow_guard.EXIT_CODES["PASS"]
+    commit_payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert commit_payload["task_finish_status"] == "PASS"
+    assert commit_payload["stage_status"] == "BASELINE_GAP"
+    assert "does not mean Stage 1 has passed" in commit_payload["message"]
+
+
+def test_implementation_mode_cannot_finish_with_baseline_gap(tmp_path: Path) -> None:
+    root = _repo(tmp_path, mode="implementation", design_complete=False, implementation_authorized=True, stage_status="BASELINE_GAP")
+    _git(root, "add", "AGENTS.md", "docs/IMPLEMENTATION_EXECUTION_BASELINE.md", "execution/current_stage.yaml", "scripts/workflow_guard.py", "tests/test_workflow_guard.py", ".githooks/pre-commit")
+    assert workflow_guard.run(["finish"], repo_root=root) == workflow_guard.EXIT_CODES["BASELINE_GAP"]
+
+
+def test_tech_tested_source_level_cannot_be_claimed_as_live_validated(tmp_path: Path) -> None:
+    root = _repo(tmp_path, source_evidence_level="TECH_TESTED", claimed_source_level="LIVE_VALIDATED")
+    result = workflow_guard.run(["finish"], repo_root=root)
+    assert result == workflow_guard.EXIT_CODES["BASELINE_GAP"]
 
 
 def test_finish_failure_blocks_attestation(tmp_path: Path) -> None:

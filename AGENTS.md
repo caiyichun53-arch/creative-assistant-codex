@@ -35,9 +35,9 @@
 
 - 所有任务在读取两份基线、核对目录、分支、HEAD、工作区和执行指针后，修改文件前必须运行 `python scripts/workflow_guard.py start`；非零退出必须立即停止，不得继续实施。
 - 工作中可运行 `python scripts/workflow_guard.py check`；出现 `BASELINE_GAP`、`SCOPE_MISMATCH`、`USER_AUTH_REQUIRED`、需求映射缺失、基线哈希不一致或冻结验收测试被修改时，必须停止并汇报，不得移动文件、改写 Git 状态、删除检查或改门禁输出来规避。
-- 完成前必须暂存本轮全部文件，确认没有未暂存和未跟踪文件，再运行 `python scripts/workflow_guard.py finish`。只有 `finish` 返回 `PASS` 并为当前 Git 索引生成凭证后才允许提交。
+- 完成前必须暂存本轮全部文件，确认没有未暂存和未跟踪文件，再运行 `python scripts/workflow_guard.py finish`。只有 `finish` 的 `task_finish_status: PASS` 并为当前 Git 索引生成凭证后才允许提交；这只表示当前治理/设计恢复任务可提交，不表示业务 Stage 具备实施资格或已经完成。
 - Git 提交必须通过仓库 `.githooks/pre-commit` 对 finish 凭证的校验。禁止 `--no-verify`、禁用或替换 `core.hooksPath`、删除钩子、伪造凭证或绕过门禁。
-- 真实数据库写入、真实网络/来源、安装、环境改动、付费服务和模型调用必须在 `execution/current_stage.yaml` 中显式授权，并在命令执行前以 `--external-call` 或 `--environment-change` 通过门禁；未授权必须返回 `USER_AUTH_REQUIRED`。不得先调用后补授权。
+- 真实数据库写入、真实网络/来源、安装、环境改动、付费服务和模型调用必须在 `execution/current_stage.yaml` 中显式授权，并在命令执行前以 `--formal-data-write`、`--external-call` 或 `--environment-change` 通过门禁；未授权必须返回 `USER_AUTH_REQUIRED`。不得先调用后补授权。
 - 只有 `mode: design_recovery` 可以恢复设计；设计恢复只能修改 `docs/EFFECTIVE_DESIGN_BASELINE.md`，除非当前执行指针明确把门禁或章程治理文件列入白名单。旧 Goal、旧迁移计划、历史报告、交接状态、聊天记忆和旧代码不得直接影响业务代码。
 - 每项 requirement 必须同时指向现行基线位置和直接测试；缺少任一项时 `finish` 不得通过。任何业务实现恢复前必须把 `design_complete` 和 `implementation_authorized` 明确改为 `true`，并由用户确认对应 Stage 详细设计。
 

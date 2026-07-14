@@ -27,7 +27,11 @@ REQUIRED_FIELDS = (
     "implementation_authorized",
     "external_calls_authorized",
     "environment_changes_authorized",
+    "formal_data_writes_authorized",
+    "production_authorized",
     "completion_status",
+    "stage_status",
+    "next_action",
     "baseline_sha256",
     "base_commit",
     "requirements",
@@ -52,6 +56,7 @@ BUSINESS_CODE_PATTERNS = (
     "data/formal/**",
     "config/model_routes.yaml",
 )
+SUCCESSFUL_SOURCE_LEVELS = {"LIVE_VALIDATED", "PRODUCTION_READY"}
 
 
 class GuardFailure(RuntimeError):
@@ -156,9 +161,22 @@ def _validate_state(root: Path) -> tuple[dict[str, Any], list[list[str]]]:
         raise GuardFailure("BASELINE_GAP", "effective design baseline hash does not match", expected=expected_hash, actual=actual_hash)
     base_commit = str(state["base_commit"]).strip()
     _git(root, ["cat-file", "-e", f"{base_commit}^{{commit}}"])
-    for field in ("design_complete", "implementation_authorized", "external_calls_authorized", "environment_changes_authorized"):
+    for field in (
+        "design_complete",
+        "implementation_authorized",
+        "external_calls_authorized",
+        "environment_changes_authorized",
+        "formal_data_writes_authorized",
+        "production_authorized",
+    ):
         if not isinstance(state[field], bool):
             raise GuardFailure("BASELINE_GAP", f"{field} must be a boolean")
+    if str(state["mode"]).casefold() == "design_recovery" and state["implementation_authorized"]:
+        raise GuardFailure("BASELINE_GAP", "design_recovery must not authorize business implementation")
+    if str(state["stage_status"]).strip() == "BASELINE_GAP" and state["design_complete"]:
+        raise GuardFailure("BASELINE_GAP", "stage_status and design_complete disagree")
+    if state["production_authorized"] and (not state["implementation_authorized"] or str(state["stage_status"]).strip() != "PASS"):
+        raise GuardFailure("BASELINE_GAP", "production cannot be authorized before implementation stage is passable")
     if not isinstance(state["allowed_paths"], list) or not state["allowed_paths"]:
         raise GuardFailure("BASELINE_GAP", "allowed_paths must be a non-empty list")
     if not isinstance(state["forbidden_actions"], list) or not state["forbidden_actions"]:
@@ -191,15 +209,18 @@ def _validate_scope(root: Path, state: dict[str, Any], *, cached: bool = False) 
     paths = _changed_paths(root, str(state["base_commit"]), cached=cached)
     outside = [path for path in paths if not _path_matches(path, state["allowed_paths"])]
     frozen_tests = state.get("frozen_acceptance_tests") or []
+    frozen_contracts = state.get("frozen_contracts") or []
     changed_frozen = [path for path in paths if _path_matches(path, frozen_tests)]
+    changed_contracts = [path for path in paths if _path_matches(path, frozen_contracts)]
     business_changes = [] if state["implementation_authorized"] else [path for path in paths if _path_matches(path, BUSINESS_CODE_PATTERNS)]
-    if outside or changed_frozen or business_changes:
+    if outside or changed_frozen or changed_contracts or business_changes:
         raise GuardFailure(
             "SCOPE_MISMATCH",
             "changed paths exceed current stage contract",
             changed_paths=paths,
             outside_paths=outside,
             frozen_acceptance_tests_changed=changed_frozen,
+            frozen_contracts_changed=changed_contracts,
             business_code_changed_without_authorization=business_changes,
         )
     return paths
@@ -215,11 +236,36 @@ def _environment_change_requested(flag: bool) -> bool:
     return flag or env_value in {"1", "true", "yes", "on"}
 
 
-def _validate_authorization(state: dict[str, Any], *, external_requested: bool, environment_change_requested: bool) -> None:
+def _formal_data_write_requested(flag: bool) -> bool:
+    env_value = str(os.environ.get("WORKFLOW_GUARD_FORMAL_DATA_WRITE") or "").strip().lower()
+    return flag or env_value in {"1", "true", "yes", "on"}
+
+
+def _validate_authorization(
+    state: dict[str, Any],
+    *,
+    external_requested: bool,
+    environment_change_requested: bool,
+    formal_data_write_requested: bool,
+) -> None:
     if external_requested and not state["external_calls_authorized"]:
         raise GuardFailure("USER_AUTH_REQUIRED", "external call is not authorized by the current stage")
     if environment_change_requested and not state["environment_changes_authorized"]:
         raise GuardFailure("USER_AUTH_REQUIRED", "environment change or installation is not authorized by the current stage")
+    if formal_data_write_requested and not state["formal_data_writes_authorized"]:
+        raise GuardFailure("USER_AUTH_REQUIRED", "formal data write is not authorized by the current stage")
+
+
+def _validate_source_level_claims(state: dict[str, Any]) -> None:
+    source_evidence_level = str(state.get("source_evidence_level") or "").strip().upper()
+    claimed_source_level = str(state.get("claimed_source_level") or "").strip().upper()
+    if source_evidence_level == "TECH_TESTED" and claimed_source_level in SUCCESSFUL_SOURCE_LEVELS:
+        raise GuardFailure(
+            "BASELINE_GAP",
+            "TECH_TESTED evidence cannot be claimed as LIVE_VALIDATED or PRODUCTION_READY",
+            source_evidence_level=source_evidence_level,
+            claimed_source_level=claimed_source_level,
+        )
 
 
 def _ensure_hook(root: Path) -> None:
@@ -280,6 +326,10 @@ def _write_attestation(root: Path, state: dict[str, Any], changed_paths: list[st
         "mode": state["mode"],
         "stage": state["stage"],
         "completion_status": state["completion_status"],
+        "stage_status": state["stage_status"],
+        "implementation_authorized": state["implementation_authorized"],
+        "production_authorized": state["production_authorized"],
+        "next_action": state["next_action"],
         "index_sha256": _index_fingerprint(root, str(state["base_commit"])),
         "current_stage_sha256": _sha256_file(root / CURRENT_STAGE),
         "implementation_baseline_sha256": _sha256_file(root / IMPLEMENTATION_BASELINE),
@@ -305,6 +355,10 @@ def _verify_attestation(root: Path, state: dict[str, Any]) -> None:
     expected = {
         "base_commit": state["base_commit"],
         "completion_status": state["completion_status"],
+        "stage_status": state["stage_status"],
+        "implementation_authorized": state["implementation_authorized"],
+        "production_authorized": state["production_authorized"],
+        "next_action": state["next_action"],
         "index_sha256": _index_fingerprint(root, str(state["base_commit"])),
         "current_stage_sha256": _sha256_file(root / CURRENT_STAGE),
         "implementation_baseline_sha256": _sha256_file(root / IMPLEMENTATION_BASELINE),
@@ -319,11 +373,22 @@ def _emit(status: str, message: str, **details: Any) -> None:
     print(json.dumps({"status": status, "message": message, **details}, ensure_ascii=False, sort_keys=True))
 
 
+def _finish_status_payload(state: dict[str, Any], *, task_finish_status: str) -> dict[str, Any]:
+    return {
+        "task_finish_status": task_finish_status,
+        "stage_status": state["stage_status"],
+        "implementation_authorized": state["implementation_authorized"],
+        "production_authorized": state["production_authorized"],
+        "next_action": state["next_action"],
+    }
+
+
 def run(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("start", "check", "finish", "commit-check"))
     parser.add_argument("--external-call", action="store_true", help="declare that the requested task would make a real external call")
     parser.add_argument("--environment-change", action="store_true", help="declare that the requested task would install software or change the environment")
+    parser.add_argument("--formal-data-write", action="store_true", help="declare that the requested task would write formal business data")
     args = parser.parse_args(argv)
     root = (repo_root or Path(__file__).resolve().parents[1]).resolve()
     try:
@@ -332,10 +397,16 @@ def run(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int:
             state,
             external_requested=_external_requested(args.external_call),
             environment_change_requested=_environment_change_requested(args.environment_change),
+            formal_data_write_requested=_formal_data_write_requested(args.formal_data_write),
         )
+        _validate_source_level_claims(state)
         if args.command == "commit-check":
             _verify_attestation(root, state)
-            _emit("PASS", "finish attestation matches the current index")
+            _emit(
+                "PASS",
+                "finish attestation matches the current index; only governance/design-recovery commit is allowed, this does not mean Stage 1 has passed",
+                **_finish_status_payload(state, task_finish_status="PASS"),
+            )
             return EXIT_CODES["PASS"]
 
         _ensure_hook(root)
@@ -358,15 +429,17 @@ def run(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int:
         changed_paths = _validate_scope(root, state, cached=True)
         if not state["design_complete"] and str(state["mode"]).casefold() != "design_recovery":
             raise GuardFailure("BASELINE_GAP", "incomplete design may finish only in design_recovery")
+        if str(state["mode"]).casefold() != "design_recovery" and str(state["stage_status"]).strip() == "BASELINE_GAP":
+            raise GuardFailure("BASELINE_GAP", "implementation mode cannot finish while the stage has BASELINE_GAP")
         tests = _run_tests(root, test_commands)
         attestation = _write_attestation(root, state, changed_paths, tests)
         _emit(
             "PASS",
-            "workflow finish passed",
+            "workflow task finish passed; only governance/design-recovery commit is allowed, this does not mean Stage 1 has passed",
+            **_finish_status_payload(state, task_finish_status="PASS"),
             mode=state["mode"],
             stage=state["stage"],
             completion_status=state["completion_status"],
-            baseline_status="PASS" if state["design_complete"] else "BASELINE_GAP",
             changed_paths=changed_paths,
             attestation=str(attestation),
         )
