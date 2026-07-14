@@ -1,17 +1,18 @@
 ---
-mode: DESIGN_RECOVERY
-stage: STAGE_1_HOTSPOT_VALIDATION_RECOVERY_RULE
-design_complete: false
-baseline_sha256: fbc903a2e8aabdcf4d4558c4e7fe5f017941a85d9cec11154035d3c55b32d216
-base_commit: b211be7b8d35cd67468d8bc08cca5b18e30c83ba
+mode: VALIDATION_LIVE
+stage: STAGE_1_HOTSPOT_SOURCE_VALIDATION_RECOVERY
+design_complete: true
+baseline_sha256: 24e4312ea025708e3d01ec2940868a3ee0efc89a9370835b77167cf0a06c5a22
+base_commit: e2740491537d9c50ae27c9e07534dc8a00b107b4
 requirements:
-  - id: STAGE1-HOTSPOT-RECOVERY-DESIGN-001
-    description: 用户已批准保留原失败审计并使用明确关联原批次的新恢复编号；必须先把这一恢复例外写入唯一有效设计基线，再开放真实调用。
+  - id: STAGE1-HOTSPOT-RECOVERY-LIVE-001
+    description: 保留原失败批次，使用直接包含原批次编号的新恢复编号，只执行一次相同冻结范围的泛科普—社会生活热点 validation_live；无论结果如何均不得再次自动恢复。
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#16.7 每日发现、产能、日报与冷却
       - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#本次热点 validation_live 阻断与修复边界
     tests:
-      - [python, -m, pytest, tests/test_workflow_guard.py, -q]
+      - [python, -m, pytest, tests/core/test_stage1b_daily_discovery.py, -q]
+      - [python, -m, pytest, tests/core/test_local_trendradar_executor.py, -q]
   - id: WF-GUARD-001
     description: 安装、实现、测试、finish、提交和真实调用仍必须经过仓库工作流门禁。
     baseline_refs:
@@ -24,15 +25,12 @@ allowed_paths:
   - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
 forbidden_actions:
   - business_code_change
-  - any_external_source_call
-  - any_model_call
-  - candidate_generation
   - production_daily
   - stage1a_handoff
   - research_stage_entry
   - automatic_retry
   - workflow_guard_bypass
-external_call_authorized: false
+external_call_authorized: true
 ---
 
 # V1.3 实施执行基线
@@ -69,7 +67,7 @@ external_call_authorized: false
 
 2026-07-14 以 `source_type=hotspot`、`domain=fan_kepu_social_life`、`mode=validation_live` 启动的批次 `discovery_run_cf43d61dd5024db393c21d2e65e19100` 在 TrendRadar 桥接预检阶段确定性失败。桥接把上一次受控真实运行自己生成的 `vendor/TrendRadar/output/news/2026-07-14.db` 误判为未经批准的上游源码改动，因此在创建新证据目录、启动 TrendRadar 上游命令和调用候选判断模型之前以退出码 2 结束。该批次状态为 `completed_with_failures`；热点原始观察、来源版本、输入组装、模型运行、候选、无候选记录和用户决定均为零，只保存 1 条 `candidate_version_id=NULL` 的空 `validation_live` 快照占位、3 条命令回执和 3 条审计事件。数据库完整性检查为 `ok`，外键违规为零。不得把它认定为一次真实热点业务验收，也不得提升 TrendRadar 的六级状态。
 
-当前外部调用授权已关闭。项目桥接的安装完整性判定已修复：继续拒绝 TrendRadar 上游源码和其他陌生文件的改动，仅允许项目批准的 `config/config.yaml`、明确限定在 `output/` 下的 TrendRadar 自身运行产物以及 Python `__pycache__/`。`tests/core/test_local_trendradar_executor.py` 8 项和 `tests/core/test_stage1b_daily_discovery.py` 22 项通过；修复期间没有调用真实来源或模型。由于原批次已写入完成回执，同一幂等键只会重放失败结果；在现行设计要求使用同一冻结输入、配置和幂等键恢复的前提下，不得擅自改用新幂等键重跑，必须先解决该设计与现有幂等实现的冲突。
+项目桥接的安装完整性判定已修复：继续拒绝 TrendRadar 上游源码和其他陌生文件的改动，仅允许项目批准的 `config/config.yaml`、明确限定在 `output/` 下的 TrendRadar 自身运行产物以及 Python `__pycache__/`。`tests/core/test_local_trendradar_executor.py` 8 项和 `tests/core/test_stage1b_daily_discovery.py` 22 项通过；修复期间没有调用真实来源或模型。用户现已明确批准保留原失败批次 `discovery_run_cf43d61dd5024db393c21d2e65e19100`，并使用直接包含原批次编号的新恢复编号执行一次相同范围的热点验收。恢复必须继续使用 `fan_kepu_social_life`、`source_type=hotspot`、`mode=validation_live`、600 秒批次上限及当前显式候选判断路由；不得自动重试或再次恢复。
 
 ### 上一次单次验收授权的阻断结果
 
@@ -105,9 +103,9 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 
 | 项目 | 当前事实 |
 | --- | --- |
-| 当前阶段 | Stage 1——热点验证恢复规则设计收口 |
-| 当前状态 | 用户已批准保留原失败记录，并用明确关联原批次的新恢复编号重新执行一次相同热点验收；外部调用仍关闭 |
-| 当前动作 | 只修改有效设计基线和实施执行基线，冻结恢复条件、审计关联和一次性边界；不得运行来源或模型 |
+| 当前阶段 | Stage 1——TrendRadar 热点单次真实验收恢复 |
+| 当前状态 | 恢复规则已写入有效设计基线；用户已批准保留原失败记录，并用直接包含原批次编号的新恢复编号执行一次相同热点验收 |
+| 当前动作 | 只通过项目 Runtime 执行一次 `fan_kepu_social_life`、`source_type=hotspot`、`mode=validation_live` 的恢复批次；使用当前显式候选判断路由，600 秒上限，不自动重试 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `6693d3acab913a6845ad1c7665ff15cc4da6aefa` |
@@ -117,8 +115,8 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 | Stage 1B | 不联网六来源修复已提交：`d13e870a26945f9c5f4024d4e691e9f6eed5202a`；错误验证结果已物理删除且全库残留为零；stash 已清空，不需要恢复 |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
 | 真实来源状态 | 见 Stage 1 六级状态表；只有 `LIVE_VALIDATED` 以上才有资格在后续另行授权后进入真实候选发现 |
-| 当前阻断 | 有效设计基线尚未写入用户刚批准的新恢复编号例外；写入并提交前禁止真实调用 |
-| 下一唯一动作 | 把已批准的恢复规则写入唯一有效设计基线并提交；随后再以单独门禁开放一次真实热点恢复批次 |
+| 当前阻断 | 无；只允许本次热点恢复，其他五来源、`production_daily` 和后续阶段继续禁止 |
+| 下一唯一动作 | 提交恢复规则和单次授权后，以新恢复编号 `stage1-hotspot-validation-live-recovery-discovery_run_cf43d61dd5024db393c21d2e65e19100-01` 执行一次相同热点验收；无论结果如何立即关闭外部调用授权 |
 
 ### 创建本文件时的 Git 事实
 
