@@ -1752,7 +1752,36 @@ class Stage0ContentProductionCore:
         for row in rows:
             if row["candidate_version_id"] is None:
                 continue
-            result.append({"display_position": row["display_position"], "candidate_version_id": row["candidate_version_id"], "candidate_id": row["candidate_id"], "candidate": json.loads(row["payload_json"]), "source_type": row["source_type"], "source_time": row["source_time"], "expires_at": row["expires_at"], "source": json.loads(row["source_payload_json"]), "execution_mode": context["execution_mode"], "lifecycle_status": context["lifecycle_status"], "formal_candidate_pool": context["execution_mode"] == "production_daily" and context["lifecycle_status"] == "completed"})
+            candidate_payload = json.loads(row["payload_json"])
+            source_payload = json.loads(row["source_payload_json"])
+            source_reference = candidate_payload.get("source_reference")
+            if not isinstance(source_reference, dict):
+                source_reference = {
+                    "source_version_id": None,
+                    "source_type": row["source_type"],
+                    "source_time": row["source_time"],
+                }
+            stage1a_handoff_packet = {
+                "candidate_version_id": row["candidate_version_id"],
+                "candidate_id": row["candidate_id"],
+                "source_type": row["source_type"],
+                "core_question": candidate_payload.get("core_question"),
+                "domain_label": domain_label,
+                "recommendation_reason": candidate_payload.get("why_attention") or candidate_payload.get("new_angle"),
+                "source_evidence_refs": [
+                    source_reference,
+                    source_payload.get("formal_source", {}),
+                ],
+                "risk_limits": candidate_payload.get("risk_limits"),
+                "material_gap": candidate_payload.get("material_readiness"),
+                "timeliness_limits": row["expires_at"] or "not_time_limited",
+                "capacity_consumption": {
+                    "formal_daily_content_slots": 1,
+                    "domain_daily_limit": 1,
+                },
+                "user_confirmation_required": True,
+            }
+            result.append({"display_position": row["display_position"], "candidate_version_id": row["candidate_version_id"], "candidate_id": row["candidate_id"], "candidate": candidate_payload, "source_type": row["source_type"], "source_time": row["source_time"], "expires_at": row["expires_at"], "source": source_payload, "stage1a_handoff_packet": stage1a_handoff_packet, "execution_mode": context["execution_mode"], "lifecycle_status": context["lifecycle_status"], "formal_candidate_pool": context["execution_mode"] == "production_daily" and context["lifecycle_status"] == "completed"})
         return result
 
     def record_discovery_decision(

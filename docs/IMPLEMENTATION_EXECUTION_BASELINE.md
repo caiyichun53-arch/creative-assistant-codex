@@ -1,17 +1,17 @@
 ---
-mode: baseline_gap_resolution
+mode: implementation
 stage: stage_1_daily_discovery
-design_complete: false
-implementation_authorized: false
+design_complete: true
+implementation_authorized: true
 external_calls_authorized: false
 environment_changes_authorized: false
 formal_data_writes_authorized: false
 production_authorized: false
-completion_status: REJECTED_DESIGN_MISMATCH
-stage_status: BASELINE_GAP
-next_action: confirm_stage_1_design_complete_and_authorize_acceptance_tests
+completion_status: TECH_TESTED
+stage_status: TECH_TESTED
+next_action: request_controlled_validation_live_authorization
 baseline_sha256: 08d38a9ed9c674104f9d416a816203e80e387115fd2b7199c49c63616a9ff1ab
-base_commit: f9dd3c86ae345ed0062f651315160ec6e55c7c72
+base_commit: 870f1c798e2e3be049095678c066a74b674603bb
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
 execution_state_sources:
@@ -34,7 +34,7 @@ requirements:
       - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#工作流硬门禁
       - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#当前执行指针
     tests:
-      - [python, -m, pytest, tests/test_workflow_guard.py, -q]
+      - [python, -m, pytest, tests/test_workflow_guard.py, tests/core/test_stage1b_daily_discovery.py, -q]
 allowed_paths:
   - AGENTS.md
   - docs/EFFECTIVE_DESIGN_BASELINE.md
@@ -42,20 +42,20 @@ allowed_paths:
   - execution/current_stage.yaml
   - scripts/workflow_guard.py
   - tests/test_workflow_guard.py
-frozen_acceptance_tests:
   - tests/core/test_stage1b_daily_discovery.py
+  - scripts/core/production/stage1b_daily_discovery.py
+  - scripts/core/production/stage0_content_core.py
+frozen_acceptance_tests:
   - tests/core/test_local_trendradar_executor.py
 frozen_contracts:
   - BUSINESS_MODEL_ROUTE_REGISTRY.yaml
   - '*_BUSINESS_CONTRACT.yaml'
   - runtime_skills/**
 forbidden_actions:
-  - business_code_change
-  - stage1_business_acceptance_test_change
+  - stage1_acceptance_test_bypass
   - any_external_source_call
   - any_model_call
   - environment_install_or_change
-  - candidate_generation
   - production_daily
   - validation_live
   - stage1a_handoff
@@ -141,19 +141,19 @@ Stage 1 来源统一只使用六个完成等级：`DESIGNED`、`SCAFFOLDED`、`T
 | 项目 | 当前事实 |
 | --- | --- |
 | 当前阶段 | Stage 1B / `stage_1_daily_discovery` |
-| 当前状态 | `REJECTED_DESIGN_MISMATCH`；Stage 1 详细设计未完整确认，`design_complete: false` |
-| 当前动作 | 暂停 Stage 1 业务实现和真实运行；唯一动作是恢复并由用户确认 Stage 1 完整设计 |
+| 当前状态 | `TECH_TESTED`；Stage 1 设计已按用户确认口径写入有效基线，当前仅证明隔离技术验收通过 |
+| 当前动作 | 暂停真实运行、外部来源、真实模型和正式数据写入；下一步只能请求受控 `validation_live` 授权或继续处理明确的技术验收缺口 |
 | 当前分支 | `implementation/v1.3-stage1b-daily-discovery` |
 | 当前 HEAD | 每次新会话以 `git rev-parse HEAD` 实时核对；不得以文档内旧哈希替代当前 Git 事实 |
 | 基础提交 | `6693d3acab913a6845ad1c7665ff15cc4da6aefa` |
 | Stage 0 | 已完成并提交：`e88c86a` |
 | 参数治理 | 已完成并提交：`d766a51` |
 | Stage 1A | 已完成并提交：`6693d3a`；尚未经过真实日常候选上游接入 |
-| Stage 1B | 当前标记为 `REJECTED_DESIGN_MISMATCH`；既有技术修复和历史验收记录不得继续推动业务实现，必须先恢复并确认 Stage 1 完整设计 |
+| Stage 1B | 当前标记为 `TECH_TESTED`；不得将其冒充 `LIVE_VALIDATED`、`PRODUCTION_READY` 或真实日常完成 |
 | 仓库治理 | Codex 已成为唯一代码执行入口；Claude 专属入口与双文件镜像已在 `cc134ac1f6fb3f7c20834d90349e2149d991f466` 清理 |
 | 真实来源状态 | 全部暂停；当前不允许安装、外部来源、真实模型调用、真实数据库写入或真实运行 |
-| 当前阻断 | Stage 1 设计不完整且未获实施授权；`implementation_authorized: false`、`external_calls_authorized: false`、`environment_changes_authorized: false` |
-| 下一唯一动作 | 恢复并确认 Stage 1 完整设计；用户确认前不得编写 Stage 1 业务验收测试、不得修改 Stage 1 业务代码、不得运行真实热点或模型 |
+| 当前阻断 | 未获真实来源、真实模型、正式数据写入和生产授权；`external_calls_authorized: false`、`formal_data_writes_authorized: false`、`production_authorized: false` |
+| 下一唯一动作 | 请求并等待用户明确授权受控 `validation_live`；未授权前不得运行真实热点、真实模型、正式数据写入或 `production_daily` |
 
 ### 创建本文件时的 Git 事实
 

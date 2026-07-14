@@ -19,6 +19,7 @@ from scripts.core.production.stage0_content_core import (
     StaleResultError,
 )
 from scripts.core.production.stage1b_daily_discovery import (
+    DailyDiscoveryValidationError,
     Stage1BDailyDiscoveryService,
     parse_candidate_judgement_output,
     validate_candidate_judgement,
@@ -67,6 +68,14 @@ class FakeRouter:
         if route_id != "business_analysis" or route_name != "stage1b.daily_discovery":
             raise RuntimeError("unexpected test route")
         return self.route
+
+
+class NoopProductionAcquirer:
+    def collect_hotspots(self, *, discovery_run_id: str, now: datetime, deadline_monotonic: float | None = None) -> dict:
+        return {"status": "completed", "item_count": 0}
+
+    def search_tags(self, *, discovery_run_id: str, domain: str, now: datetime, deadline_monotonic: float | None = None) -> dict:
+        return {"status": "completed", "selected_tag_count": 0, "results": [], "failed": 0}
 
 
 class Stage1BDailyDiscoveryTests(unittest.TestCase):
@@ -171,6 +180,40 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         )
         self.core.conn.commit()
 
+    def _insert_hotspots(self, count: int) -> None:
+        seed_active_tags_from_sources_yaml(
+            self.core.conn,
+            {"domain_label": "fan_kepu_social_life", "active_tags": ["养老"]},
+        )
+        self.core.conn.execute(
+            """
+            INSERT INTO trendradar_collection_run(
+                collection_run_id, discovery_run_id, status, item_count, command_hash, started_at, completed_at
+            ) VALUES ('tr-run-many', 'upstream-run-many', 'completed', ?, 'hash-many', ?, ?)
+            """,
+            (count, self.NOW.isoformat(), self.NOW.isoformat()),
+        )
+        for index in range(count):
+            title = f"养老服务为什么影响普通家庭日常选择 {index}"
+            self.core.conn.execute(
+                """
+                INSERT INTO trendradar_hotspot_observation(
+                    observation_id, provider_item_id, title, url, source_channel, source_rank,
+                    observed_at, raw_json, collection_run_id
+                ) VALUES (?, ?, ?, ?, 'news', ?, ?, ?, 'tr-run-many')
+                """,
+                (
+                    f"hotspot-many-{index}",
+                    f"provider-many-{index}",
+                    title,
+                    f"https://example.test/hotspot-many-{index}",
+                    index + 1,
+                    self.NOW.isoformat(),
+                    json.dumps({"id": f"provider-many-{index}", "title": title}),
+                ),
+            )
+        self.core.conn.commit()
+
     def _insert_tag_source(self) -> None:
         seed_active_tags_from_sources_yaml(
             self.core.conn,
@@ -235,7 +278,7 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         )
         self.assertEqual([source["source_type"] for source in sources], ["hotspot"])
 
-    def test_completed_expansion_and_saved_user_direction_are_real_source_types(self) -> None:
+    def test_completed_expansion_is_daily_report_source_but_saved_user_direction_is_not(self) -> None:
         self.core.register_question_expansion_source(
             expansion_id="expansion-1",
             domain_label="fan_kepu_social_life",
@@ -259,7 +302,8 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
             ["question_expansion", "saved_user_direction"],
         )
         result = self._run("internal-sources")
-        self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 2)
+        self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 1)
+        self.assertEqual(self.provider.calls, 1)
 
     def test_runtime_collects_hotspot_then_converts_it_before_starting_tag_search(self) -> None:
         test_case = self
@@ -290,6 +334,85 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         )
         self.assertEqual(acquirer.calls, ["trendradar", "tag_search"])
         self.assertEqual(result["summary"]["acquisition"]["execution_order"][:2], ["trendradar_hotspot", "hotspot_conversion"])
+
+    def test_stage1_daily_report_has_only_five_reportable_source_types(self) -> None:
+        production_db = Path(self.tempdir.name) / "formal-production-daily-sources.sqlite3"
+        with patch("scripts.core.production.stage0_content_core.FORMAL_DB_PATH", production_db):
+            production_core = Stage0ContentProductionCore.open(production_db, data_identity="production")
+        self.production_core = production_core
+        production_provider = FakeDiscoveryProvider()
+        production_gateway = ModelGateway(
+            routes={self.route.route_name: self.route},
+            providers={production_provider.provider_name: production_provider},
+            materializer=CoreDiscoveryModelRunMaterializer(production_core),
+        )
+        production_service = Stage1BDailyDiscoveryService(
+            core=production_core,
+            gateway=production_gateway,
+            source_acquirer=NoopProductionAcquirer(),  # type: ignore[arg-type]
+        )
+        with self.assertRaisesRegex(DailyDiscoveryValidationError, "manual|daily report|人工|日报"):
+            production_service.run_daily_discovery(
+                discovery_date="2026-07-14",
+                actor="daily-worker",
+                idempotency_key="manual-source-not-daily",
+                execution_mode="production_daily",
+                now=self.NOW,
+                source_types=(
+                    "hotspot",
+                    "daily_competitor_content",
+                    "historical_high_signal",
+                    "tag_discovery",
+                    "question_expansion",
+                    "saved_user_direction",
+                ),
+            )
+
+    def test_hotspot_processing_is_limited_to_three_daily_items(self) -> None:
+        self._insert_hotspots(4)
+        result = self._run("hotspot-daily-limit", source_types=("hotspot",))
+        self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["sources_read"], 3)
+        self.assertLessEqual(self.provider.calls, 3)
+
+    def test_each_daily_report_source_keeps_evidence_for_has_or_has_not(self) -> None:
+        result = self._run(
+            "daily-source-evidence",
+            source_types=(
+                "hotspot",
+                "daily_competitor_content",
+                "historical_high_signal",
+                "tag_discovery",
+                "question_expansion",
+            ),
+        )
+        source_evidence = result["summary"].get("source_evidence", {}).get("fan_kepu_social_life")
+        self.assertEqual(
+            set(source_evidence or {}),
+            {"hotspot", "daily_competitor_content", "historical_high_signal", "tag_discovery", "question_expansion"},
+        )
+        for source_type, evidence in source_evidence.items():
+            with self.subTest(source_type=source_type):
+                self.assertIn(evidence.get("status"), {"has_candidate", "no_candidate", "not_available"})
+                self.assertTrue(evidence.get("reason") or evidence.get("source_refs"))
+
+    def test_daily_candidate_snapshot_contains_stage1a_handoff_packet(self) -> None:
+        self._insert_video()
+        candidate = self._first_candidate(self._run("handoff-packet"))
+        packet = candidate.get("stage1a_handoff_packet")
+        self.assertIsInstance(packet, dict)
+        self.assertEqual(packet.get("candidate_version_id"), candidate["candidate_version_id"])
+        for field in (
+            "source_type",
+            "core_question",
+            "domain_label",
+            "recommendation_reason",
+            "source_evidence_refs",
+            "risk_limits",
+            "material_gap",
+            "timeliness_limits",
+            "capacity_consumption",
+        ):
+            self.assertTrue(packet.get(field), field)
 
     def test_batch_interruption_is_finalized_without_retry(self) -> None:
         class InterruptingAcquirer:

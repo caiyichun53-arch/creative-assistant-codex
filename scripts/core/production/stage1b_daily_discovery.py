@@ -49,6 +49,14 @@ SOURCE_TYPES = (
     "question_expansion",
     "saved_user_direction",
 )
+DAILY_REPORT_SOURCE_TYPES = (
+    "hotspot",
+    "daily_competitor_content",
+    "historical_high_signal",
+    "tag_discovery",
+    "question_expansion",
+)
+HOTSPOT_DAILY_PROCESS_LIMIT = 3
 DAILY_SOURCE_VALIDITY_HOURS = 72
 SOURCE_READ_LIMIT = 6
 DISCOVERY_PROMPT_VERSION = "stage1b.daily_discovery.prompt.v1"
@@ -265,7 +273,7 @@ class Stage1BDailyDiscoveryService:
         batch_timeout_seconds: int = 600,
         now: datetime | None = None,
         domains: tuple[str, ...] = APPROVED_DOMAINS,
-        source_types: tuple[str, ...] = SOURCE_TYPES,
+        source_types: tuple[str, ...] = DAILY_REPORT_SOURCE_TYPES,
     ) -> dict[str, Any]:
         requested_domains = tuple(domains)
         requested_source_types = tuple(source_types)
@@ -283,8 +291,8 @@ class Stage1BDailyDiscoveryService:
             raise DailyDiscoveryValidationError("daily discovery requires an explicit execution mode")
         if execution_mode == "validation_live" and len(requested_source_types) != 1:
             raise DailyDiscoveryValidationError("validation_live must validate exactly one source type")
-        if execution_mode == "production_daily" and set(requested_source_types) != set(SOURCE_TYPES):
-            raise DailyDiscoveryValidationError("production_daily must run the complete six-source discovery set")
+        if execution_mode == "production_daily" and set(requested_source_types) != set(DAILY_REPORT_SOURCE_TYPES):
+            raise DailyDiscoveryValidationError("production_daily must run the complete five-source daily report set; manual tasks are not daily report sources")
         if self.core.data_identity != "production" and execution_mode != "test_isolated":
             raise DataIdentityError("non-production discovery data must use test_isolated mode")
         if self.core.data_identity == "production" and execution_mode == "test_isolated":
@@ -323,6 +331,7 @@ class Stage1BDailyDiscoveryService:
             "domains": {},
             "filtered": {},
             "source_readiness": {},
+            "source_evidence": {},
             "acquisition": {"status": "not_run", "reason": "test_isolated may use preloaded fixture sources"},
             "technical_failures": 0,
         }
@@ -355,6 +364,11 @@ class Stage1BDailyDiscoveryService:
             elif "hotspot" not in requested_source_types:
                 summary["acquisition"] = {"status": "not_selected", "reason": "hotspot is outside this source-specific run", "tag_search": {}}
             for domain_label in requested_domains:
+                source_evidence: dict[str, dict[str, Any]] = {
+                    source_type: {"status": "not_available", "reason": "no_source_available", "source_refs": []}
+                    for source_type in DAILY_REPORT_SOURCE_TYPES
+                    if source_type in requested_source_types
+                }
                 summary["source_readiness"][domain_label] = self.core.discovery_source_readiness(domain_label=domain_label, daily_since=daily_since)
                 loaded_sources = [
                     source for source in self.core.load_real_discovery_sources(
@@ -362,6 +376,27 @@ class Stage1BDailyDiscoveryService:
                     )
                     if source["source_type"] in requested_source_types
                 ]
+                hotspot_seen = 0
+                limited_sources: list[dict[str, Any]] = []
+                for source in loaded_sources:
+                    if source["source_type"] == "hotspot":
+                        hotspot_seen += 1
+                        if hotspot_seen > HOTSPOT_DAILY_PROCESS_LIMIT:
+                            source_evidence.setdefault("hotspot", {"status": "not_available", "reason": "no_source_available", "source_refs": []})
+                            source_evidence["hotspot"]["truncated_after"] = HOTSPOT_DAILY_PROCESS_LIMIT
+                            continue
+                    limited_sources.append(source)
+                    if source["source_type"] in source_evidence:
+                        source_evidence[source["source_type"]] = {
+                            "status": "no_candidate",
+                            "reason": "source_seen_pending_candidate_judgement",
+                            "source_refs": [{
+                                "source_type": source["source_type"],
+                                "source_object_id": source["source_object_id"],
+                                "source_object_version": source["source_object_version"],
+                            }],
+                        }
+                loaded_sources = limited_sources
 
                 def ordered_sources():  # type: ignore[no-untyped-def]
                     nonlocal lifecycle_status, failure_reason
@@ -412,6 +447,9 @@ class Stage1BDailyDiscoveryService:
                     )
                     if outcome != "eligible":
                         filtered[reason_code] = filtered.get(reason_code, 0) + 1
+                        if source["source_type"] in source_evidence:
+                            source_evidence[source["source_type"]]["status"] = "no_candidate"
+                            source_evidence[source["source_type"]]["reason"] = reason_code
                         continue
                     assembly_payload = self._assembly_payload(domain_label=domain_label, source=source, source_version_id=source_result["source_version_id"])
                     assembly = self.core.create_discovery_input_assembly(
@@ -434,6 +472,9 @@ class Stage1BDailyDiscoveryService:
                         )
                         filtered["model_gateway_failed"] = filtered.get("model_gateway_failed", 0) + 1
                         summary["technical_failures"] += 1
+                        if source["source_type"] in source_evidence:
+                            source_evidence[source["source_type"]]["status"] = "no_candidate"
+                            source_evidence[source["source_type"]]["reason"] = "model_gateway_failed"
                         continue
                     except (json.JSONDecodeError, DailyDiscoveryValidationError) as exc:
                         self.core.record_discovery_no_candidate(
@@ -443,6 +484,9 @@ class Stage1BDailyDiscoveryService:
                         )
                         filtered["model_output_invalid"] = filtered.get("model_output_invalid", 0) + 1
                         summary["technical_failures"] += 1
+                        if source["source_type"] in source_evidence:
+                            source_evidence[source["source_type"]]["status"] = "no_candidate"
+                            source_evidence[source["source_type"]]["reason"] = "model_output_invalid"
                         continue
                     if judgement["outcome"] == "no_candidate":
                         self.core.record_discovery_no_candidate(
@@ -451,6 +495,9 @@ class Stage1BDailyDiscoveryService:
                             idempotency_key=f"{idempotency_key}:{domain_label}:absence:{index}",
                         )
                         filtered["model_returned_no_candidate"] = filtered.get("model_returned_no_candidate", 0) + 1
+                        if source["source_type"] in source_evidence:
+                            source_evidence[source["source_type"]]["status"] = "no_candidate"
+                            source_evidence[source["source_type"]]["reason"] = "model_returned_no_candidate"
                         continue
                     rejection = candidate_rejection(domain_label, judgement)
                     if rejection is not None:
@@ -461,6 +508,9 @@ class Stage1BDailyDiscoveryService:
                             idempotency_key=f"{idempotency_key}:{domain_label}:absence:{index}",
                         )
                         filtered[reason_code] = filtered.get(reason_code, 0) + 1
+                        if source["source_type"] in source_evidence:
+                            source_evidence[source["source_type"]]["status"] = "no_candidate"
+                            source_evidence[source["source_type"]]["reason"] = reason_code
                         continue
                     candidate_payload = {
                         **judgement,
@@ -475,9 +525,13 @@ class Stage1BDailyDiscoveryService:
                         payload=candidate_payload, idempotency_key=f"{idempotency_key}:{domain_label}:candidate:{index}",
                     )
                     candidate_count += 1
+                    if source["source_type"] in source_evidence:
+                        source_evidence[source["source_type"]]["status"] = "has_candidate"
+                        source_evidence[source["source_type"]]["reason"] = "candidate_created"
                 summary["domains"][domain_label] = {"sources_read": sources_read, "candidates": candidate_count}
                 summary["source_readiness"][domain_label] = self.core.discovery_source_readiness(domain_label=domain_label, daily_since=daily_since)
                 summary["filtered"][domain_label] = filtered
+                summary["source_evidence"][domain_label] = source_evidence
                 if lifecycle_status == "timed_out":
                     break
         except KeyboardInterrupt:

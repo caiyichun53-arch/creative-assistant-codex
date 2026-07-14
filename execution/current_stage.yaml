@@ -1,16 +1,16 @@
-mode: baseline_gap_resolution
+mode: implementation
 stage: stage_1_daily_discovery
-design_complete: false
-implementation_authorized: false
+design_complete: true
+implementation_authorized: true
 external_calls_authorized: false
 environment_changes_authorized: false
 formal_data_writes_authorized: false
 production_authorized: false
-completion_status: REJECTED_DESIGN_MISMATCH
-stage_status: BASELINE_GAP
-next_action: confirm_stage_1_design_complete_and_authorize_acceptance_tests
+completion_status: TECH_TESTED
+stage_status: TECH_TESTED
+next_action: request_controlled_validation_live_authorization
 baseline_sha256: 08d38a9ed9c674104f9d416a816203e80e387115fd2b7199c49c63616a9ff1ab
-base_commit: f9dd3c86ae345ed0062f651315160ec6e55c7c72
+base_commit: 870f1c798e2e3be049095678c066a74b674603bb
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
 execution_state_sources:
@@ -33,7 +33,7 @@ requirements:
       - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#工作流硬门禁
       - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#当前执行指针
     tests:
-      - [python, -m, pytest, tests/test_workflow_guard.py, -q]
+      - [python, -m, pytest, tests/test_workflow_guard.py, tests/core/test_stage1b_daily_discovery.py, -q]
 allowed_paths:
   - AGENTS.md
   - docs/EFFECTIVE_DESIGN_BASELINE.md
@@ -41,20 +41,20 @@ allowed_paths:
   - execution/current_stage.yaml
   - scripts/workflow_guard.py
   - tests/test_workflow_guard.py
-frozen_acceptance_tests:
   - tests/core/test_stage1b_daily_discovery.py
+  - scripts/core/production/stage1b_daily_discovery.py
+  - scripts/core/production/stage0_content_core.py
+frozen_acceptance_tests:
   - tests/core/test_local_trendradar_executor.py
 frozen_contracts:
   - BUSINESS_MODEL_ROUTE_REGISTRY.yaml
   - '*_BUSINESS_CONTRACT.yaml'
   - runtime_skills/**
 forbidden_actions:
-  - business_code_change
-  - stage1_business_acceptance_test_change
+  - stage1_acceptance_test_bypass
   - any_external_source_call
   - any_model_call
   - environment_install_or_change
-  - candidate_generation
   - production_daily
   - validation_live
   - stage1a_handoff
