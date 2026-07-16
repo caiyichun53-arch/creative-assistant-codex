@@ -39,6 +39,9 @@ external_responses/
 raw_external/
 
 # Databases and transient state
+.stage_runtime/
+.codex/state/
+artifacts/validation/
 *.db
 *.db-wal
 *.db-shm

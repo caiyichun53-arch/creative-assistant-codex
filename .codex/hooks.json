@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python I:/Creation_assistant-codex/.codex/hooks/turn_change_baseline.py",
+            "timeoutSec": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python I:/Creation_assistant-codex/.codex/hooks/stop_verification_gate.py",
+            "timeoutSec": 10
+          }
+        ]
+      }
+    ]
+  }
+}
