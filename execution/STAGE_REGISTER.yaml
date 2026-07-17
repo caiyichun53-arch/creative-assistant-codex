@@ -1,0 +1,298 @@
+source:
+  effective_planning_file: docs/IMPLEMENTATION_EXECUTION_BASELINE.md
+  source_commit: 54442b029cf4085a3f5122da1439daa373bffb88
+  extraction_scope: "Stage headings, dependencies, completion state, real acceptance evidence only."
+  note: "This register orders execution Stages only; docs/EFFECTIVE_DESIGN_BASELINE.md remains the only complete business design baseline."
+
+baseline:
+  file: docs/EFFECTIVE_DESIGN_BASELINE.md
+  sha256: 6822f5e121073f321b2a7d5a2ae1043d1bb46c001ca72edc8263371f2d2b70e8
+
+default_allowed_files:
+  - AGENTS.md
+  - execution/STAGE_REGISTER.yaml
+  - scripts/execution/stage_control.py
+  - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
+  - docs/*.md
+  - tests/*.py
+  - tests/core/*.py
+  - .gitignore
+
+protected_files:
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
+  - data/**
+  - config/model_routes.yaml
+  - BUSINESS_MODEL_ROUTE_REGISTRY.yaml
+
+forbidden_modes:
+  - mock
+  - fixture-only
+  - temp-entry
+  - internal-direct-call
+  - production_daily
+  - external-call
+  - formal-data-write
+  - model-call
+
+forbidden_rules:
+  - id: fallback_or_silent_degrade
+    description: "Do not add automatic fallback, provider downgrade, or silent recovery paths."
+    pattern: "(?i)(auto(?:matic)?[_ -]?fallback|silent[_ -]?fallback|provider[_ -]?downgrade|fallback\\s*=)"
+  - id: temporary_bypass_entry
+    description: "Do not add temporary bypasses, direct internal-call acceptance, or side-entry workflow execution."
+    pattern: "(?i)(temporary[_ -]?bypass|side[_ -]?entry|direct[_ -]?call|fixture[_ -]?only|mock[_ -]?acceptance)"
+
+stop_conditions:
+  - "The baseline hash does not match baseline.sha256."
+  - "No unique eligible type=business Stage can be selected."
+  - "A dependency status is missing or conflicts with depends_on."
+  - "A changed file is outside the selected Stage scope."
+  - "A protected file is modified."
+  - "The selected Stage requires explicit authorization before real workflow execution."
+  - "A business rule change is required to continue."
+
+stages:
+  - stage_id: stage_0_controlled_execution_foundation
+    stage_name: "Stage 0: 受控执行底座"
+    type: business
+    status: passed
+    depends_on: []
+    baseline_sections:
+      - "## 12. 测试、能力证据、数据隔离与清理"
+      - "## 13. 参数、配置、运行与异常"
+      - "## 14. 实施与验收防跑偏边界"
+      - "## 18. 正式数据语义、版本链、状态机与依赖传播"
+      - "## 22. 物理一致性、受控写入、纠错与隔离验证"
+      - "## 23. 操作手册、测试协议与实施验收的完整要求"
+    real_workflow_test:
+      - python
+      - -m
+      - pytest
+      - tests/core/test_execution_contract.py
+      - tests/core/test_stage0_content_core.py
+      - tests/validation/test_stage0_production_boundaries.py
+      - -q
+    acceptance_summary: "受控执行边界、正式库隔离、唯一入口/事实源和模型绑定核查已完成。"
+
+  - stage_id: stage_1_daily_discovery
+    stage_name: "Stage 1: 真实日常发现与候选选择"
+    type: business
+    status: passed
+    depends_on:
+      - stage_0_controlled_execution_foundation
+    authorization_required: true
+    authorization_status: authorized
+    allowed_files:
+      - execution/STAGE_REGISTER.yaml
+      - TECHNICAL_MANUAL.md
+      - scripts/core/production/stage0_content_core.py
+      - scripts/core/production/stage1b_daily_discovery.py
+      - scripts/core/business_data/daily_source_acquisition.py
+      - tests/core/test_stage1b_daily_discovery.py
+      - tests/core/test_source_to_topic_skill.py
+      - SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml
+      - runtime_skills/source_to_topic/prompt.md
+    baseline_sections:
+      - "### 3.3.1 热点转选题的受控搜索与 Skill 审核"
+      - "## 12. 测试、能力证据、数据隔离与清理"
+      - "## 13. 参数、配置、运行与异常"
+      - "## 14. 实施与验收防跑偏边界"
+      - "### 20.1 来源与选题 Skill"
+      - "## 24. 执行控制登记表"
+    real_workflow_test:
+      - python
+      - -m
+      - scripts.core.production.stage1b_daily_discovery
+      - --domain
+      - fan_kepu_social_life
+      - --source-type
+      - hotspot
+      - --actor
+      - codex_user_authorized_validation
+      - --idempotency-key
+      - stage1b-validation-live-2026-07-17-fan_kepu_social_life-hotspot-codex_user_authorized_validation
+      - --mode
+      - validation_live
+      - --discovery-date
+      - "2026-07-17"
+      - --batch-timeout-seconds
+      - "600"
+    acceptance_summary: "已完成授权后的 hotspot validation_live 验收：stage_control accept run stage_1_daily_discovery-1784281804 PASS；业务 run discovery_run_41b19f557c594109824599baf51b3ed8 为 validation_live completed，technical_failures=0，隔离快照为零候选，不进入 formal_candidate_pool；Stage 2 需要用户选择既有候选、提供方向或要求重跑来源。"
+
+  - stage_id: stage_2_topic_research
+    stage_name: "Stage 2: 正式选题、研究方案与深度研究"
+    type: business
+    status: pending
+    depends_on:
+      - stage_1_daily_discovery
+    baseline_sections:
+      - "## 4. 选题、研究与内容路线"
+      - "## 7. 数据对象、版本、状态与追溯"
+      - "## 10. LLM、Prompt、Skill 与输入组装"
+      - "## 18. 正式数据语义、版本链、状态机与依赖传播"
+      - "## 20. 业务 Skill 的逐项契约、失败处理与测试"
+      - "## 22. 物理一致性、受控写入、纠错与隔离验证"
+      - "## 24. 执行控制登记表"
+    real_workflow_test:
+      - python
+      - -m
+      - pytest
+      - tests/core/test_stage1a_research_plan.py
+      - -q
+    acceptance_summary: "候选到正式选题、研究方案待审、人工决定、深度研究与结果审核证据；当前只到研究方案待审核。"
+
+  - stage_id: stage_3_content_plan_experience_selection
+    stage_name: "Stage 3: 内容计划与经验选择"
+    type: business
+    status: pending
+    depends_on:
+      - stage_2_topic_research
+    baseline_sections:
+      - "## 5. 受控内容生产工作流"
+      - "## 7. 数据对象、版本、状态与追溯"
+      - "## 9. 经验、内容偏好、反馈与正式实验"
+      - "## 10. LLM、Prompt、Skill 与输入组装"
+      - "## 18. 正式数据语义、版本链、状态机与依赖传播"
+      - "## 20. 业务 Skill 的逐项契约、失败处理与测试"
+      - "## 24. 执行控制登记表"
+    real_workflow_test:
+      - python
+      - -c
+      - "raise SystemExit('Stage 3 real workflow is not implemented yet')"
+    acceptance_summary: "正式计划入口、真实输入组装、计划版本、人工决定和经验决策审计。"
+
+  - stage_id: stage_4_draft_revision_review
+    stage_name: "Stage 4: 初稿、优化、去 AI、审核与最终确认"
+    type: business
+    status: pending
+    depends_on:
+      - stage_3_content_plan_experience_selection
+    baseline_sections:
+      - "## 5. 受控内容生产工作流"
+      - "## 7. 数据对象、版本、状态与追溯"
+      - "## 10. LLM、Prompt、Skill 与输入组装"
+      - "## 18. 正式数据语义、版本链、状态机与依赖传播"
+      - "## 20. 业务 Skill 的逐项契约、失败处理与测试"
+      - "## 24. 执行控制登记表"
+    real_workflow_test:
+      - python
+      - -c
+      - "raise SystemExit('Stage 4 real workflow is not implemented yet')"
+    acceptance_summary: "正式稿件入口、上游输入、稿件版本/Diff、模型/校验记录、人工决定和异常恢复证据。"
+
+  - stage_id: stage_5_experience_quality_validation
+    stage_name: "Stage 5: 经验机制和文案质量真实验证"
+    type: business
+    status: pending
+    depends_on:
+      - stage_4_draft_revision_review
+    baseline_sections:
+      - "## 9. 经验、内容偏好、反馈与正式实验"
+      - "## 12. 测试、能力证据、数据隔离与清理"
+      - "## 18. 正式数据语义、版本链、状态机与依赖传播"
+      - "## 20. 业务 Skill 的逐项契约、失败处理与测试"
+      - "## 24. 执行控制登记表"
+    real_workflow_test:
+      - python
+      - -c
+      - "raise SystemExit('Stage 5 real workflow is not implemented yet')"
+    acceptance_summary: "实际引用记录、真实反馈/反例、候选或无动作、用户审核和状态审计。"
+
+  - stage_id: stage_6_audio_delivery
+    stage_name: "Stage 6: 音频交付"
+    type: business
+    status: pending
+    depends_on:
+      - stage_4_draft_revision_review
+    baseline_sections:
+      - "## 6. 声音、音频与交付"
+      - "## 7. 数据对象、版本、状态与追溯"
+      - "## 10. LLM、Prompt、Skill 与输入组装"
+      - "## 18. 正式数据语义、版本链、状态机与依赖传播"
+      - "## 24. 执行控制登记表"
+    real_workflow_test:
+      - python
+      - -c
+      - "raise SystemExit('Stage 6 real workflow is not implemented yet')"
+    acceptance_summary: "正式音频版本、配置/运行记录、审核动作、资产完整性和恢复演练。"
+
+  - stage_id: stage_7_publication_p_metrics
+    stage_name: "Stage 7: 实际发布关联、P0-P7 和 P7 复盘"
+    type: business
+    status: pending
+    depends_on:
+      - stage_6_audio_delivery
+    baseline_sections:
+      - "## 8. 外部发布、数据回流与 P0—P7"
+      - "## 9. 经验、内容偏好、反馈与正式实验"
+      - "## 21. Core API、飞书入口、权限、作业与运行审计"
+      - "## 24. 执行控制登记表"
+    real_workflow_test:
+      - python
+      - -c
+      - "raise SystemExit('Stage 7 real workflow is not implemented yet')"
+    acceptance_summary: "发布关联、P0-P7 快照/缺失、P7 复盘、作业审计和真实适配器记录。"
+
+  - stage_id: stage_8_feishu_workbench_manual
+    stage_name: "Stage 8: 飞书、工作台和操作手册"
+    type: business
+    status: pending
+    depends_on:
+      - stage_1_daily_discovery
+      - stage_2_topic_research
+      - stage_3_content_plan_experience_selection
+      - stage_4_draft_revision_review
+      - stage_5_experience_quality_validation
+      - stage_6_audio_delivery
+      - stage_7_publication_p_metrics
+    baseline_sections:
+      - "## 11. 工作台、飞书、操作与权限"
+      - "## 21. Core API、飞书入口、权限、作业与运行审计"
+      - "## 23. 操作手册、测试协议与实施验收的完整要求"
+      - "## 24. 执行控制登记表"
+    real_workflow_test:
+      - python
+      - -c
+      - "raise SystemExit('Stage 8 real workflow is not implemented yet')"
+    acceptance_summary: "Core 调用追溯、身份/签名日志、对象版本回显、用户动作审计和端到端测试。"
+
+  - stage_id: stage_9_production_activation
+    stage_name: "Stage 9: 正式生产激活"
+    type: business
+    status: pending
+    depends_on:
+      - stage_0_controlled_execution_foundation
+      - stage_1_daily_discovery
+      - stage_2_topic_research
+      - stage_3_content_plan_experience_selection
+      - stage_4_draft_revision_review
+      - stage_5_experience_quality_validation
+      - stage_6_audio_delivery
+      - stage_7_publication_p_metrics
+      - stage_8_feishu_workbench_manual
+    baseline_sections:
+      - "## 12. 测试、能力证据、数据隔离与清理"
+      - "## 13. 参数、配置、运行与异常"
+      - "## 14. 实施与验收防跑偏边界"
+      - "## 21. Core API、飞书入口、权限、作业与运行审计"
+      - "## 23. 操作手册、测试协议与实施验收的完整要求"
+      - "## 24. 执行控制登记表"
+    real_workflow_test:
+      - python
+      - -c
+      - "raise SystemExit('Stage 9 real workflow is not implemented yet')"
+    acceptance_summary: "全阶段验收、真实演练、模型/费用/时延、正式对象链、人工批准、监控、备份、恢复和隔离证据。"
+
+  - stage_id: stage_execution_mechanism_minimalization
+    stage_name: "Stage execution mechanism minimalization"
+    type: maintenance
+    status: isolated_not_business
+    depends_on: []
+    baseline_sections:
+      - "## 0. 本文件的效力与规则分层"
+      - "## 14. 实施与验收防跑偏边界"
+    real_workflow_test:
+      - python
+      - -c
+      - "print('maintenance task is not a business Stage')"
+    acceptance_summary: "维护任务隔离；不得计入业务 Stage 进度、替换业务指针或触发下一业务 Stage。"

@@ -173,6 +173,111 @@ def _hash(value: Any) -> str:
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
 
 
+def _hotspot_cluster_key(title: str) -> str:
+    normalized = "".join(ch for ch in title.casefold() if ch.isalnum())
+    return normalized or _hash({"title": title})[:20]
+
+
+def _hotspot_rank_value(row: sqlite3.Row) -> int:
+    value = row["source_rank"]
+    return int(value) if isinstance(value, int) or str(value).isdigit() else 9999
+
+
+def _hotspot_policy_score(title: str, policy: dict[str, Any]) -> tuple[int, list[str], list[str]]:
+    title_folded = title.casefold()
+    risk_terms = [str(term) for term in policy.get("risk_block_terms", []) if str(term).casefold() in title_folded]
+    exclude_terms = [str(term) for term in policy.get("exclude_terms", []) if str(term).casefold() in title_folded]
+    if risk_terms or exclude_terms:
+        return -10000, [], risk_terms + exclude_terms
+    matched_terms = [str(term) for term in policy.get("hotspot_match_terms", []) if str(term).casefold() in title_folded]
+    return len(matched_terms) * 100, matched_terms, []
+
+
+def _build_hotspot_event_cluster_sources(
+    rows: list[sqlite3.Row], *, domain_label: str, per_source_limit: int
+) -> list[dict[str, Any]]:
+    policy = get_discovery_policy(domain_label)
+    clusters: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        title = str(row["title"] or "").strip()
+        url = str(row["url"] or "").strip()
+        if not title or not url:
+            continue
+        clusters.setdefault(_hotspot_cluster_key(title), []).append(row)
+
+    ranked: list[tuple[int, int, int, str, list[sqlite3.Row], list[str]]] = []
+    for key, members in clusters.items():
+        best = min(members, key=_hotspot_rank_value)
+        score, matched_terms, blocked_terms = _hotspot_policy_score(str(best["title"]), policy)
+        if blocked_terms:
+            continue
+        if not matched_terms and domain_label != "fan_kepu_social_life":
+            continue
+        cross_source_bonus = max(len({str(row["source_channel"]) for row in members}) - 1, 0) * 15
+        rank_bonus = max(30 - _hotspot_rank_value(best), 0)
+        ranked.append((score + cross_source_bonus + rank_bonus, len(members), -_hotspot_rank_value(best), key, members, matched_terms))
+    ranked.sort(reverse=True)
+
+    result: list[dict[str, Any]] = []
+    for score, _count, _rank, key, members, matched_terms in ranked[:per_source_limit]:
+        representative = min(members, key=_hotspot_rank_value)
+        observed_at = max(str(row["observed_at"]) for row in members)
+        merged_sources = [
+            {
+                "observation_id": str(row["observation_id"]),
+                "title": str(row["title"]),
+                "url": str(row["url"]),
+                "channel": str(row["source_channel"]),
+                "rank": row["source_rank"],
+                "observed_at": str(row["observed_at"]),
+            }
+            for row in sorted(members, key=_hotspot_rank_value)
+        ]
+        cluster_payload = {
+            "cluster_id": f"hotspot_cluster_{_hash({'domain': domain_label, 'key': key})[:20]}",
+            "representative_source": str(representative["title"]),
+            "merged_sources": merged_sources,
+            "dedupe_reason": "deterministic title-normalized event cluster before source_to_topic",
+            "matched_terms": matched_terms,
+        }
+        source_content = "；".join(dict.fromkeys(item["title"] for item in merged_sources[:8]))
+        representative_raw_hash = _hash(json.loads(str(representative["raw_json"])))
+        result.append(
+            {
+                "source_type": "hotspot",
+                "source_object_id": str(representative["observation_id"]),
+                "source_object_version": str(representative["observed_at"]),
+                "source_time": str(representative["observed_at"]),
+                "payload": {
+                    "source_id": cluster_payload["cluster_id"],
+                    "title": str(representative["title"]),
+                    "url": str(representative["url"]),
+                    "account_name": "TrendRadar/event_cluster",
+                    "source_time": observed_at,
+                    "hotspot_event_cluster": cluster_payload,
+                    "material_packet": {
+                        "fact_summary": source_content,
+                        "key_source_refs": [item["url"] for item in merged_sources[:8]],
+                        "audience_relation": "hotspot cluster selected for controlled source-to-topic judgement",
+                        "domain_fit": "deterministic hotspot cluster prefilter selected this item for the target domain",
+                        "possible_questions": [item["title"] for item in merged_sources[:5]],
+                        "uncertainty": "cluster is still a discovery source; formal research evidence has not started",
+                        "material_gaps": ["controlled search material supplementation is still required before formal research"],
+                        "risks": [],
+                        "stop_reason": "none",
+                    },
+                    "formal_source": {
+                        "table": "trendradar_hotspot_observation",
+                        "object_id": str(representative["observation_id"]),
+                        "object_version": str(representative["observed_at"]),
+                        "raw_metadata_hash": representative_raw_hash,
+                    },
+                },
+            }
+        )
+    return result
+
+
 def is_formal_database(path: Path | str) -> bool:
     return Path(path).resolve() == FORMAL_DB_PATH.resolve()
 
@@ -1056,7 +1161,9 @@ class Stage0ContentProductionCore:
         if source_type == "hotspot":
             match_terms = tuple(str(term) for term in get_discovery_policy(domain_label).get("hotspot_match_terms", []))
             folded_title = str(row["title"]).casefold()
-            if not match_terms or not any(term.casefold() in folded_title for term in match_terms):
+            if not payload.get("hotspot_event_cluster") and (
+                not match_terms or not any(term.casefold() in folded_title for term in match_terms)
+            ):
                 raise StateTransitionError("hotspot does not match the versioned domain policy")
         if origin.get("table") != expected_table or origin.get("object_id") != source_object_id:
             raise StateTransitionError("daily discovery source mapping does not identify the formal origin")
@@ -1925,15 +2032,17 @@ class Stage0ContentProductionCore:
             (domain_label,),
         ).fetchone()[0] if competitor_ready else 0
         hotspot_rows = self.conn.execute(
-            "SELECT observation.title FROM trendradar_hotspot_observation observation "
+            "SELECT observation.* FROM trendradar_hotspot_observation observation "
             "JOIN trendradar_collection_run run ON run.collection_run_id=observation.collection_run_id "
             "WHERE observation.observed_at>=? AND run.status IN ('completed', 'completed_with_failures')",
             (daily_since,),
         ).fetchall()
-        hotspot_terms = tuple(str(term).casefold() for term in get_discovery_policy(domain_label).get("hotspot_match_terms", []))
-        hotspot_sources = sum(
-            1 for row in hotspot_rows
-            if hotspot_terms and any(term in str(row["title"]).casefold() for term in hotspot_terms)
+        hotspot_sources = len(
+            _build_hotspot_event_cluster_sources(
+                list(hotspot_rows),
+                domain_label=domain_label,
+                per_source_limit=len(hotspot_rows) or 1,
+            )
         )
         tag_sources = self.conn.execute(
             "SELECT COUNT(*) FROM discovered_external_videos video JOIN domain_search_tags tag ON tag.tag_id=video.tag_id "
@@ -1976,14 +2085,13 @@ class Stage0ContentProductionCore:
             "ORDER BY observation.observed_at DESC, observation.observation_id ASC",
             (daily_since,),
         ).fetchall()
-        hotspot_terms = tuple(str(term).casefold() for term in get_discovery_policy(domain_label).get("hotspot_match_terms", []))
-        hotspot_rows = [
-            row for row in all_hotspot_rows
-            if hotspot_terms and any(term in str(row["title"]).casefold() for term in hotspot_terms)
-        ][:per_source_limit]
-        for row in hotspot_rows:
-            raw_hash = _hash(json.loads(row["raw_json"]))
-            result.append({"source_type": "hotspot", "source_object_id": row["observation_id"], "source_object_version": row["observed_at"], "source_time": row["observed_at"], "payload": {"source_id": row["observation_id"], "title": row["title"], "url": row["url"], "account_name": f"TrendRadar/{row['source_channel']}", "source_time": row["observed_at"], "formal_source": {"table": "trendradar_hotspot_observation", "object_id": row["observation_id"], "object_version": row["observed_at"], "raw_metadata_hash": raw_hash}}})
+        result.extend(
+            _build_hotspot_event_cluster_sources(
+                list(all_hotspot_rows),
+                domain_label=domain_label,
+                per_source_limit=per_source_limit,
+            )
+        )
         daily_rows = self.conn.execute(
             "SELECT video.video_id, video.title, video.url, video.publish_time, video.last_checked_at, video.raw_json, account.account_name "
             "FROM competitor_videos video JOIN competitor_accounts account ON account.account_id=video.account_id "

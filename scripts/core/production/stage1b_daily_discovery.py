@@ -67,6 +67,7 @@ DAILY_REPORT_SOURCE_TYPES = (
     "question_expansion",
 )
 HOTSPOT_DAILY_PROCESS_LIMIT = 3
+VALIDATION_LIVE_ELIGIBLE_PROCESS_LIMIT = 1
 DAILY_SOURCE_VALIDITY_HOURS = 72
 SOURCE_READ_LIMIT = 6
 DISCOVERY_PROMPT_VERSION = "source_to_topic.prompt.v1"
@@ -447,6 +448,7 @@ class Stage1BDailyDiscoveryService:
                 filtered: dict[str, int] = {}
                 candidate_count = 0
                 sources_read = 0
+                eligible_model_attempts = 0
                 for index, source in enumerate(ordered_sources()):
                     sources_read += 1
                     if time.monotonic() >= deadline:
@@ -469,6 +471,11 @@ class Stage1BDailyDiscoveryService:
                             source_evidence[source["source_type"]]["status"] = "no_candidate"
                             source_evidence[source["source_type"]]["reason"] = reason_code
                         continue
+                    eligible_model_attempts += 1
+                    validation_live_limit_reached = (
+                        execution_mode == "validation_live"
+                        and eligible_model_attempts >= VALIDATION_LIVE_ELIGIBLE_PROCESS_LIMIT
+                    )
                     assembly_payload = self._assembly_payload(
                         run_id=run["run_id"],
                         domain_label=domain_label,
@@ -499,6 +506,8 @@ class Stage1BDailyDiscoveryService:
                         if source["source_type"] in source_evidence:
                             source_evidence[source["source_type"]]["status"] = "no_candidate"
                             source_evidence[source["source_type"]]["reason"] = "model_gateway_failed"
+                        if validation_live_limit_reached:
+                            break
                         continue
                     except (json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
                         self.core.record_discovery_no_candidate(
@@ -513,6 +522,8 @@ class Stage1BDailyDiscoveryService:
                         if source["source_type"] in source_evidence:
                             source_evidence[source["source_type"]]["status"] = "no_candidate"
                             source_evidence[source["source_type"]]["reason"] = "model_output_invalid"
+                        if validation_live_limit_reached:
+                            break
                         continue
                     if judgement["topic_status"] == "no_result":
                         self.core.record_discovery_no_candidate(
@@ -529,6 +540,8 @@ class Stage1BDailyDiscoveryService:
                         if source["source_type"] in source_evidence:
                             source_evidence[source["source_type"]]["status"] = "no_candidate"
                             source_evidence[source["source_type"]]["reason"] = "model_returned_no_candidate"
+                        if validation_live_limit_reached:
+                            break
                         continue
                     rejection = candidate_rejection(domain_label, judgement)
                     if rejection is not None:
@@ -542,6 +555,8 @@ class Stage1BDailyDiscoveryService:
                         if source["source_type"] in source_evidence:
                             source_evidence[source["source_type"]]["status"] = "no_candidate"
                             source_evidence[source["source_type"]]["reason"] = reason_code
+                        if validation_live_limit_reached:
+                            break
                         continue
                     candidate_payload = {
                         **judgement,
@@ -565,6 +580,8 @@ class Stage1BDailyDiscoveryService:
                     if source["source_type"] in source_evidence:
                         source_evidence[source["source_type"]]["status"] = "has_candidate"
                         source_evidence[source["source_type"]]["reason"] = "candidate_created"
+                    if validation_live_limit_reached:
+                        break
                 summary["domains"][domain_label] = {"sources_read": sources_read, "candidates": candidate_count}
                 summary["source_readiness"][domain_label] = self.core.discovery_source_readiness(domain_label=domain_label, daily_since=daily_since)
                 summary["filtered"][domain_label] = filtered
@@ -678,7 +695,8 @@ class Stage1BDailyDiscoveryService:
             return "excluded", "outside_domain_policy", {"matched_terms": matched_terms}
         if source["source_type"] == "hotspot":
             match_terms = tuple(str(term) for term in policy.get("hotspot_match_terms", []))
-            if not match_terms or not any(term.casefold() in title_folded for term in match_terms):
+            cluster = source["payload"].get("hotspot_event_cluster")
+            if not cluster and (not match_terms or not any(term.casefold() in title_folded for term in match_terms)):
                 return "excluded", "hotspot_domain_mismatch", {}
         normalized_title = _normalize_title(title)
         if self.core.discovery_source_seen(source_type=source["source_type"], source_object_id=source["source_object_id"], source_object_version=source["source_object_version"]):
@@ -722,6 +740,26 @@ class Stage1BDailyDiscoveryService:
             evidence_items.append(url)
         if account_name:
             evidence_items.append(account_name)
+        hotspot_cluster = payload.get("hotspot_event_cluster") if source["source_type"] == "hotspot" else None
+        if isinstance(hotspot_cluster, dict):
+            for item in hotspot_cluster.get("merged_sources", []):
+                if not isinstance(item, dict):
+                    continue
+                for key in ("title", "url", "channel"):
+                    value = str(item.get(key) or "").strip()
+                    if value:
+                        evidence_items.append(value)
+        event_cluster_summary = (
+            hotspot_cluster
+            if isinstance(hotspot_cluster, dict)
+            else {
+                "cluster_id": source_version_id,
+                "representative_source": title,
+                "merged_sources": [],
+                "dedupe_reason": "single currently recorded source version; upstream event clustering must be supplied before live validation can be upgraded.",
+            }
+        )
+        material_packet = payload.get("material_packet") if isinstance(payload.get("material_packet"), dict) else None
         domain_summary = (
             f"当前领域为 {domain_label}。排除类型/词包括：{', '.join(str(term) for term in policy.get('exclude_terms', [])) or '无'}。"
             f"热点匹配词包括：{', '.join(str(term) for term in policy.get('hotspot_match_terms', [])) or '无'}。"
@@ -735,19 +773,14 @@ class Stage1BDailyDiscoveryService:
             "domain_label": domain_label,
             "relation_summary": "deterministic prefilter passed; duplicate, cooldown and prior production checks are clear for this source version.",
             "source_kind": source_kind,
-            "event_cluster_summary": {
-                "cluster_id": source_version_id,
-                "representative_source": title,
-                "merged_sources": [],
-                "dedupe_reason": "single currently recorded source version; upstream event clustering must be supplied before live validation can be upgraded.",
-            },
+            "event_cluster_summary": event_cluster_summary,
             "deterministic_prefilter": {
                 "passed": True,
                 "reasons": ["source_traceable", "freshness_checked", "domain_prefilter_passed", "duplicate_and_cooling_clear"],
                 "risk_flags": [],
                 "domain_precheck": domain_label,
             },
-            "material_packet": {
+            "material_packet": material_packet or {
                 "fact_summary": source_content,
                 "key_source_refs": evidence_items[:8],
                 "audience_relation": "该来源只提供发现线索；是否与目标受众有强关系需由来源转选题 Skill 基于输入材料判断。",
@@ -771,7 +804,7 @@ class Stage1BDailyDiscoveryService:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run one Core-owned Stage 1B batch, or classify a prior live validation."""
+    """Run one Core-owned Stage 1B batch, classify, or purge a live validation."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--domain", choices=APPROVED_DOMAINS, help="one authorized formal domain for a new batch")
     parser.add_argument(
@@ -786,9 +819,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--discovery-date", default=datetime.now(timezone.utc).date().isoformat(), help="YYYY-MM-DD (defaults to UTC today)")
     parser.add_argument("--batch-timeout-seconds", type=int, default=600, help="bounded batch deadline; timed-out or interrupted batches are not retried")
     parser.add_argument("--reclassify-run", help="existing run to mark as validation_live without re-running sources or models")
+    parser.add_argument("--purge-validation-run", help="existing validation_live run to physically purge after explicit confirmation")
+    parser.add_argument("--expected-candidate-count", type=int, help="required candidate count guard when purging a validation_live run")
+    parser.add_argument("--confirmation", help="exact purge confirmation token")
     parser.add_argument("--reason", help="required audit reason when reclassifying an existing run")
     args = parser.parse_args(argv)
-    if args.reclassify_run:
+    if args.reclassify_run and args.purge_validation_run:
+        parser.error("choose only one of --reclassify-run or --purge-validation-run")
+    if args.purge_validation_run:
+        if args.mode != "validation_live" or not args.reason or args.domain or args.expected_candidate_count is None or not args.confirmation:
+            parser.error(
+                "purge requires --purge-validation-run, --mode validation_live, --actor, --reason, "
+                "--expected-candidate-count, --confirmation, and no --domain"
+            )
+    elif args.reclassify_run:
         if args.mode != "validation_live" or not args.reason or args.domain:
             parser.error("reclassification requires --reclassify-run, --mode validation_live, --actor, --reason, and no --domain")
     elif not args.domain:
@@ -803,6 +847,16 @@ def main(argv: list[str] | None = None) -> int:
                 actor=args.actor,
                 reason=args.reason,
                 idempotency_key=args.idempotency_key,
+            )
+            print(_canonical(result))
+            return 0
+        if args.purge_validation_run:
+            result = core.purge_validation_live_run(
+                run_id=args.purge_validation_run,
+                actor=args.actor,
+                reason=args.reason or "",
+                expected_candidate_count=args.expected_candidate_count if args.expected_candidate_count is not None else -1,
+                confirmation=args.confirmation or "",
             )
             print(_canonical(result))
             return 0

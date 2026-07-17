@@ -19,4 +19,10 @@ Required output keys: topic_status, candidate_topic, topic_angle, core_question,
 
 Write all human-readable values in Simplified Chinese. `topic_status` is exactly one of `"generated"`, `"generated_good_candidate"`, `"valid_but_weak"`, `"needs_review"`, or `"no_result"`. `confidence` is exactly `"high"`, `"medium"`, `"low"`, or `"none"`, never a number. `no_result_reason` is exactly `"none"`, `"empty_source"`, `"insufficient_source_evidence"`, or `"unsupported_source"`. Use schema_version `source_to_topic.output.v1`.
 
-Before answering, double check every required key is present, every enum uses an allowed string, every execution_review item is boolean, and `schema_version` is present.
+The following keys must always be JSON arrays, even when there is only one item or no item: `supporting_evidence`, `source_constraints`, `risks`, `material_gaps`, `user_review_reasons`, `candidate_selection.rejected_directions`, `experience_usage.used_experience_ids`, and `experience_usage.unused_experience_ids`. Never return these keys as strings, objects, null, or comma-separated text. Use `[]` when empty.
+
+`execution_review` must always be a JSON object, never an array, string, or paragraph. It must contain exactly these boolean keys: `used_only_supplied_material`, `did_not_search_by_itself`, `did_not_invent_facts`, `respected_domain_boundary`, `respected_risk_boundary`, `did_not_force_candidate`, and `no_score_rank_weight`.
+
+`angle_discovery` must always be a JSON object, never an array or list of paragraphs. It must contain exactly these object keys: `problem_angle`, `audience_relevance_angle`, `content_increment_angle`, `tension_angle`, `distinct_angle`, `producible_angle`, and `durable_value_angle`. Each angle object must contain `found` (boolean), `direction` (string), and `reason` (string).
+
+Before answering, double check every required key is present, every enum uses an allowed string, every array field is a JSON array, every execution_review item is boolean, and `schema_version` is present.

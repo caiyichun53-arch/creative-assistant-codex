@@ -428,6 +428,115 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["sources_read"], 3)
         self.assertLessEqual(self.provider.calls, 3)
 
+    def test_validation_live_stops_after_one_eligible_model_attempt(self) -> None:
+        production_db = Path(self.tempdir.name) / "formal-validation-live-limit.sqlite3"
+        with patch("scripts.core.production.stage0_content_core.FORMAL_DB_PATH", production_db):
+            production_core = Stage0ContentProductionCore.open(production_db, data_identity="production")
+        self.production_core = production_core
+        production_provider = FakeDiscoveryProvider()
+        production_gateway = ModelGateway(
+            routes={self.route.route_name: self.route},
+            providers={production_provider.provider_name: production_provider},
+            materializer=CoreDiscoveryModelRunMaterializer(production_core),
+        )
+        production_core.conn.execute(
+            """
+            INSERT INTO trendradar_collection_run(
+                collection_run_id, discovery_run_id, status, item_count, command_hash, started_at, completed_at
+            ) VALUES ('tr-run-validation-limit', 'upstream-validation-limit', 'completed', 4, 'hash-validation-limit', ?, ?)
+            """,
+            (self.NOW.isoformat(), self.NOW.isoformat()),
+        )
+        for index in range(4):
+            title = f"validation live hotspot source {index}"
+            production_core.conn.execute(
+                """
+                INSERT INTO trendradar_hotspot_observation(
+                    observation_id, provider_item_id, title, url, source_channel, source_rank,
+                    observed_at, raw_json, collection_run_id
+                ) VALUES (?, ?, ?, ?, 'news', ?, ?, ?, 'tr-run-validation-limit')
+                """,
+                (
+                    f"validation-hotspot-{index}",
+                    f"validation-provider-{index}",
+                    title,
+                    f"https://example.test/validation-hotspot-{index}",
+                    index + 1,
+                    self.NOW.isoformat(),
+                    json.dumps({"id": f"validation-provider-{index}", "title": title}),
+                ),
+            )
+        production_core.conn.commit()
+        service = Stage1BDailyDiscoveryService(
+            core=production_core,
+            gateway=production_gateway,
+            source_acquirer=NoopProductionAcquirer(),  # type: ignore[arg-type]
+        )
+
+        result = service.run_daily_discovery(
+            discovery_date="2026-07-14",
+            actor="validator",
+            idempotency_key="validation-live-one-attempt",
+            execution_mode="validation_live",
+            now=self.NOW,
+            domains=("fan_kepu_social_life",),
+            source_types=("hotspot",),
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["sources_read"], 1)
+        self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 1)
+        self.assertEqual(production_provider.calls, 1)
+
+    def test_hotspots_are_clustered_before_daily_processing_limit(self) -> None:
+        self.core.conn.execute(
+            """
+            INSERT INTO trendradar_collection_run(
+                collection_run_id, discovery_run_id, status, item_count, command_hash, started_at, completed_at
+            ) VALUES ('tr-run-cluster', 'upstream-run-cluster', 'completed', 5, 'hash-cluster', ?, ?)
+            """,
+            (self.NOW.isoformat(), self.NOW.isoformat()),
+        )
+        rows = [
+            ("hotspot-cluster-1", "provider-cluster-1", "shared housing policy debate", "weibo", 1),
+            ("hotspot-cluster-2", "provider-cluster-2", "shared housing policy debate", "toutiao", 2),
+            ("hotspot-cluster-3", "provider-cluster-3", "salary holiday policy route", "baidu", 3),
+            ("hotspot-cluster-4", "provider-cluster-4", "family service pressure", "zhihu", 4),
+            ("hotspot-cluster-5", "provider-cluster-5", "consumer refund dispute", "douyin", 5),
+        ]
+        for observation_id, provider_id, title, channel, rank in rows:
+            self.core.conn.execute(
+                """
+                INSERT INTO trendradar_hotspot_observation(
+                    observation_id, provider_item_id, title, url, source_channel, source_rank,
+                    observed_at, raw_json, collection_run_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'tr-run-cluster')
+                """,
+                (
+                    observation_id,
+                    provider_id,
+                    title,
+                    f"https://example.test/{provider_id}",
+                    channel,
+                    rank,
+                    self.NOW.isoformat(),
+                    json.dumps({"id": provider_id, "title": title}),
+                ),
+            )
+        self.core.conn.commit()
+
+        sources = self.core.load_real_discovery_sources(
+            domain_label="fan_kepu_social_life",
+            daily_since="2026-07-11T12:00:00+00:00",
+            per_source_limit=6,
+        )
+        hotspot_sources = [source for source in sources if source["source_type"] == "hotspot"]
+        self.assertEqual(len(hotspot_sources), 4)
+        first_cluster = hotspot_sources[0]["payload"]["hotspot_event_cluster"]
+        self.assertEqual(hotspot_sources[0]["source_object_id"], "hotspot-cluster-1")
+        self.assertTrue(first_cluster["cluster_id"].startswith("hotspot_cluster_"))
+        self.assertEqual(first_cluster["representative_source"], "shared housing policy debate")
+        self.assertEqual(len(first_cluster["merged_sources"]), 2)
+
     def test_each_daily_report_source_keeps_evidence_for_has_or_has_not(self) -> None:
         result = self._run(
             "daily-source-evidence",

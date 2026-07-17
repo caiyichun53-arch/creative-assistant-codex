@@ -1,22 +1,23 @@
 mode: implementation
 stage: stage_1_daily_discovery
 design_complete: true
-implementation_authorized: false
+implementation_authorized: true
 external_calls_authorized: false
 environment_changes_authorized: false
 formal_data_writes_authorized: false
 production_authorized: false
-completion_status: SOURCE_TO_TOPIC_STAGE1B_ENTRYPOINT_FIX_TECH_TESTED_WAITING_LIVE_VALIDATION_AUTHORIZATION
-stage_status: TECH_TESTED_PENDING_USER_LIVE_VALIDATION_AUTHORIZATION
-source_evidence_level: LIVE_RUN_REJECTED
-claimed_source_level: NONE
-next_action: user_review_and_optionally_authorize_next_source_to_topic_live_validation
+completion_status: STAGE1_DAILY_DISCOVERY_VALIDATION_LIVE_ZERO_CANDIDATE_PASSED
+stage_status: PASS
+source_evidence_level: LIVE_VALIDATED
+claimed_source_level: LIVE_VALIDATED
+next_action: user_select_existing_candidate_provide_direction_or_request_source_rerun_for_stage_2_topic_research
 baseline_sha256: 6822f5e121073f321b2a7d5a2ae1043d1bb46c001ca72edc8263371f2d2b70e8
-base_commit: 761c345f70ccc6da415c90840d0dd2304adb6170
+base_commit: 86cff32e127d25c240e433862c3ce4f2d19fa478
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
 execution_state_sources:
-  - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
+  - execution/STAGE_REGISTER.yaml
+  - .stage_runtime/current_stage.yaml
   - execution/current_stage.yaml
 prohibited_design_sources:
   - V0.x documents
@@ -28,31 +29,33 @@ prohibited_design_sources:
   - Git history old designs
   - old code comments business rules
 requirements:
-  - id: STAGE1-HOTSPOT-DESIGN-CORRECTION-001
-    description: "Stage 1B source_to_topic entrypoint repair is committed and tech-tested. Implementation authorization is closed; real sources, model calls, formal data writes, production_daily, and validation_live remain unauthorized pending user review."
+  - id: STAGE1-DAILY-DISCOVERY-VALIDATION-LIVE-001
+    description: "Stage 1 daily discovery validates a real hotspot validation_live run with isolated candidate output, no technical failures, and no production_daily promotion."
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3.1 热点转选题的受控搜索与 Skill 审核
       - docs/EFFECTIVE_DESIGN_BASELINE.md#20.1 来源与选题 Skill
-      - docs/IMPLEMENTATION_EXECUTION_BASELINE.md#当前执行指针
     tests:
-      - [python, -m, pytest, tests/test_workflow_guard.py, tests/core/test_stage1b_daily_discovery.py, tests/core/test_source_to_topic_skill.py, tests/core/test_run_source_to_topic.py, -q]
+      - [python, -m, pytest, tests/core/test_stage1b_daily_discovery.py, tests/core/test_source_to_topic_skill.py, -q]
 allowed_paths:
-  - docs/IMPLEMENTATION_EXECUTION_BASELINE.md
+  - SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml
+  - TECHNICAL_MANUAL.md
+  - execution/STAGE_REGISTER.yaml
   - execution/current_stage.yaml
+  - runtime_skills/source_to_topic/prompt.md
+  - scripts/core/production/stage0_content_core.py
+  - scripts/core/production/stage1b_daily_discovery.py
+  - tests/core/test_source_to_topic_skill.py
+  - tests/core/test_stage1b_daily_discovery.py
 frozen_acceptance_tests:
   - tests/core/test_local_trendradar_executor.py
 frozen_contracts:
   - BUSINESS_MODEL_ROUTE_REGISTRY.yaml
 forbidden_actions:
-  - business_code_change
-  - stage1_acceptance_test_change
   - any_external_source_call
   - any_model_call
   - environment_install_or_change
   - formal_data_write
   - production_daily
-  - validation_live
-  - stage1a_handoff
-  - research_stage_entry
+  - stage1a_handoff_without_user_selection
   - automatic_retry
   - workflow_guard_bypass

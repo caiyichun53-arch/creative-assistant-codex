@@ -55,7 +55,7 @@ Input Assembly、ModelGateway 运行记录和审计边界，不执行真实内�
 
 `scripts/core/production/stage1b_daily_discovery.py` 是由项目 Core Runtime 直接执行的一次性 Stage 1B 批处理入口；它不是由 Codex 轮询的业务进程。每次必须显式给出一个领域、审计主体、幂等键和运行模式：`test_isolated` 只能使用非生产数据身份，`validation_live` 只形成隔离的真实验收结果，`production_daily` 才可能形成正式日产候选池。前两种模式不可自动升级，也不能进入日产能、Stage 1A、研究或经验系统。
 
-`validation_live` 每次必须且只能指定一个 `--source-type`，用于按来源逐项验收；热点和标签搜索只校验自己需要的采集配置，不要求无关来源同时启用。六个值是 `hotspot`、`daily_competitor_content`、`historical_high_signal`、`tag_discovery`、`question_expansion`、`saved_user_direction`。`production_daily` 不接受缺项，必须执行完整六来源集合。
+`validation_live` 每次必须且只能指定一个 `--source-type`，用于按来源逐项验收；热点和标签搜索只校验自己需要的采集配置，不要求无关来源同时启用。一次 `validation_live` 批次只对第一个通过确定性过滤的 eligible 来源发起一次模型尝试，尝试成功、零候选、输出非法或模型失败后均停止本批次后续 eligible 处理，避免单次验收继续消耗多个模型调用。六个值是 `hotspot`、`daily_competitor_content`、`historical_high_signal`、`tag_discovery`、`question_expansion`、`saved_user_direction`。`production_daily` 不接受缺项，必须执行完整六来源集合。
 
 新批次的固定顺序是：TrendRadar 热点采集→热点领域转化→对标日常来源→对标历史高信号→领域标签搜索→标签来源转化→已完成问题拓展→用户保存方向。标签搜索每天按最久未搜索优先轮换最多 3 个活跃标签，每个标签只请求第 1 页；该页返回多少条就在 `domain_search_page_observation` 留存多少条，不翻页补量、不按互动量另截固定条数。通过确定性过滤的记录才进入 `discovered_external_videos`，之后仍只是来源，不是候选。领域话题库只用于标签搜索；热点原始观察写入 `trendradar_hotspot_observation` 后，按 `config/domain_packs/*.yaml` 的版本化领域规则匹配，不读取活跃话题标签。
 

@@ -43,6 +43,13 @@ class RenderedPromptReachesModelTests(unittest.TestCase):
 
         self.assertIn("Simplified Chinese", prompt)
         self.assertIn("Do not omit schema_version", prompt)
+        self.assertIn("source_constraints", prompt)
+        self.assertIn("must always be JSON arrays", prompt)
+        self.assertIn("Use [] when empty", prompt)
+        self.assertIn("execution_review must always be a JSON object", prompt)
+        self.assertIn("used_only_supplied_material", prompt)
+        self.assertIn("angle_discovery must always be a JSON object", prompt)
+        self.assertIn("problem_angle", prompt)
 
 
 class SourceToTopicBusinessContractTests(unittest.TestCase):
