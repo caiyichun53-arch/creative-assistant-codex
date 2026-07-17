@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,6 +52,73 @@ def read_stdin_json() -> dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid hook JSON input: {exc}") from exc
+
+
+TEXT_KEYS = {
+    "assistant_response",
+    "assistant_message",
+    "completion",
+    "content",
+    "last_assistant_message",
+    "message",
+    "output",
+    "prompt",
+    "response",
+    "stop_reason",
+    "text",
+    "transcript",
+}
+
+COMPLETION_CLAIM_RE = re.compile(
+    r"("
+    r"已\s*(修复|修改|完成|处理|解决|验证|通过|生效|更新|落地)|"
+    r"(修复|修改|完成|解决|验证|测试)\s*(了|完成|通过)|"
+    r"(可以|已经)\s*(正常|使用|通过|生效)|"
+    r"\b(fixed|completed|complete|done|implemented|updated|changed|working|passing|passes|verified)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _collect_text_values(value: Any, texts: list[str]) -> None:
+    if isinstance(value, str):
+        if value.strip():
+            texts.append(value)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _collect_text_values(item, texts)
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in TEXT_KEYS or isinstance(item, (dict, list)):
+                _collect_text_values(item, texts)
+
+
+def _read_transcript_path(root: Path, data: dict[str, Any]) -> str:
+    value = data.get("transcript_path") or data.get("transcriptPath")
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    path = Path(value)
+    if not path.is_absolute():
+        path = root / path
+    if not path.exists() or not path.is_file():
+        return ""
+    raw = path.read_bytes()
+    return raw[-200_000:].decode("utf-8", errors="replace")
+
+
+def hook_input_text(root: Path, data: dict[str, Any]) -> str:
+    texts: list[str] = []
+    _collect_text_values(data, texts)
+    transcript = _read_transcript_path(root, data)
+    if transcript:
+        texts.append(transcript)
+    return "\n".join(texts)
+
+
+def has_completion_claim(text: str) -> bool:
+    return bool(text and COMPLETION_CLAIM_RE.search(text))
 
 
 def hook_json(payload: dict[str, Any]) -> None:

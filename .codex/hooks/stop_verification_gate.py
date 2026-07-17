@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from hook_common import current_stage_id, hook_json, hook_stop_continue, hook_stop_final, hook_system_message, latest_evidence, load_turn_state, modified_files, project_root, read_stdin_json, workspace_fingerprint
+from hook_common import current_stage_id, has_completion_claim, hook_input_text, hook_json, hook_stop_continue, hook_stop_final, latest_evidence, load_turn_state, modified_files, project_root, read_stdin_json, workspace_fingerprint
 
 
 def block(message: str, missing: list[str], stop_hook_active: bool) -> int:
@@ -27,6 +27,14 @@ def main() -> int:
         files = modified_files(root)
         if not files:
             hook_json({"continue": True, "systemMessage": "no controlled workspace changes; completion gate not required"})
+            return 0
+
+        text = hook_input_text(root, data)
+        if text and not has_completion_claim(text):
+            hook_json({
+                "continue": True,
+                "systemMessage": "controlled workspace changes exist, but this Stop output has no completion/fix/pass claim; verification gate not required for read-only discussion",
+            })
             return 0
 
         state = load_turn_state(root)
