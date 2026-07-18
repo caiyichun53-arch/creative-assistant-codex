@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[3]
 FORMAL_DB_PATH = ROOT / "data" / "formal" / "production_activation.sqlite3"
 DataIdentity = Literal["production", "test", "fixture", "synthetic", "replay", "mock"]
 NON_PRODUCTION_IDENTITIES = frozenset({"test", "fixture", "synthetic", "replay", "mock"})
-DISCOVERY_EXECUTION_MODES = frozenset({"test_isolated", "validation_live", "production_daily"})
+DISCOVERY_EXECUTION_MODES = frozenset({"test_isolated", "real_daily_validation", "production_daily"})
 DISCOVERY_RUN_OUTCOMES = frozenset(
     {"processing", "completed", "completed_with_failures", "timed_out", "interrupted", "failed", "cancelled"}
 )
@@ -201,15 +201,17 @@ def _build_hotspot_event_cluster_sources(
             continue
         clusters.setdefault(_hotspot_cluster_key(title), []).append(row)
 
-    queued: list[tuple[float, str, list[sqlite3.Row]]] = []
+    queued: list[tuple[int, int, int, str, list[sqlite3.Row]]] = []
     for key, members in clusters.items():
-        observed_at = max(str(row["observed_at"]) for row in members)
-        queued.append((-_hotspot_time_sort_value(observed_at), key, members))
-    queued.sort(key=lambda item: (item[0], item[1]))
+        ranks = [_hotspot_rank_value(row) for row in members]
+        platform_count = len({str(row["source_channel"]) for row in members})
+        # Select review signals by their hotspot strength, never crawl time.
+        queued.append((-platform_count, min(ranks), sum(ranks), key, members))
+    queued.sort(key=lambda item: item[:4])
 
     result: list[dict[str, Any]] = []
     selected_clusters = queued if per_source_limit is None else queued[:per_source_limit]
-    for _observed_sort, key, members in selected_clusters:
+    for negative_platform_count, best_rank, rank_sum, key, members in selected_clusters:
         representative = min(members, key=_hotspot_rank_value)
         observed_at = max(str(row["observed_at"]) for row in members)
         merged_sources = [
@@ -229,6 +231,12 @@ def _build_hotspot_event_cluster_sources(
             "representative_source": str(representative["title"]),
             "merged_sources": merged_sources,
             "dedupe_reason": "deterministic title-normalized global event cluster",
+            "selection_signal": {
+                "supporting_platform_count": -negative_platform_count,
+                "best_original_rank": best_rank,
+                "original_rank_sum": rank_sum,
+                "rule": "more supporting platforms first; then better original ranks; then stable event id",
+            },
         }
         source_content = "；".join(dict.fromkeys(item["title"] for item in merged_sources[:8]))
         representative_raw_hash = _hash(json.loads(str(representative["raw_json"])))
@@ -470,7 +478,7 @@ class Stage0ContentProductionCore:
             );
             CREATE TABLE IF NOT EXISTS stage1b_run_execution_context (
                 run_id TEXT PRIMARY KEY REFERENCES stage1b_discovery_run(run_id),
-                execution_mode TEXT NOT NULL CHECK(execution_mode IN ('test_isolated', 'validation_live', 'production_daily')),
+                execution_mode TEXT NOT NULL CHECK(execution_mode IN ('test_isolated', 'real_daily_validation', 'production_daily', 'retired_legacy_validation')),
                 lifecycle_status TEXT NOT NULL CHECK(lifecycle_status IN ('processing', 'completed', 'completed_with_failures', 'timed_out', 'interrupted', 'failed', 'cancelled')),
                 classification_reason TEXT NOT NULL,
                 classified_by TEXT NOT NULL,
@@ -1043,7 +1051,7 @@ class Stage0ContentProductionCore:
         row = self._discovery_context_optional(run_id)
         if row is None:
             raise StateTransitionError(
-                "discovery run has no execution classification; classify it as validation_live before it can be viewed or used"
+                "discovery run has no execution classification; it cannot be viewed or used"
             )
         return row
 
@@ -1272,43 +1280,6 @@ class Stage0ContentProductionCore:
             self._audit(run_id, "stage1b_discovery_run_started", {**result, "execution_mode": execution_mode})
         return result
 
-    def classify_existing_discovery_run_as_validation_live(
-        self, *, run_id: str, actor: str, reason: str, idempotency_key: str
-    ) -> dict[str, str]:
-        """One-way classification for an already-recorded live validation run.
-
-        This preserves immutable source/model/candidate records while explicitly
-        preventing them from entering the formal daily candidate path.
-        """
-        if self.data_identity != "production":
-            raise DataIdentityError("live validation classification requires production data identity")
-        if not actor.strip() or not reason.strip():
-            raise StateTransitionError("live validation classification requires an audited actor and reason")
-        run = self._discovery_run(run_id)
-        if self._discovery_context_optional(run_id) is not None:
-            raise StateTransitionError("discovery run already has an immutable execution classification")
-        decision = self.conn.execute(
-            "SELECT 1 FROM stage1b_candidate_decision WHERE candidate_version_id IN "
-            "(SELECT candidate_version_id FROM stage1b_candidate_version WHERE run_id=?) LIMIT 1",
-            (run_id,),
-        ).fetchone()
-        if decision is not None:
-            raise StateTransitionError("a run with candidate decisions cannot be retroactively classified")
-        request = {"run_id": run_id, "execution_mode": "validation_live", "actor": actor, "reason": reason}
-        replay = self._replay("stage1b_classify_existing_validation_live", idempotency_key, request)
-        if replay:
-            return replay
-        lifecycle_status = "completed" if run["status"] == "completed" else "failed"
-        with self.conn:
-            self.conn.execute(
-                "INSERT INTO stage1b_run_execution_context VALUES (?, 'validation_live', ?, ?, ?, ?, ?)",
-                (run_id, lifecycle_status, reason, actor, _now(), self.data_identity),
-            )
-            result = {"run_id": run_id, "execution_mode": "validation_live", "lifecycle_status": lifecycle_status}
-            self._receipt("stage1b_classify_existing_validation_live", idempotency_key, request, result)
-            self._audit(run_id, "stage1b_run_classified_validation_live", {**result, "reason": reason})
-        return result
-
     def register_question_expansion_source(
         self,
         *,
@@ -1374,7 +1345,7 @@ class Stage0ContentProductionCore:
             )
         return {"direction_id": direction_id, "source_object_version": integrity_hash, "saved_at": saved_at}
 
-    def purge_validation_live_run(
+    def purge_real_daily_validation_run(
         self,
         *,
         run_id: str,
@@ -1392,14 +1363,14 @@ class Stage0ContentProductionCore:
         require_baseline_citations(["3", "13", "16", "17"])
         if self.data_identity != "production":
             raise DataIdentityError("validation result purge requires production data identity")
-        if confirmation != f"DELETE_VALIDATION_LIVE_RUN:{run_id}":
-            raise StateTransitionError("validation result purge requires the exact confirmation token")
+        if confirmation != f"DELETE_REAL_DAILY_VALIDATION_RUN:{run_id}":
+            raise StateTransitionError("real daily validation purge requires the exact confirmation token")
         if not actor.strip() or not reason.strip():
             raise StateTransitionError("validation result purge requires actor and reason")
         run = self._discovery_run(run_id)
         context = self._discovery_context(run_id)
-        if context["execution_mode"] != "validation_live":
-            raise StateTransitionError("only validation_live results can be physically purged here")
+        if context["execution_mode"] != "real_daily_validation":
+            raise StateTransitionError("only real daily validation results can be physically purged here")
         candidate_count = int(self.conn.execute(
             "SELECT COUNT(*) FROM stage1b_candidate_version WHERE run_id=?", (run_id,)
         ).fetchone()[0])
@@ -1625,9 +1596,9 @@ class Stage0ContentProductionCore:
         """Return one frozen hotspot judgement that an authorized user may resubmit once."""
         run = self._discovery_run(run_id)
         context = self._discovery_context(run_id)
-        allowed_modes = {"validation_live"} if self.data_identity == "production" else {"test_isolated"}
+        allowed_modes = {"real_daily_validation"} if self.data_identity == "production" else {"test_isolated"}
         if run["status"] != "processing" or context["execution_mode"] not in allowed_modes:
-            raise StateTransitionError("only a processing validation hotspot run can resubmit its judgement")
+            raise StateTransitionError("only a processing real daily hotspot run can resubmit its judgement")
         rows = self.conn.execute(
             "SELECT source.source_version_id, source.domain_label, source.payload_json, "
             "assembly.assembly_id, assembly.payload_json AS assembly_payload_json "
@@ -2179,6 +2150,31 @@ class Stage0ContentProductionCore:
                 [(row["observation_id"],) for row in rows],
             )
         return len(rows)
+
+    def retain_only_latest_hotspot_batch(self, *, discovery_run_id: str) -> dict[str, int]:
+        """Keep exactly one successful raw hotspot batch for explicit later reuse."""
+        current = self.conn.execute(
+            "SELECT collection_run_id FROM trendradar_collection_run "
+            "WHERE discovery_run_id=? AND status='completed' AND item_count>0",
+            (discovery_run_id,),
+        ).fetchall()
+        if len(current) != 1:
+            raise StateTransitionError("a retained hotspot batch must be one successful non-empty collection")
+        collection_run_id = str(current[0]["collection_run_id"])
+        with self.conn:
+            observations = self.conn.execute(
+                "DELETE FROM trendradar_hotspot_observation WHERE collection_run_id<>?",
+                (collection_run_id,),
+            ).rowcount
+            collections = self.conn.execute(
+                "DELETE FROM trendradar_collection_run WHERE collection_run_id<>?",
+                (collection_run_id,),
+            ).rowcount
+        return {
+            "retained_collection_run_id": collection_run_id,
+            "deleted_raw_items": int(observations),
+            "deleted_collection_batches": int(collections),
+        }
 
     def load_real_discovery_sources(
         self,

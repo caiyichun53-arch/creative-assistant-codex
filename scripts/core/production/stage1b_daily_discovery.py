@@ -46,12 +46,17 @@ from scripts.core.production.stage0_content_core import (
 )
 from scripts.core.business_data.daily_source_acquisition import DailyDiscoverySourceAcquirer, validate_hotspot_collection_contract
 from scripts.core.business_data.run_domain_search import validate_domain_search_execution_contract
-from scripts.core.business_data.domain_labels import FORMAL_DOMAIN_LABELS, get_discovery_policy, get_domain_pack
+from scripts.core.business_data.domain_labels import (
+    FORMAL_DOMAIN_LABELS,
+    get_discovery_policy,
+    get_domain_pack,
+    hotspot_global_risk_block_terms,
+)
 from scripts.core.external_adapters import LocalMediaCrawlerExecutor, LocalTrendRadarExecutor
 
 
 APPROVED_DOMAINS = tuple(sorted(FORMAL_DOMAIN_LABELS))
-EXECUTION_MODES = ("test_isolated", "validation_live", "hotspot_review", "production_daily")
+EXECUTION_MODES = ("test_isolated", "real_daily_validation", "production_daily")
 SOURCE_TYPES = (
     "hotspot",
     "daily_competitor_content",
@@ -68,12 +73,18 @@ DAILY_REPORT_SOURCE_TYPES = (
     "question_expansion",
 )
 HOTSPOT_DAILY_PROCESS_LIMIT = 10
-VALIDATION_LIVE_ELIGIBLE_PROCESS_LIMIT = 1
 DAILY_SOURCE_VALIDITY_HOURS = 72
 SOURCE_READ_LIMIT = 6
 DISCOVERY_PROMPT_VERSION = "source_to_topic.prompt.v1"
 DISCOVERY_SKILL_VERSION = "source_to_topic.skill.v1"
 ORIGINALITY_RELATIONSHIPS = frozenset({"same_topic_original_reconstruction", "problem_expansion", "independent_research"})
+HOTSPOT_DOMAIN_BRIDGE_TYPES = frozenset({
+    "direct_object", "mechanism", "audience_impact", "cultural_mapping", "downstream_effect",
+})
+HOTSPOT_DOMAIN_FITS = frozenset({"core", "adjacent"})
+HOTSPOT_PRIMARY_LENSES = frozenset({
+    "原因解释", "普通人关系", "反向视角", "局部细节", "背景补充", "后续推演",
+})
 SETTINGS_PATH = ROOT / "config" / "settings.yaml"
 
 
@@ -108,8 +119,7 @@ def _required_text(payload: dict[str, Any], key: str) -> str:
 def _required_natural_chinese(payload: dict[str, Any], key: str) -> str:
     value = _required_text(payload, key)
     han_count = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", value))
-    latin_words = re.findall(r"[A-Za-z]{3,}", value)
-    if han_count < 4 or latin_words:
+    if han_count < 4:
         raise DailyDiscoveryValidationError(f"candidate {key} must be natural Chinese for user display")
     return value
 
@@ -161,22 +171,41 @@ def validate_hotspot_opportunity_judgement(
     if outcome != "candidates" or not candidates or len(candidates) > 10:
         raise DailyDiscoveryValidationError("hotspot opportunity outcome is invalid")
     required = {
-        "domain_label", "candidate_topic", "core_question", "audience_relation",
-        "content_increment", "topic_angle", "trendradar_material_refs", "timeliness",
-        "risks", "user_review_reason",
+        "domain_label", "theme_conflict", "domain_bridge", "audience_problem",
+        "domain_fit", "fit_reason", "primary_lens", "candidate_topic", "core_question",
+        "audience_relation", "content_increment", "topic_angle", "verification_gap",
+        "trendradar_material_refs", "timeliness", "risks", "user_review_reason",
     }
     normalized: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
+    seen_domains: set[str] = set()
     for item in candidates:
         if not isinstance(item, dict) or set(item) != required:
             raise DailyDiscoveryValidationError("hotspot candidate fields are invalid")
         domain_label = _required_text(item, "domain_label")
         if domain_label not in enabled_domains:
             raise DailyDiscoveryValidationError("hotspot candidate uses a domain not enabled for this run")
+        if domain_label in seen_domains:
+            raise DailyDiscoveryValidationError("hotspot event can create at most one candidate per domain")
+        domain_bridge = item["domain_bridge"]
+        if not isinstance(domain_bridge, dict) or set(domain_bridge) != {"type", "reason"}:
+            raise DailyDiscoveryValidationError("hotspot candidate domain_bridge is invalid")
+        bridge_type = _required_text(domain_bridge, "type")
+        if bridge_type not in HOTSPOT_DOMAIN_BRIDGE_TYPES:
+            raise DailyDiscoveryValidationError("hotspot candidate has an unsupported domain bridge type")
+        domain_fit = _required_text(item, "domain_fit")
+        if domain_fit not in HOTSPOT_DOMAIN_FITS:
+            raise DailyDiscoveryValidationError("hotspot candidate has an unsupported domain fit")
+        primary_lens = _required_natural_chinese(item, "primary_lens")
+        if primary_lens not in HOTSPOT_PRIMARY_LENSES:
+            raise DailyDiscoveryValidationError("hotspot candidate has an unsupported primary lens")
         candidate = {
             key: _required_natural_chinese(item, key)
-            for key in required - {"domain_label", "trendradar_material_refs", "risks"}
+            for key in required - {
+                "domain_label", "domain_bridge", "domain_fit", "primary_lens",
+                "trendradar_material_refs", "risks",
+            }
         }
+        bridge_reason = _required_natural_chinese(domain_bridge, "reason")
         refs, risks = item["trendradar_material_refs"], item["risks"]
         # This is format repair only: a single supplied reference or risk keeps
         # exactly the same meaning, but is normalized into the contract's list
@@ -189,13 +218,13 @@ def validate_hotspot_opportunity_judgement(
             raise DailyDiscoveryValidationError("hotspot candidate must cite TrendRadar material")
         if not isinstance(risks, list) or not all(isinstance(risk, str) and risk.strip() for risk in risks):
             raise DailyDiscoveryValidationError("hotspot candidate risks must be a string array")
-        key = (domain_label, _normalize_title(candidate["candidate_topic"]))
-        if key in seen:
-            raise DailyDiscoveryValidationError("hotspot candidate is duplicated within its domain")
-        seen.add(key)
+        seen_domains.add(domain_label)
         normalized.append({
             "domain_label": domain_label,
             **candidate,
+            "domain_bridge": {"type": bridge_type, "reason": bridge_reason},
+            "domain_fit": domain_fit,
+            "primary_lens": primary_lens,
             "trendradar_material_refs": [ref.strip() for ref in refs],
             "risks": [risk.strip() for risk in risks],
         })
@@ -375,10 +404,8 @@ class Stage1BDailyDiscoveryService:
             raise DailyDiscoveryValidationError("daily discovery requires distinct supported source types")
         if execution_mode not in EXECUTION_MODES:
             raise DailyDiscoveryValidationError("daily discovery requires an explicit execution mode")
-        if execution_mode == "validation_live" and len(requested_source_types) != 1:
-            raise DailyDiscoveryValidationError("validation_live must validate exactly one source type")
-        if execution_mode == "hotspot_review" and set(requested_source_types) != {"hotspot"}:
-            raise DailyDiscoveryValidationError("hotspot_review only runs the complete hotspot path for user review")
+        if execution_mode == "real_daily_validation" and len(requested_source_types) != 1:
+            raise DailyDiscoveryValidationError("real daily validation requires exactly one source type for a complete path")
         if reuse_hotspot_discovery_run_id is not None and set(requested_source_types) != {"hotspot"}:
             raise DailyDiscoveryValidationError("a reused hotspot batch can only run the hotspot conversion path")
         if execution_mode == "production_daily" and set(requested_source_types) != set(DAILY_REPORT_SOURCE_TYPES):
@@ -449,6 +476,10 @@ class Stage1BDailyDiscoveryService:
                         hotspot = self.source_acquirer.collect_hotspots(
                             discovery_run_id=run["run_id"], now=now, deadline_monotonic=deadline
                         )
+                        if hotspot["status"] == "completed" and int(hotspot.get("item_count") or 0) > 0:
+                            hotspot["retention"] = self.core.retain_only_latest_hotspot_batch(
+                                discovery_run_id=run["run_id"]
+                            )
                     summary["acquisition"] = {
                         "execution_order": [
                             "trendradar_hotspot", "hotspot_conversion", "daily_competitor",
@@ -479,6 +510,7 @@ class Stage1BDailyDiscoveryService:
                 idempotency_key=idempotency_key,
                 deadline_monotonic=deadline,
             )
+            summary["hotspot_audit"] = hotspot_summary["hotspot_audit"]
             if hotspot_discovery_run_id is not None and execution_mode == "production_daily":
                 deleted_hotspots = self.core.clear_hotspot_observations_for_discovery_run(
                     discovery_run_id=hotspot_discovery_run_id
@@ -486,7 +518,7 @@ class Stage1BDailyDiscoveryService:
                 summary["acquisition"].setdefault("hotspot", {})["deleted_raw_items"] = deleted_hotspots
             elif hotspot_discovery_run_id is not None:
                 summary["acquisition"].setdefault("hotspot", {})["raw_batch_status"] = (
-                    "temporary_reusable_until_explicit_validation_purge"
+                    "latest_reusable_batch; it is replaced only after a later successful collection"
                 )
             for domain_label in requested_domains:
                 source_evidence: dict[str, dict[str, Any]] = {
@@ -559,7 +591,6 @@ class Stage1BDailyDiscoveryService:
                 filtered: dict[str, int] = dict(hotspot_summary["filtered"][domain_label])
                 candidate_count = hotspot_summary["candidate_counts"][domain_label]
                 sources_read = hotspot_summary["sources_read"][domain_label]
-                eligible_model_attempts = 0
                 for index, source in enumerate(ordered_sources()):
                     sources_read += 1
                     if time.monotonic() >= deadline:
@@ -582,11 +613,6 @@ class Stage1BDailyDiscoveryService:
                             source_evidence[source["source_type"]]["status"] = "no_candidate"
                             source_evidence[source["source_type"]]["reason"] = reason_code
                         continue
-                    eligible_model_attempts += 1
-                    validation_live_limit_reached = (
-                        execution_mode == "validation_live"
-                        and eligible_model_attempts >= VALIDATION_LIVE_ELIGIBLE_PROCESS_LIMIT
-                    )
                     assembly_payload = self._assembly_payload(
                         run_id=run["run_id"],
                         domain_label=domain_label,
@@ -617,8 +643,6 @@ class Stage1BDailyDiscoveryService:
                         if source["source_type"] in source_evidence:
                             source_evidence[source["source_type"]]["status"] = "no_candidate"
                             source_evidence[source["source_type"]]["reason"] = "model_gateway_failed"
-                        if validation_live_limit_reached:
-                            break
                         continue
                     except (json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
                         self.core.record_discovery_no_candidate(
@@ -633,8 +657,6 @@ class Stage1BDailyDiscoveryService:
                         if source["source_type"] in source_evidence:
                             source_evidence[source["source_type"]]["status"] = "no_candidate"
                             source_evidence[source["source_type"]]["reason"] = "model_output_invalid"
-                        if validation_live_limit_reached:
-                            break
                         continue
                     if judgement["topic_status"] == "no_result":
                         self.core.record_discovery_no_candidate(
@@ -651,8 +673,6 @@ class Stage1BDailyDiscoveryService:
                         if source["source_type"] in source_evidence:
                             source_evidence[source["source_type"]]["status"] = "no_candidate"
                             source_evidence[source["source_type"]]["reason"] = "model_returned_no_candidate"
-                        if validation_live_limit_reached:
-                            break
                         continue
                     rejection = candidate_rejection(domain_label, judgement)
                     if rejection is not None:
@@ -666,8 +686,6 @@ class Stage1BDailyDiscoveryService:
                         if source["source_type"] in source_evidence:
                             source_evidence[source["source_type"]]["status"] = "no_candidate"
                             source_evidence[source["source_type"]]["reason"] = reason_code
-                        if validation_live_limit_reached:
-                            break
                         continue
                     candidate_payload = {
                         **judgement,
@@ -691,8 +709,6 @@ class Stage1BDailyDiscoveryService:
                     if source["source_type"] in source_evidence:
                         source_evidence[source["source_type"]]["status"] = "has_candidate"
                         source_evidence[source["source_type"]]["reason"] = "candidate_created"
-                    if validation_live_limit_reached:
-                        break
                 summary["domains"][domain_label] = {"sources_read": sources_read, "candidates": candidate_count}
                 summary["source_readiness"][domain_label] = self.core.discovery_source_readiness(
                     domain_label=domain_label,
@@ -865,6 +881,7 @@ class Stage1BDailyDiscoveryService:
             "sources_read": {domain: 0 for domain in requested_domains},
             "filtered": {domain: {} for domain in requested_domains},
             "source_evidence": {domain: dict(empty_evidence) for domain in requested_domains},
+            "hotspot_audit": {"events": [], "hard_excluded": 0, "selected_for_detail": 0, "not_selected_after_top_ten": 0},
         }
         if "hotspot" not in requested_source_types:
             return result
@@ -878,13 +895,29 @@ class Stage1BDailyDiscoveryService:
                 result["source_evidence"][domain] = {"status": "no_candidate", "reason": "no_hotspot_event", "source_refs": []}
             return result
         storage_domain = requested_domains[0]
-        detail_limit = 1 if execution_mode == "validation_live" else HOTSPOT_DAILY_PROCESS_LIMIT
-        details_selected = 0
+        eligible_sources: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
         for index, source in enumerate(sources):
+            cluster = dict(source["payload"].get("hotspot_event_cluster") or {})
+            audit_entry = {
+                "event_id": cluster.get("cluster_id", source["source_object_id"]),
+                "title": source["payload"].get("title", ""),
+                "url": source["payload"].get("url", ""),
+                "merged_sources": [
+                    {"platform": item.get("channel", ""), "rank": item.get("rank"), "title": item.get("title", ""), "url": item.get("url", "")}
+                    for item in cluster.get("merged_sources", [])
+                ],
+                "selection_signal": dict(cluster.get("selection_signal") or {}),
+                "status": "hard_screening",
+                "reason_code": "",
+                "detail": {},
+            }
+            result["hotspot_audit"]["events"].append(audit_entry)
             outcome, reason_code, detail = self._deterministic_filter(
                 domain_label=storage_domain, source=source, now=now
             )
             if outcome != "eligible":
+                audit_entry.update({"status": "hard_excluded", "reason_code": reason_code, "detail": detail})
+                result["hotspot_audit"]["hard_excluded"] += 1
                 source_result = self.core.record_discovery_source(
                     run_id=run_id,
                     domain_label=storage_domain,
@@ -906,9 +939,20 @@ class Stage1BDailyDiscoveryService:
                     result["filtered"][domain][reason_code] = result["filtered"][domain].get(reason_code, 0) + 1
                     result["source_evidence"][domain] = {"status": "no_candidate", "reason": reason_code, "source_refs": []}
                 continue
-            if details_selected >= detail_limit:
-                break
-            details_selected += 1
+            audit_entry.update({"status": "hard_passed", "reason_code": "eligible"})
+            eligible_sources.append((index, source, audit_entry))
+
+        for selected_index, (index, source, audit_entry) in enumerate(eligible_sources):
+            if selected_index >= HOTSPOT_DAILY_PROCESS_LIMIT:
+                audit_entry.update({
+                    "status": "not_selected_after_top_ten",
+                    "reason_code": "daily_top_ten_limit",
+                    "detail": {"selected_before_this_event": HOTSPOT_DAILY_PROCESS_LIMIT},
+                })
+                result["hotspot_audit"]["not_selected_after_top_ten"] += 1
+                continue
+            audit_entry.update({"status": "selected_for_detail", "reason_code": "hotspot_signal_priority"})
+            result["hotspot_audit"]["selected_for_detail"] += 1
             detail_result: dict[str, Any] = {"status": "not_required"}
             read_detail = getattr(self.source_acquirer, "read_hotspot_event_detail", None)
             if callable(read_detail):
@@ -917,6 +961,7 @@ class Stage1BDailyDiscoveryService:
                 outcome, reason_code, detail = "excluded", "hotspot_detail_unavailable", {
                     "reason": str(detail_result.get("reason") or "original_link_content_unavailable")
                 }
+                audit_entry.update({"status": "detail_unavailable", "reason_code": reason_code, "detail": detail})
             source_result = self.core.record_discovery_source(
                 run_id=run_id,
                 domain_label=storage_domain,
@@ -953,6 +998,7 @@ class Stage1BDailyDiscoveryService:
                     enabled_domains=requested_domains,
                 )
             except (ModelGatewayError, json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
+                audit_entry.update({"status": "judgement_failed", "reason_code": "hotspot_judgement_failed", "detail": {"reason": str(exc)}})
                 self.core.record_discovery_no_candidate(
                     run_id=run_id, source_version_id=source_result["source_version_id"], model_run_id=None,
                     reason_code="hotspot_judgement_failed", detail={"reason": str(exc), "retry": "forbidden_after_uncertain_request"},
@@ -963,6 +1009,7 @@ class Stage1BDailyDiscoveryService:
                     result["source_evidence"][domain] = {"status": "no_candidate", "reason": "hotspot_judgement_failed", "source_refs": []}
                 continue
             if judgement["outcome"] == "no_candidate":
+                audit_entry.update({"status": "not_converted", "reason_code": "hotspot_not_converted", "detail": {"reason": judgement["reason"]}})
                 self.core.record_discovery_no_candidate(
                     run_id=run_id, source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
                     reason_code="hotspot_not_converted", detail={"reason": judgement["reason"]},
@@ -992,6 +1039,7 @@ class Stage1BDailyDiscoveryService:
                 )
                 result["candidate_counts"][domain] += 1
                 result["source_evidence"][domain] = {"status": "has_candidate", "reason": "candidate_created", "source_refs": [{"source_type": "hotspot", "source_object_id": source["source_object_id"], "source_object_version": source["source_object_version"]}]}
+            audit_entry.update({"status": "judged", "reason_code": "candidate_created", "detail": {"candidate_count": len(judgement["candidates"])}})
         return result
 
     def _run_source_to_topic_skill(
@@ -1102,16 +1150,23 @@ class Stage1BDailyDiscoveryService:
             return "excluded", "material_obviously_insufficient", {}
         if source["source_type"] in {"hotspot", "daily_competitor_content"} and _parse_time(source["source_time"]) + timedelta(hours=DAILY_SOURCE_VALIDITY_HOURS) < now:
             return "excluded", "freshness_expired", {}
-        policy = get_discovery_policy(domain_label)
-        risk_terms = tuple(str(term) for term in policy.get("risk_block_terms", []))
+        risk_terms = hotspot_global_risk_block_terms() if source["source_type"] == "hotspot" else tuple(
+            str(term) for term in get_discovery_policy(domain_label).get("risk_block_terms", [])
+        )
         if any(term in title for term in risk_terms):
             return "excluded", "risk_blocked", {"matched_terms": [term for term in risk_terms if term in title]}
+        normalized_title = _normalize_title(title)
+        if source["source_type"] == "hotspot":
+            # A shared hotspot must not be rejected by one domain's title-word
+            # exclusions before the cross-domain judgement sees its full material.
+            if self.core.discovery_source_seen(source_type=source["source_type"], source_object_id=source["source_object_id"], source_object_version=source["source_object_version"]):
+                return "excluded", "source_already_processed", {}
+            return "eligible", "eligible", {"normalized_source_title": normalized_title}
         title_folded = title.casefold()
-        exclude_terms = tuple(str(term) for term in policy.get("exclude_terms", []))
+        exclude_terms = tuple(str(term) for term in get_discovery_policy(domain_label).get("exclude_terms", []))
         matched_terms = [term for term in exclude_terms if term.casefold() in title_folded]
         if matched_terms:
             return "excluded", "outside_domain_policy", {"matched_terms": matched_terms}
-        normalized_title = _normalize_title(title)
         if self.core.discovery_source_seen(source_type=source["source_type"], source_object_id=source["source_object_id"], source_object_version=source["source_object_version"]):
             return "excluded", "source_already_processed", {}
         if self.core.discovery_candidate_in_cooldown(domain_label=domain_label, normalized_title=normalized_title, now=now.isoformat()):
@@ -1217,43 +1272,41 @@ class Stage1BDailyDiscoveryService:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run one Core-owned Stage 1B batch, reuse frozen input, classify, or purge a live validation."""
+    """Run one Core-owned Stage 1B batch, reuse frozen input, resubmit, or purge a real daily validation."""
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--domain", choices=APPROVED_DOMAINS, help="one authorized formal domain for a new batch")
     parser.add_argument(
         "--source-type",
         action="append",
         choices=SOURCE_TYPES,
-        help="source type to run; validation_live requires exactly one, hotspot_review runs hotspots only, production_daily always uses all six",
+        help="source type to run; real_daily_validation runs one complete source path, production_daily always uses all six",
     )
     parser.add_argument("--actor", required=True, help="audited actor for the explicit user authorization")
     parser.add_argument("--idempotency-key", required=True, help="stable key for this exact authorized run")
     parser.add_argument("--mode", required=True, choices=EXECUTION_MODES, help="explicit execution identity; no mode can be promoted automatically")
     parser.add_argument("--discovery-date", default=datetime.now(timezone.utc).date().isoformat(), help="YYYY-MM-DD (defaults to UTC today)")
     parser.add_argument("--batch-timeout-seconds", type=int, default=600, help="bounded batch deadline; timed-out or interrupted batches are not retried")
-    parser.add_argument("--reclassify-run", help="existing run to mark as validation_live without re-running sources or models")
     parser.add_argument("--reuse-hotspot-run", help="successful hotspot collection run whose temporary batch is reused without collecting again")
-    parser.add_argument("--resubmit-hotspot-judgement-run", help="processing validation run whose frozen hotspot judgement the user explicitly authorizes to resubmit")
-    parser.add_argument("--purge-validation-run", help="existing validation_live run to physically purge after explicit confirmation")
-    parser.add_argument("--expected-candidate-count", type=int, help="required candidate count guard when purging a validation_live run")
+    parser.add_argument("--resubmit-hotspot-judgement-run", help="processing real daily hotspot run whose frozen judgement the user explicitly authorizes to resubmit")
+    parser.add_argument("--purge-real-daily-validation-run", help="existing real daily validation run to physically purge after explicit confirmation")
+    parser.add_argument("--expected-candidate-count", type=int, help="required candidate count guard when purging a real daily validation run")
     parser.add_argument("--confirmation", help="exact purge confirmation token")
-    parser.add_argument("--reason", help="required audit reason when reclassifying an existing run")
+    parser.add_argument("--reason", help="required audit reason for a resubmission or purge")
     args = parser.parse_args(argv)
-    special_actions = sum(bool(value) for value in (args.reclassify_run, args.purge_validation_run, args.reuse_hotspot_run, args.resubmit_hotspot_judgement_run))
+    special_actions = sum(bool(value) for value in (args.purge_real_daily_validation_run, args.reuse_hotspot_run, args.resubmit_hotspot_judgement_run))
     if special_actions > 1:
         parser.error("choose only one special action")
-    if args.purge_validation_run:
-        if args.mode != "validation_live" or not args.reason or args.domain or args.expected_candidate_count is None or not args.confirmation:
+    if args.purge_real_daily_validation_run:
+        if args.mode != "real_daily_validation" or not args.reason or args.domain or args.expected_candidate_count is None or not args.confirmation:
             parser.error(
-                "purge requires --purge-validation-run, --mode validation_live, --actor, --reason, "
+                "purge requires --purge-real-daily-validation-run, --mode real_daily_validation, --actor, --reason, "
                 "--expected-candidate-count, --confirmation, and no --domain"
             )
-    elif args.reclassify_run:
-        if args.mode != "validation_live" or not args.reason or args.domain:
-            parser.error("reclassification requires --reclassify-run, --mode validation_live, --actor, --reason, and no --domain")
     elif args.resubmit_hotspot_judgement_run:
-        if args.mode != "validation_live" or not args.reason or args.domain or args.source_type:
-            parser.error("resubmission requires --resubmit-hotspot-judgement-run, --mode validation_live, --actor, --reason, and no --domain or --source-type")
+        if args.mode != "real_daily_validation" or not args.reason or args.domain or args.source_type:
+            parser.error("resubmission requires --resubmit-hotspot-judgement-run, --mode real_daily_validation, --actor, --reason, and no --domain or --source-type")
     elif not args.domain:
         parser.error("a new batch requires --domain")
 
@@ -1262,18 +1315,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--reuse-hotspot-run requires exactly --source-type hotspot")
     core = Stage0ContentProductionCore.open(FORMAL_DB_PATH, data_identity="production")
     try:
-        if args.reclassify_run:
-            result = core.classify_existing_discovery_run_as_validation_live(
-                run_id=args.reclassify_run,
-                actor=args.actor,
-                reason=args.reason,
-                idempotency_key=args.idempotency_key,
-            )
-            print(_canonical(result))
-            return 0
-        if args.purge_validation_run:
-            result = core.purge_validation_live_run(
-                run_id=args.purge_validation_run,
+        if args.purge_real_daily_validation_run:
+            result = core.purge_real_daily_validation_run(
+                run_id=args.purge_real_daily_validation_run,
                 actor=args.actor,
                 reason=args.reason or "",
                 expected_candidate_count=args.expected_candidate_count if args.expected_candidate_count is not None else -1,

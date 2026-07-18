@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    purge = subparsers.add_parser("purge-validation-run")
+    purge = subparsers.add_parser("purge-real-daily-validation-run")
     purge.add_argument("--run-id", required=True)
     purge.add_argument("--expected-candidates", required=True, type=int)
     purge.add_argument("--actor", required=True)
@@ -51,8 +51,8 @@ def main(argv: list[str] | None = None) -> int:
     require_baseline_citations(["3", "13", "16", "17"])
     core = Stage0ContentProductionCore.open(FORMAL_DB_PATH, data_identity="production")
     try:
-        if args.command == "purge-validation-run":
-            result = core.purge_validation_live_run(
+        if args.command == "purge-real-daily-validation-run":
+            result = core.purge_real_daily_validation_run(
                 run_id=args.run_id,
                 actor=args.actor,
                 reason=args.reason,

@@ -6,7 +6,7 @@ source:
 
 baseline:
   file: docs/EFFECTIVE_DESIGN_BASELINE.md
-  sha256: 2e02fbb9d33865d61ed9a0ff8cca0142939a2843de12a2b3a0ba8adec19b4648
+  sha256: ba92f0f891bbfbb02990976cf3bee6f28a6d7774ad67d97d8663079d9a88e367
 
 default_allowed_files:
   - AGENTS.md
@@ -77,7 +77,7 @@ stages:
   - stage_id: stage_1_daily_discovery
     stage_name: "Stage 1: 真实日常发现与候选选择"
     type: business
-    status: blocked_model_gateway_timeout
+    status: pending_real_daily_validation
     depends_on:
       - stage_0_controlled_execution_foundation
     authorization_required: true
@@ -86,6 +86,7 @@ stages:
       - execution/STAGE_REGISTER.yaml
       - TECHNICAL_MANUAL.md
       - scripts/core/production/stage0_content_core.py
+      - scripts/core/production/stage1_source_runtime.py
       - scripts/core/production/stage1b_daily_discovery.py
       - scripts/core/business_data/daily_source_acquisition.py
       - scripts/core/business_data/domain_labels.py
@@ -115,16 +116,18 @@ stages:
       - --source-type
       - hotspot
       - --actor
-      - codex_user_authorized_source_rerun
+      - codex_user_authorized_reuse_validation
       - --idempotency-key
-      - stage1b-source-rerun-live-2026-07-17-fan_kepu_social_life-hotspot-codex_user_authorized_source_rerun
+      - stage1b-real-daily-2026-07-18-reuse-hotspot-2e645d7394a4476ea75c57d9621cceb5
       - --mode
-      - validation_live
+      - real_daily_validation
+      - --reuse-hotspot-run
+      - discovery_run_2e645d7394a4476ea75c57d9621cceb5
       - --discovery-date
-      - "2026-07-17"
+      - "2026-07-18"
       - --batch-timeout-seconds
       - "600"
-    acceptance_summary: "技术链路曾完成 hotspot validation_live 零候选验收，但未经过用户审核，不得标记为业务通过。用户选择重跑来源后，stage_control accept run stage_1_daily_discovery-1784283337 失败；业务 run discovery_run_9cee4017567c4b349eefaeaaa5055b9d 为 validation_live completed_with_failures，stage1b_model_run discovery_model_run_98b1ef12a30f454eb5bc1eb247b6d0cc 失败，provider_error=Request timed out，快照零候选；当前等待用户决定是否按同输入重试、调整输入/配置后新版本运行，或取消。"
+    acceptance_summary: "此前单事件技术试跑不得作为验收。热点真实验证必须完成本次采集的全部硬筛、逐条审计清单和按跨平台支持与原始热搜排名选出的前 10 个事件；候选质量由用户审核，未获用户确认不得标记为业务通过。"
 
   - stage_id: stage_2_topic_research
     stage_name: "Stage 2: 正式选题、研究方案与深度研究"

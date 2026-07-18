@@ -1,7 +1,7 @@
 schema_version: hotspot_to_opportunity.business_contract.v1
 skill_id: hotspot_to_opportunity
 formal_skill_id: hotspot_to_opportunity
-skill_version: 1.0.1
+skill_version: 1.1.0
 allowed_model_nodes:
   - business.source_to_topic
 whether_model_is_required: true
@@ -63,6 +63,7 @@ model_binding:
     只输出一个 JSON 对象，不要 Markdown、解释文字、评分、排名、权重或内部运行信息。对象必须且只能有 outcome、candidates、reason 三个字段。
     若不适合，必须输出 {{"outcome":"no_candidate","candidates":[],"reason":"具体且简短的不转化原因"}}。
     若形成候选，outcome 必须为 candidates，reason 必须说明整体判断；每个 candidates 项必须严格采用这个字段形状：{{"domain_label":"一个启用领域","candidate_topic":"具体选题","core_question":"核心问题","audience_relation":"受众关系","content_increment":"内容增量","topic_angle":"具体角度","trendradar_material_refs":["所用原始链接"],"timeliness":"时效说明","risks":["风险或限制；没有则空列表"],"user_review_reason":"给用户的审核原因"}}。trendradar_material_refs 和 risks 必须是字符串列表，不能写成一句话或 null。
+    上述每个 candidates 项还必须追加以下字段：`theme_conflict`（热点背后的母题或冲突）、`domain_bridge`（仅含 `type` 和 `reason`；type 只能是 direct_object、mechanism、audience_impact、cultural_mapping、downstream_effect 之一）、`audience_problem`（目标受众实际需要判断或解决的问题）、`domain_fit`（只能是 core 或 adjacent）、`fit_reason`（为何符合已确认领域方向，而非标题关键词重合）、`primary_lens`（只能是原因解释、普通人关系、反向视角、局部细节、背景补充、后续推演之一）和 `verification_gap`（后续研究仍须补证的内容）。同一事件在同一领域最多一个候选。core 直接服务领域核心问题；adjacent 表示存在真实桥接但必须等待用户明确选择。无法同时说明真实桥接、具体受众问题和内容增量时，必须输出 no_candidate。
     事件材料：{event_material}
     启用领域方向：{enabled_domains}
 input_schema:

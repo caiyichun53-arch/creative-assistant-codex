@@ -103,11 +103,21 @@ class FakeDiscoveryProvider:
                 "reason": "热点对当前生活领域有明确可做的解释角度。",
                 "candidates": [{
                     "domain_label": "fan_kepu_social_life",
+                    "theme_conflict": "公共事件如何改变普通人的日常判断与生活选择",
+                    "domain_bridge": {
+                        "type": "audience_impact",
+                        "reason": "生活领域可以解释事件怎样落到家庭的具体决策上。",
+                    },
+                    "audience_problem": "普通家庭需要判断事件是否会影响自己的生活安排。",
+                    "domain_fit": "core",
+                    "fit_reason": "它直接服务领域方向中普通人生活判断的核心问题。",
+                    "primary_lens": "普通人关系",
                     "candidate_topic": "热点事件怎样影响普通人的生活选择",
                     "core_question": "事件会怎样改变普通人的日常判断",
                     "audience_relation": "普通家庭需要理解事件带来的实际影响",
                     "content_increment": "把事件与具体生活决策的关系说明白",
                     "topic_angle": "从热点变化拆解生活选择",
+                    "verification_gap": "后续研究需要核验事件影响是否已经真实落到家庭选择。",
                     "trendradar_material_refs": ["https://example.test/hotspot"],
                     "timeliness": "事件仍在持续讨论",
                     "risks": [],
@@ -152,9 +162,6 @@ class NoopProductionAcquirer:
 
 
 class Stage1BDailyDiscoveryTests(unittest.TestCase):
-    def test_hotspot_review_is_a_distinct_user_review_mode(self) -> None:
-        self.assertIn("hotspot_review", EXECUTION_MODES)
-
     NOW = datetime(2026, 7, 14, 12, tzinfo=timezone.utc)
 
     def setUp(self) -> None:
@@ -367,6 +374,17 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         )
         self.assertEqual([source["source_type"] for source in sources], ["hotspot"])
 
+    def test_social_life_exclusion_words_do_not_block_a_hotspot_before_shared_judgement(self) -> None:
+        self._insert_hotspot(title="明星公共事件为何会影响普通人的消费选择")
+        source = self.core.load_hotspot_event_clusters(
+            daily_since="2026-07-11T12:00:00+00:00", per_source_limit=None
+        )[0]
+
+        outcome, reason_code, _detail = self.service._deterministic_filter(
+            domain_label="fan_kepu_social_life", source=source, now=self.NOW
+        )
+        self.assertEqual((outcome, reason_code), ("eligible", "eligible"))
+
     def test_completed_expansion_is_daily_report_source_but_saved_user_direction_is_not(self) -> None:
         self.core.register_question_expansion_source(
             expansion_id="expansion-1",
@@ -486,7 +504,20 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["sources_read"], 4)
         self.assertLessEqual(self.provider.calls, 10)
 
-    def test_validation_live_stops_after_one_eligible_model_attempt(self) -> None:
+    def test_full_daily_hotspot_report_lists_all_hard_exclusions_and_top_ten_decisions(self) -> None:
+        self._insert_hotspots(12)
+        result = self._run("hotspot-audit-all-decisions", source_types=("hotspot",))
+
+        audit = result["summary"]["hotspot_audit"]
+        self.assertEqual(len(audit["events"]), 12)
+        self.assertEqual(audit["selected_for_detail"], 10)
+        self.assertEqual(audit["not_selected_after_top_ten"], 2)
+        self.assertEqual(self.provider.calls, 10)
+        deferred = [entry for entry in audit["events"] if entry["status"] == "not_selected_after_top_ten"]
+        self.assertEqual(len(deferred), 2)
+        self.assertTrue(all(entry["reason_code"] == "daily_top_ten_limit" for entry in deferred))
+
+    def test_real_daily_validation_processes_the_complete_daily_hotspot_selection(self) -> None:
         production_db = Path(self.tempdir.name) / "formal-validation-live-limit.sqlite3"
         with patch("scripts.core.production.stage0_content_core.FORMAL_DB_PATH", production_db):
             production_core = Stage0ContentProductionCore.open(production_db, data_identity="production")
@@ -567,23 +598,25 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         result = service.run_daily_discovery(
             discovery_date="2026-07-14",
             actor="validator",
-            idempotency_key="validation-live-one-attempt",
-            execution_mode="validation_live",
+            idempotency_key="validation-live-complete-daily-selection",
+            execution_mode="real_daily_validation",
             now=self.NOW,
             domains=("fan_kepu_social_life",),
             source_types=("hotspot",),
         )
         self.assertEqual(result["status"], "completed")
-        self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["sources_read"], 1)
-        self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 1)
-        self.assertEqual(production_provider.calls, 1)
+        self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["sources_read"], 4)
+        self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 4)
+        self.assertEqual(production_provider.calls, 4)
         recorded_sources = [
             row[0]
             for row in production_core.conn.execute(
                 "SELECT source_object_id FROM stage1b_source_version ORDER BY created_at"
             ).fetchall()
         ]
-        self.assertEqual(recorded_sources, ["validation-hotspot-0"])
+        self.assertEqual(recorded_sources, [
+            "validation-hotspot-0", "validation-hotspot-1", "validation-hotspot-2", "validation-hotspot-3"
+        ])
 
     def test_hotspots_are_clustered_before_daily_processing_limit(self) -> None:
         self.core.conn.execute(
@@ -622,6 +655,14 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
                 ),
             )
         self.core.conn.commit()
+
+        ordered_clusters = self.core.load_hotspot_event_clusters(
+            daily_since="2026-07-11T12:00:00+00:00", per_source_limit=None
+        )
+        self.assertEqual(ordered_clusters[0]["source_object_id"], "hotspot-cluster-1")
+        self.assertEqual(
+            ordered_clusters[0]["payload"]["hotspot_event_cluster"]["selection_signal"]["supporting_platform_count"], 2
+        )
 
         sources = self.core.load_real_discovery_sources(
             domain_label="fan_kepu_social_life",
@@ -672,6 +713,43 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
             "SELECT COUNT(*) FROM trendradar_hotspot_observation WHERE observation_id='hotspot-to-delete'"
         ).fetchone()[0]
         self.assertEqual(remaining, 0)
+
+    def test_new_successful_hotspot_batch_replaces_all_older_raw_batches(self) -> None:
+        now = self.NOW.isoformat()
+        for collection_run_id, discovery_run_id in (
+            ("tr-run-old", "upstream-run-old"),
+            ("tr-run-latest", "upstream-run-latest"),
+        ):
+            self.core.conn.execute(
+                """
+                INSERT INTO trendradar_collection_run(
+                    collection_run_id, discovery_run_id, status, item_count, command_hash, started_at, completed_at
+                ) VALUES (?, ?, 'completed', 1, 'hash-retention', ?, ?)
+                """,
+                (collection_run_id, discovery_run_id, now, now),
+            )
+            self.core.conn.execute(
+                """
+                INSERT INTO trendradar_hotspot_observation(
+                    observation_id, provider_item_id, title, url, source_channel, source_rank,
+                    observed_at, raw_json, collection_run_id
+                ) VALUES (?, ?, ?, ?, 'news', 1, ?, '{}', ?)
+                """,
+                (f"obs-{collection_run_id}", collection_run_id, collection_run_id,
+                 f"https://example.test/{collection_run_id}", now, collection_run_id),
+            )
+        self.core.conn.commit()
+
+        result = self.core.retain_only_latest_hotspot_batch(discovery_run_id="upstream-run-latest")
+
+        self.assertEqual(result["deleted_raw_items"], 1)
+        self.assertEqual(result["deleted_collection_batches"], 1)
+        self.assertEqual(self.core.conn.execute(
+            "SELECT COUNT(*) FROM trendradar_hotspot_observation WHERE collection_run_id='tr-run-old'"
+        ).fetchone()[0], 0)
+        self.assertEqual(self.core.conn.execute(
+            "SELECT COUNT(*) FROM trendradar_hotspot_observation WHERE collection_run_id='tr-run-latest'"
+        ).fetchone()[0], 1)
 
     def test_hotspot_hard_screen_runs_before_original_link_reading(self) -> None:
         self._insert_hotspot(title="短题")
@@ -898,13 +976,13 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         ]
         self.assertEqual(snapshot_domains, ["fan_kepu_social_life"])
 
-    def test_validation_live_requires_exactly_one_source_type(self) -> None:
+    def test_real_daily_validation_requires_exactly_one_source_type(self) -> None:
         with self.assertRaisesRegex(StateTransitionError, "exactly one source type"):
             self.service.run_daily_discovery(
                 discovery_date="2026-07-14",
                 actor="validator",
                 idempotency_key="multi-source-validation",
-                execution_mode="validation_live",
+                execution_mode="real_daily_validation",
                 now=self.NOW,
                 domains=("fan_kepu_social_life",),
                 source_types=("daily_competitor_content", "historical_high_signal"),
@@ -1079,6 +1157,13 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         english = {**VALID_JUDGEMENT, "title": "A daily problem"}
         with self.assertRaisesRegex(Exception, "natural Chinese"):
             validate_candidate_judgement(english)
+        self.assertEqual(
+            validate_candidate_judgement({
+                **VALID_JUDGEMENT,
+                "why_attention": "FIFA 等必要专名可以保留，整体说明仍以中文为主。",
+            })["why_attention"],
+            "FIFA 等必要专名可以保留，整体说明仍以中文为主。",
+        )
 
     def test_social_life_filter_excludes_programming_engineering_rockets_materials_and_music(self) -> None:
         for index, title in enumerate(("Python 编程入门", "火箭发动机工程技术", "新型材料技术突破", "歌手音乐专辑盘点")):
@@ -1088,7 +1173,7 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
                 self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 0)
                 self.assertEqual(result["summary"]["filtered"]["fan_kepu_social_life"]["outside_domain_policy"], index + 1)
 
-    def test_physically_purges_only_the_confirmed_validation_run(self) -> None:
+    def test_physically_purges_only_the_confirmed_real_daily_validation_run(self) -> None:
         production_db = Path(self.tempdir.name) / "formal-production.sqlite3"
         with patch("scripts.core.production.stage0_content_core.FORMAL_DB_PATH", production_db):
             production_core = Stage0ContentProductionCore.open(production_db, data_identity="production")
@@ -1110,7 +1195,7 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
             discovery_date="2026-07-14",
             actor="validator",
             idempotency_key="bad-validation",
-            execution_mode="validation_live",
+            execution_mode="real_daily_validation",
             now=self.NOW,
             domains=("fan_kepu_social_life",),
             source_types=("saved_user_direction",),
@@ -1129,15 +1214,15 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         unrelated = production_core.create_discovery_run(
             discovery_date="2026-07-14",
             actor="validator",
-            execution_mode="validation_live",
+            execution_mode="real_daily_validation",
             idempotency_key="unrelated-validation",
         )
-        purge = production_core.purge_validation_live_run(
+        purge = production_core.purge_real_daily_validation_run(
             run_id=result["run_id"],
             actor="user",
             reason="explicitly approved erroneous validation result deletion",
             expected_candidate_count=1,
-            confirmation=f"DELETE_VALIDATION_LIVE_RUN:{result['run_id']}",
+            confirmation=f"DELETE_REAL_DAILY_VALIDATION_RUN:{result['run_id']}",
         )
         self.assertEqual(purge["result"], "physically_deleted")
         self.assertEqual(purge["deleted"]["stage1b_candidate_version"], 1)
@@ -1169,11 +1254,21 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
                 "candidates": [
                     {
                         "domain_label": "fan_kepu_social_life",
+                        "theme_conflict": "公共事件会怎样改变普通人的生活判断",
+                        "domain_bridge": {
+                            "type": "audience_impact",
+                            "reason": "生活领域可以解释公共变化如何落到家庭决策。",
+                        },
+                        "audience_problem": "普通家庭需要判断事件是否影响自己的日常安排。",
+                        "domain_fit": "core",
+                        "fit_reason": "它直接服务普通人生活判断这一领域核心问题。",
+                        "primary_lens": "普通人关系",
                         "candidate_topic": "公共事件怎样影响普通人的生活选择",
                         "core_question": "它会怎样改变普通人的日常判断",
                         "audience_relation": "普通家庭需要理解其中的实际影响",
                         "content_increment": "解释事件如何落到具体生活决策",
                         "topic_angle": "从规则变化到家庭选择的链条",
+                        "verification_gap": "后续研究需要核验这种影响是否已经真实发生。",
                         "trendradar_material_refs": ["https://example.test/event"],
                         "timeliness": "事件正在持续发酵",
                         "risks": [],
@@ -1181,11 +1276,21 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
                     },
                     {
                         "domain_label": "music_entertainment",
+                        "theme_conflict": "公共事件会怎样改变娱乐受众的讨论重心",
+                        "domain_bridge": {
+                            "type": "cultural_mapping",
+                            "reason": "娱乐领域可以解释公共话题如何进入作品与文化讨论。",
+                        },
+                        "audience_problem": "娱乐受众需要判断公共事件为何改变讨论重点。",
+                        "domain_fit": "adjacent",
+                        "fit_reason": "它有明确文化讨论桥接，但需要用户决定是否探索。",
+                        "primary_lens": "背景补充",
                         "candidate_topic": "公共事件为何会改变娱乐讨论的关注点",
                         "core_question": "事件怎样影响娱乐受众正在讨论的问题",
                         "audience_relation": "关注娱乐文化的人需要理解讨论变化",
                         "content_increment": "把热点与具体娱乐讨论关系说清楚",
                         "topic_angle": "从公共事件看娱乐讨论的转向",
+                        "verification_gap": "后续研究需要核验娱乐讨论是否存在独立内容增量。",
                         "trendradar_material_refs": ["https://example.test/event"],
                         "timeliness": "讨论仍在快速变化",
                         "risks": ["不得把未证实说法当成事实"],
@@ -1197,6 +1302,42 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         )
         self.assertEqual(len(judgement["candidates"]), 2)
         self.assertEqual(judgement["candidates"][1]["domain_label"], "music_entertainment")
+
+    def test_hotspot_judgement_rejects_missing_semantic_bridge_or_two_candidates_in_one_domain(self) -> None:
+        candidate = {
+            "domain_label": "fan_kepu_social_life",
+            "theme_conflict": "公共事件会怎样改变普通人的生活判断",
+            "domain_bridge": {
+                "type": "audience_impact",
+                "reason": "生活领域可以解释公共变化如何落到家庭决策。",
+            },
+            "audience_problem": "普通家庭需要判断事件是否影响自己的日常安排。",
+            "domain_fit": "core",
+            "fit_reason": "它直接服务普通人生活判断这一领域核心问题。",
+            "primary_lens": "普通人关系",
+            "candidate_topic": "公共事件怎样影响普通人的生活选择",
+            "core_question": "它会怎样改变普通人的日常判断",
+            "audience_relation": "普通家庭需要理解其中的实际影响",
+            "content_increment": "解释事件如何落到具体生活决策",
+            "topic_angle": "从规则变化到家庭选择的链条",
+            "verification_gap": "后续研究需要核验这种影响是否已经真实发生。",
+            "trendradar_material_refs": ["https://example.test/event"],
+            "timeliness": "事件正在持续发酵",
+            "risks": [],
+            "user_review_reason": "可判断是否符合账号的生活解释方向",
+        }
+        missing_bridge = dict(candidate)
+        missing_bridge.pop("domain_bridge")
+        with self.assertRaisesRegex(DailyDiscoveryValidationError, "fields are invalid"):
+            validate_hotspot_opportunity_judgement(
+                {"outcome": "candidates", "reason": "事件可被转为生活问题。", "candidates": [missing_bridge]},
+                enabled_domains=("fan_kepu_social_life",),
+            )
+        with self.assertRaisesRegex(DailyDiscoveryValidationError, "at most one candidate per domain"):
+            validate_hotspot_opportunity_judgement(
+                {"outcome": "candidates", "reason": "事件可被转为两个生活问题。", "candidates": [candidate, candidate]},
+                enabled_domains=("fan_kepu_social_life",),
+            )
 
 
 if __name__ == "__main__":

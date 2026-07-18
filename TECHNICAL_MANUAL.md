@@ -53,17 +53,19 @@ Input Assembly、ModelGateway 运行记录和审计边界，不执行真实内�
 
 ### Stage 1B：受控日常发现
 
-热点的处理顺序固定为：先按标题、链接、时效、重复、低信息、风险和排除项做硬筛；通过硬筛的事件才按上游顺序取本轮最多 10 个；只有这 10 个才读取其原始链接正文。正文读取不是热点筛选手段，更不允许用搜索结果替换原始链接。
+热点的处理顺序固定为：先对全部事件做硬筛，并在本次结果逐条展示标题、平台、原始排名、合并关系、剔除或未入选原因；通过硬筛的事件按跨平台出现次数、原始热搜排名、稳定事件 ID 取本轮最多 10 个，绝不按采集时间。只有这 10 个才读取其原始链接正文。领域排除词不参与热点前筛，只在候选判断后拦截不合格候选。正文读取不是热点筛选手段，更不允许用搜索结果替换原始链接。
 
-真实热点采集成功后，验证批次不再自动删除这一批临时热点。后续排查使用 `--reuse-hotspot-run <已成功采集的运行ID> --source-type hotspot`，只重跑热点转化，绝不再次请求 TrendRadar；采集失败、空批次或已清理批次不能复用。它只在当前验证期间临时保留，完成验证后仍必须通过受控清理删除，绝不成为热点库存。
+热点候选必须给出母题或冲突、五类合法领域桥接之一及理由、受众具体问题、领域适配（`core` 或需用户选择的 `adjacent`）、一个主角度和后续研究缺口；同一事件在同一领域最多一个候选。热点不能改写领域方向，也不能因为标题关键词相同而跨领域成立。
+
+真实热点采集成功后，系统只保留这一次完整、非空的热点批次。后续排查使用 `--reuse-hotspot-run <已成功采集的运行ID> --source-type hotspot`，只重跑热点转化，绝不再次请求 TrendRadar；采集失败、空批次或已清理批次不能复用。下一次成功采集会自动删除这批之前的全部热点原始材料，因此系统始终只有一批可复用热点，不会形成热点库存。
 
 如果正文已读取且模型回执因进程中断而状态不明，系统不会自动重发。只有用户明确批准后，才能用 `--resubmit-hotspot-judgement-run <运行ID>` 重提那一份已冻结的判断输入；它不采集、不读正文，也不搜索。
 
-`scripts/core/production/stage1b_daily_discovery.py` 是由项目 Core Runtime 直接执行的一次性 Stage 1B 批处理入口；它不是由 Codex 轮询的业务进程。每次必须显式给出一个领域、审计主体、幂等键和运行模式：`test_isolated` 只能使用非生产数据身份，`validation_live` 只形成隔离的真实验收结果，`production_daily` 才可能形成正式日产候选池。前两种模式不可自动升级，也不能进入日产能、Stage 1A、研究或经验系统。
+`scripts/core/production/stage1b_daily_discovery.py` 是由项目 Core Runtime 直接执行的一次性 Stage 1B 批处理入口；它不是由 Codex 轮询的业务进程。每次必须显式给出一个领域、审计主体、幂等键和运行模式：`test_isolated` 只能使用非生产数据身份，`real_daily_validation` 是完整日常产出的真实验收结果，`production_daily` 才可能形成正式日产候选池。前两种模式不可自动升级，也不能进入日产能、Stage 1A、研究或经验系统。
 
-`validation_live` 每次必须且只能指定一个 `--source-type`，用于按来源逐项验收；热点和标签搜索只校验自己需要的采集配置，不要求无关来源同时启用。一次 `validation_live` 批次只对第一个通过确定性过滤的 eligible 来源发起一次模型尝试，尝试成功、零候选、输出非法或模型失败后均停止本批次后续 eligible 处理，避免单次验收继续消耗多个模型调用。六个值是 `hotspot`、`daily_competitor_content`、`historical_high_signal`、`tag_discovery`、`question_expansion`、`saved_user_direction`。`production_daily` 不接受缺项，必须执行完整六来源集合。
+`real_daily_validation` 每次必须且只能指定一个 `--source-type`，用于按来源执行完整日常验收；热点和标签搜索只校验自己需要的采集配置，不要求无关来源同时启用。它不得用“只处理第一个”压缩真实产出：热点必须完成全部硬筛并处理本批前 10 个信号。六个值是 `hotspot`、`daily_competitor_content`、`historical_high_signal`、`tag_discovery`、`question_expansion`、`saved_user_direction`。`production_daily` 不接受缺项，必须执行完整六来源集合。
 
-新批次的固定顺序是：TrendRadar 热点采集→热点领域转化→对标日常来源→对标历史高信号→领域标签搜索→标签来源转化→已完成问题拓展→用户保存方向。标签搜索每天按最久未搜索优先轮换最多 3 个活跃标签，每个标签只请求第 1 页；该页返回多少条就在 `domain_search_page_observation` 留存多少条，不翻页补量、不按互动量另截固定条数。通过确定性过滤的记录才进入 `discovered_external_videos`，之后仍只是来源，不是候选。领域话题库只用于标签搜索；热点原始观察写入 `trendradar_hotspot_observation` 后，按 `config/domain_packs/*.yaml` 的版本化领域规则匹配，不读取活跃话题标签。
+新批次的固定顺序是：TrendRadar 热点采集→热点共享事件判断→对标日常来源→对标历史高信号→领域标签搜索→标签来源转化→已完成问题拓展→用户保存方向。标签搜索每天按最久未搜索优先轮换最多 3 个活跃标签，每个标签只请求第 1 页；该页返回多少条就在 `domain_search_page_observation` 留存多少条，不翻页补量、不按互动量另截固定条数。通过确定性过滤的记录才进入 `discovered_external_videos`，之后仍只是来源，不是候选。领域话题库只用于标签搜索；热点原始观察写入 `trendradar_hotspot_observation` 后，不按任何领域标题词前筛。
 
 领域包的 `discovery.topic_search` 区分领域宽标签、通用流量标签和活动待复核词。`科普`、`知识`在泛科普领域保留；活动词只进入 `pending_review`。只有 `domain_search_activity_tag_registry` 中存在当前有效、带平台、活动身份、证据链接、有效期和理由的精确登记时，才会排除对应平台活动标签。新增领域通过新增领域包接入，通用 Stage 1 代码不增加领域枚举或复制流水线。
 
@@ -79,11 +81,7 @@ Stage 1 来源完成度统一使用 `DESIGNED → SCAFFOLDED → TECH_TESTED →
 python scripts/core/production/stage1b_daily_discovery.py --domain fan_kepu_social_life --mode production_daily --actor <audited-user> --idempotency-key <stable-authorized-run-key> --batch-timeout-seconds 600
 ```
 
-批处理在截止时间、中断或部分失败时会写入实际生命周期和审计，不伪装为完整成功；模型请求状态不确定、可能已消耗 token 或已离开明确失败状态时禁止自动重试。对既有真实验证运行，仅可通过同一受控入口一次性重分类，且必须显式标为 `validation_live`，不会重新读取来源或调用模型：
-
-```powershell
-python scripts/core/production/stage1b_daily_discovery.py --reclassify-run <run-id> --mode validation_live --actor <audited-user> --reason <audited-reclassification-reason> --idempotency-key <stable-reclassification-key>
-```
+批处理在截止时间、中断或部分失败时会写入实际生命周期和审计，不伪装为完整成功；模型请求状态不确定、可能已消耗 token 或已离开明确失败状态时禁止自动重试。
 
 已完成问题拓展和用户保存方向通过项目 Runtime 的确定性入口登记，不调用外部来源或模型：
 
@@ -92,10 +90,10 @@ python -m scripts.core.production.stage1_source_runtime register-question-expans
 python -m scripts.core.production.stage1_source_runtime register-user-direction --direction-id <id> --domain fan_kepu_social_life --core-question <具体中文问题> --submitted-by <user-id>
 ```
 
-物理删除错误 `validation_live` 结果只允许用户明确指定运行后执行。入口要求精确候选数和逐字确认令牌，拒绝已有用户决定的运行；它删除该运行及全部派生来源版本、过滤、输入组装、模型记录、候选、零候选、快照、冷却、回执和审计，不删除原始对标视频或历史高信号：
+物理删除错误的 `real_daily_validation` 结果只允许用户明确指定运行后执行。入口要求精确候选数和逐字确认令牌，拒绝已有用户决定的运行；它删除该运行及全部派生来源版本、过滤、输入组装、模型记录、候选、零候选、快照、冷却、回执和审计，不删除原始对标视频或历史高信号：
 
 ```powershell
-python -m scripts.core.production.stage1_source_runtime purge-validation-run --run-id <run-id> --expected-candidates <count> --actor <audited-user> --reason <reason> --confirm DELETE_VALIDATION_LIVE_RUN:<run-id>
+python -m scripts.core.production.stage1_source_runtime purge-real-daily-validation-run --run-id <run-id> --expected-candidates <count> --actor <audited-user> --reason <reason> --confirm DELETE_REAL_DAILY_VALIDATION_RUN:<run-id>
 ```
 
 ### 外部适配器
@@ -144,4 +142,4 @@ python scripts/validation/live_gates.py dry-run
 - `AGENTS.md` 是唯一执行章程；不生成或依赖 `CLAUDE.md`。
 ## Stage 1B TrendRadar Hotspot Handling Note
 
-带真实 acquirer 的 Stage 1B live 运行只从本次 `discovery_run_id` 绑定的 collection 形成临时热点事件簇；不会把历史热点重新混入本轮。每个平台只有前 10 条热搜能进入这一步。事件簇形成后，系统只读取该事件代表性原始链接的正文；这不是搜索，也不会换链接或自动重试。正文读取失败或为空时，事件直接按“材料不足”淘汰，不调用热点判断。正文可用时，Runtime 连同 TrendRadar 原始记录一起冻结为事件材料；热点只在来源不可追溯、信息明显无效、风险词或排除词命中时被拦截；不得按领域标题词筛掉热点。一个完整事件只进行一次跨领域选题判断，未形成候选的原始热点在批次结束后删除，不保留为库存。`validation_live` 只判断一个事件，专用于技术验收；`hotspot_review` 只跑热点，但会处理本批最多 10 个不同事件，并把产生的候选交给用户审核。
+带真实 acquirer 的 Stage 1B live 运行只从本次 `discovery_run_id` 绑定的 collection 形成热点事件簇；不会把旧热点重新混入本轮。每个平台只有前 10 条热搜能进入这一步。事件簇按跨平台支持和原始热搜排名选出前 10，并在运行结果中完整列出每个事件的去向。事件簇形成后，系统只读取入选事件代表性原始链接的正文；这不是搜索，也不会换链接或自动重试。正文读取失败或为空时，事件直接按“材料不足”淘汰，不调用热点判断。正文可用时，Runtime 连同 TrendRadar 原始记录一起冻结为事件材料；热点只在来源不可追溯、信息明显无效或全局明确风险词命中时被前置拦截；领域排除词只能在候选判断后拦截候选。一个完整事件只进行一次跨领域选题判断。最新成功批次的全部原始热点保留供后续复用；下一次成功采集前不删除，下一次成功采集时才整体替换。`real_daily_validation` 处理本批完整前 10 个不同事件，并把产生的候选交给用户审核；不存在单事件验证或独立热点审核入口。

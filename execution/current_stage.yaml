@@ -2,16 +2,16 @@ mode: implementation
 stage: stage_1_daily_discovery
 design_complete: true
 implementation_authorized: true
-external_calls_authorized: false
+external_calls_authorized: true
 environment_changes_authorized: false
-formal_data_writes_authorized: false
+formal_data_writes_authorized: true
 production_authorized: false
-completion_status: STAGE1_HOTSPOT_TECHNICAL_VALIDATION_NOT_BUSINESS_ACCEPTED
-stage_status: BLOCKED_USER_AUDIT_REQUIRED
-source_evidence_level: TECH_TESTED
-claimed_source_level: TECH_TESTED
-next_action: user_audit_hotspot_candidate_and_confirm_business_acceptance_criteria
-baseline_sha256: 2e02fbb9d33865d61ed9a0ff8cca0142939a2843de12a2b3a0ba8adec19b4648
+completion_status: STAGE1_PENDING_REAL_DAILY_HOTSPOT_VALIDATION
+stage_status: PENDING_REAL_DAILY_VALIDATION
+source_evidence_level: NOT_YET_VALIDATED
+claimed_source_level: NOT_YET_VALIDATED
+next_action: run_complete_daily_hotspot_validation_then_user_audits_every_event_decision
+baseline_sha256: ba92f0f891bbfbb02990976cf3bee6f28a6d7774ad67d97d8663079d9a88e367
 base_commit: 86cff32e127d25c240e433862c3ce4f2d19fa478
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
@@ -51,6 +51,7 @@ allowed_paths:
   - scripts/core/business_data/domain_labels.py
   - scripts/core/model_gateway/formal_skill_adapter.py
   - scripts/core/production/stage0_content_core.py
+  - scripts/core/production/stage1_source_runtime.py
   - scripts/core/production/stage1b_daily_discovery.py
   - scripts/integrations/trendradar_runtime.py
   - scripts/validation/test_superpowers_selective.py

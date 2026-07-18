@@ -60,5 +60,19 @@ def get_discovery_policy(domain_label: str) -> dict[str, Any]:
     return policy
 
 
+def hotspot_global_risk_block_terms() -> tuple[str, ...]:
+    """Terms that block every hotspot before shared event judgement.
+
+    Domain exclusion terms remain post-judgement candidate checks. They must
+    never decide whether a raw hotspot reaches the shared judgement.
+    """
+    terms: set[str] = set()
+    for pack in configured_domain_packs().values():
+        policy = pack.get("discovery") or {}
+        if isinstance(policy, dict):
+            terms.update(str(term).strip() for term in policy.get("risk_block_terms", []) if str(term).strip())
+    return tuple(sorted(terms))
+
+
 FORMAL_DOMAIN_LABELS = formal_domain_labels()
 ALLOWED_DOMAIN_LABELS = frozenset(FORMAL_DOMAIN_LABELS | INTERNAL_DOMAIN_LABELS)
