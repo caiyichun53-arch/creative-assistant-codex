@@ -939,6 +939,19 @@ class Stage1BDailyDiscoveryService:
             outcome, reason_code, detail = self._deterministic_filter(
                 domain_label=storage_domain, source=source, now=now
             )
+            if (
+                outcome == "excluded"
+                and reason_code == "source_already_processed"
+                and execution_mode == "real_daily_validation"
+                and hotspot_discovery_run_id is not None
+            ):
+                # A user-authorized validation rerun deliberately reuses a
+                # frozen hotspot batch after rules change.  It must reassess
+                # the event rather than silently inherit an earlier result.
+                outcome, reason_code, detail = "eligible", "eligible", {
+                    "normalized_source_title": _normalize_title(str(source["payload"].get("title") or "")),
+                    "reassessment": "explicit_real_daily_validation_reuse",
+                }
             if outcome != "eligible":
                 audit_entry.update({"status": "hard_excluded", "reason_code": reason_code, "detail": detail})
                 result["hotspot_audit"]["hard_excluded"] += 1
