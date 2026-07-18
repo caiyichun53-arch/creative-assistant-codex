@@ -261,6 +261,30 @@ def candidate_rejection(domain_label: str, judgement: dict[str, Any]) -> tuple[s
     return None
 
 
+def hotspot_candidate_rejection(domain_label: str, candidate: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    """Apply a domain boundary after a hotspot has been understood, never from its raw title."""
+    policy = get_discovery_policy(domain_label)
+    candidate_text = "\n".join(
+        str(value or "")
+        for value in (
+            candidate.get("theme_conflict"),
+            candidate.get("audience_problem"),
+            candidate.get("fit_reason"),
+            candidate.get("candidate_topic"),
+            candidate.get("core_question"),
+            candidate.get("audience_relation"),
+            candidate.get("content_increment"),
+            candidate.get("topic_angle"),
+            (candidate.get("domain_bridge") or {}).get("reason") if isinstance(candidate.get("domain_bridge"), dict) else "",
+        )
+    ).casefold()
+    exclude_terms = tuple(str(term) for term in policy.get("exclude_terms", []))
+    matched_terms = sorted({term for term in exclude_terms if term.casefold() in candidate_text})
+    if matched_terms:
+        return "candidate_outside_domain_policy", {"matched_terms": matched_terms}
+    return None
+
+
 def daily_discovery_prompt(input_payload: dict[str, Any]) -> str:
     return (
         "你只能根据一条已通过确定性筛选的受控来源，作有限的候选判断。不得搜索、抓取、下载、转写、分析视频，"
@@ -1019,7 +1043,32 @@ class Stage1BDailyDiscoveryService:
                     result["filtered"][domain]["hotspot_not_converted"] = result["filtered"][domain].get("hotspot_not_converted", 0) + 1
                     result["source_evidence"][domain] = {"status": "no_candidate", "reason": "hotspot_not_converted", "source_refs": []}
                 continue
-            for candidate_index, candidate in enumerate(judgement["candidates"]):
+            accepted_candidates: list[dict[str, Any]] = []
+            rejected_candidates: list[dict[str, Any]] = []
+            for candidate in judgement["candidates"]:
+                rejection = hotspot_candidate_rejection(candidate["domain_label"], candidate)
+                if rejection is None:
+                    accepted_candidates.append(candidate)
+                    continue
+                reason_code, detail = rejection
+                rejected_candidates.append({"domain_label": candidate["domain_label"], "reason_code": reason_code, "detail": detail})
+                result["filtered"][candidate["domain_label"]][reason_code] = (
+                    result["filtered"][candidate["domain_label"]].get(reason_code, 0) + 1
+                )
+                result["source_evidence"][candidate["domain_label"]] = {
+                    "status": "no_candidate", "reason": reason_code, "source_refs": []
+                }
+            if not accepted_candidates:
+                reason_code = rejected_candidates[0]["reason_code"]
+                detail = rejected_candidates[0]["detail"]
+                audit_entry.update({"status": "not_converted", "reason_code": reason_code, "detail": detail})
+                self.core.record_discovery_no_candidate(
+                    run_id=run_id, source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
+                    reason_code=reason_code, detail=detail,
+                    idempotency_key=f"{idempotency_key}:hotspot:absence:{index}",
+                )
+                continue
+            for candidate_index, candidate in enumerate(accepted_candidates):
                 domain = candidate["domain_label"]
                 payload = {
                     "title": candidate["candidate_topic"], "why_attention": candidate["audience_relation"],
@@ -1039,7 +1088,11 @@ class Stage1BDailyDiscoveryService:
                 )
                 result["candidate_counts"][domain] += 1
                 result["source_evidence"][domain] = {"status": "has_candidate", "reason": "candidate_created", "source_refs": [{"source_type": "hotspot", "source_object_id": source["source_object_id"], "source_object_version": source["source_object_version"]}]}
-            audit_entry.update({"status": "judged", "reason_code": "candidate_created", "detail": {"candidate_count": len(judgement["candidates"])}})
+            audit_entry.update({
+                "status": "judged",
+                "reason_code": "candidate_created",
+                "detail": {"candidate_count": len(accepted_candidates), "rejected_candidates": rejected_candidates},
+            })
         return result
 
     def _run_source_to_topic_skill(

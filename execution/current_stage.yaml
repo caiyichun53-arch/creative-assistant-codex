@@ -46,6 +46,7 @@ allowed_paths:
   - execution/STAGE_REGISTER.yaml
   - execution/current_stage.yaml
   - runtime_skills/hotspot_to_opportunity/prompt.md
+  - config/domain_packs/fan_kepu_social_life.yaml
   - runtime_skills/source_to_topic/prompt.md
   - scripts/core/business_data/daily_source_acquisition.py
   - scripts/core/business_data/domain_labels.py

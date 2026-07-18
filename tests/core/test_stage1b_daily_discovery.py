@@ -25,6 +25,7 @@ from scripts.core.production.stage1b_daily_discovery import (
     parse_candidate_judgement_output,
     validate_candidate_judgement,
     validate_hotspot_opportunity_judgement,
+    hotspot_candidate_rejection,
 )
 
 
@@ -162,6 +163,26 @@ class NoopProductionAcquirer:
 
 
 class Stage1BDailyDiscoveryTests(unittest.TestCase):
+    def test_hotspot_candidate_is_rejected_after_judgement_when_it_crosses_the_domain_boundary(self) -> None:
+        rejection = hotspot_candidate_rejection(
+            "fan_kepu_social_life",
+            {
+                "theme_conflict": "证券市场波动与个人投资焦虑",
+                "audience_problem": "普通投资者要不要使用两融",
+                "fit_reason": "把金融市场新闻解释给大众",
+                "candidate_topic": "两融强平会不会影响股票账户",
+                "core_question": "股市大跌时如何使用杠杆",
+                "audience_relation": "证券投资者",
+                "content_increment": "解释两融规则",
+                "topic_angle": "金融市场风险",
+                "domain_bridge": {"type": "audience_impact", "reason": "影响投资决策"},
+            },
+        )
+        self.assertEqual(
+            rejection,
+            ("candidate_outside_domain_policy", {"matched_terms": ["两融", "强平", "股市", "股票", "证券", "金融"]}),
+        )
+
     NOW = datetime(2026, 7, 14, 12, tzinfo=timezone.utc)
 
     def setUp(self) -> None:

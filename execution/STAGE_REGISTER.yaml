@@ -99,6 +99,7 @@ stages:
       - HOTSPOT_TO_OPPORTUNITY_BUSINESS_CONTRACT.yaml
       - runtime_skills/source_to_topic/prompt.md
       - runtime_skills/hotspot_to_opportunity/prompt.md
+      - config/domain_packs/fan_kepu_social_life.yaml
       - vendor/TrendRadar/**
     baseline_sections:
       - "### 3.3.1 热点转选题的受控搜索与 Skill 审核"
