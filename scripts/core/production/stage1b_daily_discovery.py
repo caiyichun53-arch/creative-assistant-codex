@@ -28,6 +28,7 @@ from scripts.core.model_gateway.hermes_model_provider import HermesModelProvider
 from scripts.core.model_gateway.model_router import DEFAULT_MODEL_ENV_PATH, ModelRouter, ModelRouterError
 from scripts.core.model_gateway.formal_skill_adapter import (
     FormalSkillContract,
+    HOTSPOT_TO_OPPORTUNITY_CONTRACT_PATH,
     FormalSkillValidationError,
     SOURCE_TO_TOPIC_CONTRACT_PATH,
     apply_binding,
@@ -45,12 +46,12 @@ from scripts.core.production.stage0_content_core import (
 )
 from scripts.core.business_data.daily_source_acquisition import DailyDiscoverySourceAcquirer, validate_hotspot_collection_contract
 from scripts.core.business_data.run_domain_search import validate_domain_search_execution_contract
-from scripts.core.business_data.domain_labels import FORMAL_DOMAIN_LABELS, get_discovery_policy
+from scripts.core.business_data.domain_labels import FORMAL_DOMAIN_LABELS, get_discovery_policy, get_domain_pack
 from scripts.core.external_adapters import LocalMediaCrawlerExecutor, LocalTrendRadarExecutor
 
 
 APPROVED_DOMAINS = tuple(sorted(FORMAL_DOMAIN_LABELS))
-EXECUTION_MODES = ("test_isolated", "validation_live", "production_daily")
+EXECUTION_MODES = ("test_isolated", "validation_live", "hotspot_review", "production_daily")
 SOURCE_TYPES = (
     "hotspot",
     "daily_competitor_content",
@@ -66,7 +67,7 @@ DAILY_REPORT_SOURCE_TYPES = (
     "tag_discovery",
     "question_expansion",
 )
-HOTSPOT_DAILY_PROCESS_LIMIT = 3
+HOTSPOT_DAILY_PROCESS_LIMIT = 10
 VALIDATION_LIVE_ELIGIBLE_PROCESS_LIMIT = 1
 DAILY_SOURCE_VALIDITY_HOURS = 72
 SOURCE_READ_LIMIT = 6
@@ -136,6 +137,69 @@ def validate_candidate_judgement(payload: dict[str, Any]) -> dict[str, Any]:
     normalized["originality_relation"] = relation
     normalized["outcome"] = outcome
     return normalized
+
+
+def validate_hotspot_opportunity_judgement(
+    payload: dict[str, Any], *, enabled_domains: tuple[str, ...]
+) -> dict[str, Any]:
+    """Validate one event's zero-or-many domain opportunities without ranking them."""
+    if not isinstance(payload, dict):
+        raise DailyDiscoveryValidationError("hotspot opportunity judgement must be an object")
+    if set(payload) != {"outcome", "candidates", "reason"}:
+        raise DailyDiscoveryValidationError("hotspot opportunity output has unsupported fields")
+    if {"score", "rank", "weight", "recommendation_score", "quality_rank"} & set(payload):
+        raise DailyDiscoveryValidationError("hotspot opportunity output must not contain ranking fields")
+    outcome = _required_text(payload, "outcome")
+    reason = _required_natural_chinese(payload, "reason")
+    candidates = payload["candidates"]
+    if not isinstance(candidates, list):
+        raise DailyDiscoveryValidationError("hotspot opportunity candidates must be an array")
+    if outcome == "no_candidate":
+        if candidates:
+            raise DailyDiscoveryValidationError("zero-candidate outcome must not include candidates")
+        return {"outcome": outcome, "candidates": [], "reason": reason}
+    if outcome != "candidates" or not candidates or len(candidates) > 10:
+        raise DailyDiscoveryValidationError("hotspot opportunity outcome is invalid")
+    required = {
+        "domain_label", "candidate_topic", "core_question", "audience_relation",
+        "content_increment", "topic_angle", "trendradar_material_refs", "timeliness",
+        "risks", "user_review_reason",
+    }
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in candidates:
+        if not isinstance(item, dict) or set(item) != required:
+            raise DailyDiscoveryValidationError("hotspot candidate fields are invalid")
+        domain_label = _required_text(item, "domain_label")
+        if domain_label not in enabled_domains:
+            raise DailyDiscoveryValidationError("hotspot candidate uses a domain not enabled for this run")
+        candidate = {
+            key: _required_natural_chinese(item, key)
+            for key in required - {"domain_label", "trendradar_material_refs", "risks"}
+        }
+        refs, risks = item["trendradar_material_refs"], item["risks"]
+        # This is format repair only: a single supplied reference or risk keeps
+        # exactly the same meaning, but is normalized into the contract's list
+        # shape before semantic validation.  It must never invent or remove one.
+        if isinstance(refs, str) and refs.strip():
+            refs = [refs]
+        if isinstance(risks, str) and risks.strip():
+            risks = [risks]
+        if not isinstance(refs, list) or not refs or not all(isinstance(ref, str) and ref.strip() for ref in refs):
+            raise DailyDiscoveryValidationError("hotspot candidate must cite TrendRadar material")
+        if not isinstance(risks, list) or not all(isinstance(risk, str) and risk.strip() for risk in risks):
+            raise DailyDiscoveryValidationError("hotspot candidate risks must be a string array")
+        key = (domain_label, _normalize_title(candidate["candidate_topic"]))
+        if key in seen:
+            raise DailyDiscoveryValidationError("hotspot candidate is duplicated within its domain")
+        seen.add(key)
+        normalized.append({
+            "domain_label": domain_label,
+            **candidate,
+            "trendradar_material_refs": [ref.strip() for ref in refs],
+            "risks": [risk.strip() for risk in risks],
+        })
+    return {"outcome": outcome, "candidates": normalized, "reason": reason}
 
 
 def parse_candidate_judgement_output(output_text: str) -> dict[str, Any]:
@@ -276,11 +340,13 @@ class Stage1BDailyDiscoveryService:
         gateway: ModelGateway,
         source_acquirer: DailyDiscoverySourceAcquirer | None = None,
         source_to_topic_contract: FormalSkillContract | None = None,
+        hotspot_to_opportunity_contract: FormalSkillContract | None = None,
     ):
         self.core = core
         self.gateway = gateway
         self.source_acquirer = source_acquirer
         self.source_to_topic_contract = source_to_topic_contract or FormalSkillContract.from_yaml(SOURCE_TO_TOPIC_CONTRACT_PATH)
+        self.hotspot_to_opportunity_contract = hotspot_to_opportunity_contract or FormalSkillContract.from_yaml(HOTSPOT_TO_OPPORTUNITY_CONTRACT_PATH)
 
     def run_daily_discovery(
         self,
@@ -293,6 +359,7 @@ class Stage1BDailyDiscoveryService:
         now: datetime | None = None,
         domains: tuple[str, ...] = APPROVED_DOMAINS,
         source_types: tuple[str, ...] = DAILY_REPORT_SOURCE_TYPES,
+        reuse_hotspot_discovery_run_id: str | None = None,
     ) -> dict[str, Any]:
         requested_domains = tuple(domains)
         requested_source_types = tuple(source_types)
@@ -310,6 +377,10 @@ class Stage1BDailyDiscoveryService:
             raise DailyDiscoveryValidationError("daily discovery requires an explicit execution mode")
         if execution_mode == "validation_live" and len(requested_source_types) != 1:
             raise DailyDiscoveryValidationError("validation_live must validate exactly one source type")
+        if execution_mode == "hotspot_review" and set(requested_source_types) != {"hotspot"}:
+            raise DailyDiscoveryValidationError("hotspot_review only runs the complete hotspot path for user review")
+        if reuse_hotspot_discovery_run_id is not None and set(requested_source_types) != {"hotspot"}:
+            raise DailyDiscoveryValidationError("a reused hotspot batch can only run the hotspot conversion path")
         if execution_mode == "production_daily" and set(requested_source_types) != set(DAILY_REPORT_SOURCE_TYPES):
             raise DailyDiscoveryValidationError("production_daily must run the complete five-source daily report set; manual tasks are not daily report sources")
         if self.core.data_identity != "production" and execution_mode != "test_isolated":
@@ -332,6 +403,7 @@ class Stage1BDailyDiscoveryService:
             "execution_mode": execution_mode,
             "source_types": list(requested_source_types),
             "batch_timeout_seconds": batch_timeout_seconds,
+            "reuse_hotspot_discovery_run_id": reuse_hotspot_discovery_run_id,
         }
         replay = self.core.find_command_replay("stage1b_execute_daily_discovery", idempotency_key, request)
         if replay:
@@ -356,13 +428,27 @@ class Stage1BDailyDiscoveryService:
         }
         daily_since = (now - timedelta(hours=DAILY_SOURCE_VALIDITY_HOURS)).isoformat()
         deadline = time.monotonic() + batch_timeout_seconds
+        hotspot_discovery_run_id = reuse_hotspot_discovery_run_id or (
+            run["run_id"]
+            if self.source_acquirer is not None and "hotspot" in requested_source_types
+            else None
+        )
         lifecycle_status, failure_reason = "completed", None
         try:
             if self.source_acquirer is not None and "hotspot" in requested_source_types:
                 try:
-                    hotspot = self.source_acquirer.collect_hotspots(
-                        discovery_run_id=run["run_id"], now=now, deadline_monotonic=deadline
-                    )
+                    if reuse_hotspot_discovery_run_id is not None:
+                        hotspot = {
+                            "status": "reused",
+                            "reuse": self.core.reusable_hotspot_batch_status(
+                                discovery_run_id=reuse_hotspot_discovery_run_id
+                            ),
+                            "reason": "a successful temporary collection is being reused; no TrendRadar collection was started",
+                        }
+                    else:
+                        hotspot = self.source_acquirer.collect_hotspots(
+                            discovery_run_id=run["run_id"], now=now, deadline_monotonic=deadline
+                        )
                     summary["acquisition"] = {
                         "execution_order": [
                             "trendradar_hotspot", "hotspot_conversion", "daily_competitor",
@@ -372,7 +458,7 @@ class Stage1BDailyDiscoveryService:
                         "hotspot": hotspot,
                         "tag_search": {},
                     }
-                    hotspot_failed = hotspot["status"] not in {"completed", "completed_with_failures"}
+                    hotspot_failed = hotspot["status"] not in {"completed", "completed_with_failures", "reused"}
                     if hotspot_failed or hotspot["status"] == "completed_with_failures":
                         summary["technical_failures"] += 1
                 except Exception as exc:
@@ -382,28 +468,50 @@ class Stage1BDailyDiscoveryService:
                     summary["technical_failures"] += 1
             elif "hotspot" not in requested_source_types:
                 summary["acquisition"] = {"status": "not_selected", "reason": "hotspot is outside this source-specific run", "tag_search": {}}
+            hotspot_summary = self._process_hotspots_once(
+                run_id=run["run_id"],
+                requested_domains=requested_domains,
+                requested_source_types=requested_source_types,
+                daily_since=daily_since,
+                hotspot_discovery_run_id=hotspot_discovery_run_id,
+                now=now,
+                execution_mode=execution_mode,
+                idempotency_key=idempotency_key,
+                deadline_monotonic=deadline,
+            )
+            if hotspot_discovery_run_id is not None and execution_mode == "production_daily":
+                deleted_hotspots = self.core.clear_hotspot_observations_for_discovery_run(
+                    discovery_run_id=hotspot_discovery_run_id
+                )
+                summary["acquisition"].setdefault("hotspot", {})["deleted_raw_items"] = deleted_hotspots
+            elif hotspot_discovery_run_id is not None:
+                summary["acquisition"].setdefault("hotspot", {})["raw_batch_status"] = (
+                    "temporary_reusable_until_explicit_validation_purge"
+                )
             for domain_label in requested_domains:
                 source_evidence: dict[str, dict[str, Any]] = {
                     source_type: {"status": "not_available", "reason": "no_source_available", "source_refs": []}
                     for source_type in DAILY_REPORT_SOURCE_TYPES
                     if source_type in requested_source_types
                 }
-                summary["source_readiness"][domain_label] = self.core.discovery_source_readiness(domain_label=domain_label, daily_since=daily_since)
+                if "hotspot" in requested_source_types:
+                    source_evidence["hotspot"] = hotspot_summary["source_evidence"][domain_label]
+                summary["source_readiness"][domain_label] = self.core.discovery_source_readiness(
+                    domain_label=domain_label,
+                    daily_since=daily_since,
+                    hotspot_discovery_run_id=hotspot_discovery_run_id,
+                )
                 loaded_sources = [
                     source for source in self.core.load_real_discovery_sources(
-                        domain_label=domain_label, daily_since=daily_since, per_source_limit=SOURCE_READ_LIMIT
+                        domain_label=domain_label,
+                        daily_since=daily_since,
+                        per_source_limit=SOURCE_READ_LIMIT,
+                        hotspot_discovery_run_id=hotspot_discovery_run_id,
                     )
-                    if source["source_type"] in requested_source_types
+                    if source["source_type"] in requested_source_types and source["source_type"] != "hotspot"
                 ]
-                hotspot_seen = 0
                 limited_sources: list[dict[str, Any]] = []
                 for source in loaded_sources:
-                    if source["source_type"] == "hotspot":
-                        hotspot_seen += 1
-                        if hotspot_seen > HOTSPOT_DAILY_PROCESS_LIMIT:
-                            source_evidence.setdefault("hotspot", {"status": "not_available", "reason": "no_source_available", "source_refs": []})
-                            source_evidence["hotspot"]["truncated_after"] = HOTSPOT_DAILY_PROCESS_LIMIT
-                            continue
                     limited_sources.append(source)
                     if source["source_type"] in source_evidence:
                         source_evidence[source["source_type"]] = {
@@ -441,13 +549,16 @@ class Stage1BDailyDiscoveryService:
                         lifecycle_status, failure_reason = "timed_out", "batch deadline reached during tag search; no request was retried"
                         return
                     refreshed = self.core.load_real_discovery_sources(
-                        domain_label=domain_label, daily_since=daily_since, per_source_limit=SOURCE_READ_LIMIT
+                        domain_label=domain_label,
+                        daily_since=daily_since,
+                        per_source_limit=SOURCE_READ_LIMIT,
+                        hotspot_discovery_run_id=hotspot_discovery_run_id,
                     )
                     yield from (source for source in refreshed if source["source_type"] == "tag_discovery")
 
-                filtered: dict[str, int] = {}
-                candidate_count = 0
-                sources_read = 0
+                filtered: dict[str, int] = dict(hotspot_summary["filtered"][domain_label])
+                candidate_count = hotspot_summary["candidate_counts"][domain_label]
+                sources_read = hotspot_summary["sources_read"][domain_label]
                 eligible_model_attempts = 0
                 for index, source in enumerate(ordered_sources()):
                     sources_read += 1
@@ -583,7 +694,11 @@ class Stage1BDailyDiscoveryService:
                     if validation_live_limit_reached:
                         break
                 summary["domains"][domain_label] = {"sources_read": sources_read, "candidates": candidate_count}
-                summary["source_readiness"][domain_label] = self.core.discovery_source_readiness(domain_label=domain_label, daily_since=daily_since)
+                summary["source_readiness"][domain_label] = self.core.discovery_source_readiness(
+                    domain_label=domain_label,
+                    daily_since=daily_since,
+                    hotspot_discovery_run_id=hotspot_discovery_run_id,
+                )
                 summary["filtered"][domain_label] = filtered
                 summary["source_evidence"][domain_label] = source_evidence
                 if lifecycle_status == "timed_out":
@@ -635,6 +750,250 @@ class Stage1BDailyDiscoveryService:
             idempotency_key=idempotency_key,
         )
 
+    def resubmit_pending_hotspot_judgement(
+        self,
+        *,
+        run_id: str,
+        actor: str,
+        reason: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Submit exactly one user-authorized retry from an already frozen hotspot input."""
+        if not actor.strip() or not reason.strip():
+            raise DailyDiscoveryValidationError("hotspot judgement resubmission requires an actor and reason")
+        request = {"run_id": run_id, "actor": actor, "reason": reason}
+        replay = self.core.find_command_replay("stage1b_resubmit_hotspot_judgement", idempotency_key, request)
+        if replay:
+            return {**replay, "replayed": True}
+        pending = self.core.pending_hotspot_judgement(run_id=run_id)
+        input_payload = pending["input_payload"]
+        enabled_domains = tuple(
+            str(item.get("domain_label"))
+            for item in input_payload.get("enabled_domains", [])
+            if isinstance(item, dict) and str(item.get("domain_label") or "") in APPROVED_DOMAINS
+        )
+        if not enabled_domains:
+            raise DailyDiscoveryValidationError("the frozen hotspot input has no approved enabled domain")
+        source_version_id = str(pending["source_version_id"])
+        source_payload = dict(pending["source_payload"])
+        lifecycle_status, failure_reason, candidate_count = "completed", None, 0
+        try:
+            model_result, judgement = self._run_hotspot_to_opportunity_skill(
+                run_id=run_id,
+                source_version_id=source_version_id,
+                assembly_id=str(pending["assembly_id"]),
+                input_payload=input_payload,
+                enabled_domains=enabled_domains,
+            )
+            if judgement["outcome"] == "no_candidate":
+                self.core.record_discovery_no_candidate(
+                    run_id=run_id,
+                    source_version_id=source_version_id,
+                    model_run_id=model_result.envelope_version_id,
+                    reason_code="hotspot_not_converted",
+                    detail={"reason": judgement["reason"]},
+                    idempotency_key=f"{idempotency_key}:absence",
+                )
+            else:
+                for candidate_index, candidate in enumerate(judgement["candidates"]):
+                    domain = candidate["domain_label"]
+                    payload = {
+                        "title": candidate["candidate_topic"], "why_attention": candidate["audience_relation"],
+                        "new_angle": f"{candidate['topic_angle']}；{candidate['content_increment']}",
+                        "material_readiness": "热点仅提供发现材料；正式研究仍需独立核验。",
+                        "risk_limits": "；".join(candidate["risks"]) or "热点材料仅用于发现，不得替代正式研究证据。",
+                        "originality_relation": "problem_expansion", "normalized_title": _normalize_title(candidate["candidate_topic"]),
+                        "normalized_source_title": _normalize_title(str(source_payload["title"])), "domain": domain,
+                        "source_reference": {"source_version_id": source_version_id, "source_type": "hotspot", "url": source_payload.get("url", "")},
+                        **candidate,
+                    }
+                    self.core.create_discovery_candidate(
+                        run_id=run_id,
+                        source_version_id=source_version_id,
+                        model_run_id=model_result.envelope_version_id,
+                        candidate_id=f"candidate_{_stable_id({domain: source_version_id, 'title': payload['normalized_title']})}",
+                        payload=payload,
+                        candidate_domain_label=domain,
+                        allow_multiple_from_model_run=True,
+                        idempotency_key=f"{idempotency_key}:candidate:{candidate_index}",
+                    )
+                    candidate_count += 1
+        except (ModelGatewayError, json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
+            lifecycle_status, failure_reason = "completed_with_failures", "hotspot judgement resubmission failed; no automatic retry was attempted"
+            self.core.record_discovery_no_candidate(
+                run_id=run_id,
+                source_version_id=source_version_id,
+                model_run_id=None,
+                reason_code="hotspot_judgement_failed",
+                detail={"reason": str(exc), "retry": "forbidden_after_uncertain_request"},
+                idempotency_key=f"{idempotency_key}:failed",
+            )
+        finalization = self.core.complete_discovery_run(
+            run_id=run_id,
+            domains=enabled_domains,
+            lifecycle_status=lifecycle_status,
+            failure_reason=failure_reason,
+            idempotency_key=f"{idempotency_key}:finalize",
+        )
+        result = {**finalization, "candidate_count": candidate_count}
+        self.core.record_completed_command(
+            command="stage1b_resubmit_hotspot_judgement",
+            idempotency_key=idempotency_key,
+            request=request,
+            task_id=run_id,
+            event="stage1b_hotspot_judgement_resubmitted",
+            result={key: str(value) for key, value in result.items()},
+        )
+        return result
+
+    def _process_hotspots_once(
+        self,
+        *,
+        run_id: str,
+        requested_domains: tuple[str, ...],
+        requested_source_types: tuple[str, ...],
+        daily_since: str,
+        hotspot_discovery_run_id: str | None,
+        now: datetime,
+        execution_mode: str,
+        idempotency_key: str,
+        deadline_monotonic: float | None,
+    ) -> dict[str, Any]:
+        empty_evidence = {"status": "not_available", "reason": "hotspot_not_selected", "source_refs": []}
+        result = {
+            "candidate_counts": {domain: 0 for domain in requested_domains},
+            "sources_read": {domain: 0 for domain in requested_domains},
+            "filtered": {domain: {} for domain in requested_domains},
+            "source_evidence": {domain: dict(empty_evidence) for domain in requested_domains},
+        }
+        if "hotspot" not in requested_source_types:
+            return result
+        sources = self.core.load_hotspot_event_clusters(
+            daily_since=daily_since,
+            per_source_limit=None,
+            hotspot_discovery_run_id=hotspot_discovery_run_id,
+        )
+        if not sources:
+            for domain in requested_domains:
+                result["source_evidence"][domain] = {"status": "no_candidate", "reason": "no_hotspot_event", "source_refs": []}
+            return result
+        storage_domain = requested_domains[0]
+        detail_limit = 1 if execution_mode == "validation_live" else HOTSPOT_DAILY_PROCESS_LIMIT
+        details_selected = 0
+        for index, source in enumerate(sources):
+            outcome, reason_code, detail = self._deterministic_filter(
+                domain_label=storage_domain, source=source, now=now
+            )
+            if outcome != "eligible":
+                source_result = self.core.record_discovery_source(
+                    run_id=run_id,
+                    domain_label=storage_domain,
+                    source_type="hotspot",
+                    source_object_id=source["source_object_id"],
+                    source_object_version=source["source_object_version"],
+                    source_time=source["source_time"],
+                    expires_at=self._expires_at(source, now=now),
+                    payload=source["payload"],
+                    idempotency_key=f"{idempotency_key}:hotspot:source:{index}",
+                )
+                self.core.record_discovery_filter(
+                    source_version_id=source_result["source_version_id"], outcome=outcome,
+                    reason_code=reason_code, detail=detail,
+                    idempotency_key=f"{idempotency_key}:hotspot:filter:{index}",
+                )
+                for domain in requested_domains:
+                    result["sources_read"][domain] += 1
+                    result["filtered"][domain][reason_code] = result["filtered"][domain].get(reason_code, 0) + 1
+                    result["source_evidence"][domain] = {"status": "no_candidate", "reason": reason_code, "source_refs": []}
+                continue
+            if details_selected >= detail_limit:
+                break
+            details_selected += 1
+            detail_result: dict[str, Any] = {"status": "not_required"}
+            read_detail = getattr(self.source_acquirer, "read_hotspot_event_detail", None)
+            if callable(read_detail):
+                source, detail_result = read_detail(source=source, deadline_monotonic=deadline_monotonic)
+            if detail_result.get("status") not in {"completed", "not_required"}:
+                outcome, reason_code, detail = "excluded", "hotspot_detail_unavailable", {
+                    "reason": str(detail_result.get("reason") or "original_link_content_unavailable")
+                }
+            source_result = self.core.record_discovery_source(
+                run_id=run_id,
+                domain_label=storage_domain,
+                source_type="hotspot",
+                source_object_id=source["source_object_id"],
+                source_object_version=source["source_object_version"],
+                source_time=source["source_time"],
+                expires_at=self._expires_at(source, now=now),
+                payload=source["payload"],
+                idempotency_key=f"{idempotency_key}:hotspot:source:{index}",
+            )
+            self.core.record_discovery_filter(
+                source_version_id=source_result["source_version_id"], outcome=outcome,
+                reason_code=reason_code, detail=detail,
+                idempotency_key=f"{idempotency_key}:hotspot:filter:{index}",
+            )
+            for domain in requested_domains:
+                result["sources_read"][domain] += 1
+            if outcome != "eligible":
+                for domain in requested_domains:
+                    result["filtered"][domain][reason_code] = result["filtered"][domain].get(reason_code, 0) + 1
+                    result["source_evidence"][domain] = {"status": "no_candidate", "reason": reason_code, "source_refs": []}
+                continue
+            input_payload = self._hotspot_opportunity_input(source=source, enabled_domains=requested_domains)
+            assembly = self.core.create_discovery_input_assembly(
+                run_id=run_id, source_version_id=source_result["source_version_id"], payload=input_payload,
+                prompt_version="hotspot_to_opportunity.v1", skill_version="hotspot_to_opportunity.v1",
+                idempotency_key=f"{idempotency_key}:hotspot:assembly:{index}",
+            )
+            try:
+                model_result, judgement = self._run_hotspot_to_opportunity_skill(
+                    run_id=run_id, source_version_id=source_result["source_version_id"],
+                    assembly_id=assembly["assembly_id"], input_payload=input_payload,
+                    enabled_domains=requested_domains,
+                )
+            except (ModelGatewayError, json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
+                self.core.record_discovery_no_candidate(
+                    run_id=run_id, source_version_id=source_result["source_version_id"], model_run_id=None,
+                    reason_code="hotspot_judgement_failed", detail={"reason": str(exc), "retry": "forbidden_after_uncertain_request"},
+                    idempotency_key=f"{idempotency_key}:hotspot:absence:{index}",
+                )
+                for domain in requested_domains:
+                    result["filtered"][domain]["hotspot_judgement_failed"] = result["filtered"][domain].get("hotspot_judgement_failed", 0) + 1
+                    result["source_evidence"][domain] = {"status": "no_candidate", "reason": "hotspot_judgement_failed", "source_refs": []}
+                continue
+            if judgement["outcome"] == "no_candidate":
+                self.core.record_discovery_no_candidate(
+                    run_id=run_id, source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
+                    reason_code="hotspot_not_converted", detail={"reason": judgement["reason"]},
+                    idempotency_key=f"{idempotency_key}:hotspot:absence:{index}",
+                )
+                for domain in requested_domains:
+                    result["filtered"][domain]["hotspot_not_converted"] = result["filtered"][domain].get("hotspot_not_converted", 0) + 1
+                    result["source_evidence"][domain] = {"status": "no_candidate", "reason": "hotspot_not_converted", "source_refs": []}
+                continue
+            for candidate_index, candidate in enumerate(judgement["candidates"]):
+                domain = candidate["domain_label"]
+                payload = {
+                    "title": candidate["candidate_topic"], "why_attention": candidate["audience_relation"],
+                    "new_angle": f"{candidate['topic_angle']}；{candidate['content_increment']}",
+                    "material_readiness": "热点仅提供发现材料；正式研究仍需独立核验。",
+                    "risk_limits": "；".join(candidate["risks"]) or "热点材料仅用于发现，不得替代正式研究证据。",
+                    "originality_relation": "problem_expansion", "normalized_title": _normalize_title(candidate["candidate_topic"]),
+                    "normalized_source_title": _normalize_title(str(source["payload"]["title"])), "domain": domain,
+                    "source_reference": {"source_version_id": source_result["source_version_id"], "source_type": "hotspot", "source_object_id": source["source_object_id"], "source_object_version": source["source_object_version"], "source_time": source["source_time"], "url": source["payload"].get("url", "")},
+                    **candidate,
+                }
+                self.core.create_discovery_candidate(
+                    run_id=run_id, source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
+                    candidate_id=f"candidate_{_stable_id({domain: source_result['source_version_id'], 'title': payload['normalized_title']})}",
+                    payload=payload, candidate_domain_label=domain, allow_multiple_from_model_run=True,
+                    idempotency_key=f"{idempotency_key}:hotspot:candidate:{index}:{candidate_index}",
+                )
+                result["candidate_counts"][domain] += 1
+                result["source_evidence"][domain] = {"status": "has_candidate", "reason": "candidate_created", "source_refs": [{"source_type": "hotspot", "source_object_id": source["source_object_id"], "source_object_version": source["source_object_version"]}]}
+        return result
+
     def _run_source_to_topic_skill(
         self,
         *,
@@ -671,6 +1030,65 @@ class Stage1BDailyDiscoveryService:
         validate_source_to_topic_output_semantics(input_payload, output_payload)
         return model_result, output_payload
 
+    def _run_hotspot_to_opportunity_skill(
+        self,
+        *,
+        run_id: str,
+        source_version_id: str,
+        assembly_id: str,
+        input_payload: dict[str, Any],
+        enabled_domains: tuple[str, ...],
+    ):
+        contract = self.hotspot_to_opportunity_contract
+        contract.validate_contract()
+        validate_payload(input_payload, contract.input_schema)
+        model_input = apply_binding(contract.input_map, input_payload, {}, {})
+        validate_payload(model_input, contract.model_input_schema)
+        prompt = contract.portable_skill().render_prompt(model_input)
+        request = self.core.prepare_discovery_model_request(
+            run_id=run_id,
+            source_version_id=source_version_id,
+            assembly_id=assembly_id,
+            prompt=prompt,
+            skill_name=contract.formal_skill_id,
+            skill_version=contract.version,
+            skill_hash=contract.skill_hash,
+            binding_name=contract.binding_name,
+            binding_version=contract.binding_version,
+            binding_hash=contract.binding_hash,
+            model_input_payload=model_input,
+        )
+        model_result = self.gateway.complete(request)
+        model_output = parse_model_json(model_result.output_text)
+        validate_payload(model_output, contract.model_output_schema)
+        output_payload = apply_binding(contract.output_map, input_payload, model_output, {})
+        validate_payload(output_payload, contract.output_schema)
+        return model_result, validate_hotspot_opportunity_judgement(
+            output_payload, enabled_domains=enabled_domains
+        )
+
+    @staticmethod
+    def _hotspot_opportunity_input(
+        *, source: dict[str, Any], enabled_domains: tuple[str, ...]
+    ) -> dict[str, Any]:
+        cluster = source["payload"].get("hotspot_event_cluster")
+        if not isinstance(cluster, dict):
+            raise DailyDiscoveryValidationError("hotspot opportunity requires a complete event cluster")
+        return {
+            "event_material": cluster,
+            "enabled_domains": [
+                {
+                    "domain_label": domain_label,
+                    "direction_card": {
+                        key: value
+                        for key, value in get_domain_pack(domain_label).items()
+                        if key != "discovery"
+                    },
+                }
+                for domain_label in enabled_domains
+            ],
+        }
+
     def _deterministic_filter(self, *, domain_label: str, source: dict[str, Any], now: datetime) -> tuple[str, str, dict[str, Any]]:
         if source["source_type"] not in {
             "hotspot", "daily_competitor_content", "historical_high_signal", "tag_discovery",
@@ -693,11 +1111,6 @@ class Stage1BDailyDiscoveryService:
         matched_terms = [term for term in exclude_terms if term.casefold() in title_folded]
         if matched_terms:
             return "excluded", "outside_domain_policy", {"matched_terms": matched_terms}
-        if source["source_type"] == "hotspot":
-            match_terms = tuple(str(term) for term in policy.get("hotspot_match_terms", []))
-            cluster = source["payload"].get("hotspot_event_cluster")
-            if not cluster and (not match_terms or not any(term.casefold() in title_folded for term in match_terms)):
-                return "excluded", "hotspot_domain_mismatch", {}
         normalized_title = _normalize_title(title)
         if self.core.discovery_source_seen(source_type=source["source_type"], source_object_id=source["source_object_id"], source_object_version=source["source_object_version"]):
             return "excluded", "source_already_processed", {}
@@ -804,14 +1217,14 @@ class Stage1BDailyDiscoveryService:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run one Core-owned Stage 1B batch, classify, or purge a live validation."""
+    """Run one Core-owned Stage 1B batch, reuse frozen input, classify, or purge a live validation."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--domain", choices=APPROVED_DOMAINS, help="one authorized formal domain for a new batch")
     parser.add_argument(
         "--source-type",
         action="append",
         choices=SOURCE_TYPES,
-        help="source type to run; validation_live requires exactly one, production_daily always uses all six",
+        help="source type to run; validation_live requires exactly one, hotspot_review runs hotspots only, production_daily always uses all six",
     )
     parser.add_argument("--actor", required=True, help="audited actor for the explicit user authorization")
     parser.add_argument("--idempotency-key", required=True, help="stable key for this exact authorized run")
@@ -819,13 +1232,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--discovery-date", default=datetime.now(timezone.utc).date().isoformat(), help="YYYY-MM-DD (defaults to UTC today)")
     parser.add_argument("--batch-timeout-seconds", type=int, default=600, help="bounded batch deadline; timed-out or interrupted batches are not retried")
     parser.add_argument("--reclassify-run", help="existing run to mark as validation_live without re-running sources or models")
+    parser.add_argument("--reuse-hotspot-run", help="successful hotspot collection run whose temporary batch is reused without collecting again")
+    parser.add_argument("--resubmit-hotspot-judgement-run", help="processing validation run whose frozen hotspot judgement the user explicitly authorizes to resubmit")
     parser.add_argument("--purge-validation-run", help="existing validation_live run to physically purge after explicit confirmation")
     parser.add_argument("--expected-candidate-count", type=int, help="required candidate count guard when purging a validation_live run")
     parser.add_argument("--confirmation", help="exact purge confirmation token")
     parser.add_argument("--reason", help="required audit reason when reclassifying an existing run")
     args = parser.parse_args(argv)
-    if args.reclassify_run and args.purge_validation_run:
-        parser.error("choose only one of --reclassify-run or --purge-validation-run")
+    special_actions = sum(bool(value) for value in (args.reclassify_run, args.purge_validation_run, args.reuse_hotspot_run, args.resubmit_hotspot_judgement_run))
+    if special_actions > 1:
+        parser.error("choose only one special action")
     if args.purge_validation_run:
         if args.mode != "validation_live" or not args.reason or args.domain or args.expected_candidate_count is None or not args.confirmation:
             parser.error(
@@ -835,10 +1251,15 @@ def main(argv: list[str] | None = None) -> int:
     elif args.reclassify_run:
         if args.mode != "validation_live" or not args.reason or args.domain:
             parser.error("reclassification requires --reclassify-run, --mode validation_live, --actor, --reason, and no --domain")
+    elif args.resubmit_hotspot_judgement_run:
+        if args.mode != "validation_live" or not args.reason or args.domain or args.source_type:
+            parser.error("resubmission requires --resubmit-hotspot-judgement-run, --mode validation_live, --actor, --reason, and no --domain or --source-type")
     elif not args.domain:
         parser.error("a new batch requires --domain")
 
     selected_source_types = tuple(args.source_type or SOURCE_TYPES)
+    if args.reuse_hotspot_run and set(selected_source_types) != {"hotspot"}:
+        parser.error("--reuse-hotspot-run requires exactly --source-type hotspot")
     core = Stage0ContentProductionCore.open(FORMAL_DB_PATH, data_identity="production")
     try:
         if args.reclassify_run:
@@ -860,6 +1281,17 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(_canonical(result))
             return 0
+        if args.resubmit_hotspot_judgement_run:
+            gateway = build_production_daily_discovery_gateway(core)
+            service = Stage1BDailyDiscoveryService(core=core, gateway=gateway)
+            result = service.resubmit_pending_hotspot_judgement(
+                run_id=args.resubmit_hotspot_judgement_run,
+                actor=args.actor,
+                reason=args.reason or "",
+                idempotency_key=args.idempotency_key,
+            )
+            print(_canonical(result))
+            return 0 if result["status"] == "completed" else 2
         source_acquirer = (
             build_production_source_acquirer(core, source_types=selected_source_types)
             if {"hotspot", "tag_discovery"} & set(selected_source_types)
@@ -875,6 +1307,7 @@ def main(argv: list[str] | None = None) -> int:
             batch_timeout_seconds=args.batch_timeout_seconds,
             domains=(args.domain,),
             source_types=selected_source_types,
+            reuse_hotspot_discovery_run_id=args.reuse_hotspot_run,
         )
         snapshot = service.view_daily_snapshot(run_id=result["run_id"], domains=(args.domain,))
         print(_canonical({**result, "snapshot": snapshot}))

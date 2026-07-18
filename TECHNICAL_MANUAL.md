@@ -53,6 +53,12 @@ Input Assembly、ModelGateway 运行记录和审计边界，不执行真实内�
 
 ### Stage 1B：受控日常发现
 
+热点的处理顺序固定为：先按标题、链接、时效、重复、低信息、风险和排除项做硬筛；通过硬筛的事件才按上游顺序取本轮最多 10 个；只有这 10 个才读取其原始链接正文。正文读取不是热点筛选手段，更不允许用搜索结果替换原始链接。
+
+真实热点采集成功后，验证批次不再自动删除这一批临时热点。后续排查使用 `--reuse-hotspot-run <已成功采集的运行ID> --source-type hotspot`，只重跑热点转化，绝不再次请求 TrendRadar；采集失败、空批次或已清理批次不能复用。它只在当前验证期间临时保留，完成验证后仍必须通过受控清理删除，绝不成为热点库存。
+
+如果正文已读取且模型回执因进程中断而状态不明，系统不会自动重发。只有用户明确批准后，才能用 `--resubmit-hotspot-judgement-run <运行ID>` 重提那一份已冻结的判断输入；它不采集、不读正文，也不搜索。
+
 `scripts/core/production/stage1b_daily_discovery.py` 是由项目 Core Runtime 直接执行的一次性 Stage 1B 批处理入口；它不是由 Codex 轮询的业务进程。每次必须显式给出一个领域、审计主体、幂等键和运行模式：`test_isolated` 只能使用非生产数据身份，`validation_live` 只形成隔离的真实验收结果，`production_daily` 才可能形成正式日产候选池。前两种模式不可自动升级，也不能进入日产能、Stage 1A、研究或经验系统。
 
 `validation_live` 每次必须且只能指定一个 `--source-type`，用于按来源逐项验收；热点和标签搜索只校验自己需要的采集配置，不要求无关来源同时启用。一次 `validation_live` 批次只对第一个通过确定性过滤的 eligible 来源发起一次模型尝试，尝试成功、零候选、输出非法或模型失败后均停止本批次后续 eligible 处理，避免单次验收继续消耗多个模型调用。六个值是 `hotspot`、`daily_competitor_content`、`historical_high_signal`、`tag_discovery`、`question_expansion`、`saved_user_direction`。`production_daily` 不接受缺项，必须执行完整六来源集合。
@@ -136,3 +142,6 @@ python scripts/validation/live_gates.py dry-run
 - 新模块在同一改动中更新本手册的当前使用说明。
 - 不将旧计划、历史报告、迁移说明、交接记录或旧会话 Skill 写回为设计依据。
 - `AGENTS.md` 是唯一执行章程；不生成或依赖 `CLAUDE.md`。
+## Stage 1B TrendRadar Hotspot Handling Note
+
+带真实 acquirer 的 Stage 1B live 运行只从本次 `discovery_run_id` 绑定的 collection 形成临时热点事件簇；不会把历史热点重新混入本轮。每个平台只有前 10 条热搜能进入这一步。事件簇形成后，系统只读取该事件代表性原始链接的正文；这不是搜索，也不会换链接或自动重试。正文读取失败或为空时，事件直接按“材料不足”淘汰，不调用热点判断。正文可用时，Runtime 连同 TrendRadar 原始记录一起冻结为事件材料；热点只在来源不可追溯、信息明显无效、风险词或排除词命中时被拦截；不得按领域标题词筛掉热点。一个完整事件只进行一次跨领域选题判断，未形成候选的原始热点在批次结束后删除，不保留为库存。`validation_live` 只判断一个事件，专用于技术验收；`hotspot_review` 只跑热点，但会处理本批最多 10 个不同事件，并把产生的候选交给用户审核。

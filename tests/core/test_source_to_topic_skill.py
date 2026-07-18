@@ -4,6 +4,7 @@ import unittest
 
 from scripts.core.model_gateway.formal_skill_adapter import (
     SOURCE_TO_TOPIC_CONTRACT_PATH,
+    HOTSPOT_TO_OPPORTUNITY_CONTRACT_PATH,
     DeterministicSourceToTopicModelPort,
     FormalSkillContract,
     FormalSkillValidationError,
@@ -17,6 +18,7 @@ from scripts.core.model_gateway.formal_skill_adapter import (
     validate_source_to_topic_business_contract,
     validate_source_to_topic_output_semantics,
 )
+from scripts.core.production.stage1b_daily_discovery import validate_hotspot_opportunity_judgement
 
 
 class SourceToTopicHarnessMixin:
@@ -53,6 +55,63 @@ class RenderedPromptReachesModelTests(unittest.TestCase):
 
 
 class SourceToTopicBusinessContractTests(unittest.TestCase):
+    def test_hotspot_contract_accepts_one_event_and_multiple_domain_candidates(self) -> None:
+        contract = FormalSkillContract.from_yaml(HOTSPOT_TO_OPPORTUNITY_CONTRACT_PATH)
+        contract.validate_contract()
+        self.assertEqual(contract.formal_skill_id, "hotspot_to_opportunity")
+        validate_payload(
+            {
+                "event_material": {"cluster_id": "event-1", "merged_sources": []},
+                "enabled_domains": [
+                    {"domain_label": "fan_kepu_social_life"},
+                    {"domain_label": "music_entertainment"},
+                ],
+            },
+            contract.input_schema,
+        )
+        rendered = contract.portable_skill().render_prompt(
+            {
+                "event_material": {"cluster_id": "event-1", "merged_sources": []},
+                "enabled_domains": [{"domain_label": "fan_kepu_social_life"}],
+            }
+        )
+        self.assertIn("outcome、candidates、reason", rendered)
+        self.assertIn('"outcome":"no_candidate"', rendered)
+        self.assertIn('"risks":[', rendered)
+        validate_payload(
+            {
+                "outcome": "candidates",
+                "candidates": [
+                    {"domain_label": "fan_kepu_social_life", "title": "候选一"},
+                    {"domain_label": "music_entertainment", "title": "候选二"},
+                ],
+                "reason": "事件与两个领域都有明确可做角度。",
+            },
+            contract.output_schema,
+        )
+
+    def test_hotspot_judgement_normalizes_a_single_risk_string_without_changing_it(self) -> None:
+        result = validate_hotspot_opportunity_judgement(
+            {
+                "outcome": "candidates",
+                "reason": "事件可形成明确的生活解释角度。",
+                "candidates": [{
+                    "domain_label": "fan_kepu_social_life",
+                    "candidate_topic": "热点事件怎样影响普通人的生活选择",
+                    "core_question": "事件会怎样改变普通人的日常判断",
+                    "audience_relation": "普通家庭需要理解事件带来的实际影响",
+                    "content_increment": "把事件与具体生活决策的关系说明白",
+                    "topic_angle": "从热点变化拆解生活选择",
+                    "trendradar_material_refs": "https://example.test/hotspot",
+                    "timeliness": "事件仍在持续讨论",
+                    "risks": "不得把热点正文当成正式研究证据。",
+                    "user_review_reason": "可判断是否符合生活解释方向",
+                }],
+            },
+            enabled_domains=("fan_kepu_social_life",),
+        )
+        self.assertEqual(result["candidates"][0]["risks"], ["不得把热点正文当成正式研究证据。"])
+
     def test_business_contract_has_required_sections_and_no_missing_requirements(self) -> None:
         result = validate_source_to_topic_business_contract(load_source_to_topic_business_contract())
         self.assertEqual(result["skill_id"], "source_to_topic")

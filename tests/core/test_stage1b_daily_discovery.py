@@ -20,9 +20,11 @@ from scripts.core.production.stage0_content_core import (
 )
 from scripts.core.production.stage1b_daily_discovery import (
     DailyDiscoveryValidationError,
+    EXECUTION_MODES,
     Stage1BDailyDiscoveryService,
     parse_candidate_judgement_output,
     validate_candidate_judgement,
+    validate_hotspot_opportunity_judgement,
 )
 
 
@@ -95,6 +97,23 @@ class FakeDiscoveryProvider:
         if self.fail:
             raise RuntimeError("test-only provider failure")
         output = self.output
+        if "event_material" in request.input_payload and isinstance(output, dict) and "topic_status" in output:
+            output = {
+                "outcome": "candidates",
+                "reason": "热点对当前生活领域有明确可做的解释角度。",
+                "candidates": [{
+                    "domain_label": "fan_kepu_social_life",
+                    "candidate_topic": "热点事件怎样影响普通人的生活选择",
+                    "core_question": "事件会怎样改变普通人的日常判断",
+                    "audience_relation": "普通家庭需要理解事件带来的实际影响",
+                    "content_increment": "把事件与具体生活决策的关系说明白",
+                    "topic_angle": "从热点变化拆解生活选择",
+                    "trendradar_material_refs": ["https://example.test/hotspot"],
+                    "timeliness": "事件仍在持续讨论",
+                    "risks": [],
+                    "user_review_reason": "可判断是否符合生活解释方向",
+                }],
+            }
         if isinstance(output, dict):
             output = dict(output)
             evidence = list(request.input_payload.get("source_evidence_refs") or [])
@@ -133,6 +152,9 @@ class NoopProductionAcquirer:
 
 
 class Stage1BDailyDiscoveryTests(unittest.TestCase):
+    def test_hotspot_review_is_a_distinct_user_review_mode(self) -> None:
+        self.assertIn("hotspot_review", EXECUTION_MODES)
+
     NOW = datetime(2026, 7, 14, 12, tzinfo=timezone.utc)
 
     def setUp(self) -> None:
@@ -332,6 +354,19 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         )
         self.assertEqual([source["source_type"] for source in sources], ["hotspot"])
 
+    def test_hotspot_without_domain_title_match_remains_a_global_event(self) -> None:
+        self._insert_hotspot(
+            observation_id="hotspot-unmatched",
+            title="unrelated celebrity update",
+            seed_search_tag=False,
+        )
+        sources = self.core.load_real_discovery_sources(
+            domain_label="fan_kepu_social_life",
+            daily_since="2026-07-11T12:00:00+00:00",
+            per_source_limit=6,
+        )
+        self.assertEqual([source["source_type"] for source in sources], ["hotspot"])
+
     def test_completed_expansion_is_daily_report_source_but_saved_user_direction_is_not(self) -> None:
         self.core.register_question_expansion_source(
             expansion_id="expansion-1",
@@ -368,7 +403,30 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
 
             def collect_hotspots(self, *, discovery_run_id: str, now: datetime, deadline_monotonic: float | None = None) -> dict:
                 self.calls.append("trendradar")
-                test_case._insert_hotspot()
+                title = "\u5c31\u4e1a\u70ed\u70b9\u5f71\u54cd\u666e\u901a\u4eba\u65e5\u5e38\u9009\u62e9"
+                test_case.core.conn.execute(
+                    """
+                    INSERT INTO trendradar_collection_run(
+                        collection_run_id, discovery_run_id, status, item_count, command_hash, started_at, completed_at
+                    ) VALUES ('tr-run-current', ?, 'completed', 1, 'hash-current', ?, ?)
+                    """,
+                    (discovery_run_id, test_case.NOW.isoformat(), test_case.NOW.isoformat()),
+                )
+                test_case.core.conn.execute(
+                    """
+                    INSERT INTO trendradar_hotspot_observation(
+                        observation_id, provider_item_id, title, url, source_channel, source_rank,
+                        observed_at, raw_json, collection_run_id
+                    ) VALUES ('hotspot-current', 'provider-current', ?,
+                              'https://example.test/hotspot-current', 'news', 1, ?, ?, 'tr-run-current')
+                    """,
+                    (
+                        title,
+                        test_case.NOW.isoformat(),
+                        json.dumps({"id": "provider-current", "title": title}),
+                    ),
+                )
+                test_case.core.conn.commit()
                 return {"status": "completed", "item_count": 1}
 
             def search_tags(self, *, discovery_run_id: str, domain: str, now: datetime, deadline_monotonic: float | None = None) -> dict:
@@ -422,11 +480,11 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
                 ),
             )
 
-    def test_hotspot_processing_is_limited_to_three_daily_items(self) -> None:
+    def test_hotspot_processing_keeps_all_events_within_the_ten_item_daily_limit(self) -> None:
         self._insert_hotspots(4)
         result = self._run("hotspot-daily-limit", source_types=("hotspot",))
-        self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["sources_read"], 3)
-        self.assertLessEqual(self.provider.calls, 3)
+        self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["sources_read"], 4)
+        self.assertLessEqual(self.provider.calls, 10)
 
     def test_validation_live_stops_after_one_eligible_model_attempt(self) -> None:
         production_db = Path(self.tempdir.name) / "formal-validation-live-limit.sqlite3"
@@ -439,38 +497,71 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
             providers={production_provider.provider_name: production_provider},
             materializer=CoreDiscoveryModelRunMaterializer(production_core),
         )
+        old_title = "\u5c31\u4e1a\u65e7\u70ed\u70b9\u4e0d\u5e94\u8fdb\u5165\u672c\u8f6e\u9a8c\u6536"
         production_core.conn.execute(
             """
             INSERT INTO trendradar_collection_run(
                 collection_run_id, discovery_run_id, status, item_count, command_hash, started_at, completed_at
-            ) VALUES ('tr-run-validation-limit', 'upstream-validation-limit', 'completed', 4, 'hash-validation-limit', ?, ?)
+            ) VALUES ('tr-run-validation-old', 'previous-run', 'completed', 1, 'hash-validation-old', ?, ?)
             """,
             (self.NOW.isoformat(), self.NOW.isoformat()),
         )
-        for index in range(4):
-            title = f"validation live hotspot source {index}"
-            production_core.conn.execute(
-                """
-                INSERT INTO trendradar_hotspot_observation(
-                    observation_id, provider_item_id, title, url, source_channel, source_rank,
-                    observed_at, raw_json, collection_run_id
-                ) VALUES (?, ?, ?, ?, 'news', ?, ?, ?, 'tr-run-validation-limit')
-                """,
-                (
-                    f"validation-hotspot-{index}",
-                    f"validation-provider-{index}",
-                    title,
-                    f"https://example.test/validation-hotspot-{index}",
-                    index + 1,
-                    self.NOW.isoformat(),
-                    json.dumps({"id": f"validation-provider-{index}", "title": title}),
-                ),
-            )
+        production_core.conn.execute(
+            """
+            INSERT INTO trendradar_hotspot_observation(
+                observation_id, provider_item_id, title, url, source_channel, source_rank,
+                observed_at, raw_json, collection_run_id
+            ) VALUES ('validation-hotspot-old', 'validation-provider-old', ?,
+                      'https://example.test/validation-hotspot-old', 'news', 1, ?, ?, 'tr-run-validation-old')
+            """,
+            (
+                old_title,
+                self.NOW.isoformat(),
+                json.dumps({"id": "validation-provider-old", "title": old_title}),
+            ),
+        )
         production_core.conn.commit()
+
+        class CurrentRunHotspotAcquirer:
+            def collect_hotspots(self, *, discovery_run_id: str, now: datetime, deadline_monotonic: float | None = None) -> dict:
+                production_core.conn.execute(
+                    """
+                    INSERT INTO trendradar_collection_run(
+                        collection_run_id, discovery_run_id, status, item_count, command_hash, started_at, completed_at
+                    ) VALUES ('tr-run-validation-limit', ?, 'completed', 4, 'hash-validation-limit', ?, ?)
+                    """,
+                    (discovery_run_id, self_outer.NOW.isoformat(), self_outer.NOW.isoformat()),
+                )
+                for index in range(4):
+                    title = f"\u5c31\u4e1a\u70ed\u70b9\u5f71\u54cd\u666e\u901a\u4eba\u65e5\u5e38\u9009\u62e9 {index}"
+                    production_core.conn.execute(
+                        """
+                        INSERT INTO trendradar_hotspot_observation(
+                            observation_id, provider_item_id, title, url, source_channel, source_rank,
+                            observed_at, raw_json, collection_run_id
+                        ) VALUES (?, ?, ?, ?, 'news', ?, ?, ?, 'tr-run-validation-limit')
+                        """,
+                        (
+                            f"validation-hotspot-{index}",
+                            f"validation-provider-{index}",
+                            title,
+                            f"https://example.test/validation-hotspot-{index}",
+                            index + 1,
+                            self_outer.NOW.isoformat(),
+                            json.dumps({"id": f"validation-provider-{index}", "title": title}),
+                        ),
+                    )
+                production_core.conn.commit()
+                return {"status": "completed", "item_count": 4}
+
+            def search_tags(self, *, discovery_run_id: str, domain: str, now: datetime, deadline_monotonic: float | None = None) -> dict:
+                return {"selected_tag_count": 0, "results": [], "failed": 0}
+
+        self_outer = self
         service = Stage1BDailyDiscoveryService(
             core=production_core,
             gateway=production_gateway,
-            source_acquirer=NoopProductionAcquirer(),  # type: ignore[arg-type]
+            source_acquirer=CurrentRunHotspotAcquirer(),  # type: ignore[arg-type]
         )
 
         result = service.run_daily_discovery(
@@ -486,6 +577,13 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["sources_read"], 1)
         self.assertEqual(result["summary"]["domains"]["fan_kepu_social_life"]["candidates"], 1)
         self.assertEqual(production_provider.calls, 1)
+        recorded_sources = [
+            row[0]
+            for row in production_core.conn.execute(
+                "SELECT source_object_id FROM stage1b_source_version ORDER BY created_at"
+            ).fetchall()
+        ]
+        self.assertEqual(recorded_sources, ["validation-hotspot-0"])
 
     def test_hotspots_are_clustered_before_daily_processing_limit(self) -> None:
         self.core.conn.execute(
@@ -496,12 +594,13 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
             """,
             (self.NOW.isoformat(), self.NOW.isoformat()),
         )
+        housing_title = "\u4f4f\u623f\u653f\u7b56\u5f15\u53d1\u666e\u901a\u4eba\u8ba8\u8bba"
         rows = [
-            ("hotspot-cluster-1", "provider-cluster-1", "shared housing policy debate", "weibo", 1),
-            ("hotspot-cluster-2", "provider-cluster-2", "shared housing policy debate", "toutiao", 2),
-            ("hotspot-cluster-3", "provider-cluster-3", "salary holiday policy route", "baidu", 3),
-            ("hotspot-cluster-4", "provider-cluster-4", "family service pressure", "zhihu", 4),
-            ("hotspot-cluster-5", "provider-cluster-5", "consumer refund dispute", "douyin", 5),
+            ("hotspot-cluster-1", "provider-cluster-1", housing_title, "weibo", 1),
+            ("hotspot-cluster-2", "provider-cluster-2", housing_title, "toutiao", 2),
+            ("hotspot-cluster-3", "provider-cluster-3", "\u5c31\u4e1a\u653f\u7b56\u5f71\u54cd\u804c\u573a\u9009\u62e9", "baidu", 3),
+            ("hotspot-cluster-4", "provider-cluster-4", "\u5bb6\u5ead\u670d\u52a1\u538b\u529b\u5f71\u54cd\u751f\u6d3b", "zhihu", 4),
+            ("hotspot-cluster-5", "provider-cluster-5", "\u6d88\u8d39\u9000\u6b3e\u89c4\u5219\u5f15\u53d1\u4e89\u8bae", "douyin", 5),
         ]
         for observation_id, provider_id, title, channel, rank in rows:
             self.core.conn.execute(
@@ -531,11 +630,164 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         )
         hotspot_sources = [source for source in sources if source["source_type"] == "hotspot"]
         self.assertEqual(len(hotspot_sources), 4)
-        first_cluster = hotspot_sources[0]["payload"]["hotspot_event_cluster"]
-        self.assertEqual(hotspot_sources[0]["source_object_id"], "hotspot-cluster-1")
+        duplicate_source = next(
+            source
+            for source in hotspot_sources
+            if len(source["payload"]["hotspot_event_cluster"]["merged_sources"]) == 2
+        )
+        first_cluster = duplicate_source["payload"]["hotspot_event_cluster"]
+        self.assertEqual(duplicate_source["source_object_id"], "hotspot-cluster-1")
         self.assertTrue(first_cluster["cluster_id"].startswith("hotspot_cluster_"))
-        self.assertEqual(first_cluster["representative_source"], "shared housing policy debate")
+        self.assertEqual(first_cluster["representative_source"], housing_title)
         self.assertEqual(len(first_cluster["merged_sources"]), 2)
+        self.assertEqual(
+            first_cluster["merged_sources"][0]["trendradar_record"],
+            {"id": "provider-cluster-1", "title": housing_title},
+        )
+
+    def test_global_hotspot_clusters_do_not_use_domain_title_terms(self) -> None:
+        self._insert_hotspot(
+            observation_id="hotspot-no-domain-term",
+            title="一项公共事件引发持续讨论",
+            seed_search_tag=False,
+        )
+        clusters = self.core.load_hotspot_event_clusters(
+            daily_since="2026-07-11T12:00:00+00:00",
+            per_source_limit=10,
+        )
+        self.assertEqual(len(clusters), 1)
+        self.assertEqual(clusters[0]["source_object_id"], "hotspot-no-domain-term")
+        self.assertEqual(
+            clusters[0]["payload"]["hotspot_event_cluster"]["dedupe_reason"],
+            "deterministic title-normalized global event cluster",
+        )
+
+    def test_hotspot_batch_cleanup_physically_removes_raw_observations(self) -> None:
+        self._insert_hotspot(observation_id="hotspot-to-delete")
+        deleted = self.core.clear_hotspot_observations_for_discovery_run(
+            discovery_run_id="upstream-run"
+        )
+        self.assertEqual(deleted, 1)
+        remaining = self.core.conn.execute(
+            "SELECT COUNT(*) FROM trendradar_hotspot_observation WHERE observation_id='hotspot-to-delete'"
+        ).fetchone()[0]
+        self.assertEqual(remaining, 0)
+
+    def test_hotspot_hard_screen_runs_before_original_link_reading(self) -> None:
+        self._insert_hotspot(title="短题")
+
+        class HardScreenOnlyAcquirer:
+            def collect_hotspots(self, **kwargs):  # type: ignore[no-untyped-def]
+                return {"status": "completed", "item_count": 1}
+
+            def read_hotspot_event_detail(self, **kwargs):  # type: ignore[no-untyped-def]
+                raise AssertionError("a hard-filtered hotspot must not read its original link")
+
+        service = Stage1BDailyDiscoveryService(
+            core=self.core, gateway=self.gateway, source_acquirer=HardScreenOnlyAcquirer()  # type: ignore[arg-type]
+        )
+        result = service.run_daily_discovery(
+            discovery_date="2026-07-14",
+            actor="test-worker",
+            idempotency_key="hotspot-hard-screen-before-body",
+            execution_mode="test_isolated",
+            now=self.NOW,
+            domains=("fan_kepu_social_life",),
+            source_types=("hotspot",),
+            reuse_hotspot_discovery_run_id="upstream-run",
+        )
+
+        self.assertEqual(self.provider.calls, 0)
+        self.assertEqual(
+            result["summary"]["filtered"]["fan_kepu_social_life"]["material_obviously_insufficient"], 1
+        )
+
+    def test_successful_hotspot_batch_is_reused_without_collecting_again(self) -> None:
+        self._insert_hotspot()
+
+        class ReuseOnlyAcquirer:
+            def collect_hotspots(self, **kwargs):  # type: ignore[no-untyped-def]
+                raise AssertionError("a reused hotspot batch must not collect again")
+
+        service = Stage1BDailyDiscoveryService(
+            core=self.core, gateway=self.gateway, source_acquirer=ReuseOnlyAcquirer()  # type: ignore[arg-type]
+        )
+        result = service.run_daily_discovery(
+            discovery_date="2026-07-14",
+            actor="test-worker",
+            idempotency_key="reuse-successful-hotspot-batch",
+            execution_mode="test_isolated",
+            now=self.NOW,
+            domains=("fan_kepu_social_life",),
+            source_types=("hotspot",),
+            reuse_hotspot_discovery_run_id="upstream-run",
+        )
+
+        self.assertEqual(result["summary"]["acquisition"]["hotspot"]["status"], "reused")
+        self.assertEqual(self.provider.calls, 1)
+        remaining = self.core.conn.execute(
+            "SELECT COUNT(*) FROM trendradar_hotspot_observation WHERE collection_run_id='tr-run'"
+        ).fetchone()[0]
+        self.assertEqual(remaining, 1)
+
+    def test_user_authorized_hotspot_judgement_resubmission_uses_frozen_input(self) -> None:
+        self._insert_hotspot()
+        hotspot = self.core.load_hotspot_event_clusters(
+            daily_since="2026-07-11T12:00:00+00:00", per_source_limit=1
+        )[0]
+        run = self.core.create_discovery_run(
+            discovery_date="2026-07-14",
+            actor="test-worker",
+            execution_mode="test_isolated",
+            idempotency_key="frozen-hotspot-resubmit:run",
+        )
+        stored = self.core.record_discovery_source(
+            run_id=run["run_id"],
+            domain_label="fan_kepu_social_life",
+            source_type="hotspot",
+            source_object_id=hotspot["source_object_id"],
+            source_object_version=hotspot["source_object_version"],
+            source_time=hotspot["source_time"],
+            expires_at=None,
+            payload=hotspot["payload"],
+            idempotency_key="frozen-hotspot-resubmit:source",
+        )
+        self.core.record_discovery_filter(
+            source_version_id=stored["source_version_id"],
+            outcome="eligible",
+            reason_code="eligible",
+            detail={},
+            idempotency_key="frozen-hotspot-resubmit:filter",
+        )
+        input_payload = self.service._hotspot_opportunity_input(
+            source=hotspot, enabled_domains=("fan_kepu_social_life",)
+        )
+        self.core.create_discovery_input_assembly(
+            run_id=run["run_id"],
+            source_version_id=stored["source_version_id"],
+            payload=input_payload,
+            prompt_version="hotspot_to_opportunity.v1",
+            skill_version="hotspot_to_opportunity.v1",
+            idempotency_key="frozen-hotspot-resubmit:assembly",
+        )
+
+        result = self.service.resubmit_pending_hotspot_judgement(
+            run_id=run["run_id"],
+            actor="test-user",
+            reason="用户明确批准重新提交一次状态不明的判断请求",
+            idempotency_key="frozen-hotspot-resubmit:submit",
+        )
+
+        absence = self.core.conn.execute(
+            "SELECT reason_code, detail_json FROM stage1b_candidate_absence WHERE run_id=?",
+            (run["run_id"],),
+        ).fetchone()
+        self.assertEqual(result["status"], "completed", {"result": result, "absence": tuple(absence) if absence else None})
+        self.assertEqual(result["candidate_count"], 1)
+        self.assertEqual(self.provider.calls, 1)
+        self.assertEqual(
+            self.core.conn.execute("SELECT COUNT(*) FROM trendradar_hotspot_observation").fetchone()[0], 1
+        )
 
     def test_each_daily_report_source_keeps_evidence_for_has_or_has_not(self) -> None:
         result = self._run(
@@ -907,6 +1159,44 @@ class Stage1BDailyDiscoveryTests(unittest.TestCase):
         self.assertEqual(result["status"], "timed_out")
         self.assertEqual(self.provider.calls, 0)
         self.assertEqual(self.core.conn.execute("SELECT lifecycle_status FROM stage1b_run_execution_context").fetchone()[0], "timed_out")
+
+
+    def test_hotspot_judgement_allows_multiple_enabled_domains_from_one_event(self) -> None:
+        judgement = validate_hotspot_opportunity_judgement(
+            {
+                "outcome": "candidates",
+                "reason": "事件对两个不同受众都有明确问题。",
+                "candidates": [
+                    {
+                        "domain_label": "fan_kepu_social_life",
+                        "candidate_topic": "公共事件怎样影响普通人的生活选择",
+                        "core_question": "它会怎样改变普通人的日常判断",
+                        "audience_relation": "普通家庭需要理解其中的实际影响",
+                        "content_increment": "解释事件如何落到具体生活决策",
+                        "topic_angle": "从规则变化到家庭选择的链条",
+                        "trendradar_material_refs": ["https://example.test/event"],
+                        "timeliness": "事件正在持续发酵",
+                        "risks": [],
+                        "user_review_reason": "可判断是否符合账号的生活解释方向",
+                    },
+                    {
+                        "domain_label": "music_entertainment",
+                        "candidate_topic": "公共事件为何会改变娱乐讨论的关注点",
+                        "core_question": "事件怎样影响娱乐受众正在讨论的问题",
+                        "audience_relation": "关注娱乐文化的人需要理解讨论变化",
+                        "content_increment": "把热点与具体娱乐讨论关系说清楚",
+                        "topic_angle": "从公共事件看娱乐讨论的转向",
+                        "trendradar_material_refs": ["https://example.test/event"],
+                        "timeliness": "讨论仍在快速变化",
+                        "risks": ["不得把未证实说法当成事实"],
+                        "user_review_reason": "可判断是否值得进入娱乐内容方向",
+                    },
+                ],
+            },
+            enabled_domains=("fan_kepu_social_life", "music_entertainment"),
+        )
+        self.assertEqual(len(judgement["candidates"]), 2)
+        self.assertEqual(judgement["candidates"][1]["domain_label"], "music_entertainment")
 
 
 if __name__ == "__main__":

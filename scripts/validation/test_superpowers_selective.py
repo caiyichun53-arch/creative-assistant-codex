@@ -150,7 +150,21 @@ def main() -> int:
         proc = stop(root, input_data={"assistant_response": "read-only research comparison; no code change claim"})
         assert_case("read-only discussion bypasses verification debt", proc.returncode == 0 and hook_json(proc)["continue"] is True, proc.stdout)
 
-        # 4. completion/fix claims still require evidence.
+        # 4. Tool and transcript noise must not turn a read-only response into a completion claim.
+        root = init_repo(); roots.append(root)
+        record_turn(root)
+        (root / "AGENTS.md").write_text("changed\n", encoding="utf-8")
+        proc = stop(
+            root,
+            input_data={
+                "assistant_response": "read-only investigation; no code change claim",
+                "tool_result": {"content": "Script completed"},
+                "transcript": "previous task completed",
+            },
+        )
+        assert_case("tool or transcript completion noise bypasses verification debt", proc.returncode == 0 and hook_json(proc)["continue"] is True, proc.stdout)
+
+        # 5. completion/fix claims still require evidence.
         root = init_repo(); roots.append(root)
         record_turn(root)
         (root / "AGENTS.md").write_text("changed\n", encoding="utf-8")

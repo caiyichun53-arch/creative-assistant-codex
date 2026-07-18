@@ -7,11 +7,16 @@ import json
 import sqlite3
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from scripts.core.business_data.run_domain_search import run_daily_tag_searches
 from scripts.core.execution_contract import require_baseline_citations
 from scripts.core.external_adapters import ExternalAdapterCommand, ExternalCommandExecutor
+from scripts.integrations.trendradar_runtime import read_original_article
+
+
+TRENDRADAR_INSTALL_DIR = Path(__file__).resolve().parents[3] / "vendor" / "TrendRadar"
 
 
 def _canonical(value: Any) -> str:
@@ -160,6 +165,35 @@ class DailyDiscoverySourceAcquirer:
             config=config,
             now=now,
         )
+
+    def read_hotspot_event_detail(
+        self,
+        *,
+        source: dict[str, Any],
+        deadline_monotonic: float | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Attach TrendRadar's direct original-link material to one event cluster.
+
+        Failure is final for this event in the current batch: it is not a cue to
+        search, switch links, or retry the request.
+        """
+        enriched = json.loads(json.dumps(source, ensure_ascii=False))
+        payload = enriched.get("payload") if isinstance(enriched, dict) else None
+        cluster = payload.get("hotspot_event_cluster") if isinstance(payload, dict) else None
+        url = str(payload.get("url") or "") if isinstance(payload, dict) else ""
+        if not isinstance(cluster, dict):
+            return enriched, {"status": "unavailable", "reason": "hotspot_event_cluster_missing"}
+        remaining = 30
+        if deadline_monotonic is not None:
+            remaining = min(remaining, int(deadline_monotonic - time.monotonic()))
+        detail = read_original_article(
+            trendradar_dir=TRENDRADAR_INSTALL_DIR,
+            url=url,
+            timeout_seconds=remaining,
+        )
+        if detail.get("status") == "completed":
+            cluster["event_detail"] = detail["event_detail"]
+        return enriched, detail
 
     def search_tags(self, *, discovery_run_id: str, domain: str, now: datetime, deadline_monotonic: float | None = None) -> dict[str, Any]:
         if self.mediacrawler_executor is None:

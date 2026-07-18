@@ -183,20 +183,16 @@ def _hotspot_rank_value(row: sqlite3.Row) -> int:
     return int(value) if isinstance(value, int) or str(value).isdigit() else 9999
 
 
-def _hotspot_policy_score(title: str, policy: dict[str, Any]) -> tuple[int, list[str], list[str]]:
-    title_folded = title.casefold()
-    risk_terms = [str(term) for term in policy.get("risk_block_terms", []) if str(term).casefold() in title_folded]
-    exclude_terms = [str(term) for term in policy.get("exclude_terms", []) if str(term).casefold() in title_folded]
-    if risk_terms or exclude_terms:
-        return -10000, [], risk_terms + exclude_terms
-    matched_terms = [str(term) for term in policy.get("hotspot_match_terms", []) if str(term).casefold() in title_folded]
-    return len(matched_terms) * 100, matched_terms, []
+def _hotspot_time_sort_value(value: str) -> float:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
 
 
 def _build_hotspot_event_cluster_sources(
-    rows: list[sqlite3.Row], *, domain_label: str, per_source_limit: int
+    rows: list[sqlite3.Row], *, per_source_limit: int | None
 ) -> list[dict[str, Any]]:
-    policy = get_discovery_policy(domain_label)
     clusters: dict[str, list[sqlite3.Row]] = {}
     for row in rows:
         title = str(row["title"] or "").strip()
@@ -205,21 +201,15 @@ def _build_hotspot_event_cluster_sources(
             continue
         clusters.setdefault(_hotspot_cluster_key(title), []).append(row)
 
-    ranked: list[tuple[int, int, int, str, list[sqlite3.Row], list[str]]] = []
+    queued: list[tuple[float, str, list[sqlite3.Row]]] = []
     for key, members in clusters.items():
-        best = min(members, key=_hotspot_rank_value)
-        score, matched_terms, blocked_terms = _hotspot_policy_score(str(best["title"]), policy)
-        if blocked_terms:
-            continue
-        if not matched_terms and domain_label != "fan_kepu_social_life":
-            continue
-        cross_source_bonus = max(len({str(row["source_channel"]) for row in members}) - 1, 0) * 15
-        rank_bonus = max(30 - _hotspot_rank_value(best), 0)
-        ranked.append((score + cross_source_bonus + rank_bonus, len(members), -_hotspot_rank_value(best), key, members, matched_terms))
-    ranked.sort(reverse=True)
+        observed_at = max(str(row["observed_at"]) for row in members)
+        queued.append((-_hotspot_time_sort_value(observed_at), key, members))
+    queued.sort(key=lambda item: (item[0], item[1]))
 
     result: list[dict[str, Any]] = []
-    for score, _count, _rank, key, members, matched_terms in ranked[:per_source_limit]:
+    selected_clusters = queued if per_source_limit is None else queued[:per_source_limit]
+    for _observed_sort, key, members in selected_clusters:
         representative = min(members, key=_hotspot_rank_value)
         observed_at = max(str(row["observed_at"]) for row in members)
         merged_sources = [
@@ -230,15 +220,15 @@ def _build_hotspot_event_cluster_sources(
                 "channel": str(row["source_channel"]),
                 "rank": row["source_rank"],
                 "observed_at": str(row["observed_at"]),
+                "trendradar_record": json.loads(str(row["raw_json"])),
             }
             for row in sorted(members, key=_hotspot_rank_value)
         ]
         cluster_payload = {
-            "cluster_id": f"hotspot_cluster_{_hash({'domain': domain_label, 'key': key})[:20]}",
+            "cluster_id": f"hotspot_cluster_{_hash({'key': key})[:20]}",
             "representative_source": str(representative["title"]),
             "merged_sources": merged_sources,
-            "dedupe_reason": "deterministic title-normalized event cluster before source_to_topic",
-            "matched_terms": matched_terms,
+            "dedupe_reason": "deterministic title-normalized global event cluster",
         }
         source_content = "；".join(dict.fromkeys(item["title"] for item in merged_sources[:8]))
         representative_raw_hash = _hash(json.loads(str(representative["raw_json"])))
@@ -258,11 +248,11 @@ def _build_hotspot_event_cluster_sources(
                     "material_packet": {
                         "fact_summary": source_content,
                         "key_source_refs": [item["url"] for item in merged_sources[:8]],
-                        "audience_relation": "hotspot cluster selected for controlled source-to-topic judgement",
-                        "domain_fit": "deterministic hotspot cluster prefilter selected this item for the target domain",
+                        "audience_relation": "是否与目标受众相关由一次热点机会判断决定",
+                        "domain_fit": "热点不按标题词预先归入领域",
                         "possible_questions": [item["title"] for item in merged_sources[:5]],
                         "uncertainty": "cluster is still a discovery source; formal research evidence has not started",
-                        "material_gaps": ["controlled search material supplementation is still required before formal research"],
+                        "material_gaps": ["热点只提供发现材料；正式研究证据尚未开始。"],
                         "risks": [],
                         "stop_reason": "none",
                     },
@@ -1631,6 +1621,43 @@ class Stage0ContentProductionCore:
             self._audit(run_id, "stage1b_input_assembly_created", result)
         return result
 
+    def pending_hotspot_judgement(self, *, run_id: str) -> dict[str, Any]:
+        """Return one frozen hotspot judgement that an authorized user may resubmit once."""
+        run = self._discovery_run(run_id)
+        context = self._discovery_context(run_id)
+        allowed_modes = {"validation_live"} if self.data_identity == "production" else {"test_isolated"}
+        if run["status"] != "processing" or context["execution_mode"] not in allowed_modes:
+            raise StateTransitionError("only a processing validation hotspot run can resubmit its judgement")
+        rows = self.conn.execute(
+            "SELECT source.source_version_id, source.domain_label, source.payload_json, "
+            "assembly.assembly_id, assembly.payload_json AS assembly_payload_json "
+            "FROM stage1b_source_version source "
+            "JOIN stage1b_input_assembly assembly ON assembly.source_version_id=source.source_version_id "
+            "WHERE source.run_id=? AND source.source_type='hotspot' "
+            "ORDER BY source.created_at, source.source_version_id",
+            (run_id,),
+        ).fetchall()
+        if len(rows) != 1:
+            raise StateTransitionError("resubmission requires exactly one frozen hotspot judgement input")
+        row = rows[0]
+        source_version_id = str(row["source_version_id"])
+        for table in ("stage1b_model_run", "stage1b_candidate_version", "stage1b_candidate_absence"):
+            if self.conn.execute(
+                f"SELECT 1 FROM {table} WHERE run_id=? AND source_version_id=?",
+                (run_id, source_version_id),
+            ).fetchone():
+                raise StateTransitionError("a hotspot judgement with a recorded outcome cannot be resubmitted")
+        input_payload = json.loads(str(row["assembly_payload_json"]))
+        input_payload.pop("model_binding", None)
+        return {
+            "run_id": run_id,
+            "source_version_id": source_version_id,
+            "domain_label": str(row["domain_label"]),
+            "source_payload": json.loads(str(row["payload_json"])),
+            "assembly_id": str(row["assembly_id"]),
+            "input_payload": input_payload,
+        }
+
     def prepare_discovery_model_request(
         self,
         *,
@@ -1785,19 +1812,27 @@ class Stage0ContentProductionCore:
         model_run_id: str,
         candidate_id: str,
         payload: dict[str, Any],
+        candidate_domain_label: str | None = None,
+        allow_multiple_from_model_run: bool = False,
         idempotency_key: str,
     ) -> dict[str, str]:
         run, source, model_run = self._discovery_run(run_id), self._discovery_source(source_version_id), self._discovery_model_run(model_run_id)
         if run["status"] != "processing" or source["run_id"] != run_id or model_run["run_id"] != run_id or model_run["source_version_id"] != source_version_id:
             raise StateTransitionError("candidate does not belong to the active source run")
-        if model_run["status"] != "succeeded" or model_run["via_model_gateway"] != 1 or model_run["validation_status"] != "not_validated":
+        if model_run["status"] != "succeeded" or model_run["via_model_gateway"] != 1 or (
+            model_run["validation_status"] != "not_validated"
+            and not (allow_multiple_from_model_run and model_run["validation_status"] == "passed")
+        ):
             raise ModelGatewayRequiredError("candidate requires one successful unconsumed ModelGateway run")
         forbidden_fields = {"score", "rank", "weight", "recommendation_score", "quality_rank"}
         if forbidden_fields & set(payload):
             raise StateTransitionError("discovery candidates must not contain business-ranking fields")
         if self.conn.execute("SELECT 1 FROM stage1b_candidate_absence WHERE run_id=? AND source_version_id=?", (run_id, source_version_id)).fetchone():
             raise StateTransitionError("a source recorded as zero-candidate cannot create a candidate")
-        request = {"run_id": run_id, "source_version_id": source_version_id, "model_run_id": model_run_id, "candidate_id": candidate_id, "payload": payload}
+        domain_label = candidate_domain_label or str(source["domain_label"])
+        if domain_label not in FORMAL_DOMAIN_LABELS:
+            raise StateTransitionError("candidate domain is not a formal domain")
+        request = {"run_id": run_id, "source_version_id": source_version_id, "model_run_id": model_run_id, "candidate_id": candidate_id, "payload": payload, "candidate_domain_label": domain_label, "allow_multiple_from_model_run": allow_multiple_from_model_run}
         replay = self._replay("stage1b_create_discovery_candidate", idempotency_key, request)
         if replay:
             return replay
@@ -1805,7 +1840,7 @@ class Stage0ContentProductionCore:
         with self.conn:
             self.conn.execute(
                 "INSERT INTO stage1b_candidate_version VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 'awaiting_user_decision', ?, ?)",
-                (candidate_version_id, candidate_id, run_id, source["domain_label"], source_version_id, model_run_id, _canonical(payload), _hash(payload), self.data_identity, _now()),
+                (candidate_version_id, candidate_id, run_id, domain_label, source_version_id, model_run_id, _canonical(payload), _hash(payload), self.data_identity, _now()),
             )
             self.conn.execute("UPDATE stage1b_model_run SET validation_status='passed' WHERE model_run_id=?", (model_run_id,))
             result = {"candidate_version_id": candidate_version_id, "candidate_id": candidate_id}
@@ -2011,7 +2046,9 @@ class Stage0ContentProductionCore:
             self._audit(task_id, "formal_topic_submitted_from_stage1b_candidate", result)
         return result
 
-    def discovery_source_readiness(self, *, domain_label: str, daily_since: str) -> dict[str, Any]:
+    def discovery_source_readiness(
+        self, *, domain_label: str, daily_since: str, hotspot_discovery_run_id: str | None = None
+    ) -> dict[str, Any]:
         if domain_label not in FORMAL_DOMAIN_LABELS:
             raise StateTransitionError("daily discovery requires a configured formal domain")
         tables = {row["name"] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
@@ -2031,16 +2068,21 @@ class Stage0ContentProductionCore:
             "AND COALESCE(video.raw_archive_ref, '')<>'' AND video.excluded_reason IS NULL",
             (domain_label,),
         ).fetchone()[0] if competitor_ready else 0
+        hotspot_scope = ""
+        hotspot_params: list[Any] = [daily_since]
+        if hotspot_discovery_run_id is not None:
+            hotspot_scope = " AND run.discovery_run_id=?"
+            hotspot_params.append(hotspot_discovery_run_id)
         hotspot_rows = self.conn.execute(
             "SELECT observation.* FROM trendradar_hotspot_observation observation "
             "JOIN trendradar_collection_run run ON run.collection_run_id=observation.collection_run_id "
-            "WHERE observation.observed_at>=? AND run.status IN ('completed', 'completed_with_failures')",
-            (daily_since,),
+            "WHERE observation.observed_at>=? AND run.status IN ('completed', 'completed_with_failures')"
+            + hotspot_scope,
+            tuple(hotspot_params),
         ).fetchall()
         hotspot_sources = len(
             _build_hotspot_event_cluster_sources(
                 list(hotspot_rows),
-                domain_label=domain_label,
                 per_source_limit=len(hotspot_rows) or 1,
             )
         )
@@ -2071,24 +2113,107 @@ class Stage0ContentProductionCore:
             return {"status": "blocked", "reason": "no_qualified_formal_source", **counts}
         return {"status": "ready", "reason": "qualified_formal_source_available", **counts}
 
-    def load_real_discovery_sources(self, *, domain_label: str, daily_since: str, per_source_limit: int) -> list[dict[str, Any]]:
+    def load_hotspot_event_clusters(
+        self,
+        *,
+        daily_since: str,
+        per_source_limit: int | None,
+        hotspot_discovery_run_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return one temporary source per TrendRadar event, without domain keyword filtering."""
+        hotspot_scope = ""
+        hotspot_params = [daily_since]
+        if hotspot_discovery_run_id is not None:
+            hotspot_scope = " AND run.discovery_run_id=? "
+            hotspot_params.append(hotspot_discovery_run_id)
+        rows = self.conn.execute(
+            "SELECT observation.* FROM trendradar_hotspot_observation observation "
+            "JOIN trendradar_collection_run run ON run.collection_run_id=observation.collection_run_id "
+            "WHERE observation.observed_at>=? AND run.status IN ('completed', 'completed_with_failures') "
+            + hotspot_scope
+            + "ORDER BY observation.observed_at DESC, observation.observation_id ASC",
+            tuple(hotspot_params),
+        ).fetchall()
+        return _build_hotspot_event_cluster_sources(
+            list(rows), per_source_limit=per_source_limit
+        )
+
+    def reusable_hotspot_batch_status(self, *, discovery_run_id: str) -> dict[str, Any]:
+        """Return the one successful temporary hotspot batch that may be reused in a validation."""
+        rows = self.conn.execute(
+            "SELECT collection_run_id, status, item_count FROM trendradar_collection_run "
+            "WHERE discovery_run_id=? ORDER BY started_at DESC, collection_run_id ASC",
+            (discovery_run_id,),
+        ).fetchall()
+        if len(rows) != 1:
+            raise StateTransitionError("a reusable hotspot batch must have exactly one recorded collection")
+        row = rows[0]
+        if str(row["status"]) != "completed" or int(row["item_count"] or 0) < 1:
+            raise StateTransitionError("only a successful non-empty hotspot collection can be reused")
+        observation_count = int(self.conn.execute(
+            "SELECT COUNT(*) FROM trendradar_hotspot_observation WHERE collection_run_id=?",
+            (str(row["collection_run_id"]),),
+        ).fetchone()[0])
+        if observation_count < 1:
+            raise StateTransitionError("the successful hotspot batch has already been cleared and cannot be reused")
+        return {
+            "discovery_run_id": discovery_run_id,
+            "collection_run_id": str(row["collection_run_id"]),
+            "item_count": int(row["item_count"]),
+            "observation_count": observation_count,
+        }
+
+    def clear_hotspot_observations_for_discovery_run(self, *, discovery_run_id: str) -> int:
+        """Physically remove this run's temporary raw hotspot entries after conversion."""
+        rows = self.conn.execute(
+            "SELECT observation.observation_id FROM trendradar_hotspot_observation observation "
+            "JOIN trendradar_collection_run run ON run.collection_run_id=observation.collection_run_id "
+            "WHERE run.discovery_run_id=?",
+            (discovery_run_id,),
+        ).fetchall()
+        if not rows:
+            return 0
+        with self.conn:
+            self.conn.executemany(
+                "DELETE FROM trendradar_hotspot_observation WHERE observation_id=?",
+                [(row["observation_id"],) for row in rows],
+            )
+        return len(rows)
+
+    def load_real_discovery_sources(
+        self,
+        *,
+        domain_label: str,
+        daily_since: str,
+        per_source_limit: int,
+        hotspot_discovery_run_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Read only qualified, already-recorded formal source facts; never collect or invent content."""
-        if self.discovery_source_readiness(domain_label=domain_label, daily_since=daily_since)["status"] != "ready":
+        if self.discovery_source_readiness(
+            domain_label=domain_label,
+            daily_since=daily_since,
+            hotspot_discovery_run_id=hotspot_discovery_run_id,
+        )["status"] != "ready":
             return []
         result: list[dict[str, Any]] = []
         tables = {row["name"] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         competitor_ready = {"competitor_accounts", "competitor_videos", "hits"}.issubset(tables)
+        hotspot_scope = ""
+        hotspot_params = [daily_since]
+        if hotspot_discovery_run_id is not None:
+            hotspot_scope = " AND run.discovery_run_id=? "
+            hotspot_params.append(hotspot_discovery_run_id)
         all_hotspot_rows = self.conn.execute(
             "SELECT observation.* FROM trendradar_hotspot_observation observation "
             "JOIN trendradar_collection_run run ON run.collection_run_id=observation.collection_run_id "
             "WHERE observation.observed_at>=? AND run.status IN ('completed', 'completed_with_failures') "
+            + hotspot_scope +
             "ORDER BY observation.observed_at DESC, observation.observation_id ASC",
-            (daily_since,),
+            tuple(hotspot_params),
         ).fetchall()
         result.extend(
             _build_hotspot_event_cluster_sources(
                 list(all_hotspot_rows),
-                domain_label=domain_label,
                 per_source_limit=per_source_limit,
             )
         )

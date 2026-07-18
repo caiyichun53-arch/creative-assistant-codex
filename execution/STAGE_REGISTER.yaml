@@ -6,7 +6,7 @@ source:
 
 baseline:
   file: docs/EFFECTIVE_DESIGN_BASELINE.md
-  sha256: 6822f5e121073f321b2a7d5a2ae1043d1bb46c001ca72edc8263371f2d2b70e8
+  sha256: 2e02fbb9d33865d61ed9a0ff8cca0142939a2843de12a2b3a0ba8adec19b4648
 
 default_allowed_files:
   - AGENTS.md
@@ -77,7 +77,7 @@ stages:
   - stage_id: stage_1_daily_discovery
     stage_name: "Stage 1: 真实日常发现与候选选择"
     type: business
-    status: passed
+    status: blocked_model_gateway_timeout
     depends_on:
       - stage_0_controlled_execution_foundation
     authorization_required: true
@@ -88,10 +88,17 @@ stages:
       - scripts/core/production/stage0_content_core.py
       - scripts/core/production/stage1b_daily_discovery.py
       - scripts/core/business_data/daily_source_acquisition.py
+      - scripts/core/business_data/domain_labels.py
+      - scripts/core/model_gateway/formal_skill_adapter.py
+      - scripts/integrations/trendradar_runtime.py
       - tests/core/test_stage1b_daily_discovery.py
       - tests/core/test_source_to_topic_skill.py
+      - tests/core/test_local_trendradar_executor.py
       - SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml
+      - HOTSPOT_TO_OPPORTUNITY_BUSINESS_CONTRACT.yaml
       - runtime_skills/source_to_topic/prompt.md
+      - runtime_skills/hotspot_to_opportunity/prompt.md
+      - vendor/TrendRadar/**
     baseline_sections:
       - "### 3.3.1 热点转选题的受控搜索与 Skill 审核"
       - "## 12. 测试、能力证据、数据隔离与清理"
@@ -108,16 +115,16 @@ stages:
       - --source-type
       - hotspot
       - --actor
-      - codex_user_authorized_validation
+      - codex_user_authorized_source_rerun
       - --idempotency-key
-      - stage1b-validation-live-2026-07-17-fan_kepu_social_life-hotspot-codex_user_authorized_validation
+      - stage1b-source-rerun-live-2026-07-17-fan_kepu_social_life-hotspot-codex_user_authorized_source_rerun
       - --mode
       - validation_live
       - --discovery-date
       - "2026-07-17"
       - --batch-timeout-seconds
       - "600"
-    acceptance_summary: "已完成授权后的 hotspot validation_live 验收：stage_control accept run stage_1_daily_discovery-1784281804 PASS；业务 run discovery_run_41b19f557c594109824599baf51b3ed8 为 validation_live completed，technical_failures=0，隔离快照为零候选，不进入 formal_candidate_pool；Stage 2 需要用户选择既有候选、提供方向或要求重跑来源。"
+    acceptance_summary: "技术链路曾完成 hotspot validation_live 零候选验收，但未经过用户审核，不得标记为业务通过。用户选择重跑来源后，stage_control accept run stage_1_daily_discovery-1784283337 失败；业务 run discovery_run_9cee4017567c4b349eefaeaaa5055b9d 为 validation_live completed_with_failures，stage1b_model_run discovery_model_run_98b1ef12a30f454eb5bc1eb247b6d0cc 失败，provider_error=Request timed out，快照零候选；当前等待用户决定是否按同输入重试、调整输入/配置后新版本运行，或取消。"
 
   - stage_id: stage_2_topic_research
     stage_name: "Stage 2: 正式选题、研究方案与深度研究"

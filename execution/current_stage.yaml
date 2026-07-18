@@ -6,12 +6,12 @@ external_calls_authorized: false
 environment_changes_authorized: false
 formal_data_writes_authorized: false
 production_authorized: false
-completion_status: STAGE1_DAILY_DISCOVERY_VALIDATION_LIVE_ZERO_CANDIDATE_PASSED
-stage_status: PASS
-source_evidence_level: LIVE_VALIDATED
-claimed_source_level: LIVE_VALIDATED
-next_action: user_select_existing_candidate_provide_direction_or_request_source_rerun_for_stage_2_topic_research
-baseline_sha256: 6822f5e121073f321b2a7d5a2ae1043d1bb46c001ca72edc8263371f2d2b70e8
+completion_status: STAGE1_HOTSPOT_TECHNICAL_VALIDATION_NOT_BUSINESS_ACCEPTED
+stage_status: BLOCKED_USER_AUDIT_REQUIRED
+source_evidence_level: TECH_TESTED
+claimed_source_level: TECH_TESTED
+next_action: user_audit_hotspot_candidate_and_confirm_business_acceptance_criteria
+baseline_sha256: 2e02fbb9d33865d61ed9a0ff8cca0142939a2843de12a2b3a0ba8adec19b4648
 base_commit: 86cff32e127d25c240e433862c3ce4f2d19fa478
 allowed_design_sources:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
@@ -30,24 +30,34 @@ prohibited_design_sources:
   - old code comments business rules
 requirements:
   - id: STAGE1-DAILY-DISCOVERY-VALIDATION-LIVE-001
-    description: "Stage 1 daily discovery validates a real hotspot validation_live run with isolated candidate output, no technical failures, and no production_daily promotion."
+    description: "Stage 1 hotspot technical validation may use real data, but requires user audit before any business acceptance claim."
     baseline_refs:
       - docs/EFFECTIVE_DESIGN_BASELINE.md#3.3.1 热点转选题的受控搜索与 Skill 审核
       - docs/EFFECTIVE_DESIGN_BASELINE.md#20.1 来源与选题 Skill
     tests:
-      - [python, -m, pytest, tests/core/test_stage1b_daily_discovery.py, tests/core/test_source_to_topic_skill.py, -q]
+      - [python, -m, unittest, tests.core.test_stage1b_daily_discovery, tests.core.test_local_trendradar_executor, tests.core.test_source_to_topic_skill]
 allowed_paths:
+  - .codex/hooks/hook_common.py
+  - .codex/hooks/stop_verification_gate.py
+  - HOTSPOT_TO_OPPORTUNITY_BUSINESS_CONTRACT.yaml
   - SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml
   - TECHNICAL_MANUAL.md
+  - docs/EFFECTIVE_DESIGN_BASELINE.md
   - execution/STAGE_REGISTER.yaml
   - execution/current_stage.yaml
+  - runtime_skills/hotspot_to_opportunity/prompt.md
   - runtime_skills/source_to_topic/prompt.md
+  - scripts/core/business_data/daily_source_acquisition.py
+  - scripts/core/business_data/domain_labels.py
+  - scripts/core/model_gateway/formal_skill_adapter.py
   - scripts/core/production/stage0_content_core.py
   - scripts/core/production/stage1b_daily_discovery.py
+  - scripts/integrations/trendradar_runtime.py
+  - scripts/validation/test_superpowers_selective.py
+  - tests/core/test_local_trendradar_executor.py
   - tests/core/test_source_to_topic_skill.py
   - tests/core/test_stage1b_daily_discovery.py
-frozen_acceptance_tests:
-  - tests/core/test_local_trendradar_executor.py
+frozen_acceptance_tests: []
 frozen_contracts:
   - BUSINESS_MODEL_ROUTE_REGISTRY.yaml
 forbidden_actions:

@@ -14,6 +14,7 @@ from scripts.integrations.trendradar_runtime import (
     approved_runtime_worktree_change,
     changed_crawl_record,
     export_crawl,
+    read_original_article,
     verify_official_install,
 )
 
@@ -106,14 +107,90 @@ class LocalTrendRadarExecutorTests(unittest.TestCase):
                 )
                 conn.execute("INSERT INTO platforms VALUES ('weibo', '微博')")
                 conn.execute("INSERT INTO news_items VALUES (1, '真实热点', 'weibo', 2, '', '', '12-30')")
+                conn.execute("INSERT INTO news_items VALUES (2, '第十一名热点', 'weibo', 11, '', '', '12-30')")
                 conn.execute("INSERT INTO crawl_records VALUES (7, '12-30')")
                 conn.execute("INSERT INTO crawl_source_status VALUES (7, 'weibo', 'success')")
                 conn.commit()
             items, statuses = export_crawl(database, "12-30")
             self.assertEqual(items[0]["id"], "weibo:1")
+            self.assertEqual(len(items), 1)
             self.assertEqual(items[0]["url"], "")
             self.assertEqual(items[0]["observed_at"], "2026-07-14T12:30:00+08:00")
             self.assertEqual(statuses, [{"platform_id": "weibo", "status": "success"}])
+
+    def test_real_sqlite_crawl_preserves_all_trendradar_event_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            database = Path(tmp) / "2026-07-14.db"
+            with closing(sqlite3.connect(database)) as conn:
+                conn.executescript(
+                    """
+                    CREATE TABLE platforms(id TEXT PRIMARY KEY, name TEXT NOT NULL);
+                    CREATE TABLE news_items(
+                        id INTEGER PRIMARY KEY, title TEXT, platform_id TEXT, rank INTEGER,
+                        url TEXT, mobile_url TEXT, last_crawl_time TEXT,
+                        event_detail TEXT, extra_metadata TEXT
+                    );
+                    CREATE TABLE crawl_records(id INTEGER PRIMARY KEY, crawl_time TEXT UNIQUE);
+                    CREATE TABLE crawl_source_status(crawl_record_id INTEGER, platform_id TEXT, status TEXT);
+                    """
+                )
+                conn.execute("INSERT INTO platforms VALUES ('weibo', '微博')")
+                conn.execute(
+                    "INSERT INTO news_items VALUES (1, '真实热点', 'weibo', 2, '', '', '12-30', ?, ?)",
+                    ("TrendRadar 已采集的事件详情", '{\"origin\":\"TrendRadar\"}'),
+                )
+                conn.execute("INSERT INTO crawl_records VALUES (7, '12-30')")
+                conn.execute("INSERT INTO crawl_source_status VALUES (7, 'weibo', 'success')")
+                conn.commit()
+            items, _statuses = export_crawl(database, "12-30")
+            record = items[0]["trendradar_record"]
+            self.assertEqual(record["event_detail"], "TrendRadar 已采集的事件详情")
+            self.assertEqual(record["extra_metadata"], '{\"origin\":\"TrendRadar\"}')
+
+    def test_original_link_reader_uses_trendradar_reader_and_returns_body(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps({"success": True, "data": {"content": "热点事件正文", "format": "markdown"}}),
+            stderr="",
+        )
+        with patch("scripts.integrations.trendradar_runtime.verify_official_install", return_value={"python_executable": "reader-python"}), patch(
+            "scripts.integrations.trendradar_runtime.subprocess.run", return_value=completed
+        ) as run:
+            result = read_original_article(
+                trendradar_dir=Path("vendor/TrendRadar"),
+                url="https://example.test/original-event",
+            )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["event_detail"]["content"], "热点事件正文")
+        self.assertFalse(run.call_args.kwargs["shell"])
+        self.assertEqual(run.call_args.kwargs["env"]["PYTHONIOENCODING"], "utf-8")
+
+    def test_original_link_reader_does_not_search_or_retry_after_an_empty_read(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps({"success": True, "data": {"content": ""}}), stderr=""
+        )
+        with patch("scripts.integrations.trendradar_runtime.verify_official_install", return_value={"python_executable": "reader-python"}), patch(
+            "scripts.integrations.trendradar_runtime.subprocess.run", return_value=completed
+        ) as run:
+            result = read_original_article(
+                trendradar_dir=Path("vendor/TrendRadar"),
+                url="https://example.test/original-event",
+            )
+        self.assertEqual(result, {"status": "unavailable", "reason": "original_link_reader_returned_empty_content"})
+        self.assertEqual(run.call_count, 1)
+
+    def test_original_link_reader_records_a_subprocess_exit_without_a_retry(self) -> None:
+        completed = subprocess.CompletedProcess(args=[], returncode=7, stdout="", stderr="reader startup failed")
+        with patch("scripts.integrations.trendradar_runtime.verify_official_install", return_value={"python_executable": "reader-python"}), patch(
+            "scripts.integrations.trendradar_runtime.subprocess.run", return_value=completed
+        ) as run:
+            result = read_original_article(
+                trendradar_dir=Path("vendor/TrendRadar"),
+                url="https://example.test/original-event",
+            )
+        self.assertEqual(result, {"status": "unavailable", "reason": "original_link_reader_failed_exit_7"})
+        self.assertEqual(run.call_count, 1)
 
     def test_changed_crawl_requires_new_or_updated_real_record(self) -> None:
         old = {("one.db", "10-00"): (10, "2026-07-14 10:00:01")}

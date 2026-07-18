@@ -54,20 +54,11 @@ def read_stdin_json() -> dict[str, Any]:
         raise ValueError(f"invalid hook JSON input: {exc}") from exc
 
 
-TEXT_KEYS = {
+ASSISTANT_RESPONSE_KEYS = (
     "assistant_response",
     "assistant_message",
-    "completion",
-    "content",
     "last_assistant_message",
-    "message",
-    "output",
-    "prompt",
-    "response",
-    "stop_reason",
-    "text",
-    "transcript",
-}
+)
 
 COMPLETION_CLAIM_RE = re.compile(
     r"("
@@ -80,41 +71,14 @@ COMPLETION_CLAIM_RE = re.compile(
 )
 
 
-def _collect_text_values(value: Any, texts: list[str]) -> None:
-    if isinstance(value, str):
-        if value.strip():
-            texts.append(value)
-        return
-    if isinstance(value, list):
-        for item in value:
-            _collect_text_values(item, texts)
-        return
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if key in TEXT_KEYS or isinstance(item, (dict, list)):
-                _collect_text_values(item, texts)
-
-
-def _read_transcript_path(root: Path, data: dict[str, Any]) -> str:
-    value = data.get("transcript_path") or data.get("transcriptPath")
-    if not isinstance(value, str) or not value.strip():
-        return ""
-    path = Path(value)
-    if not path.is_absolute():
-        path = root / path
-    if not path.exists() or not path.is_file():
-        return ""
-    raw = path.read_bytes()
-    return raw[-200_000:].decode("utf-8", errors="replace")
-
-
 def hook_input_text(root: Path, data: dict[str, Any]) -> str:
-    texts: list[str] = []
-    _collect_text_values(data, texts)
-    transcript = _read_transcript_path(root, data)
-    if transcript:
-        texts.append(transcript)
-    return "\n".join(texts)
+    """Return only the final assistant response, never tool or transcript noise."""
+    del root
+    return "\n".join(
+        value.strip()
+        for key in ASSISTANT_RESPONSE_KEYS
+        if isinstance((value := data.get(key)), str) and value.strip()
+    )
 
 
 def has_completion_claim(text: str) -> bool:

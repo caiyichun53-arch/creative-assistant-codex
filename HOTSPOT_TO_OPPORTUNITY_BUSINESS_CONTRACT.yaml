@@ -1,0 +1,95 @@
+schema_version: hotspot_to_opportunity.business_contract.v1
+skill_id: hotspot_to_opportunity
+formal_skill_id: hotspot_to_opportunity
+skill_version: 1.0.1
+allowed_model_nodes:
+  - business.source_to_topic
+whether_model_is_required: true
+materializer_contract: formal_business_skill_result.v1
+model_binding:
+  route_name: business.source_to_topic
+  route_id: business_analysis
+  binding_name: hotspot_to_opportunity_event_to_candidates
+  binding_version: 1.0.0
+  input_map:
+    event_material:
+      source: input
+      key: event_material
+    enabled_domains:
+      source: input
+      key: enabled_domains
+  output_map:
+    outcome:
+      source: model_output
+      key: outcome
+    candidates:
+      source: model_output
+      key: candidates
+    reason:
+      source: model_output
+      key: reason
+  model_input_schema:
+    type: object
+    required: [event_material, enabled_domains]
+    additional_properties: false
+    properties:
+      event_material:
+        type: object
+      enabled_domains:
+        type: array
+        minItems: 1
+        items:
+          type: object
+  model_output_schema:
+    type: object
+    required: [outcome, candidates, reason]
+    additional_properties: false
+    properties:
+      outcome:
+        type: string
+        enum: [candidates, no_candidate]
+      candidates:
+        type: array
+        maxItems: 10
+        items:
+          type: object
+      reason:
+        type: string
+        minLength: 1
+  prompt_template: |
+    你只判断这一个已经由 TrendRadar 采集完成的热点事件，不能搜索、抓取、补充事实、写库或重试。
+    依据完整事件材料和启用领域方向，决定是否形成选题机会。不得用热点标题关键词替代领域判断。
+    一个事件可返回零个或多个候选；每个候选必须只属于一个启用领域，并说明核心问题、受众关系、内容增量、具体角度、所用材料引用、时效、风险和给用户的审核原因。
+    只输出一个 JSON 对象，不要 Markdown、解释文字、评分、排名、权重或内部运行信息。对象必须且只能有 outcome、candidates、reason 三个字段。
+    若不适合，必须输出 {{"outcome":"no_candidate","candidates":[],"reason":"具体且简短的不转化原因"}}。
+    若形成候选，outcome 必须为 candidates，reason 必须说明整体判断；每个 candidates 项必须严格采用这个字段形状：{{"domain_label":"一个启用领域","candidate_topic":"具体选题","core_question":"核心问题","audience_relation":"受众关系","content_increment":"内容增量","topic_angle":"具体角度","trendradar_material_refs":["所用原始链接"],"timeliness":"时效说明","risks":["风险或限制；没有则空列表"],"user_review_reason":"给用户的审核原因"}}。trendradar_material_refs 和 risks 必须是字符串列表，不能写成一句话或 null。
+    事件材料：{event_material}
+    启用领域方向：{enabled_domains}
+input_schema:
+  type: object
+  required: [event_material, enabled_domains]
+  additional_properties: false
+  properties:
+    event_material:
+      type: object
+    enabled_domains:
+      type: array
+      minItems: 1
+      items:
+        type: object
+output_schema:
+  type: object
+  required: [outcome, candidates, reason]
+  additional_properties: false
+  properties:
+    outcome:
+      type: string
+      enum: [candidates, no_candidate]
+    candidates:
+      type: array
+      maxItems: 10
+      items:
+        type: object
+    reason:
+      type: string
+      minLength: 1

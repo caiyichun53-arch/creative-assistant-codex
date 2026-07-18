@@ -20,6 +20,19 @@ import sys
 import time
 import tomllib
 from typing import Any
+
+
+_ARTICLE_READER_BOOTSTRAP = """
+import json
+import sys
+from mcp_server.tools.article_reader import ArticleReaderTools
+
+result = ArticleReaderTools(project_root='.').read_article(
+    url=sys.argv[1],
+    timeout=int(sys.argv[2]),
+)
+print(json.dumps(result, ensure_ascii=False))
+"""
 from zoneinfo import ZoneInfo
 
 
@@ -140,11 +153,10 @@ def export_crawl(database: Path, crawl_time: str) -> tuple[list[dict[str, Any]],
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT n.id, n.title, n.platform_id, p.name AS platform_name,
-                   n.rank, n.url, n.mobile_url
+            SELECT n.*, p.name AS platform_name
             FROM news_items n
             JOIN platforms p ON p.id = n.platform_id
-            WHERE n.last_crawl_time = ?
+            WHERE n.last_crawl_time = ? AND n.rank BETWEEN 1 AND 10
             ORDER BY n.platform_id, n.rank, n.id
             """,
             (crawl_time,),
@@ -174,10 +186,88 @@ def export_crawl(database: Path, crawl_time: str) -> tuple[list[dict[str, Any]],
                 "record_id": int(row["id"]),
                 "crawl_time": crawl_time,
             },
+            # Keep the complete record produced by TrendRadar.  The stable
+            # convenience fields above are for deterministic routing only;
+            # downstream event judgement must receive the source detail too.
+            "trendradar_record": {
+                column: row[column]
+                for column in row.keys()
+                if column != "platform_name"
+            },
         }
         for row in rows
     ]
     return items, [dict(row) for row in statuses]
+
+
+def read_original_article(
+    *,
+    trendradar_dir: Path,
+    url: str,
+    timeout_seconds: int = 30,
+) -> dict[str, Any]:
+    """Use TrendRadar's bundled article reader for one original hotspot link.
+
+    This is deliberately a direct-link read, not a search or a retry path.
+    The caller decides which already-clustered hotspot event is worth reading.
+    """
+    normalized_url = str(url or "").strip()
+    if not normalized_url.startswith(("https://", "http://")):
+        return {"status": "unavailable", "reason": "original_link_missing_or_invalid"}
+    if timeout_seconds <= 0:
+        return {"status": "unavailable", "reason": "batch_deadline_reached_before_original_link_read"}
+    try:
+        install = verify_official_install(trendradar_dir)
+        env = dict(os.environ)
+        env.update({"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"})
+        completed = subprocess.run(
+            [
+                install["python_executable"],
+                "-c",
+                _ARTICLE_READER_BOOTSTRAP,
+                normalized_url,
+                str(timeout_seconds),
+            ],
+            cwd=trendradar_dir.resolve(),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_seconds + 5,
+            check=False,
+            shell=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "unavailable", "reason": "original_link_read_timed_out"}
+    except Exception as exc:
+        return {"status": "unavailable", "reason": f"original_link_reader_failed: {exc}"}
+    if completed.returncode != 0:
+        return {
+            "status": "unavailable",
+            "reason": f"original_link_reader_failed_exit_{completed.returncode}",
+        }
+    try:
+        reader_result = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return {"status": "unavailable", "reason": "original_link_reader_returned_invalid_output"}
+    if not isinstance(reader_result, dict) or reader_result.get("success") is not True:
+        return {"status": "unavailable", "reason": "original_link_reader_could_not_read_content"}
+    data = reader_result.get("data")
+    content = data.get("content") if isinstance(data, dict) else None
+    if not isinstance(content, str) or not content.strip():
+        return {"status": "unavailable", "reason": "original_link_reader_returned_empty_content"}
+    return {
+        "status": "completed",
+        "event_detail": {
+            "reader": "TrendRadar_original_link_reader",
+            "source_url": normalized_url,
+            "format": str(data.get("format") or "markdown"),
+            "content": content,
+            "content_length": len(content),
+        },
+    }
 
 
 def run_once(
