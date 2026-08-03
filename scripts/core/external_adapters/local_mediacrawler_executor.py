@@ -55,7 +55,7 @@ _MEDIACRAWLER_CDP_PORT = 9222
 
 
 def _active_douyin_profile_name() -> str:
-    state_path = local_repo_path("data", "agent_platform", "mediacrawler_browser_state.json")
+    state_path = runtime_path("agent_platform", "mediacrawler_browser_state.json")
     if not state_path.is_file():
         return "primary"
     try:
@@ -69,10 +69,12 @@ def _active_douyin_profile_name() -> str:
 
 
 def _active_douyin_profile_dir(mediacrawler_dir: Path) -> Path:
+    del mediacrawler_dir
+    profile_root = runtime_path("external", "mediacrawler", "browser_data")
     profile_name = _active_douyin_profile_name()
     if profile_name == "primary":
-        return mediacrawler_dir / "browser_data" / "cdp_dy_user_data_dir"
-    return mediacrawler_dir / "browser_data" / f"cdp_dy_user_data_dir_{profile_name}"
+        return profile_root / "cdp_dy_user_data_dir"
+    return profile_root / f"cdp_dy_user_data_dir_{profile_name}"
 
 
 def _cdp_port_ready(port: int = _MEDIACRAWLER_CDP_PORT) -> bool:
@@ -130,6 +132,20 @@ def _ensure_shared_douyin_browser(mediacrawler_dir: Path) -> None:
         raise ExternalAdapterError(
             "the reusable collector browser is not ready; start or restore its dedicated logged-in session before collecting"
         )
+
+
+def retained_douyin_collector_browser_status(mediacrawler_dir: Path) -> dict[str, Any]:
+    """Report collector-browser readiness without starting or changing anything."""
+    profile_name = _active_douyin_profile_name()
+    profile_dir = _active_douyin_profile_dir(mediacrawler_dir)
+    return {
+        "status": "ready" if _cdp_port_ready() else "not_ready",
+        "cdp_port": _MEDIACRAWLER_CDP_PORT,
+        "profile_name": profile_name,
+        "profile_dir": str(profile_dir),
+        "profile_exists": profile_dir.is_dir(),
+        "login_status": "not_verified",
+    }
 
 
 def start_retained_douyin_collector_browser(mediacrawler_dir: Path) -> None:
