@@ -51,6 +51,7 @@ from scripts.core.production.stage1_competitor_registration import (
     run_test_only_competitor_breakdown_batch,
 )
 from scripts.core.production.stage1b_daily_discovery import (
+    DAILY_REPORT_SOURCE_TYPES,
     Stage1BDailyDiscoveryService,
     build_production_daily_discovery_gateway,
 )
