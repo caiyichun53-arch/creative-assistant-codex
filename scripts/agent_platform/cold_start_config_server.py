@@ -56,7 +56,7 @@ from scripts.core.production.stage1b_daily_discovery import (
 )
 from scripts.core.production.stage1a_research_plan import (
     Stage1AResearchPlanService,
-    build_production_research_plan_gateway,
+    build_research_plan_gateway,
 )
 from scripts.core.production.stage1c_content_pipeline import (
     Stage1CContentPipelineService,
@@ -2589,7 +2589,7 @@ class ColdStartConfigHandler(BaseHTTPRequestHandler):
             def confirm(command: FormalHumanDecisionCommand) -> dict[str, Any]:
                 service = Stage1AResearchPlanService(
                     core=core,
-                    gateway=build_production_research_plan_gateway(core),
+                    gateway=build_research_plan_gateway(core),
                 )
                 created = service.create_direct_formal_topic_and_generate_plan(
                     domain_label=str(packet["domain_label"]),
@@ -2662,7 +2662,7 @@ class ColdStartConfigHandler(BaseHTTPRequestHandler):
             command_id = str(body.get("command_id") or "").strip()
             service = Stage1AResearchPlanService(
                 core=core,
-                gateway=build_production_research_plan_gateway(core),
+                gateway=build_research_plan_gateway(core),
             )
             return self._formal_command(
                 core=core,
@@ -2710,7 +2710,7 @@ class ColdStartConfigHandler(BaseHTTPRequestHandler):
         try:
             service = Stage1AResearchPlanService(
                 core=core,
-                gateway=build_production_research_plan_gateway(core),
+                gateway=build_research_plan_gateway(core),
             )
 
             def decide(command: FormalHumanDecisionCommand) -> dict[str, Any]:

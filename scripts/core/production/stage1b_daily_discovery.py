@@ -948,11 +948,11 @@ class Stage1BDailyDiscoveryService:
         )
         from scripts.core.production.stage1a_research_plan import (
             Stage1AResearchPlanService,
-            build_production_research_plan_gateway,
+            build_research_plan_gateway,
         )
         topic = self.core.get_artifact_payload(selected["topic_version_id"])["payload"]
         plan = Stage1AResearchPlanService(
-            core=self.core, gateway=build_production_research_plan_gateway(self.core)
+            core=self.core, gateway=build_research_plan_gateway(self.core)
         ).generate_research_plan(
             task_id=selected["task_id"],
             user_requirements=_canonical({

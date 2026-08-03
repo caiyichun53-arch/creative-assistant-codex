@@ -274,14 +274,14 @@ CREATE TABLE IF NOT EXISTS hit_comments (
 CREATE INDEX IF NOT EXISTS idx_hit_comments_hit
 ON hit_comments(hit_id, sample_rank);
 
--- Output of runtime_skills/sample_deep_analyze (BR-DNA-001), one already-
+-- Output projection for the current competitor breakdown (BR-DNA-001), one already-
 -- prepared hit analyzed per row. Append-only like hit_transcripts -- a re-run
 -- adds a new version rather than overwriting a prior analysis. The Skill
 -- itself never writes here (CR-003A: no database access from inside a
 -- portable Skill) -- this is Core's Output Binding, converting the Skill's
--- public output_schema (topic_pattern/hook_pattern/structure_pattern) into a
+-- retained breakdown output into a
 -- business record. request_id doubles as the Skill's idempotency key
--- (SAMPLE_DEEP_ANALYZE_BUSINESS_CONTRACT.yaml: "sample_deep_analyze:{request_id}").
+-- request_id remains the idempotency key for the retained breakdown record.
 CREATE TABLE IF NOT EXISTS hit_deep_analysis (
     analysis_id TEXT PRIMARY KEY,
     hit_id TEXT NOT NULL REFERENCES hits(hit_id) ON DELETE RESTRICT,
@@ -311,151 +311,32 @@ ON hit_deep_analysis(hit_id, version);
 -- arrays of short strings per the Skill's own schema, not queried by value).
 --
 -- 2026-07-10: human_review_status is the production human-review gate --
--- every row starts 'pending_review'; content_plan's select query will not
--- pick up a topic until it is 'approved' (see review_queue.py). This is a
--- real gap found and fixed the same day the chain was first wired: nothing
--- previously stopped a candidate topic from auto-flowing all the way to a
--- script draft with no human ever looking at it.
-CREATE TABLE IF NOT EXISTS topic_candidates (
-    topic_id TEXT PRIMARY KEY,
-    source_analysis_id TEXT NOT NULL REFERENCES hit_deep_analysis(analysis_id) ON DELETE RESTRICT,
-    version INTEGER NOT NULL,
-    request_id TEXT NOT NULL,
-    correlation_id TEXT NOT NULL,
-    topic_status TEXT NOT NULL,
-    candidate_topic TEXT NOT NULL,
-    topic_angle TEXT NOT NULL,
-    supporting_evidence TEXT NOT NULL,
-    source_constraints TEXT NOT NULL,
-    no_result_reason TEXT NOT NULL,
-    confidence TEXT NOT NULL,
-    model_name TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    human_review_status TEXT NOT NULL DEFAULT 'pending_review'
-        CHECK (human_review_status IN ('pending_review', 'approved', 'rejected')),
-    reviewed_at TEXT,
-    reviewed_note TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(source_analysis_id, version)
-);
-
-CREATE INDEX IF NOT EXISTS idx_topic_candidates_source_analysis
-ON topic_candidates(source_analysis_id, version);
-
--- One row per content_plan run over a topic_candidates record. Append-only
--- like topic_candidates. hooks/beats are JSON-encoded text (bounded arrays
--- of short strings per the Skill's own schema). human_review_status: see
--- topic_candidates above -- script_generate's select query requires
--- 'approved' here too.
-CREATE TABLE IF NOT EXISTS content_plans (
-    plan_id TEXT PRIMARY KEY,
-    source_topic_id TEXT NOT NULL REFERENCES topic_candidates(topic_id) ON DELETE RESTRICT,
-    version INTEGER NOT NULL,
-    request_id TEXT NOT NULL,
-    correlation_id TEXT NOT NULL,
-    hooks TEXT NOT NULL,
-    selected_hook TEXT NOT NULL,
-    beats TEXT NOT NULL,
-    model_name TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    human_review_status TEXT NOT NULL DEFAULT 'pending_review'
-        CHECK (human_review_status IN ('pending_review', 'approved', 'rejected')),
-    reviewed_at TEXT,
-    reviewed_note TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(source_topic_id, version)
-);
-
-CREATE INDEX IF NOT EXISTS idx_content_plans_source_topic
-ON content_plans(source_topic_id, version);
-
--- One row per script_generate run over a content_plans record. Append-only
--- like content_plans. draft_text is the Skill's raw output_schema field
--- (50-6000 chars per script_generate's own schema). human_review_status:
--- see topic_candidates above -- an approved draft is what run_script_review.py
+-- The retired candidate, plan, draft, review, and final-draft tables were
+-- removed. Current content artifacts use the versioned formal ledger.
+-- Historical review notes are not executable configuration.
+-- see the current content core for the active human confirmation rules.
 -- (below) picks up next; it is not the end of the chain (2026-07-13: 置顶规则
--- 总表 requires 文案优化/审核/最终稿 after 初稿, see script_reviews/final_drafts).
-CREATE TABLE IF NOT EXISTS script_drafts (
-    draft_id TEXT PRIMARY KEY,
-    source_plan_id TEXT NOT NULL REFERENCES content_plans(plan_id) ON DELETE RESTRICT,
-    version INTEGER NOT NULL,
-    request_id TEXT NOT NULL,
-    correlation_id TEXT NOT NULL,
-    draft_text TEXT NOT NULL,
-    model_name TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    human_review_status TEXT NOT NULL DEFAULT 'pending_review'
-        CHECK (human_review_status IN ('pending_review', 'approved', 'rejected')),
-    reviewed_at TEXT,
-    reviewed_note TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(source_plan_id, version)
-);
-
-CREATE INDEX IF NOT EXISTS idx_script_drafts_source_plan
-ON script_drafts(source_plan_id, version);
-
--- One row per runtime_skills/script_review run over an approved script_drafts
--- record (BR-CONTENT-004, 2026-07-13). This Skill's own three subnodes
--- (business.creation_polish, then business.creation_review, then
--- business.ai_flavor_judge -- see formal_skill_adapter.py's
--- _run_script_review()) bundle 文案优化/审核/AI味判定 into one atomic call, so
+-- The current ledger contains the active optimization, review, and final records.
+-- Retired runtime review storage is not recreated here.
+-- Current content stages are stored in the versioned formal ledger.
+-- The active content core owns optimization and review.
+-- Historical subnode details are not executable configuration.
+-- The active core handles these decisions in the current ledger.
 -- this is ONE new pipeline stage, not three -- the 置顶规则总表's "文案优化在
 -- 初稿之后、审核之前" ordering requirement is satisfied INSIDE this Skill call
--- (polish runs first), not by splitting it into separate database rows that
--- don't correspond to a real atomic Skill boundary. polished_text is the
--- actual optimized script; issues/revision_focus/revision_targets are JSON
--- arrays (Skill output, not further parsed here -- Core stores what the Skill
--- returned). human_review_status: same pattern as script_drafts -- an
--- approved review is what run_final_draft.py picks up next.
-CREATE TABLE IF NOT EXISTS script_reviews (
-    review_id TEXT PRIMARY KEY,
-    source_draft_id TEXT NOT NULL REFERENCES script_drafts(draft_id) ON DELETE RESTRICT,
-    version INTEGER NOT NULL,
-    request_id TEXT NOT NULL,
-    correlation_id TEXT NOT NULL,
-    verdict TEXT NOT NULL CHECK (verdict IN ('pass', 'revise', 'fail')),
-    issues TEXT NOT NULL,
-    polished_text TEXT NOT NULL,
-    revision_focus TEXT NOT NULL,
-    ai_flavor_risk TEXT NOT NULL CHECK (ai_flavor_risk IN ('low', 'medium', 'high')),
-    revision_targets TEXT NOT NULL,
-    model_name TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    human_review_status TEXT NOT NULL DEFAULT 'pending_review'
-        CHECK (human_review_status IN ('pending_review', 'approved', 'rejected')),
-    reviewed_at TEXT,
-    reviewed_note TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(source_draft_id, version)
-);
-
-CREATE INDEX IF NOT EXISTS idx_script_reviews_source_draft
-ON script_reviews(source_draft_id, version);
-
--- One row per "this reviewed draft is proposed as the final version" event
--- (BR-CONTENT-005, 2026-07-13). Deliberately a SEPARATE confirmation from
--- script_reviews.human_review_status='approved' -- 置顶规则总表条目5/56
+-- The active ledger stores the current versioned result.
+-- Retired storage tables are intentionally absent.
+-- Historical output details are not executable configuration.
+-- The current core validates and stores the active output directly.
+-- Current confirmation history belongs to the formal ledger.
+-- No retired final-draft handoff is recreated here.
+-- Final confirmation is represented by the active versioned artifact ledger.
+-- It remains independent from earlier review decisions.
+-- Final confirmation is independently recorded in the current ledger.
 -- requires "最终稿必须由用户确认" as its own explicit step, not something a
--- review approval implies for free. final_text is copied from the approved
--- review's polished_text at creation time (content does not change here;
--- this row's only real job is to carry a SEPARATE human_review_status so the
--- "this is final" confirmation is independently auditable). No further stage
--- exists after this one; publishing is manual and out of scope (see
+-- It is not recreated by the retired storage schema.
+-- The current ledger preserves the approved content version.
+-- The formal ledger keeps the current confirmation history.
+-- Final confirmation remains auditable in the current ledger.
+-- Publishing remains manual and outside this data schema.
 -- 有效设计基线的发布规则: "发布由用户人工完成").
-CREATE TABLE IF NOT EXISTS final_drafts (
-    final_draft_id TEXT PRIMARY KEY,
-    source_review_id TEXT NOT NULL REFERENCES script_reviews(review_id) ON DELETE RESTRICT,
-    version INTEGER NOT NULL,
-    final_text TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    human_review_status TEXT NOT NULL DEFAULT 'pending_review'
-        CHECK (human_review_status IN ('pending_review', 'approved', 'rejected')),
-    reviewed_at TEXT,
-    reviewed_note TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(source_review_id, version)
-);
-
-CREATE INDEX IF NOT EXISTS idx_final_drafts_source_review
-ON final_drafts(source_review_id, version);

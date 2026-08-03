@@ -27,8 +27,8 @@ for an object_kind without a STATE_RANK entry raises a clear, documented
 error rather than a guessed ranking.
 
 Methods here deliberately do not open their own transaction (no `with
-self.conn:`) -- callers (e.g. scripts/core/experience/tactic_registry.py)
-need to compose a create_state call with trace_root/trace_version/
+self.conn:`) -- callers need to compose a create_state call with
+trace_root/trace_version/
 object_reference writes inside one atomic transaction, matching the
 transaction-agnostic style PersistenceStore's own methods already use.
 """

@@ -143,7 +143,7 @@ def _configured_environment_value(reference: str, *, env_path: Path = DEFAULT_MO
     return value
 
 
-def build_production_research_plan_gateway(core: Stage0ContentProductionCore) -> ModelGateway:
+def build_research_plan_gateway(core: Stage0ContentProductionCore) -> ModelGateway:
     """Build the one provider selected by the bound formal route."""
     if core.data_identity != "production":
         raise StateTransitionError("production research-plan gateway requires production data identity")

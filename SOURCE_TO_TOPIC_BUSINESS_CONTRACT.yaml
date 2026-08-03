@@ -8,19 +8,12 @@ source_documents:
   - runtime_skills/source_to_topic/skill.yaml
 responsibility: Discover good topic angles from already supplied, pre-frozen source material and return one auditable candidate or a no-conversion reason for the formal production workflow.
 non_responsibilities:
-  - content_classify
-  - content_relation_judge
   - viral_or_hit_judgement
   - account_baseline_calculation
   - deep_sample_analysis
-  - tactic_extract
   - research_fetching
   - controlled_search
   - material_packet_building
-  - research_evidence_extract
-  - content_plan
-  - script_generate
-  - script_review
   - status_transition
   - database_query
   - file_read_write
@@ -268,8 +261,8 @@ model_binding:
     additional_properties: false
   # 2026-07-11: rewritten before this Skill's first real call, applying the
   # same two fixes real data proved necessary for other rewritten Skills:
-  # explicit output-language guidance (sample_deep_analyze's real data
-  # showed the model silently switches to English when never told), and an
+  # explicit output-language guidance (earlier model output showed the model
+  # silently switches to English when never told), and an
   # explicit trailing reminder to include every required key including
   # schema_version (real calls showed the model drops schema_version when
   # it is only mentioned once, early, in a long prompt -- this Skill's

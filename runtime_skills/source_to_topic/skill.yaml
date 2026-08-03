@@ -4,8 +4,6 @@ skill_version: 1.1.0
 source_contract: SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml
 responsibility: Discover good topic angles from supplied, pre-frozen source material and return one auditable candidate or a no-conversion reason.
 non_responsibilities:
-  - content_classify
-  - content_relation_judge
   - research
   - controlled_search
   - material_packet_building

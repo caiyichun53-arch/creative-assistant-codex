@@ -877,17 +877,7 @@
 
 | 实际名称 | 白话说明 | 默认处理 |
 |---|---|---|
-| `runtime_skills/production_research_plan/` | 旧研究方案能力 | 检查无引用后删除 |
-| `runtime_skills/content_plan/` | 旧内容方案能力 | 检查无引用后删除 |
-| `runtime_skills/script_generate/` | 旧写稿能力 | 检查无引用后删除 |
-| `runtime_skills/script_review/` | 旧写稿审核能力 | 检查无引用后删除 |
-| `runtime_skills/content_classify/` | 旧内容分类能力 | 检查无正式引用后删除 |
-| `runtime_skills/content_relation_judge/` | 旧内容关系判断能力 | 检查无正式引用后删除 |
-| `runtime_skills/research_evidence_extract/` | 旧研究证据提取能力 | 检查无正式引用后删除 |
-| `runtime_skills/sample_deep_analyze/` | 旧样本深度分析能力 | 检查无正式引用后删除 |
-| `runtime_skills/tactic_extract/` | 旧技巧提取能力 | 检查无正式引用后删除 |
-| `runtime_skills/experience_revision_propose/` | 旧经验修订能力 | 检查无正式引用后删除 |
-| `runtime_skills/experiment_review/` | 旧实验复盘能力 | 检查无正式引用后删除 |
+| 旧研究、提纲、写稿、审核、分类、关系判断、爆款归纳、经验修订和实验复盘能力 | 已按用户确认清理（2026-08-03） | 当前正式流程不再登记或调用 |
 | `runtime_skills/source_to_topic/` | 旧素材转选题能力 | 检查无正式引用后删除或重命名统一 |
 
 新能力：
@@ -911,18 +901,8 @@
 
 | 实际名称 | 白话说明 | 默认处理 |
 |---|---|---|
-| `PRODUCTION_RESEARCH_PLAN_BUSINESS_CONTRACT.yaml` | 旧研究方案契约 | 与新研究方案对比后删除 |
-| `CONTENT_PLAN_BUSINESS_CONTRACT.yaml` | 旧内容方案契约 | 与新内容方案对比后删除 |
-| `SCRIPT_GENERATE_BUSINESS_CONTRACT.yaml` | 旧写稿契约 | 与新初稿能力对比后删除 |
-| `SCRIPT_REVIEW_BUSINESS_CONTRACT.yaml` | 旧写稿审核契约 | 与新最终审核能力对比后删除 |
-| `CONTENT_CLASSIFY_BUSINESS_CONTRACT.yaml` | 旧内容分类契约 | 无正式引用后删除 |
-| `CONTENT_RELATION_JUDGE_BUSINESS_CONTRACT.yaml` | 旧内容关系判断契约 | 无正式引用后删除 |
-| `RESEARCH_EVIDENCE_EXTRACT_BUSINESS_CONTRACT.yaml` | 旧研究证据提取契约 | 无正式引用后删除 |
-| `SAMPLE_DEEP_ANALYZE_BUSINESS_CONTRACT.yaml` | 旧样本分析契约 | 无正式引用后删除 |
-| `TACTIC_EXTRACT_BUSINESS_CONTRACT.yaml` | 旧技巧提取契约 | 无正式引用后删除 |
-| `EXPERIENCE_REVISION_PROPOSE_BUSINESS_CONTRACT.yaml` | 旧经验修订契约 | 无正式引用后删除 |
-| `EXPERIMENT_REVIEW_BUSINESS_CONTRACT.yaml` | 旧实验复盘契约 | 无正式引用后删除 |
-| `SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml` | 旧素材转选题契约 | 无正式引用后删除 |
+| 旧研究、提纲、写稿、审核、分类、关系判断、爆款归纳、经验修订和实验复盘契约 | 已按用户确认清理（2026-08-03） | 不再作为正式规则来源 |
+| `SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml` | 当前素材转选题契约 | 当前保留并继续作为正式规则来源 |
 | `HOTSPOT_TO_OPPORTUNITY_BUSINESS_CONTRACT.yaml` | 热点转机会契约 | 当前能力被暂时阻断；先由用户决定保留还是删除 |
 | `COMPETITOR_BREAKDOWN_BUSINESS_CONTRACT.yaml` | 新竞品拆解契约 | 当前保留 |
 | `TWO_WEEK_LEARNING_PROPOSE_BUSINESS_CONTRACT.yaml` | 新两周学习契约 | 先完成质量验收 |
