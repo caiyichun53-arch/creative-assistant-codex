@@ -68,7 +68,7 @@
         "runtime_skills/competitor_breakdown_structural_v13/",
         "runtime_skills/experience_candidate_propose/",
         "config/runtime_storage.json",
-        "COMPETITOR_BREAKDOWN_BUSINESS_CONTRACT.yaml"
+        "runtime_skills/competitor_breakdown_structural_v13/skill.yaml"
       ]
     },
     "cold_start": {

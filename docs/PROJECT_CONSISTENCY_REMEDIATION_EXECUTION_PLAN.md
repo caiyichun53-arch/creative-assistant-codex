@@ -904,7 +904,7 @@
 | 旧研究、提纲、写稿、审核、分类、关系判断、爆款归纳、经验修订和实验复盘契约 | 已按用户确认清理（2026-08-03） | 不再作为正式规则来源 |
 | `SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml` | 当前素材转选题契约 | 当前保留并继续作为正式规则来源 |
 | `HOTSPOT_TO_OPPORTUNITY_BUSINESS_CONTRACT.yaml` | 热点转机会契约 | 当前能力被暂时阻断；先由用户决定保留还是删除 |
-| `COMPETITOR_BREAKDOWN_BUSINESS_CONTRACT.yaml` | 新竞品拆解契约 | 当前保留 |
+| `runtime_skills/competitor_breakdown_structural_v13/skill.yaml` | 当前竞品结构拆解规则 | 当前保留并作为唯一正式来源 |
 | `TWO_WEEK_LEARNING_PROPOSE_BUSINESS_CONTRACT.yaml` | 新两周学习契约 | 先完成质量验收 |
 
 ### A.6 旧生产链和旧保存方式
