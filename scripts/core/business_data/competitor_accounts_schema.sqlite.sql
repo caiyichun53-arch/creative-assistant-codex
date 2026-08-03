@@ -33,8 +33,9 @@ END;
 -- classified at first contact into exactly one of three categories, per the
 -- document's "历史回填与三类视频". This replaces the prior watching/archived/
 -- promoted status machine entirely -- there is no retraction/graduation
--- lifecycle anymore (BR-HIT-005: once a video first formally triggers, its
--- candidate fields are permanent).
+-- lifecycle anymore. A video remains a formal hit only while it satisfies the
+-- current approved policy; a full policy re-evaluation hard-deletes invalid
+-- hit rows and their derived material instead of retaining a fallback copy.
 --   historical_mature: already published >=7 days when first seen. One
 --     cumulative snapshot now. Feeds mature_history baseline only.
 --   transition: published 1-7 days when first seen. One snapshot now, a
@@ -148,10 +149,8 @@ ON baselines(account_id, baseline_mode, metric, observation_point, computed_at);
 -- promotion time (like_anomaly/comment_anomaly/collect_anomaly/share_anomaly/
 -- multi_indicator/comment_like_ratio/cold_start_d7_rough) -- not a fixed
 -- small enum, since BR-HIT-001's 6-channel OR design allows many combinations
--- and BR-HIT-005 requires the video's own trigger_rules to be the cumulative
--- record. This row records the FIRST promotion only; once inserted it is
--- never deleted or reverted (BR-HIT-005 permanence) -- later judgement
--- passes may only add to competitor_videos.trigger_rules, not touch this row.
+-- record. A row may be hard-deleted together with all derived data when a
+-- complete approved-policy re-evaluation proves that the video is not a hit.
 CREATE TABLE IF NOT EXISTS hits (
     hit_id TEXT PRIMARY KEY,
     video_id TEXT NOT NULL REFERENCES competitor_videos(video_id) ON DELETE RESTRICT,
@@ -172,11 +171,9 @@ CREATE TABLE IF NOT EXISTS hits (
     -- rows), not a single literal baselines.baseline_id row.
     baseline_id TEXT,
     run_id TEXT NOT NULL,
-    -- Source document section 13: "处理状态只保留 pending、running、completed、
-    -- failed" -- this is the reverse-prep (transcript+comment) queue status,
-    -- not a business judgement field. No CHECK constraint (would need a full
-    -- table rebuild on an existing production table); enforced in Python by
-    -- run_reverse_prep.py, which is the only writer.
+    -- Historical preparation state retained for existing source records.
+    -- New collection paths must create source facts through the controlled
+    -- external-adapter boundary rather than treating this as a work queue.
     preparation_status TEXT NOT NULL DEFAULT 'pending',
     promoted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(account_id, platform_item_id)
@@ -266,9 +263,8 @@ CREATE TABLE IF NOT EXISTS hit_comments (
     observation_point TEXT,
     -- How this batch was selected -- currently only one real strategy exists
     -- (crawler's own popularity ranking, top N), kept as free text rather
-    -- than an enum since new strategies are expected once purpose-tagged
-    -- multi-stage collection is fully wired (see run_reverse_prep.py's
-    -- module docstring for exactly what is/isn't implemented yet).
+    -- than an enum so that controlled external adapters can record their
+    -- source-specific collection strategy without changing this schema.
     sampling_strategy TEXT,
     run_id TEXT NOT NULL,
     fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

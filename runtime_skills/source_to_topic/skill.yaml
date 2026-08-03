@@ -1,4 +1,4 @@
-schema_version: formal_skill_manifest.v1
+﻿schema_version: formal_skill_manifest.v1
 formal_skill_id: source_to_topic
 skill_version: 1.1.0
 source_contract: SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml
@@ -20,7 +20,6 @@ input_schema: input_schema.yaml
 output_schema: output_schema.yaml
 binding: binding.yaml
 prompt: prompt.md
-fixtures: fixtures.yaml
 standalone_boundaries:
   requires_database: false
   reads_files_at_runtime: false

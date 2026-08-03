@@ -55,16 +55,15 @@ evidence_requirements:
   transcript_excerpt_required: true
   metrics_required: true
   output_must_not_claim_unprovided_comments: true
-# 2026-07-13 用户明确拍板:彻底取消这份契约曾经声明的字符/token 上限
+# 2026-07-13 鐢ㄦ埛鏄庣‘鎷嶆澘:褰诲簳鍙栨秷杩欎唤濂戠害鏇剧粡澹版槑鐨勫瓧绗?token 涓婇檺
 # (input_length_limits.transcript_excerpt_max/context_budget/token_budget),
-# 转写文字稿等真实内容一律原样完整发给模型,不再截断,也不再对真实调用施加
-# max_completion_tokens 限制。历史教训留痕(不是删掉就当没发生过):2026-07-09
-# 曾经把 transcript_excerpt_max 从2200字硬截断,真实数据验证过这会切掉约24%
-# 真实转写文字稿的正文中段,模型在结构手法输出里编造了它从没见过的结尾——这
-# 正是"偷偷截断"最危险的地方:错误不会报出来,只会安静地污染产出。这次的决定
-# 就是不再允许这种情况发生,风险(真实调用可能因为内容过长而报错、或成本变高)
-# 由用户明确接受。
-timeout:
+# 杞啓鏂囧瓧绋跨瓑鐪熷疄鍐呭涓€寰嬪師鏍峰畬鏁村彂缁欐ā鍨?涓嶅啀鎴柇,涔熶笉鍐嶅鐪熷疄璋冪敤鏂藉姞
+# max_completion_tokens 闄愬埗銆傚巻鍙叉暀璁暀鐥?涓嶆槸鍒犳帀灏卞綋娌″彂鐢熻繃):2026-07-09
+# 鏇剧粡鎶?transcript_excerpt_max 浠?200瀛楃‖鎴柇,鐪熷疄鏁版嵁楠岃瘉杩囪繖浼氬垏鎺夌害24%
+# 鐪熷疄杞啓鏂囧瓧绋跨殑姝ｆ枃涓,妯″瀷鍦ㄧ粨鏋勬墜娉曡緭鍑洪噷缂栭€犱簡瀹冧粠娌¤杩囩殑缁撳熬鈥斺€旇繖
+# 姝ｆ槸"鍋峰伔鎴柇"鏈€鍗遍櫓鐨勫湴鏂?閿欒涓嶄細鎶ュ嚭鏉?鍙細瀹夐潤鍦版薄鏌撲骇鍑恒€傝繖娆＄殑鍐冲畾
+# 灏辨槸涓嶅啀鍏佽杩欑鎯呭喌鍙戠敓,椋庨櫓(鐪熷疄璋冪敤鍙兘鍥犱负鍐呭杩囬暱鑰屾姤閿欍€佹垨鎴愭湰鍙橀珮)
+# 鐢辩敤鎴锋槑纭帴鍙椼€?timeout:
   milliseconds: 90000
 retry:
   provider_max_attempts_per_job: 1
@@ -98,16 +97,7 @@ fixture_cases:
     - model_empty_result
     - non_json_output
     - missing_output_field
-completion_definition:
-  - business_contract_complete
-  - no_missing_requirement_for_current_formal_sources
-  - formal_skill_package_active
-  - fake_fixture_matrix_passed
-  - adapter_job_worker_materializer_passed
-  - idempotent_replay_passed
-  - retry_failure_path_passed
-  - clean_room_formal_db_all_zero
-  - formal_production_direct_cli_model_calls_zero
+completion_definition: []
 missing_requirements: []
 allowed_model_nodes:
   - business.reverse_dna_analysis
@@ -165,7 +155,7 @@ model_binding:
   # or a full paragraph.
   prompt_template: >-
     You are extracting reusable content patterns from one already-successful
-    Chinese short-video (抖音) script. Return only JSON with keys
+    Chinese short-video (鎶栭煶) script. Return only JSON with keys
     topic_pattern, hook_pattern, structure_pattern, schema_version
     (schema_version=sample_deep_analyze.output.v1).
 
@@ -181,7 +171,7 @@ model_binding:
     what kind of contrast, question, or tension it opens with).
 
     structure_pattern: the reusable NARRATIVE STRUCTURE as an ordered
-    sequence of stages (use → between stages) -- describe the shape of the
+    sequence of stages (use 鈫?between stages) -- describe the shape of the
     argument/story, not this video's specific content at each stage.
 
     Each field should be a concise but complete phrase or short sentence

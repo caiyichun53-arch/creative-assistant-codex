@@ -1,0 +1,28 @@
+# 外部采集工具的运行设置。
+# 正式数据库位置、模型路线和业务状态不放在这里。
+
+hotspot_collection:
+  provider: trendradar
+  live_enabled: true
+  project_dir: "I:/Creation_assistant-codex"
+  executable: "C:/Users/15891/anaconda3/python.exe"
+  args:
+    - "scripts/integrations/trendradar_runtime.py"
+    - "--trendradar-dir"
+    - "vendor/TrendRadar"
+    - "--output"
+    - "I:/Creation_assistant-runtime/external_collection/trendradar/latest.json"
+    - "--evidence-root"
+    - "I:/Creation_assistant-runtime/external_collection/trendradar/evidence"
+    - "--timeout-seconds"
+    - "300"
+  normalized_json_path: "I:/Creation_assistant-runtime/external_collection/trendradar/latest.json"
+  timeout_seconds: 330
+  max_items: 500
+
+domain_search:
+  live_enabled: true
+  daily_tag_count: 3
+  page_count_per_tag: 1
+
+schema_version: external_collection.v1

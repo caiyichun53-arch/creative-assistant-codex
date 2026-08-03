@@ -1,0 +1,12 @@
+schema_version: formal_skill_binding.v1
+binding_name: formal_draft_frozen_content_plan_v1
+binding_version: 1.0.0
+model_response_format: {type: json_object}
+input_map: {input_assembly: {source: input, key: input_assembly}}
+output_map:
+  node: {source: literal, value: formal_draft}
+  document: {source: model_output, key: document}
+  source_boundaries: {source: model_output, key: source_boundaries}
+  unresolved: {source: model_output, key: unresolved}
+model_input_schema: {type: object, required: [input_assembly], properties: {input_assembly: {type: object}}, additional_properties: false}
+model_output_schema: {type: object, required: [document, source_boundaries, unresolved], properties: {document: {type: object}, source_boundaries: {type: array}, unresolved: {type: array}}, additional_properties: false}

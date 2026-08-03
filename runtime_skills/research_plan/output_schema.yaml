@@ -1,0 +1,17 @@
+type: object
+required: [core_question, provisional_viewpoint, research_scope, research_questions, candidate_claims, evidence_requirements, blocking_claims, required_materials, prohibited_materials, candidate_content_routes, stop_conditions, budget_boundary, risks_uncertainties]
+properties:
+  core_question: {type: string}
+  provisional_viewpoint: {type: string}
+  research_scope: {type: object}
+  research_questions: {type: array}
+  candidate_claims: {type: array}
+  evidence_requirements: {type: array}
+  blocking_claims: {type: array}
+  required_materials: {type: array}
+  prohibited_materials: {type: array}
+  candidate_content_routes: {type: array}
+  stop_conditions: {type: array}
+  budget_boundary: {type: object}
+  risks_uncertainties: {type: array}
+additional_properties: false

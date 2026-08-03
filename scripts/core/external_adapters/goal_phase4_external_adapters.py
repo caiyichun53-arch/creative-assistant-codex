@@ -110,7 +110,9 @@ class _ExternalAdapterBase:
             raise ExternalAdapterError("adapter command capability mismatch")
         result = self.executor.execute(command)
         if result.status != "succeeded":
-            raise ExternalAdapterError(f"{self.adapter_id} command failed: {result.status}")
+            detail = str(result.payload.get("error") or "").strip() if isinstance(result.payload, dict) else ""
+            suffix = f": {detail}" if detail else ""
+            raise ExternalAdapterError(f"{self.adapter_id} command failed: {result.status}{suffix}")
         if not isinstance(result.payload, dict):
             raise ExternalAdapterError("adapter command payload must be an object")
         return result
@@ -144,7 +146,7 @@ class MediaCrawlerCollectorAdapter(_ExternalAdapterBase):
         platform_name = _require_text(platform, "platform").lower()
         if platform_name not in self.supported_platforms:
             raise ExternalAdapterError(f"unsupported MediaCrawler platform: {platform}")
-        cap = _require_positive_int(max_items, "max_items", maximum=5)
+        cap = _require_positive_int(max_items, "max_items", maximum=500)
         url = _require_text(source_url, "source_url")
         source_kind = "creator" if "/user/" in url or (platform_name == "douyin" and url.startswith("MS4wLjABAAAA")) else "detail"
         command = ExternalAdapterCommand(
@@ -166,8 +168,87 @@ class MediaCrawlerCollectorAdapter(_ExternalAdapterBase):
         items = result.payload.get("items")
         if not isinstance(items, list):
             raise ExternalAdapterError("MediaCrawler result must contain items")
-        normalized = [self._normalize_video_item(item, platform_name) for item in items[:cap]]
-        payload = {"items": normalized, "source_platform": platform_name, "comments_requested": with_comments}
+        normalized: list[dict[str, Any]] = []
+        seen_source_ids: set[str] = set()
+        for raw_item in items:
+            item = self._normalize_video_item(raw_item, platform_name)
+            source_id = item["source_id"]
+            if source_id in seen_source_ids:
+                continue
+            seen_source_ids.add(source_id)
+            normalized.append(item)
+            if len(normalized) >= cap:
+                break
+        comments = result.payload.get("comments", [])
+        if with_comments and not isinstance(comments, list):
+            raise ExternalAdapterError("MediaCrawler result must contain a comments array when comments are requested")
+        payload = {
+            "items": normalized,
+            "source_platform": platform_name,
+            "comments_requested": with_comments,
+            "comments": comments if isinstance(comments, list) else [],
+        }
+        return self._run_result(command, result, payload, len(normalized))
+
+    def collect_video_snapshots(
+        self,
+        *,
+        platform: str,
+        source_urls: tuple[str, ...],
+        with_comments: bool = False,
+        max_comments_per_item: int = 60,
+    ) -> ExternalAdapterRunResult:
+        platform_name = _require_text(platform, "platform").lower()
+        if platform_name not in self.supported_platforms:
+            raise ExternalAdapterError(f"unsupported MediaCrawler platform: {platform}")
+        urls = tuple(dict.fromkeys(
+            _require_text(value, "source_url") for value in source_urls
+        ))
+        if not urls or len(urls) > 20:
+            raise ExternalAdapterError("MediaCrawler detail batches require between 1 and 20 videos")
+        comment_limit = _require_positive_int(
+            max_comments_per_item,
+            "max_comments_per_item",
+            maximum=100,
+        )
+        command = ExternalAdapterCommand(
+            adapter_id=self.adapter_id,
+            capability=self.capability,
+            executable="vendor/MediaCrawler/main.py",
+            args=(platform_name, "detail", "--get_comment", "yes" if with_comments else "no"),
+            input_payload={
+                "platform": platform_name,
+                "source_urls": list(urls),
+                "source_kind": "detail",
+                "with_comments": with_comments,
+                "max_comments_per_item": comment_limit,
+            },
+            env_keys=("COLLECTOR_TEST_PROFILE_DIR",),
+            max_items=len(urls),
+            timeout_seconds=max(120, len(urls) * 45),
+        )
+        result = self._execute(command, expected_capability=self.capability)
+        items = result.payload.get("items")
+        if not isinstance(items, list):
+            raise ExternalAdapterError("MediaCrawler batch result must contain items")
+        normalized: list[dict[str, Any]] = []
+        seen_source_ids: set[str] = set()
+        for raw_item in items:
+            item = self._normalize_video_item(raw_item, platform_name)
+            source_id = item["source_id"]
+            if source_id in seen_source_ids:
+                continue
+            seen_source_ids.add(source_id)
+            normalized.append(item)
+        comments = result.payload.get("comments", [])
+        if with_comments and not isinstance(comments, list):
+            raise ExternalAdapterError("MediaCrawler batch result must contain a comments array")
+        payload = {
+            "items": normalized,
+            "source_platform": platform_name,
+            "comments_requested": with_comments,
+            "comments": comments if isinstance(comments, list) else [],
+        }
         return self._run_result(command, result, payload, len(normalized))
 
     @staticmethod
@@ -183,10 +264,15 @@ class MediaCrawlerCollectorAdapter(_ExternalAdapterBase):
             "url": url,
             "title": str(item.get("title") or item.get("desc") or ""),
             "author": str(item.get("author") or item.get("nickname") or ""),
+            "published_at": item.get("published_at") or item.get("create_time"),
+            "duration_seconds": int(item.get("duration_seconds") or item.get("duration_sec") or 0),
+            "music_download_url": str(item.get("music_download_url") or ""),
+            "video_download_url": str(item.get("video_download_url") or item.get("video_url") or ""),
             "metrics": {
                 "like_count": int(item.get("like_count") or item.get("liked_count") or 0),
                 "comment_count": int(item.get("comment_count") or 0),
                 "share_count": int(item.get("share_count") or 0),
+                "collect_count": int(item.get("collect_count") or item.get("collected_count") or 0),
             },
         }
 
@@ -262,6 +348,7 @@ class AsrAdapter(_ExternalAdapterBase):
             args=("--media", "<controlled-media-path>", "--language", language),
             input_payload={
                 "media_ref": _require_text(media_ref, "media_ref"),
+                "controlled_media_path": _require_text(media_path, "media_path"),
                 "media_path_hash": _stable_hash(_require_text(media_path, "media_path")),
                 "language": language,
                 "max_duration_seconds": duration,
@@ -279,6 +366,8 @@ class AsrAdapter(_ExternalAdapterBase):
             "media_ref": media_ref,
             "transcript_ref": transcript_ref,
             "transcript_hash": transcript_hash,
+            "asr_model_ref": str(result.payload.get("asr_model_ref") or self.adapter_id),
+            "vad_model_ref": str(result.payload.get("vad_model_ref") or "not_reported"),
             "duration_seconds": int(result.payload.get("duration_seconds") or 0),
             "segment_count": int(result.payload.get("segment_count") or 0),
             "quality_status": str(result.payload.get("quality_status") or "unknown"),

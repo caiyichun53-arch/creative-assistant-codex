@@ -3,6 +3,129 @@ binding_name: source_to_topic_public_input_to_topic_generation
 binding_version: 1.0.0
 route_name: business.source_to_topic
 route_id: business_analysis
+model_response_format:
+  type: json_object
+model_input_schema:
+  type: object
+  required:
+    - fixture_id
+    - source_content
+    - source_evidence_refs
+    - domain_label
+    - relation_summary
+    - source_kind
+    - event_cluster_summary
+    - deterministic_prefilter
+    - material_packet
+    - duplicate_cooling_status
+    - domain_rule_summary
+    - experience_cards
+    - user_direction
+  properties:
+    fixture_id: string
+    source_content: string
+    source_evidence_refs: array
+    domain_label: string
+    relation_summary: string
+    source_kind: string
+    event_cluster_summary:
+      type: object
+    deterministic_prefilter:
+      type: object
+    material_packet:
+      type: object
+    duplicate_cooling_status:
+      type: object
+    domain_rule_summary: string
+    experience_cards:
+      type: array
+      items:
+        type: object
+    user_direction: string
+  additional_properties: false
+model_output_schema:
+  type: object
+  required:
+    - topic_status
+    - candidate_topic
+    - topic_angle
+    - core_question
+    - audience_relation
+    - content_increment
+    - supporting_evidence
+    - source_constraints
+    - no_result_reason
+    - confidence
+    - angle_discovery
+    - candidate_selection
+    - risks
+    - material_gaps
+    - user_review_required
+    - user_review_reasons
+    - execution_review
+    - experience_usage
+    - schema_version
+  properties:
+    topic_status:
+      type: string
+      enum: [generated, generated_good_candidate, valid_but_weak, needs_review, no_result]
+    candidate_topic:
+      type: string
+    topic_angle:
+      type: string
+    core_question:
+      type: string
+    audience_relation:
+      type: string
+    content_increment:
+      type: string
+    supporting_evidence:
+      type: array
+      minItems: 0
+      maxItems: 8
+      items:
+        type: string
+    source_constraints:
+      type: array
+      minItems: 0
+      maxItems: 8
+      items:
+        type: string
+    no_result_reason:
+      type: string
+      enum: [none, empty_source, insufficient_source_evidence, unsupported_source]
+    confidence:
+      type: string
+      enum: [high, medium, low, none]
+    angle_discovery:
+      type: object
+    candidate_selection:
+      type: object
+    risks:
+      type: array
+      maxItems: 8
+      items:
+        type: string
+    material_gaps:
+      type: array
+      maxItems: 8
+      items:
+        type: string
+    user_review_required:
+      type: boolean
+    user_review_reasons:
+      type: array
+      maxItems: 8
+      items:
+        type: string
+    execution_review:
+      type: object
+    experience_usage:
+      type: object
+    schema_version:
+      type: string
+      const: source_to_topic.output.v1
+  additional_properties: false
 input_map:
   fixture_id:
     source: input

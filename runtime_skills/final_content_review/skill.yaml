@@ -1,0 +1,13 @@
+schema_version: formal_skill_manifest.v1
+formal_skill_id: final_content_review
+skill_version: 1.0.0
+responsibility: Review and produce only the final spoken script from one frozen revised draft.
+non_responsibilities: [collection, external_search, formal_data_write, business_state_transition, human_confirmation, other_skill_invocation]
+runner: FormalBusinessSkillAdapter
+route_name: stage0.review
+route_id: writing_generation
+input_schema: input_schema.yaml
+output_schema: output_schema.yaml
+binding: binding.yaml
+prompt: prompt.md
+standalone_boundaries: {requires_database: false, reads_files_at_runtime: false, writes_files_at_runtime: false, calls_other_skills: false, calls_core_api: false, accesses_external_url: false, uses_chat_memory: false}

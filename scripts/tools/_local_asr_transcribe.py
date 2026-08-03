@@ -18,6 +18,10 @@ import sys
 EMOJI = re.compile(r"[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F300-\U0001F9FF]")
 
 
+def progress(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("audio_path")
@@ -34,6 +38,7 @@ def main() -> int:
     # data/formal/production_activation.sqlite3's hit_transcripts table --
     # the import-time notice specifically survived an earlier fix attempt
     # that only wrapped the AutoModel()/generate() calls, not the imports).
+    progress("progress:loading_transcription_runtime")
     with contextlib.redirect_stdout(io.StringIO()):
         from funasr import AutoModel
         from funasr.utils.postprocess_utils import rich_transcription_postprocess
@@ -44,9 +49,12 @@ def main() -> int:
             vad_kwargs={"max_single_segment_time": 30000},
             disable_update=True,
         )
+        progress("progress:runtime_loaded")
+        progress("progress:transcription_started")
         result = model.generate(
             input=args.audio_path, language="auto", use_itn=True, batch_size_s=60, merge_vad=True, merge_length_s=15
         )
+    progress("progress:transcription_result_received")
     text = "".join(rich_transcription_postprocess(item["text"]) for item in result)
     text = EMOJI.sub("", text).strip()
     # On Windows, a subprocess's stdout defaults to the console's legacy

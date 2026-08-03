@@ -1,0 +1,27 @@
+schema_version: formal_skill_manifest.v1
+formal_skill_id: experience_candidate_propose
+skill_version: 1.0.0
+responsibility: Produce at most one source-frozen reusable spoken-content experience candidate for one content plan.
+non_responsibilities:
+  - automatic_experience_publication
+  - effectiveness_claim
+  - cross_video_generalization
+  - data_read_write
+  - business_state_transition
+  - human_confirmation
+  - other_skill_invocation
+runner: FormalBusinessSkillAdapter
+route_name: stage0.experience_candidate_propose
+route_id: business_analysis
+input_schema: input_schema.yaml
+output_schema: output_schema.yaml
+binding: binding.yaml
+prompt: prompt.md
+standalone_boundaries:
+  requires_database: false
+  reads_files_at_runtime: false
+  writes_files_at_runtime: false
+  calls_other_skills: false
+  calls_core_api: false
+  accesses_external_url: false
+  uses_chat_memory: false

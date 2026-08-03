@@ -1,12 +1,146 @@
 name: 音乐娱乐
 formal_domain_label: music_entertainment
-activation_status: pending_business_input
+description: 音乐作品、歌手、文化记忆、审美、情绪与流行传播；不做娱乐新闻、综艺八卦和未证实传闻。
+activation_status: approved
+workflow_mode: manual_guard
+runtime_requirements:
+- music_audience_browser
 discovery:
-  hotspot_match_terms: [音乐, 歌曲, 歌手, 专辑, 乐队, 演唱会]
-  risk_block_terms: [八卦, 绯闻, 恋情, 私生活, 粉圈, 撕]
+  hotspot_match_terms:
+  - 音乐
+  - 歌曲
+  - 歌手
+  - 专辑
+  - 乐队
+  - 演唱会
+  risk_block_terms:
+  - 八卦
+  - 绯闻
+  - 恋情
+  - 私生活
+  - 粉圈
+  - 撕
   exclude_terms: []
   topic_search:
     active_tags: []
-    broad_domain_tags: [音乐, 歌曲]
-    generic_tags: [热点, 热门, 推荐, 上热门]
-    activity_review_terms: [挑战赛, 挑战, 活动, 打卡, 创作季, 征集, 大赛, 任务, 话题活动]
+    broad_domain_tags:
+    - 音乐
+    - 歌曲
+    generic_tags:
+    - 热点
+    - 热门
+    - 推荐
+    - 上热门
+    - 音乐分享
+    - 音乐推荐
+    - 音乐合集
+    - 歌单
+    - 热门音乐
+    - 经典歌曲
+    minimum_source_support_floor: 2
+    minimum_source_support_ratio: 0.005
+    platform_generic_terms:
+    - 抖音
+    - 汽水
+    - 内容启发搜索
+    - 向全世界安利
+    activity_review_terms:
+    - 挑战赛
+    - 挑战
+    - 活动
+    - 打卡
+    - 创作季
+    - 征集
+    - 大赛
+    - 任务
+    - 话题活动
+    - 成长计划
+    - 种草计划
+    - 乐评计划
+    named_entity_terms:
+    - 周杰伦
+    - 黄家驹
+    - beyond
+    - 陈奕迅
+    - 邓紫棋
+    - 林俊杰
+    - 孙燕姿
+    - 薛之谦
+    - 刘德华
+    - 时代峰峻
+    - 李荣浩
+    - 蔡依林
+    - 王力宏
+    - 陶喆
+    - 王菲
+    - 张学友
+    - 张国荣
+    - 迈克尔杰克逊
+    - 许嵩
+    - 周星驰
+    - 周深
+    - 田馥甄
+    - 单依纯
+    - 张雨生
+    - 徐佳莹
+    - 时代少年团
+    - 梁静茹
+    - 王心凌
+    - 张韶涵
+    - 毛不易
+    - 五月天
+    - 韩红
+    - ladygaga
+    - 张惠妹
+    - 霉霉
+    - drake
+    - 蔡徐坤
+    - 张杰
+    - 梁博
+    - 莫文蔚
+    - 赵雷
+    - 太阳之子
+    - 阿黛尔
+    - 火星哥
+    - 海来阿木
+    - 白鹿
+    - 付航
+    - 碧昂丝
+    - 黄伟文
+    - eminem
+    - 影娱漫谈编辑部
+    - bigbang
+    - taylorswift
+    - 任然
+    - 窦靖童
+    - 罗大佑
+    - 黄霄雲
+    - 唐恬
+    - 贾斯汀比伯
+    - 阿信
+    - 黄子弘凡
+    - 泰勒斯威夫特
+    - 浅影阿
+    - 脱口秀和他的朋友们
+    - 天赐的声音
+    - 歌手2026
+    - 娱乐评论大赏
+    - 奥斯卡
+    work_title_terms:
+    - baby
+    - 海阔天空
+    - 起风了
+    - 天地龙鳞
+    - 唯一
+    - 我怀念的
+    - 仙剑奇侠传
+    - 遇见
+person_name_concept_allowlist:
+    - 华语乐坛
+    - 华语流行
+    - 金曲奖
+    - 乐评
+    - 乐评盘点
+    - 怀旧金曲
+    - 欧美音乐
+    - 经典老歌

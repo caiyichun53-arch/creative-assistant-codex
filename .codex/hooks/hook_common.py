@@ -5,33 +5,181 @@ import json
 import os
 import re
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
-IGNORED_PREFIXES = (
-    ".codex/state/",
-    "artifacts/validation/",
-    ".stage_runtime/",
+IMPLEMENTATION_ACTIONS = (
+    "修复", "修改", "实施", "落地", "接通", "补齐", "写完", "执行",
+    "构建", "升级", "开始做", "继续做", "改代码", "启动superpower",
+)
+IMPLEMENTATION_OBJECTS = (
+    "代码", "系统", "页面", "功能", "hook", "钩子", "护栏", "链路",
+    "实现", "项目", "服务", "数据库", "接口", "运行",
+)
+STRONG_IMPLEMENTATION_PHRASES = (
+    "修复",
+    "允许继续修改",
+    "继续修改",
+    "继续修复",
+    "完成修复",
+    "开始打通",
+    "继续补",
+    "继续做完",
+    "执行实施",
 )
 
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def project_root() -> Path:
-    env_root = os.environ.get("CODEX_PROJECT_ROOT")
-    if env_root:
-        return Path(env_root).resolve()
+def root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def run_git(root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def read_input() -> dict[str, Any]:
+    raw = sys.stdin.read()
+    if not raw.strip():
+        return {}
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        # apply_patch sends the patch body directly in this Codex surface.
+        # Treat it as tool input instead of misreporting a valid patch as bad JSON.
+        return {"tool_input": {"patch": raw}, "_raw_patch_input": True}
+    return value if isinstance(value, dict) else {}
+
+
+def write_json(payload: dict[str, Any]) -> None:
+    print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+
+def prompt_text(data: dict[str, Any]) -> str:
+    for key in ("prompt", "user_prompt", "userPrompt", "message", "input"):
+        value = data.get(key)
+        if isinstance(value, str):
+            return value.strip()
+    return ""
+
+
+def is_implementation_prompt(text: str) -> bool:
+    folded = text.casefold()
+    return (
+        any(value.casefold() in folded for value in STRONG_IMPLEMENTATION_PHRASES)
+        or (
+            any(value.casefold() in folded for value in IMPLEMENTATION_ACTIONS)
+            and any(value.casefold() in folded for value in IMPLEMENTATION_OBJECTS)
+        )
+    )
+
+
+def registry(project: Path) -> dict[str, Any]:
+    path = project / "config" / "business_guardrails" / "stage_registry.json"
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise RuntimeError("implementation stage registry must be one object")
+    return value
+
+
+def current_pointer(project: Path, values: dict[str, Any]) -> dict[str, Any]:
+    path = project / str(values["pointer"])
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or not value.get("stage"):
+        raise RuntimeError("current implementation stage pointer is invalid")
+    return value
+
+
+def current_stage(project: Path) -> str:
+    values = registry(project)
+    return str(current_pointer(project, values)["stage"])
+
+
+def stages_for_path(project: Path, relative_path: str) -> set[str]:
+    raw_path = relative_path.strip().strip('"')
+    candidate = Path(raw_path)
+    if candidate.is_absolute():
+        try:
+            path = candidate.resolve().relative_to(project.resolve()).as_posix()
+        except ValueError:
+            return {"__outside_project__"}
+    else:
+        path = raw_path.replace("\\", "/").lstrip("./")
+    values = registry(project)
+    matches: set[str] = set()
+    for stage, definition in values.get("stages", {}).items():
+        for prefix in definition.get("path_prefixes", []):
+            normalized = str(prefix).replace("\\", "/")
+            if path == normalized or path.startswith(normalized.rstrip("/") + "/"):
+                matches.add(str(stage))
+    return matches
+
+
+def affected_paths(data: dict[str, Any]) -> list[str]:
+    tool_input = data.get("tool_input")
+    if not isinstance(tool_input, dict):
+        tool_input = data.get("toolInput")
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    result: set[str] = set()
+    for key in ("file_path", "filePath", "path"):
+        value = tool_input.get(key)
+        if isinstance(value, str) and value.strip():
+            result.add(value.strip())
+    patch = tool_text(data)
+    if isinstance(patch, str):
+        for value in re.findall(
+            r"^\*\*\* (?:Add|Update|Delete) File: (.+)$",
+            patch,
+            flags=re.MULTILINE,
+        ):
+            result.add(value.strip())
+        # In this Codex surface a hook can receive the JavaScript wrapper
+        # around apply_patch instead of the patch body.  Its line breaks are
+        # escaped, so accept that representation as well.
+        for value in re.findall(
+            r"\*\*\* (?:Add|Update|Delete) File: (.+?)(?=\\n|\r?\n|\*\*\* End Patch)",
+            patch,
+        ):
+            result.add(value.replace("\\\\", "\\").strip().strip('"'))
+    return sorted(result)
+
+
+def tool_text(data: dict[str, Any]) -> str:
+    tool_input = data.get("tool_input")
+    if not isinstance(tool_input, dict):
+        tool_input = data.get("toolInput")
+    if isinstance(tool_input, dict):
+        for key in ("command", "patch", "input"):
+            value = tool_input.get(key)
+            if isinstance(value, str):
+                return value
+    raw = data.get("_raw_patch_input")
+    return raw if isinstance(raw, str) else ""
+
+
+def run_stage_guard(
+    project: Path,
+    *,
+    stage: str,
+    phase: str,
+    paths: list[str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    command = [
+        sys.executable,
+        str(project / "scripts" / "stage_contract_guard.py"),
+        "--stage",
+        stage,
+        "--phase",
+        phase,
+    ]
+    for path in paths or []:
+        command.extend(("--path", path))
     return subprocess.run(
-        ["git", *args],
-        cwd=root,
+        command,
+        cwd=project,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -39,162 +187,76 @@ def run_git(root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def rel(root: Path, path: Path) -> str:
-    return path.resolve().relative_to(root.resolve()).as_posix()
-
-
-def read_stdin_json() -> dict[str, Any]:
-    try:
-        raw = os.sys.stdin.read()
-        if not raw.strip():
-            return {}
-        data = json.loads(raw)
-        return data if isinstance(data, dict) else {}
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid hook JSON input: {exc}") from exc
-
-
-ASSISTANT_RESPONSE_KEYS = (
-    "assistant_response",
-    "assistant_message",
-    "last_assistant_message",
-)
-
-COMPLETION_CLAIM_RE = re.compile(
-    r"("
-    r"已\s*(修复|修改|完成|处理|解决|验证|通过|生效|更新|落地)|"
-    r"(修复|修改|完成|解决|验证|测试)\s*(了|完成|通过)|"
-    r"(可以|已经)\s*(正常|使用|通过|生效)|"
-    r"\b(fixed|completed|complete|done|implemented|updated|changed|working|passing|passes|verified)\b"
-    r")",
-    re.IGNORECASE,
-)
-
-
-def hook_input_text(root: Path, data: dict[str, Any]) -> str:
-    """Return only the final assistant response, never tool or transcript noise."""
-    del root
-    return "\n".join(
-        value.strip()
-        for key in ASSISTANT_RESPONSE_KEYS
-        if isinstance((value := data.get(key)), str) and value.strip()
+def git(project: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=project,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
     )
 
 
-def has_completion_claim(text: str) -> bool:
-    return bool(text and COMPLETION_CLAIM_RE.search(text))
+def workspace_fingerprint(project: Path) -> str:
+    status = git(project, ["status", "--porcelain=v1", "--untracked-files=all"])
+    diff = git(project, ["diff", "--binary", "--"])
+    if status.returncode or diff.returncode:
+        raise RuntimeError("cannot fingerprint the implementation workspace")
+    digest = hashlib.sha256()
+    digest.update(status.stdout.encode("utf-8", errors="replace"))
+    digest.update(diff.stdout.encode("utf-8", errors="replace"))
+    return digest.hexdigest()
 
 
-def hook_json(payload: dict[str, Any]) -> None:
-    print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
-
-
-def hook_system_message(message: str) -> None:
-    hook_json({"continue": True, "systemMessage": message})
-
-
-def hook_stop_continue(reason: str) -> None:
-    hook_json({"decision": "block", "reason": reason})
-
-
-def hook_stop_final(reason: str) -> None:
-    hook_json({"continue": False, "stopReason": reason})
-
-
-def state_dir(root: Path) -> Path:
-    path = root / "artifacts" / "validation" / "state"
+def _state_dir(project: Path) -> Path:
+    path = project / ".codex" / "state"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def validation_dir(root: Path) -> Path:
-    path = root / "artifacts" / "validation"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+def session_key(data: dict[str, Any]) -> str:
+    value = str(data.get("session_id") or "").strip()
+    if not value:
+        return "unknown"
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:20]
 
 
-def current_stage_id(root: Path) -> str:
-    runtime_stage = root / ".stage_runtime" / "current_stage.yaml"
-    if runtime_stage.exists():
-        text = runtime_stage.read_text(encoding="utf-8-sig", errors="replace")
-        for line in text.splitlines():
-            if line.startswith("stage_id:"):
-                return line.split(":", 1)[1].strip().strip("'\"")
-    legacy_stage = root / "execution" / "current_stage.yaml"
-    if legacy_stage.exists():
-        text = legacy_stage.read_text(encoding="utf-8-sig", errors="replace")
-        for key in ("stage_id:", "stage:"):
-            for line in text.splitlines():
-                if line.startswith(key):
-                    return line.split(":", 1)[1].strip().strip("'\"")
-    return "unknown"
+def state_path(project: Path, key: str) -> Path:
+    return _state_dir(project) / f"current_implementation_turn_{key}.json"
 
 
-def modified_files(root: Path) -> list[str]:
-    proc = run_git(root, ["status", "--porcelain=v1", "--untracked-files=all"])
-    if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "git status failed")
-    paths: list[str] = []
-    for line in proc.stdout.splitlines():
-        if len(line) < 4:
-            continue
-        path = line[3:].strip()
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
-        normalized = path.replace("\\", "/")
-        if any(normalized.startswith(prefix) for prefix in IGNORED_PREFIXES):
-            continue
-        paths.append(normalized)
-    return sorted(set(paths))
+def event_log_path(project: Path) -> Path:
+    return _state_dir(project) / "independent_hook_events.jsonl"
 
 
-def workspace_fingerprint(root: Path) -> str:
-    h = hashlib.sha256()
-    files = modified_files(root)
-    h.update(json.dumps(files, ensure_ascii=False, sort_keys=True).encode("utf-8"))
-    diff = run_git(root, ["diff", "--binary", "--"])
-    if diff.returncode != 0:
-        raise RuntimeError(diff.stderr.strip() or "git diff failed")
-    h.update(diff.stdout.encode("utf-8", errors="replace"))
-    for path in files:
-        full = root / path
-        if full.exists() and full.is_file():
-            h.update(path.encode("utf-8"))
-            h.update(full.read_bytes())
-    return h.hexdigest()
+def save_state(project: Path, key: str, payload: dict[str, Any]) -> None:
+    serialized = json.dumps(payload, ensure_ascii=False, indent=2)
+    state_path(project, key).write_text(serialized, encoding="utf-8")
+    # Tool hooks do not receive the conversation session id, so they need the
+    # latest precheck state as a stable fallback for the same turn.
+    (_state_dir(project) / "current_implementation_turn.json").write_text(
+        serialized, encoding="utf-8"
+    )
 
 
-def turn_id_from_input(data: dict[str, Any]) -> str:
-    for key in ("turn_id", "turnId", "id"):
-        value = data.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    seed = json.dumps(data, ensure_ascii=False, sort_keys=True) + utc_now()
-    return "turn-" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
-
-
-def load_turn_state(root: Path) -> dict[str, Any] | None:
-    path = state_dir(root) / "current_turn.json"
-    if not path.exists():
+def load_state(project: Path, key: str) -> dict[str, Any] | None:
+    path = state_path(project, key)
+    if not path.is_file():
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return data if isinstance(data, dict) else None
+    value = json.loads(path.read_text(encoding="utf-8"))
+    return value if isinstance(value, dict) else None
 
 
-def save_turn_state(root: Path, state: dict[str, Any]) -> Path:
-    path = state_dir(root) / "current_turn.json"
-    path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-    return path
+def load_current_state(project: Path) -> dict[str, Any] | None:
+    path = _state_dir(project) / "current_implementation_turn.json"
+    if not path.is_file():
+        return None
+    value = json.loads(path.read_text(encoding="utf-8"))
+    return value if isinstance(value, dict) else None
 
 
-def latest_evidence(root: Path) -> dict[str, Any] | None:
-    files = sorted(validation_dir(root).glob("acceptance-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-    for path in files:
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            continue
-        if isinstance(data, dict):
-            data["_path"] = rel(root, path)
-            return data
-    return None
+def record_event(project: Path, event: str, **details: Any) -> None:
+    payload = {"at": now(), "event": event, "pid": os.getpid(), **details}
+    with event_log_path(project).open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")

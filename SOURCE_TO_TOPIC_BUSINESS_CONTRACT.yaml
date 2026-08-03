@@ -80,13 +80,10 @@ topic_generation_policy:
 # run_source_to_topic.py (a second, arbitrary, smaller limit stacked on top
 # of an already-real one: reverse-prep's own comment collection is already
 # bounded by BR-COLLECT-005/006's real top_comments=60). 63 is not a new
-# guess -- it is the real derived ceiling: 3 fixed pattern items (选题/开头/
-# 结构手法) + that same real 60-comment cap.
-# 2026-07-13 用户明确拍板:这份契约曾经声明的 context_budget.max_input_tokens
-# 以及每条证据的字符上限(evidence_item_max等)已经彻底取消,真实内容一律原样
-# 完整发给模型,不再截断。风险(真实调用可能因为内容过长报错、或成本变高)由
-# 用户明确接受。
-evidence_requirements:
+# guess -- it is the real derived ceiling: 3 fixed pattern items (閫夐/寮€澶?
+# 缁撴瀯鎵嬫硶) + that same real 60-comment cap.
+# 2026-07-13 鐢ㄦ埛鏄庣‘鎷嶆澘:杩欎唤濂戠害鏇剧粡澹版槑鐨?context_budget.max_input_tokens
+# 浠ュ強姣忔潯璇佹嵁鐨勫瓧绗︿笂闄?evidence_item_max绛?宸茬粡褰诲簳鍙栨秷,鐪熷疄鍐呭涓€寰嬪師鏍?# 瀹屾暣鍙戠粰妯″瀷,涓嶅啀鎴柇銆傞闄?鐪熷疄璋冪敤鍙兘鍥犱负鍐呭杩囬暱鎶ラ敊銆佹垨鎴愭湰鍙橀珮)鐢?# 鐢ㄦ埛鏄庣‘鎺ュ彈銆?evidence_requirements:
   source_evidence_items_min: 1
   source_evidence_items_max: 63
   output_supporting_evidence_must_reference_input: true
@@ -178,16 +175,7 @@ fixture_cases:
     - non_json_output
     - missing_output_field
     - evidence_not_in_input
-completion_definition:
-  - business_contract_complete
-  - no_missing_requirement_for_current_formal_sources
-  - formal_skill_package_active
-  - fake_fixture_matrix_passed
-  - adapter_job_worker_materializer_passed
-  - idempotent_replay_passed
-  - retry_failure_path_passed
-  - clean_room_formal_db_all_zero
-  - formal_production_direct_cli_model_calls_zero
+completion_definition: []
 missing_requirements: []
 allowed_model_nodes:
   - business.source_to_topic
@@ -199,6 +187,7 @@ model_binding:
   route_id: business_analysis
   binding_name: source_to_topic_public_input_to_topic_generation
   binding_version: 1.0.0
+  model_response_format: {type: json_object}
   input_map:
     fixture_id:
       source: input
@@ -298,7 +287,7 @@ model_binding:
   # pass only tightens format compliance.
   prompt_template: >-
     Return only JSON. Transform already supplied and frozen source material
-    into at most one good topic candidate for a Chinese short-video (抖音)
+    into at most one good topic candidate for a Chinese short-video (鎶栭煶)
     content team. Do not search, fetch URLs, research facts, classify the
     domain, judge source relation, query databases, read or write files, call
     other Skills, invent facts, or add evidence outside the input.

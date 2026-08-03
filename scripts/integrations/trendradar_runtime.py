@@ -21,6 +21,9 @@ import time
 import tomllib
 from typing import Any
 
+from scripts.core.external_adapters.windows_process import hidden_process_kwargs
+from scripts.core.runtime.runtime_storage import runtime_path
+
 
 _ARTICLE_READER_BOOTSTRAP = """
 import json
@@ -81,6 +84,7 @@ def _git(trendradar_dir: Path, *args: str) -> str:
         encoding="utf-8",
         errors="replace",
         shell=False,
+        **hidden_process_kwargs(),
     )
     return completed.stdout.strip()
 
@@ -115,9 +119,14 @@ def verify_official_install(trendradar_dir: Path) -> dict[str, Any]:
     }
 
 
-def crawl_record_snapshot(trendradar_dir: Path) -> dict[tuple[str, str], tuple[int, str]]:
+def crawl_record_snapshot(
+    trendradar_dir: Path,
+    *,
+    data_dir: Path | None = None,
+) -> dict[tuple[str, str], tuple[int, str]]:
     records: dict[tuple[str, str], tuple[int, str]] = {}
-    for database in sorted((trendradar_dir / "output" / "news").glob("*.db")):
+    news_dir = (data_dir or trendradar_dir / "output") / "news"
+    for database in sorted(news_dir.glob("*.db")):
         try:
             with closing(sqlite3.connect(database)) as conn:
                 for crawl_time, total_items, created_at in conn.execute(
@@ -238,6 +247,7 @@ def read_original_article(
             timeout=timeout_seconds + 5,
             check=False,
             shell=False,
+            **hidden_process_kwargs(),
         )
     except subprocess.TimeoutExpired:
         return {"status": "unavailable", "reason": "original_link_read_timed_out"}
@@ -289,7 +299,8 @@ def run_once(
     stderr_path = evidence_dir / "stderr.log"
     manifest_path = evidence_dir / "manifest.json"
     command = [install["python_executable"], "-m", "trendradar"]
-    before = crawl_record_snapshot(trendradar_dir)
+    data_dir = runtime_path("external_collection", "trendradar", "output")
+    before = crawl_record_snapshot(trendradar_dir, data_dir=data_dir)
     env = dict(os.environ)
     env.update({"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"})
     begin_monotonic = time.monotonic()
@@ -311,6 +322,7 @@ def run_once(
             timeout=timeout_seconds,
             check=False,
             shell=False,
+            **hidden_process_kwargs(),
         )
         return_code = completed.returncode
         stdout, stderr = completed.stdout, completed.stderr
@@ -350,7 +362,7 @@ def run_once(
         _atomic_json(manifest_path, base_manifest)
         return base_manifest | {"manifest_path": str(manifest_path), "items": []}
 
-    after = crawl_record_snapshot(trendradar_dir)
+    after = crawl_record_snapshot(trendradar_dir, data_dir=data_dir)
     changed = changed_crawl_record(before, after)
     if changed is None:
         base_manifest.update(status="failed_no_new_crawl", error="official command produced no new or updated crawl record")

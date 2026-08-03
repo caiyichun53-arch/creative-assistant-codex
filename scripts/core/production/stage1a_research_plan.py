@@ -12,8 +12,14 @@ import os
 from pathlib import Path
 from typing import Any
 
-from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelGatewayError, ModelRequest, ModelRoute
-from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig
+from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelGatewayError
+from scripts.core.model_gateway.formal_skill_adapter import (
+    FormalBusinessSkillAdapter,
+    FormalSkillContract,
+    FormalSkillValidationError,
+)
+from scripts.core.model_gateway.configured_provider import build_configured_model_provider
+from scripts.core.runtime.liveness import budget_for
 from scripts.core.model_gateway.model_router import DEFAULT_MODEL_ENV_PATH, ModelRouter, ModelRouterError
 from scripts.core.production.stage0_content_core import (
     CoreModelRunMaterializer,
@@ -117,19 +123,6 @@ def validate_research_plan_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def research_plan_prompt(input_payload: dict[str, Any]) -> str:
-    return (
-        "You are preparing a research plan only. Do not search, fetch, download, transcribe, or analyze any "
-        "video-platform material. Videos and comments may be noted only as topic-origin clues, never as factual evidence. "
-        "Do not write a content plan, draft, review, or final answer. Return only a JSON object with these exact fields: "
-        + ", ".join(RESEARCH_PLAN_REQUIRED_FIELDS)
-        + ". research_scope must contain included and excluded arrays. budget_boundary must contain positive integer "
-        "max_sources and max_time_minutes. Make blocking claims, evidence needs, material boundaries, risks, and uncertainty explicit. "
-        "Use only the supplied formal-topic and user-requirement context.\n\n"
-        f"Controlled input: {_canonical(input_payload)}"
-    )
-
-
 def _dotenv_value(reference: str, path: Path) -> str:
     if not path.exists():
         return ""
@@ -151,7 +144,7 @@ def _configured_environment_value(reference: str, *, env_path: Path = DEFAULT_MO
 
 
 def build_production_research_plan_gateway(core: Stage0ContentProductionCore) -> ModelGateway:
-    """Build the one permitted formal Mimo path; it never calls a provider directly."""
+    """Build the one provider selected by the bound formal route."""
     if core.data_identity != "production":
         raise StateTransitionError("production research-plan gateway requires production data identity")
     router = ModelRouter.from_file()
@@ -159,22 +152,11 @@ def build_production_research_plan_gateway(core: Stage0ContentProductionCore) ->
     if definition is None or definition.fallback != "none":
         raise ModelRouterError("research-plan route must be explicitly bound with fallback none")
     provider = router.providers.get(definition.provider_ref)
-    if provider is None or provider.provider_type != "mimo":
-        raise ModelRouterError("research-plan route must use the configured Mimo provider")
-    route = router.resolve_bound_route("business_analysis", route_name="stage0.research_plan")
-    if route.provider_name != "hermes":
-        raise ModelRouterError("research-plan route has an unexpected provider adapter")
-    auth_ref = str(provider.settings.get("auth_ref") or "")
-    endpoint_ref = str(provider.settings.get("endpoint_ref") or "")
-    if not auth_ref or not endpoint_ref:
-        raise ModelRouterError("configured Mimo provider lacks auth_ref or endpoint_ref")
-    api_key = _configured_environment_value(auth_ref)
-    base_url = _configured_environment_value(endpoint_ref)
-    if not base_url.startswith(("https://", "http://")):
-        raise ModelRouterError("configured Mimo endpoint must be an HTTP(S) URL")
-    adapter = HermesModelProviderAdapter(
-        HermesModelProviderConfig(api_key=api_key, base_url=base_url, model=route.model_name, timeout_seconds=90, max_retries=0)
-    )
+    if provider is None:
+        raise ModelRouterError("research-plan route must use a configured model provider")
+    limits = budget_for("model")
+    route = router.resolve_bound_route("business_analysis", route_name="stage0.research_plan", parameters={"stream": False})
+    adapter = build_configured_model_provider(provider, route, model_limits=limits)
     return ModelGateway(
         routes={route.route_name: route},
         providers={adapter.provider_name: adapter},
@@ -212,6 +194,39 @@ class Stage1AResearchPlanService:
             idempotency_key=idempotency_key,
         )
 
+    def create_direct_formal_topic_and_generate_plan(
+        self,
+        *,
+        domain_label: str,
+        account_ref: str,
+        core_question: str,
+        scope_or_requirement: str,
+        original_instruction: Any,
+        actor: str,
+        existing_manual_source_ids: tuple[str, ...] = (),
+        known_materials: list[dict[str, Any]] | None = None,
+        material_gaps: list[str] | None = None,
+        timeliness: dict[str, Any] | None = None,
+        risks: list[str] | None = None,
+        related_topic_refs: list[dict[str, Any]] | None = None,
+        idempotency_key: str,
+    ) -> dict[str, str]:
+        """One user instruction confirms the topic, then immediately produces a plan for user review."""
+        direct = self.core.create_direct_formal_topic(
+            domain_label=domain_label, account_ref=account_ref, core_question=core_question,
+            scope_or_requirement=scope_or_requirement, original_instruction=original_instruction,
+            actor=actor, actor_kind="user", existing_manual_source_ids=existing_manual_source_ids,
+            known_materials=known_materials, material_gaps=material_gaps, timeliness=timeliness,
+            risks=risks, related_topic_refs=related_topic_refs, idempotency_key=f"{idempotency_key}:topic",
+        )
+        plan = self.generate_research_plan(
+            task_id=direct["task_id"],
+            user_requirements=json.dumps({"scope_or_requirement": scope_or_requirement, "material_gaps": material_gaps or [], "risks": risks or []}, ensure_ascii=False),
+            actor=actor,
+            idempotency_key=f"{idempotency_key}:research-plan",
+        )
+        return {**direct, "research_plan_version_id": plan["node_version_id"], "research_plan_status": "awaiting_human_review"}
+
     def view_artifact(self, *, version_id: str) -> dict[str, Any]:
         return self.core.get_artifact_payload(version_id)
 
@@ -246,31 +261,54 @@ class Stage1AResearchPlanService:
         else:
             raise StateTransitionError("research plan is not ready for a model execution")
         request_version = self.core.get_node_version(request_version_id)
-        request = self.core.prepare_model_request(
-            task_id=task_id,
-            node_version_id=request_version_id,
-            prompt=research_plan_prompt(self.core.get_input_assembly_payload(request_version["input_assembly_id"])),
+        input_assembly = self.core.get_input_assembly_payload(
+            request_version["input_assembly_id"]
         )
+        contract = FormalSkillContract.from_runtime_skill("research_plan")
         try:
-            model_result = self.gateway.complete(request)
-        except ModelGatewayError:
+            skill_result = FormalBusinessSkillAdapter(
+                contract=contract, gateway=self.gateway
+            ).run(
+                {
+                    "correlation_id": task_id,
+                    "input_assembly": input_assembly,
+                    "schema_version": "research_plan.input.v1",
+                },
+                request_metadata=self.core.prepare_atomic_skill_binding(
+                    task_id=task_id, node_version_id=request_version_id
+                ),
+            )
+        except FormalSkillValidationError as exc:
+            self.core.fail_current_node_from_model(
+                task_id=task_id, node_version_id=request_version_id,
+                model_run_id=exc.model_run_envelope_version_id,
+                failure_stage=("model_output_validation" if exc.model_run_envelope_version_id else "model_execution"),
+                reason=str(exc), raw_model_output=exc.raw_model_output,
+            )
+            raise
+        except ModelGatewayError as exc:
+            self.core.fail_current_node_from_model(
+                task_id=task_id, node_version_id=request_version_id,
+                model_run_id=exc.model_run_envelope_version_id,
+                failure_stage="model_execution", reason=str(exc), raw_model_output=None,
+            )
             raise
         try:
-            raw_plan = json.loads(model_result.output_text)
-            plan = validate_research_plan_payload(raw_plan)
-        except (json.JSONDecodeError, ResearchPlanValidationError) as exc:
-            message = "research plan model output must be valid JSON" if isinstance(exc, json.JSONDecodeError) else str(exc)
+            plan = validate_research_plan_payload(skill_result.output_payload)
+        except ResearchPlanValidationError as exc:
+            message = str(exc)
             self.core.record_model_validation_failure(
                 task_id=task_id,
                 node_version_id=request_version_id,
-                model_run_id=model_result.envelope_version_id,
+                model_run_id=skill_result.model_run_envelope_version_id,
                 reason=message,
+                raw_model_output=skill_result.raw_model_output,
             )
             raise ResearchPlanValidationError(message) from exc
         result = self.core.complete_node_from_model(
             task_id=task_id,
             node_version_id=request_version_id,
-            model_run_id=model_result.envelope_version_id,
+            model_run_id=skill_result.model_run_envelope_version_id,
             output_ref=_payload_hash(plan),
             validation_status="passed",
             actor=actor,

@@ -1,0 +1,16 @@
+{
+  "contract_version": "runtime_storage_v1",
+  "migration_status": "completed",
+  "formal_runtime_root": "I:/Creation_assistant-runtime",
+  "formal_database_filename": "production_activation.sqlite3",
+  "legacy_build_root_data": "data",
+  "runtime_identity_receipt": "runtime_identity.json",
+  "rules": {
+    "formal_runtime_root_must_be_outside_build_root": true,
+    "single_active_formal_root": true,
+    "wrong_root_blocks_formal_operation_after_cutover": true,
+    "legacy_fallback_after_cutover_forbidden": true,
+    "copy_verify_switch_verify_required": true,
+    "migration_digest_is_a_copy_verification_record_not_a_live_write_lock": true
+  }
+}

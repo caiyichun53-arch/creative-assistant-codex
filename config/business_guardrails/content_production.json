@@ -1,0 +1,108 @@
+{
+  "contract_version": "content_production_formal_v1",
+  "status": "active",
+  "scope": {
+    "formal_writes_through_core_only": true,
+    "same_chain_for_all_domains": true,
+    "model_and_provider_fallback_forbidden": true,
+    "manual_source_and_original_instruction_retained": true
+  },
+  "runtime_alignment": {
+    "topic_entry_is_guarded_before_formal_write": true,
+    "research_plan_decision_is_guarded_before_formal_write": true,
+    "content_and_audio_steps_are_guarded_before_formal_write": true,
+    "video_generation_and_external_publication_actions_are_outside_this_system": true,
+    "publication_registration_and_P0_P7_feedback_are_a_separate_design_stage": true,
+    "experience_candidate_is_source_bound_and_requires_user_confirmation_before_library_entry": true,
+    "current_content_contract_is_checked_at_operation_time": true
+  },
+  "entry": {
+    "selected_candidate_immediately_creates_topic_and_research_plan": true,
+    "direct_formal_topic_skips_candidate_and_immediately_creates_research_plan": true,
+    "extra_topic_confirmation_forbidden": true,
+    "person_routes_to_person_exploration": true,
+    "single_work_routes_to_work_exploration": true,
+    "work_list_routes_to_inventory_exploration": true
+  },
+  "formal_sequence": [
+    "research_plan",
+    "deep_research",
+    "content_plan",
+    "formal_draft",
+    "copy_optimization",
+    "de_ai_revision",
+    "review",
+    "audio_production",
+    "audio_review",
+    "text_and_audio_output_only"
+  ],
+  "human_gates": {
+    "research_plan": true,
+    "deep_research_result": "domain_workflow_mode",
+    "content_plan": true,
+    "formal_draft": "domain_workflow_mode",
+    "final_review": true,
+    "audio_review": true,
+    "no_per_item_confirmation_inside_automatic_generation": true,
+    "return_creates_new_version": true,
+    "return_never_overwrites_approved_history": true
+  },
+  "workflow_mode": {
+    "source": "domain_pack.workflow_mode",
+    "allowed_values": ["manual_guard", "mature_automatic"],
+    "changed_by": "user_only",
+    "automatic_maturity_detection": false,
+    "automatic_mode_switch": false,
+    "automatic_rollback_to_manual_guard": false,
+    "manual_guard_requires_research_result_confirmation": true,
+    "manual_guard_requires_initial_draft_confirmation": true,
+    "mature_automatic_allows_those_two_steps_to_continue": true,
+    "confirmed_history_is_immutable": true
+  },
+  "research": {
+    "starts_only_after_research_plan_approval": true,
+    "facts_require_retained_allowed_research_materials": true,
+    "video_audio_transcript_comments_and_video_links_are_not_formal_research_sources": true,
+    "missing_key_evidence_blocks_writing": true
+  },
+  "content": {
+    "each_step_reads_only_approved_upstream_artifact": true,
+    "final_text_requires_user_approval": true,
+    "comparison_routes_are_not_formal_delivery": true,
+    "experience_is_reference_not_automatic_rule": true,
+    "new_experience_candidate_appears_only_when_specific_frozen_breakdowns_support_it": true,
+    "confirmed_experience_is_used_only_when_relevant_to_the_current_plan": true
+  },
+  "audio": {
+    "starts_only_after_final_text_approval": true,
+    "uses_saved_user_confirmed_voice_profile": true,
+    "engine": "local_voxcpm2",
+    "technical_check_required": true,
+    "local_asr_consistency_check_required": true,
+    "user_review_required": true,
+    "audio_only_return_regenerates_audio": true,
+    "content_issue_returns_to_content_review": true
+  },
+  "knowledge_mirror": {
+    "automatic_after_formal_changes": true,
+    "bidirectional_relationships": true,
+    "read_only_for_business_state": true
+  },
+  "failure": {
+    "explicit_status_and_reason_required": true,
+    "raw_model_output_is_retained_when_available": true,
+    "automatic_repeated_retry_forbidden": true,
+    "user_authorized_retry_uses_same_formal_entry": true
+  },
+  "forbidden": [
+    "extra_topic_confirmation",
+    "research_before_plan_approval",
+    "writing_without_retained_evidence",
+    "automatic_human_gate_approval",
+    "silent_model_or_provider_fallback",
+    "silent_overwrite",
+    "automatic_repeated_retry",
+    "audio_before_final_text_approval",
+    "video_generation_or_publication_inside_this_system"
+  ]
+}

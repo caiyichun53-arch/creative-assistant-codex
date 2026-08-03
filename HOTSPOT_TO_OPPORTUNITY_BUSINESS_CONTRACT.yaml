@@ -11,6 +11,7 @@ model_binding:
   route_id: business_analysis
   binding_name: hotspot_to_opportunity_event_to_candidates
   binding_version: 1.0.0
+  model_response_format: {type: json_object}
   input_map:
     event_material:
       source: input
@@ -57,15 +58,8 @@ model_binding:
         type: string
         minLength: 1
   prompt_template: |
-    你只判断这一个已经由 TrendRadar 采集完成的热点事件，不能搜索、抓取、补充事实、写库或重试。
-    依据完整事件材料和启用领域方向，决定是否形成选题机会。不得用热点标题关键词替代领域判断。
-    一个事件可返回零个或多个候选；每个候选必须只属于一个启用领域，并说明核心问题、受众关系、内容增量、具体角度、所用材料引用、时效、风险和给用户的审核原因。
-    只输出一个 JSON 对象，不要 Markdown、解释文字、评分、排名、权重或内部运行信息。对象必须且只能有 outcome、candidates、reason 三个字段。
-    若不适合，必须输出 {{"outcome":"no_candidate","candidates":[],"reason":"具体且简短的不转化原因"}}。
-    若形成候选，outcome 必须为 candidates，reason 必须说明整体判断；每个 candidates 项必须严格采用这个字段形状：{{"domain_label":"一个启用领域","candidate_topic":"具体选题","core_question":"核心问题","audience_relation":"受众关系","content_increment":"内容增量","topic_angle":"具体角度","trendradar_material_refs":["所用原始链接"],"timeliness":"时效说明","risks":["风险或限制；没有则空列表"],"user_review_reason":"给用户的审核原因"}}。trendradar_material_refs 和 risks 必须是字符串列表，不能写成一句话或 null。
-    上述每个 candidates 项还必须追加以下字段：`theme_conflict`（热点背后的母题或冲突）、`domain_bridge`（仅含 `type` 和 `reason`；type 只能是 direct_object、mechanism、audience_impact、cultural_mapping、downstream_effect 之一）、`audience_problem`（目标受众实际需要判断或解决的问题）、`domain_fit`（只能是 core 或 adjacent）、`fit_reason`（为何符合已确认领域方向，而非标题关键词重合）、`primary_lens`（只能是原因解释、普通人关系、反向视角、局部细节、背景补充、后续推演之一）和 `verification_gap`（后续研究仍须补证的内容）。同一事件在同一领域最多一个候选。core 直接服务领域核心问题；adjacent 表示存在真实桥接但必须等待用户明确选择。无法同时说明真实桥接、具体受众问题和内容增量时，必须输出 no_candidate。
-    事件材料：{event_material}
-    启用领域方向：{enabled_domains}
+    浣犲彧鍒ゆ柇杩欎竴涓凡缁忕敱 TrendRadar 閲囬泦瀹屾垚鐨勭儹鐐逛簨浠讹紝涓嶈兘鎼滅储銆佹姄鍙栥€佽ˉ鍏呬簨瀹炪€佸啓搴撴垨閲嶈瘯銆?    渚濇嵁瀹屾暣浜嬩欢鏉愭枡鍜屽惎鐢ㄩ鍩熸柟鍚戯紝鍐冲畾鏄惁褰㈡垚閫夐鏈轰細銆備笉寰楃敤鐑偣鏍囬鍏抽敭璇嶆浛浠ｉ鍩熷垽鏂€?    涓€涓簨浠跺彲杩斿洖闆朵釜鎴栧涓€欓€夛紱姣忎釜鍊欓€夊繀椤诲彧灞炰簬涓€涓惎鐢ㄩ鍩燂紝骞惰鏄庢牳蹇冮棶棰樸€佸彈浼楀叧绯汇€佸唴瀹瑰閲忋€佸叿浣撹搴︺€佹墍鐢ㄦ潗鏂欏紩鐢ㄣ€佹椂鏁堛€侀闄╁拰缁欑敤鎴风殑瀹℃牳鍘熷洜銆?    鍙緭鍑轰竴涓?JSON 瀵硅薄锛屼笉瑕?Markdown銆佽В閲婃枃瀛椼€佽瘎鍒嗐€佹帓鍚嶃€佹潈閲嶆垨鍐呴儴杩愯淇℃伅銆傚璞″繀椤讳笖鍙兘鏈?outcome銆乧andidates銆乺eason 涓変釜瀛楁銆?    鑻ヤ笉閫傚悎锛屽繀椤昏緭鍑?{{"outcome":"no_candidate","candidates":[],"reason":"鍏蜂綋涓旂畝鐭殑涓嶈浆鍖栧師鍥?}}銆?    鑻ュ舰鎴愬€欓€夛紝outcome 蹇呴』涓?candidates锛宺eason 蹇呴』璇存槑鏁翠綋鍒ゆ柇锛涙瘡涓?candidates 椤瑰繀椤讳弗鏍奸噰鐢ㄨ繖涓瓧娈靛舰鐘讹細{{"domain_label":"涓€涓惎鐢ㄩ鍩?,"candidate_topic":"鍏蜂綋閫夐","core_question":"鏍稿績闂","audience_relation":"鍙椾紬鍏崇郴","content_increment":"鍐呭澧為噺","topic_angle":"鍏蜂綋瑙掑害","trendradar_material_refs":["鎵€鐢ㄥ師濮嬮摼鎺?],"timeliness":"鏃舵晥璇存槑","risks":["椋庨櫓鎴栭檺鍒讹紱娌℃湁鍒欑┖鍒楄〃"],"user_review_reason":"缁欑敤鎴风殑瀹℃牳鍘熷洜"}}銆倀rendradar_material_refs 鍜?risks 蹇呴』鏄瓧绗︿覆鍒楄〃锛屼笉鑳藉啓鎴愪竴鍙ヨ瘽鎴?null銆?    涓婅堪姣忎釜 candidates 椤硅繕蹇呴』杩藉姞浠ヤ笅瀛楁锛歚theme_conflict`锛堢儹鐐硅儗鍚庣殑姣嶉鎴栧啿绐侊級銆乣domain_bridge`锛堜粎鍚?`type` 鍜?`reason`锛泃ype 鍙兘鏄?direct_object銆乵echanism銆乤udience_impact銆乧ultural_mapping銆乨ownstream_effect 涔嬩竴锛夈€乣audience_problem`锛堢洰鏍囧彈浼楀疄闄呴渶瑕佸垽鏂垨瑙ｅ喅鐨勯棶棰橈級銆乣domain_fit`锛堝彧鑳芥槸 core 鎴?adjacent锛夈€乣fit_reason`锛堜负浣曠鍚堝凡纭棰嗗煙鏂瑰悜锛岃€岄潪鏍囬鍏抽敭璇嶉噸鍚堬級銆乣primary_lens`锛堝彧鑳芥槸鍘熷洜瑙ｉ噴銆佹櫘閫氫汉鍏崇郴銆佸弽鍚戣瑙掋€佸眬閮ㄧ粏鑺傘€佽儗鏅ˉ鍏呫€佸悗缁帹婕斾箣涓€锛夊拰 `verification_gap`锛堝悗缁爺绌朵粛椤昏ˉ璇佺殑鍐呭锛夈€傚悓涓€浜嬩欢鍦ㄥ悓涓€棰嗗煙鏈€澶氫竴涓€欓€夈€俢ore 鐩存帴鏈嶅姟棰嗗煙鏍稿績闂锛沘djacent 琛ㄧず瀛樺湪鐪熷疄妗ユ帴浣嗗繀椤荤瓑寰呯敤鎴锋槑纭€夋嫨銆傛棤娉曞悓鏃惰鏄庣湡瀹炴ˉ鎺ャ€佸叿浣撳彈浼楅棶棰樺拰鍐呭澧為噺鏃讹紝蹇呴』杈撳嚭 no_candidate銆?    浜嬩欢鏉愭枡锛歿event_material}
+    鍚敤棰嗗煙鏂瑰悜锛歿enabled_domains}
 input_schema:
   type: object
   required: [event_material, enabled_domains]

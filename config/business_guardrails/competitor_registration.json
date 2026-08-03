@@ -1,0 +1,141 @@
+{
+  "contract_version": "cold_start_guard_v13",
+  "platform": "douyin",
+  "account_count": {
+    "minimum_for_new_cold_start": 10,
+    "maximum_for_new_cold_start": 20,
+    "grandfather_existing_cold_starts": true
+  },
+  "collection_policy_version": "first_registration_recent_90d_max50_v3",
+  "common_collector_policy": {
+    "version": "common_collector_v1",
+    "first_crawl": "stock_snapshot_archived",
+    "daily_incremental": "only_newly_published_within_observe_window",
+    "comments": "reverse_prep_only_for_promoted_hits",
+    "comments_top_n": 60,
+    "llm_allowed_for_collection_scope": false
+  },
+  "collection": {
+    "initial_request_limit": 50,
+    "maximum_retained_items": 50,
+    "recent_window_days": 90,
+    "maturity_days": 7,
+    "minimum_reliable_mature_items": 20,
+    "older_history_expansion": "only_when_recent_mature_below_minimum",
+    "older_history_expansion_target": "minimum_reliable_mature_items",
+    "extra_expansion_gates_forbidden": true,
+    "pinned_position_has_no_special_treatment": true
+  },
+  "first_contact": {
+    "historical_mature": {
+      "age_days_minimum": 7,
+      "joins_mature_history_baseline": true
+    },
+    "transition": {
+      "age_days_minimum": 0,
+      "age_days_maximum_exclusive": 7,
+      "daily_refresh_required": true,
+      "joins_mature_history_baseline_only_after_maturity": true,
+      "participates_in_daily_hit_judgment": true,
+      "fabricate_formal_d_series": false
+    },
+    "formal_new": {
+      "source": "daily_discovery_after_registration",
+      "discovery_delay_hours_maximum": 36,
+      "observation_points": 8,
+      "first_observation": "D0",
+      "last_observation": "D7"
+    }
+  },
+  "historical_selection_policy_version": "mature_history_median_channels_v3",
+  "historical_selection": {
+    "metrics": [
+      "like_count",
+      "comment_count",
+      "share_count",
+      "collect_count"
+    ],
+    "baseline_statistic": "median",
+    "single_metric_multiplier": 3.0,
+    "multi_metric_multiplier": 2.0,
+    "minimum_multi_metrics": 2,
+    "normal_account_like_floor": 2000,
+    "small_account_definition": "own_like_p90_below_normal_floor",
+    "small_account_fallback": "own_like_p90",
+    "small_account_p90_percentile": 0.9,
+    "comment_like_ratio_threshold": 0.2,
+    "comment_like_ratio_is_independent_channel": true,
+    "maximum_selection_ratio": null,
+    "iqr_selection_forbidden": true
+  },
+  "formal_d_selection": {
+    "activation_complete_sequences": 20,
+    "rolling_window_complete_sequences": 50,
+    "single_metric_multiplier": 2.0,
+    "multi_metric_multiplier": 1.6,
+    "minimum_multi_metrics": 2
+  },
+  "progress_reporting": {
+    "selection_ratio_numerator": "selected_hit_count",
+    "selection_ratio_denominator": "retained_historical_item_count"
+  },
+  "tag_library": {
+    "source": "selected_historical_content_original_hashtags",
+    "llm_allowed": false,
+    "deterministic_named_entity_registry_is_domain_configured": true,
+    "pending_library_is_refiltered_when_rules_change": true,
+    "filtered_named_entities_are_hard_deleted": true,
+    "whole_library_review": true,
+    "per_tag_confirmation": false,
+    "blocks_preparation_or_breakdown": false
+  },
+  "registration": {
+    "per_account_confirmation": false,
+    "per_step_confirmation": false,
+    "automatic_resume": true,
+    "failure_pause_survives_service_restart": true,
+    "restart_resumes_only_work_not_waiting_for_user": true,
+    "explicit_user_resume_clears_only_selected_pause_state": true,
+    "successful_work_clears_its_persisted_pause": true,
+    "restart_discards_pause_after_formal_state_advanced": true,
+    "contract_reload_pause_clears_after_current_contract_restart": true,
+    "platform_risk_pause_is_persisted": true,
+    "deduplicate_by_platform_item_id": true,
+    "delete_incomplete_temporary_material_before_rebuild": true,
+    "formal_step_receipt_binds_completed_artifact_set": true,
+    "resumed_step_may_not_reuse_stale_request_receipt": true,
+    "completion_receipt_reconciliation_without_external_rerun": true
+  },
+  "runtime_alignment": {
+    "current_contract_digest_checked_before_each_formal_operation": true,
+    "contract_change_after_service_start_blocks_formal_operation": true,
+    "artifact_receipts_bind_only_relevant_policy_scope": true,
+    "legacy_artifacts_are_recomputed_under_current_policy": true,
+    "automatic_deep_breakdown_runs_are_guarded": true,
+    "human_formal_writes_are_guarded": true,
+    "knowledge_mirror_formal_receipts_are_guarded": true
+  },
+  "deep_breakdown": {
+    "one_record_per_completed_spoken_transcript": true,
+    "content_type_is_fixed_classification_only": true,
+    "every_claim_requires_exact_transcript_evidence": true,
+    "real_progression_is_not_forced_into_four_stages": true,
+    "story_or_profile_progression_rejects_biographical_recap_without_spoken_structure": true,
+    "multiple_concrete_writing_methods_are_retained_per_video": true,
+    "comments_describe_reactions_not_effectiveness": true,
+    "performance_causality_claims_are_forbidden": true,
+    "quality_citation_or_structure_failure_is_recorded_and_batch_continues": true,
+    "failed_breakdowns_require_final_summary_before_downstream_progress": true,
+    "formal_backlog_task_freezes_approved_source_snapshot_and_resumes_same_snapshot": true,
+    "provider_declared_incomplete_delivery_gets_one_post_batch_same_input_retry": true,
+    "delivery_retry_never_changes_model_or_input": true,
+    "initial_and_retry_delivery_records_are_both_retained": true,
+    "repeated_delivery_interruption_remains_failed": true,
+    "cold_start_final_confirmation_requires_completed_breakdown_or_explicit_source_exclusion": true
+  },
+  "invalid_derived_results": {
+    "hard_delete_required": true,
+    "recovery_layer_forbidden": true,
+    "fallback_read_forbidden": true
+  }
+}

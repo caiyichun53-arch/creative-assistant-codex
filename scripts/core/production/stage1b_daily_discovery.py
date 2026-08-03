@@ -1,7 +1,7 @@
 """Stage 1B controlled daily candidate discovery.
 
-Only already-recorded, real source facts may enter this path.  It creates
-candidate snapshots and user decisions, never a production task by itself.
+Only already-recorded, real source facts may enter this path.  A user selection
+creates its formal topic and immediately starts its configured research plan.
 """
 
 from __future__ import annotations
@@ -24,19 +24,21 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelGatewayError, ModelRequest
-from scripts.core.model_gateway.hermes_model_provider import HermesModelProviderAdapter, HermesModelProviderConfig
+from scripts.core.model_gateway.configured_provider import build_configured_model_provider
+from scripts.core.runtime.liveness import budget_for
 from scripts.core.model_gateway.model_router import DEFAULT_MODEL_ENV_PATH, ModelRouter, ModelRouterError
 from scripts.core.model_gateway.formal_skill_adapter import (
     FormalSkillContract,
     HOTSPOT_TO_OPPORTUNITY_CONTRACT_PATH,
     FormalSkillValidationError,
-    SOURCE_TO_TOPIC_CONTRACT_PATH,
     apply_binding,
     parse_model_json,
     preprocess_formal_skill_input,
+    require_quality_cutover,
     validate_payload,
     validate_source_to_topic_output_semantics,
 )
+from scripts.core.production.business_runtime_guard import enforce_atomic_skill_runtime_guard
 from scripts.core.production.stage0_content_core import (
     CoreDiscoveryModelRunMaterializer,
     DataIdentityError,
@@ -45,9 +47,14 @@ from scripts.core.production.stage0_content_core import (
     StateTransitionError,
 )
 from scripts.core.business_data.daily_source_acquisition import DailyDiscoverySourceAcquirer, validate_hotspot_collection_contract
-from scripts.core.business_data.run_domain_search import validate_domain_search_execution_contract
+from scripts.core.business_data.run_domain_search import (
+    load_sources_yaml,
+    select_tags_due_for_search,
+    seed_active_tags_from_sources_yaml,
+    validate_domain_search_execution_contract,
+)
 from scripts.core.business_data.domain_labels import (
-    FORMAL_DOMAIN_LABELS,
+    formal_domain_labels,
     get_discovery_policy,
     get_domain_pack,
     hotspot_global_risk_block_terms,
@@ -55,7 +62,6 @@ from scripts.core.business_data.domain_labels import (
 from scripts.core.external_adapters import LocalMediaCrawlerExecutor, LocalTrendRadarExecutor
 
 
-APPROVED_DOMAINS = tuple(sorted(FORMAL_DOMAIN_LABELS))
 EXECUTION_MODES = ("test_isolated", "real_daily_validation", "production_daily")
 SOURCE_TYPES = (
     "hotspot",
@@ -66,17 +72,18 @@ SOURCE_TYPES = (
     "saved_user_direction",
 )
 DAILY_REPORT_SOURCE_TYPES = (
-    "hotspot",
     "daily_competitor_content",
     "historical_high_signal",
     "tag_discovery",
     "question_expansion",
+    "saved_user_direction",
 )
-HOTSPOT_DAILY_PROCESS_LIMIT = 10
 DAILY_SOURCE_VALIDITY_HOURS = 72
 SOURCE_READ_LIMIT = 6
 DISCOVERY_PROMPT_VERSION = "source_to_topic.prompt.v1"
 DISCOVERY_SKILL_VERSION = "source_to_topic.skill.v1"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+DOMAIN_PACK_DIR = REPOSITORY_ROOT / "config" / "domain_packs"
 ORIGINALITY_RELATIONSHIPS = frozenset({"same_topic_original_reconstruction", "problem_expansion", "independent_research"})
 HOTSPOT_DOMAIN_BRIDGE_TYPES = frozenset({
     "direct_object", "mechanism", "audience_impact", "cultural_mapping", "downstream_effect",
@@ -85,7 +92,7 @@ HOTSPOT_DOMAIN_FITS = frozenset({"core", "adjacent"})
 HOTSPOT_PRIMARY_LENSES = frozenset({
     "原因解释", "普通人关系", "反向视角", "局部细节", "背景补充", "后续推演",
 })
-SETTINGS_PATH = ROOT / "config" / "settings.yaml"
+SETTINGS_PATH = ROOT / "config" / "external_collection.yaml"
 
 
 class DailyDiscoveryValidationError(StateTransitionError):
@@ -122,6 +129,34 @@ def _required_natural_chinese(payload: dict[str, Any], key: str) -> str:
     if han_count < 4:
         raise DailyDiscoveryValidationError(f"candidate {key} must be natural Chinese for user display")
     return value
+
+
+def _candidate_assessment_from_judgement(
+    judgement: dict[str, Any], *, expires_at: str | None, supporting_material_count: int = 0
+) -> tuple[dict[str, int], dict[str, str]]:
+    """Turn the frozen source-to-topic judgement into visible, bounded ranking evidence; it never selects a topic."""
+    angle_discovery = judgement.get("angle_discovery") if isinstance(judgement.get("angle_discovery"), dict) else {}
+    distinct = angle_discovery.get("distinct_angle") if isinstance(angle_discovery.get("distinct_angle"), dict) else {}
+    scores = {
+        "demand_strength": 4 if judgement.get("audience_relation") else 0,
+        "information_increment": 4 if judgement.get("content_increment") else 0,
+        "expression_pull": min(5, 3 + supporting_material_count) if judgement.get("topic_angle") else 0,
+        "distinct_angle": 4 if distinct.get("found") else 2,
+        "question_focus": 4 if judgement.get("core_question") else 0,
+        "timeliness": 5 if expires_at else 2,
+    }
+    reasons = {
+        "demand_strength": str(judgement.get("audience_relation") or "no audience relation supplied"),
+        "information_increment": str(judgement.get("content_increment") or "no information increment supplied"),
+        "expression_pull": (
+            f"{judgement.get('topic_angle') or 'no topic angle supplied'}; "
+            f"same-angle supporting materials: {supporting_material_count}"
+        ),
+        "distinct_angle": str(distinct.get("reason") or judgement.get("topic_angle") or "no distinct-angle evidence supplied"),
+        "question_focus": str(judgement.get("core_question") or "no core question supplied"),
+        "timeliness": "source has an explicit validity window" if expires_at else "no explicit time window; only a low default weight is allowed",
+    }
+    return scores, reasons
 
 
 def validate_candidate_judgement(payload: dict[str, Any]) -> dict[str, Any]:
@@ -330,18 +365,11 @@ def build_production_daily_discovery_gateway(core: Stage0ContentProductionCore) 
     if definition is None or definition.fallback != "none" or "topic_screening" not in definition.allowed_task_types:
         raise ModelRouterError("source_to_topic requires an explicit business topic_screening route with fallback none")
     provider = router.providers.get(definition.provider_ref)
-    if provider is None or provider.provider_type != "mimo":
-        raise ModelRouterError("configured source_to_topic provider is unsupported by the current adapter")
-    route = router.resolve_bound_route("business_analysis", route_name="business.source_to_topic")
-    if route.provider_name != "hermes":
-        raise ModelRouterError("source_to_topic route has an unexpected provider adapter")
-    auth_ref, endpoint_ref = str(provider.settings.get("auth_ref") or ""), str(provider.settings.get("endpoint_ref") or "")
-    if not auth_ref or not endpoint_ref:
-        raise ModelRouterError("configured source_to_topic provider lacks auth_ref or endpoint_ref")
-    api_key, base_url = _configured_environment_value(auth_ref), _configured_environment_value(endpoint_ref)
-    if not base_url.startswith(("https://", "http://")):
-        raise ModelRouterError("configured source_to_topic endpoint must be an HTTP(S) URL")
-    adapter = HermesModelProviderAdapter(HermesModelProviderConfig(api_key=api_key, base_url=base_url, model=route.model_name, timeout_seconds=90, max_retries=0))
+    if provider is None:
+        raise ModelRouterError("configured source_to_topic provider is missing")
+    limits = budget_for("model")
+    route = router.resolve_bound_route("business_analysis", route_name="business.source_to_topic", parameters={"stream": False})
+    adapter = build_configured_model_provider(provider, route, model_limits=limits)
     return ModelGateway(routes={route.route_name: route}, providers={adapter.provider_name: adapter}, materializer=CoreDiscoveryModelRunMaterializer(core))
 
 
@@ -398,8 +426,59 @@ class Stage1BDailyDiscoveryService:
         self.core = core
         self.gateway = gateway
         self.source_acquirer = source_acquirer
-        self.source_to_topic_contract = source_to_topic_contract or FormalSkillContract.from_yaml(SOURCE_TO_TOPIC_CONTRACT_PATH)
+        self.source_to_topic_contract = source_to_topic_contract or FormalSkillContract.from_runtime_skill("source_to_topic")
         self.hotspot_to_opportunity_contract = hotspot_to_opportunity_contract or FormalSkillContract.from_yaml(HOTSPOT_TO_OPPORTUNITY_CONTRACT_PATH)
+
+    def _feed_unregistered_account_observation(
+        self,
+        *,
+        domain_label: str,
+        source: dict[str, Any],
+        source_version_id: str,
+        qualified: bool,
+    ) -> dict[str, Any] | None:
+        """Feed real tag-search videos into the shared thirty-day account rule."""
+        if source.get("source_type") != "tag_discovery":
+            return None
+        payload = source.get("payload") if isinstance(source.get("payload"), dict) else {}
+        platform = str(payload.get("platform") or "").strip()
+        account_platform_id = str(payload.get("account_platform_id") or "").strip()
+        platform_item_id = str(payload.get("platform_item_id") or "").strip()
+        title = str(payload.get("title") or "").strip()
+        url = str(payload.get("url") or "").strip()
+        source_time = str(source.get("source_time") or "").strip()
+        if not all((platform, account_platform_id, platform_item_id, title, url, source_time)):
+            return {
+                "status": "skipped_missing_source_identity",
+                "source_object_id": source.get("source_object_id"),
+            }
+        try:
+            observed_at = datetime.fromisoformat(source_time.replace("Z", "+00:00"))
+        except ValueError:
+            return {
+                "status": "skipped_invalid_source_time",
+                "source_object_id": source.get("source_object_id"),
+            }
+        if observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=timezone.utc)
+        observation = self.core.observe_unregistered_account(
+            domain_label=domain_label,
+            account_ref=f"{platform}:{account_platform_id}",
+            account_display_name=str(payload.get("account_name") or account_platform_id).strip(),
+            video_ref=f"{platform}:{platform_item_id}",
+            video_url=url,
+            video_title=title,
+            qualified=qualified,
+            source_ref={
+                "source_version_id": source_version_id,
+                "source_type": source["source_type"],
+                "source_object_id": source["source_object_id"],
+                "formal_source": payload.get("formal_source"),
+                "discovery_tag": payload.get("discovery_tag"),
+            },
+            observed_at=observed_at.isoformat(),
+        )
+        return {"status": "observed", **observation}
 
     def run_daily_discovery(
         self,
@@ -408,17 +487,18 @@ class Stage1BDailyDiscoveryService:
         actor: str,
         idempotency_key: str,
         execution_mode: str,
-        batch_timeout_seconds: int = 600,
         now: datetime | None = None,
-        domains: tuple[str, ...] = APPROVED_DOMAINS,
+        domains: tuple[str, ...] | None = None,
         source_types: tuple[str, ...] = DAILY_REPORT_SOURCE_TYPES,
         reuse_hotspot_discovery_run_id: str | None = None,
+        upstream_failures: tuple[dict[str, Any], ...] = (),
     ) -> dict[str, Any]:
-        requested_domains = tuple(domains)
+        approved_domains = formal_domain_labels()
+        requested_domains = tuple(domains) if domains is not None else tuple(sorted(approved_domains))
         requested_source_types = tuple(source_types)
         if not requested_domains or len(set(requested_domains)) != len(requested_domains):
             raise DailyDiscoveryValidationError("daily discovery requires one or more distinct approved domains")
-        if any(domain_label not in APPROVED_DOMAINS for domain_label in requested_domains):
+        if any(domain_label not in approved_domains for domain_label in requested_domains):
             raise DailyDiscoveryValidationError("daily discovery received an unapproved domain")
         if (
             not requested_source_types
@@ -433,7 +513,7 @@ class Stage1BDailyDiscoveryService:
         if reuse_hotspot_discovery_run_id is not None and set(requested_source_types) != {"hotspot"}:
             raise DailyDiscoveryValidationError("a reused hotspot batch can only run the hotspot conversion path")
         if execution_mode == "production_daily" and set(requested_source_types) != set(DAILY_REPORT_SOURCE_TYPES):
-            raise DailyDiscoveryValidationError("production_daily must run the complete five-source daily report set; manual tasks are not daily report sources")
+            raise DailyDiscoveryValidationError("production_daily must run the complete six-source daily report set")
         if self.core.data_identity != "production" and execution_mode != "test_isolated":
             raise DataIdentityError("non-production discovery data must use test_isolated mode")
         if self.core.data_identity == "production" and execution_mode == "test_isolated":
@@ -444,8 +524,6 @@ class Stage1BDailyDiscoveryService:
             and self.source_acquirer is None
         ):
             raise DailyDiscoveryValidationError("the selected live external source requires its Runtime acquirer")
-        if batch_timeout_seconds < 0:
-            raise DailyDiscoveryValidationError("batch timeout must be zero or a positive number of seconds")
         now = now or datetime.now(timezone.utc)
         request = {
             "discovery_date": discovery_date,
@@ -453,8 +531,8 @@ class Stage1BDailyDiscoveryService:
             "domains": list(requested_domains),
             "execution_mode": execution_mode,
             "source_types": list(requested_source_types),
-            "batch_timeout_seconds": batch_timeout_seconds,
             "reuse_hotspot_discovery_run_id": reuse_hotspot_discovery_run_id,
+            "upstream_failures": list(upstream_failures),
         }
         replay = self.core.find_command_replay("stage1b_execute_daily_discovery", idempotency_key, request)
         if replay:
@@ -463,6 +541,7 @@ class Stage1BDailyDiscoveryService:
             discovery_date=discovery_date,
             actor=actor,
             execution_mode=execution_mode,
+            domains=requested_domains,
             idempotency_key=f"{idempotency_key}:run",
         )
         summary: dict[str, Any] = {
@@ -475,10 +554,13 @@ class Stage1BDailyDiscoveryService:
             "source_readiness": {},
             "source_evidence": {},
             "acquisition": {"status": "not_run", "reason": "test_isolated may use preloaded fixture sources"},
-            "technical_failures": 0,
+            "technical_failures": len(upstream_failures),
+            "upstream_failures": list(upstream_failures),
+            "topic_catalog": {},
+            "account_observation": {"observed": 0, "reviews_ready": [], "skipped": []},
         }
         daily_since = (now - timedelta(hours=DAILY_SOURCE_VALIDITY_HOURS)).isoformat()
-        deadline = time.monotonic() + batch_timeout_seconds
+        deadline: float | None = None
         hotspot_discovery_run_id = reuse_hotspot_discovery_run_id or (
             run["run_id"]
             if self.source_acquirer is not None and "hotspot" in requested_source_types
@@ -501,9 +583,10 @@ class Stage1BDailyDiscoveryService:
                             discovery_run_id=run["run_id"], now=now, deadline_monotonic=deadline
                         )
                         if hotspot["status"] == "completed" and int(hotspot.get("item_count") or 0) > 0:
-                            hotspot["retention"] = self.core.retain_only_latest_hotspot_batch(
-                                discovery_run_id=run["run_id"]
-                            )
+                            hotspot["retention"] = {
+                                "status": "raw_batch_retained",
+                                "automatic_cleanup": False,
+                            }
                     summary["acquisition"] = {
                         "execution_order": [
                             "trendradar_hotspot", "hotspot_conversion", "daily_competitor",
@@ -535,16 +618,26 @@ class Stage1BDailyDiscoveryService:
                 deadline_monotonic=deadline,
             )
             summary["hotspot_audit"] = hotspot_summary["hotspot_audit"]
+            if hotspot_summary["technical_failure"] is not None:
+                summary["technical_failures"] += 1
+                lifecycle_status, failure_reason = "failed", hotspot_summary["technical_failure"]
             if hotspot_discovery_run_id is not None and execution_mode == "production_daily":
-                deleted_hotspots = self.core.clear_hotspot_observations_for_discovery_run(
-                    discovery_run_id=hotspot_discovery_run_id
+                summary["acquisition"].setdefault("hotspot", {})["raw_batch_status"] = (
+                    "retained_after_conversion; automatic cleanup is disabled"
                 )
-                summary["acquisition"].setdefault("hotspot", {})["deleted_raw_items"] = deleted_hotspots
             elif hotspot_discovery_run_id is not None:
                 summary["acquisition"].setdefault("hotspot", {})["raw_batch_status"] = (
                     "latest_reusable_batch; it is replaced only after a later successful collection"
                 )
-            for domain_label in requested_domains:
+            for domain_label in (() if lifecycle_status == "failed" else requested_domains):
+                if "tag_discovery" in requested_source_types:
+                    sources_config = load_sources_yaml(DOMAIN_PACK_DIR / f"{domain_label}.yaml")
+                    seed_result = seed_active_tags_from_sources_yaml(self.core.conn, sources_config)
+                    summary["topic_catalog"][domain_label] = {
+                        "configured_topics": list(sources_config["active_tags"]),
+                        "registration": seed_result,
+                        "note": "configured domain topics are registered before this run's external topic search; the audit packet records which ones were actually searched",
+                    }
                 source_evidence: dict[str, dict[str, Any]] = {
                     source_type: {"status": "not_available", "reason": "no_source_available", "source_refs": []}
                     for source_type in DAILY_REPORT_SOURCE_TYPES
@@ -589,7 +682,7 @@ class Stage1BDailyDiscoveryService:
                     yield from (source for source in loaded_sources if source["source_type"] != "tag_discovery")
                     if "tag_discovery" not in requested_source_types:
                         return
-                    if time.monotonic() >= deadline:
+                    if deadline is not None and time.monotonic() >= deadline:
                         lifecycle_status, failure_reason = "timed_out", "batch deadline reached before tag search; no request was sent or retried"
                         return
                     try:
@@ -617,7 +710,7 @@ class Stage1BDailyDiscoveryService:
                 sources_read = hotspot_summary["sources_read"][domain_label]
                 for index, source in enumerate(ordered_sources()):
                     sources_read += 1
-                    if time.monotonic() >= deadline:
+                    if deadline is not None and time.monotonic() >= deadline:
                         lifecycle_status, failure_reason = "timed_out", "batch deadline reached before the next source; no request was retried"
                         break
                     outcome, reason_code, detail = self._deterministic_filter(domain_label=domain_label, source=source, now=now)
@@ -631,6 +724,21 @@ class Stage1BDailyDiscoveryService:
                         source_version_id=source_result["source_version_id"], outcome=outcome, reason_code=reason_code, detail=detail,
                         idempotency_key=f"{idempotency_key}:{domain_label}:filter:{index}",
                     )
+                    account_observation = self._feed_unregistered_account_observation(
+                        domain_label=domain_label,
+                        source=source,
+                        source_version_id=source_result["source_version_id"],
+                        qualified=outcome == "eligible",
+                    )
+                    if account_observation is not None:
+                        if account_observation["status"] == "observed":
+                            summary["account_observation"]["observed"] += 1
+                            if account_observation.get("human_confirmation_required"):
+                                review_id = account_observation.get("account_review_id")
+                                if review_id and review_id not in summary["account_observation"]["reviews_ready"]:
+                                    summary["account_observation"]["reviews_ready"].append(review_id)
+                        else:
+                            summary["account_observation"]["skipped"].append(account_observation)
                     if outcome != "eligible":
                         filtered[reason_code] = filtered.get(reason_code, 0) + 1
                         if source["source_type"] in source_evidence:
@@ -657,31 +765,43 @@ class Stage1BDailyDiscoveryService:
                             input_payload=assembly_payload,
                         )
                     except ModelGatewayError as exc:
-                        self.core.record_discovery_no_candidate(
-                            run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=None,
-                            reason_code="model_gateway_failed", detail={"reason": str(exc), "retry": "forbidden_after_uncertain_request"},
-                            idempotency_key=f"{idempotency_key}:{domain_label}:absence:{index}",
+                        self.core.record_discovery_source_failure(
+                            run_id=run["run_id"], source_version_id=source_result["source_version_id"],
+                            model_run_id=exc.model_run_envelope_version_id,
+                            failure_stage="model_execution", reason=str(exc), raw_model_output=None,
+                            idempotency_key=f"{idempotency_key}:{domain_label}:failure:{index}",
                         )
                         filtered["model_gateway_failed"] = filtered.get("model_gateway_failed", 0) + 1
                         summary["technical_failures"] += 1
                         if source["source_type"] in source_evidence:
-                            source_evidence[source["source_type"]]["status"] = "no_candidate"
+                            source_evidence[source["source_type"]]["status"] = "failed"
                             source_evidence[source["source_type"]]["reason"] = "model_gateway_failed"
-                        continue
+                        lifecycle_status, failure_reason = "failed", "source-to-topic model gateway failed; batch stopped without retry"
+                        break
                     except (json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
-                        self.core.record_discovery_no_candidate(
+                        failed_model_run_id = (
+                            model_result.envelope_version_id if model_result is not None
+                            else getattr(exc, "model_run_envelope_version_id", None)
+                        )
+                        raw_model_output = getattr(exc, "raw_model_output", None)
+                        if failed_model_run_id is not None:
+                            self.core.record_discovery_model_validation_failure(
+                                model_run_id=failed_model_run_id, reason=str(exc), raw_model_output=raw_model_output,
+                            )
+                        self.core.record_discovery_source_failure(
                             run_id=run["run_id"],
                             source_version_id=source_result["source_version_id"],
-                            model_run_id=model_result.envelope_version_id if model_result is not None else None,
-                            reason_code="model_output_invalid", detail={"reason": str(exc), "retry": "forbidden_after_uncertain_request"},
-                            idempotency_key=f"{idempotency_key}:{domain_label}:absence:{index}",
+                            model_run_id=failed_model_run_id,
+                            failure_stage="model_output_validation", reason=str(exc), raw_model_output=raw_model_output,
+                            idempotency_key=f"{idempotency_key}:{domain_label}:failure:{index}",
                         )
                         filtered["model_output_invalid"] = filtered.get("model_output_invalid", 0) + 1
                         summary["technical_failures"] += 1
                         if source["source_type"] in source_evidence:
-                            source_evidence[source["source_type"]]["status"] = "no_candidate"
+                            source_evidence[source["source_type"]]["status"] = "failed"
                             source_evidence[source["source_type"]]["reason"] = "model_output_invalid"
-                        continue
+                        lifecycle_status, failure_reason = "failed", "source-to-topic model output was invalid; batch stopped without retry"
+                        break
                     if judgement["topic_status"] == "no_result":
                         self.core.record_discovery_no_candidate(
                             run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
@@ -724,12 +844,48 @@ class Stage1BDailyDiscoveryService:
                         "domain": domain_label,
                         "source_reference": {"source_version_id": source_result["source_version_id"], "source_type": source["source_type"], "source_object_id": source["source_object_id"], "source_object_version": source["source_object_version"], "source_time": source["source_time"], "url": source["payload"].get("url", "")},
                     }
-                    self.core.create_discovery_candidate(
-                        run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
-                        candidate_id=f"candidate_{_stable_id({domain_label: source_result['source_version_id'], 'title': candidate_payload['normalized_title']})}",
-                        payload=candidate_payload, idempotency_key=f"{idempotency_key}:{domain_label}:candidate:{index}",
+                    related = self.core.find_related_discovery_candidates(
+                        domain_label=domain_label, core_question=judgement["core_question"], topic_angle=judgement["topic_angle"],
                     )
-                    candidate_count += 1
+                    if related["same_angle"]:
+                        target_candidate = related["same_angle"][0]
+                        support = self.core.record_candidate_support(
+                            candidate_version_id=target_candidate, source_version_id=source_result["source_version_id"],
+                            relation_reason="the same source-to-topic judgement produced the same core question and angle",
+                        )
+                        support_count = self.core.count_candidate_support_materials(
+                            candidate_version_id=support["candidate_version_id"]
+                        )
+                        scores, reasons = _candidate_assessment_from_judgement(
+                            judgement,
+                            expires_at=self._expires_at(source, now=now),
+                            supporting_material_count=support_count,
+                        )
+                        self.core.record_candidate_assessment(
+                            candidate_version_id=support["candidate_version_id"],
+                            dimension_scores=scores,
+                            dimension_reasons=reasons,
+                            assessed_by="source_to_topic_same_angle_material_reassessment",
+                        )
+                    else:
+                        created = self.core.create_discovery_candidate(
+                            run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
+                            candidate_id=f"candidate_{_stable_id({domain_label: source_result['source_version_id'], 'title': candidate_payload['normalized_title']})}",
+                            payload=candidate_payload, idempotency_key=f"{idempotency_key}:{domain_label}:candidate:{index}",
+                        )
+                        for related_candidate in related["different_angle"]:
+                            self.core.record_candidate_relation(
+                                candidate_version_id=created["candidate_version_id"], related_candidate_version_id=related_candidate,
+                                relation_kind="same_topic_different_angle", relation_reason="the same core question has a different frozen topic angle",
+                            )
+                        scores, reasons = _candidate_assessment_from_judgement(
+                            judgement, expires_at=self._expires_at(source, now=now)
+                        )
+                        self.core.record_candidate_assessment(
+                            candidate_version_id=created["candidate_version_id"], dimension_scores=scores,
+                            dimension_reasons=reasons, assessed_by="source_to_topic_frozen_judgement",
+                        )
+                        candidate_count += 1
                     if source["source_type"] in source_evidence:
                         source_evidence[source["source_type"]]["status"] = "has_candidate"
                         source_evidence[source["source_type"]]["reason"] = "candidate_created"
@@ -741,7 +897,7 @@ class Stage1BDailyDiscoveryService:
                 )
                 summary["filtered"][domain_label] = filtered
                 summary["source_evidence"][domain_label] = source_evidence
-                if lifecycle_status == "timed_out":
+                if lifecycle_status in {"timed_out", "failed"}:
                     break
         except KeyboardInterrupt:
             lifecycle_status, failure_reason = "interrupted", "batch interrupted; no uncertain request was retried"
@@ -759,10 +915,11 @@ class Stage1BDailyDiscoveryService:
         return result
 
     def view_daily_snapshot(
-        self, *, run_id: str, domains: tuple[str, ...] = APPROVED_DOMAINS
+        self, *, run_id: str, domains: tuple[str, ...] | None = None
     ) -> dict[str, list[dict[str, Any]]]:
-        requested_domains = tuple(domains)
-        if not requested_domains or any(domain_label not in APPROVED_DOMAINS for domain_label in requested_domains):
+        approved_domains = formal_domain_labels()
+        requested_domains = tuple(domains) if domains is not None else tuple(sorted(approved_domains))
+        if not requested_domains or any(domain_label not in approved_domains for domain_label in requested_domains):
             raise DailyDiscoveryValidationError("snapshot view received an unapproved domain")
         return {
             domain_label: self.core.get_discovery_snapshot(run_id=run_id, domain_label=domain_label)
@@ -782,109 +939,94 @@ class Stage1BDailyDiscoveryService:
         reason: str,
         idempotency_key: str,
     ) -> dict[str, str]:
-        return self.core.select_discovery_candidate(
+        selected = self.core.select_discovery_candidate(
             candidate_version_id=candidate_version_id,
             actor=actor,
             actor_kind="user",
             reason=reason,
             idempotency_key=idempotency_key,
         )
+        from scripts.core.production.stage1a_research_plan import (
+            Stage1AResearchPlanService,
+            build_production_research_plan_gateway,
+        )
+        topic = self.core.get_artifact_payload(selected["topic_version_id"])["payload"]
+        plan = Stage1AResearchPlanService(
+            core=self.core, gateway=build_production_research_plan_gateway(self.core)
+        ).generate_research_plan(
+            task_id=selected["task_id"],
+            user_requirements=_canonical({
+                "scope_or_requirement": topic.get("scope_or_requirement", ""),
+                "material_gaps": topic.get("material_gaps", []),
+                "risks": topic.get("risks", []),
+            }),
+            actor=actor,
+            idempotency_key=f"{idempotency_key}:research-plan",
+        )
+        return {**selected, "research_plan_version_id": plan["node_version_id"], "research_plan_status": "awaiting_human_review"}
 
-    def resubmit_pending_hotspot_judgement(
-        self,
-        *,
-        run_id: str,
-        actor: str,
-        reason: str,
-        idempotency_key: str,
-    ) -> dict[str, Any]:
-        """Submit exactly one user-authorized retry from an already frozen hotspot input."""
-        if not actor.strip() or not reason.strip():
-            raise DailyDiscoveryValidationError("hotspot judgement resubmission requires an actor and reason")
-        request = {"run_id": run_id, "actor": actor, "reason": reason}
-        replay = self.core.find_command_replay("stage1b_resubmit_hotspot_judgement", idempotency_key, request)
-        if replay:
-            return {**replay, "replayed": True}
-        pending = self.core.pending_hotspot_judgement(run_id=run_id)
-        input_payload = pending["input_payload"]
-        enabled_domains = tuple(
-            str(item.get("domain_label"))
-            for item in input_payload.get("enabled_domains", [])
-            if isinstance(item, dict) and str(item.get("domain_label") or "") in APPROVED_DOMAINS
-        )
-        if not enabled_domains:
-            raise DailyDiscoveryValidationError("the frozen hotspot input has no approved enabled domain")
-        source_version_id = str(pending["source_version_id"])
-        source_payload = dict(pending["source_payload"])
-        lifecycle_status, failure_reason, candidate_count = "completed", None, 0
-        try:
-            model_result, judgement = self._run_hotspot_to_opportunity_skill(
-                run_id=run_id,
-                source_version_id=source_version_id,
-                assembly_id=str(pending["assembly_id"]),
-                input_payload=input_payload,
-                enabled_domains=enabled_domains,
+    def verify_stage1_production_closure(self) -> dict[str, str]:
+        return self.core.latest_stage1_production_handoff()
+
+    def preview_daily_review(self, *, domain_label: str, now: datetime | None = None) -> dict[str, Any]:
+        """Read the next daily review packet without collecting, writing or calling a model."""
+        if domain_label not in formal_domain_labels():
+            raise DailyDiscoveryValidationError("daily review preview received an unapproved domain")
+        now = now or datetime.now(timezone.utc)
+        daily_since = (now - timedelta(hours=DAILY_SOURCE_VALIDITY_HOURS)).isoformat()
+        sources_config = load_sources_yaml(DOMAIN_PACK_DIR / f"{domain_label}.yaml")
+        due_topics = select_tags_due_for_search(self.core.conn, domain_label=domain_label)
+        registered_topic_rows = self.core.conn.execute(
+            "SELECT tag FROM domain_search_tags WHERE domain_label=? AND status='active' ORDER BY tag_id",
+            (domain_label,),
+        ).fetchall()
+        registered_topics = [str(row["tag"]) for row in registered_topic_rows]
+        sources = [
+            source for source in self.core.load_real_discovery_sources(
+                domain_label=domain_label,
+                daily_since=daily_since,
+                per_source_limit=SOURCE_READ_LIMIT,
             )
-            if judgement["outcome"] == "no_candidate":
-                self.core.record_discovery_no_candidate(
-                    run_id=run_id,
-                    source_version_id=source_version_id,
-                    model_run_id=model_result.envelope_version_id,
-                    reason_code="hotspot_not_converted",
-                    detail={"reason": judgement["reason"]},
-                    idempotency_key=f"{idempotency_key}:absence",
-                )
-            else:
-                for candidate_index, candidate in enumerate(judgement["candidates"]):
-                    domain = candidate["domain_label"]
-                    payload = {
-                        "title": candidate["candidate_topic"], "why_attention": candidate["audience_relation"],
-                        "new_angle": f"{candidate['topic_angle']}；{candidate['content_increment']}",
-                        "material_readiness": "热点仅提供发现材料；正式研究仍需独立核验。",
-                        "risk_limits": "；".join(candidate["risks"]) or "热点材料仅用于发现，不得替代正式研究证据。",
-                        "originality_relation": "problem_expansion", "normalized_title": _normalize_title(candidate["candidate_topic"]),
-                        "normalized_source_title": _normalize_title(str(source_payload["title"])), "domain": domain,
-                        "source_reference": {"source_version_id": source_version_id, "source_type": "hotspot", "url": source_payload.get("url", "")},
-                        **candidate,
-                    }
-                    self.core.create_discovery_candidate(
-                        run_id=run_id,
-                        source_version_id=source_version_id,
-                        model_run_id=model_result.envelope_version_id,
-                        candidate_id=f"candidate_{_stable_id({domain: source_version_id, 'title': payload['normalized_title']})}",
-                        payload=payload,
-                        candidate_domain_label=domain,
-                        allow_multiple_from_model_run=True,
-                        idempotency_key=f"{idempotency_key}:candidate:{candidate_index}",
-                    )
-                    candidate_count += 1
-        except (ModelGatewayError, json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
-            lifecycle_status, failure_reason = "completed_with_failures", "hotspot judgement resubmission failed; no automatic retry was attempted"
-            self.core.record_discovery_no_candidate(
-                run_id=run_id,
-                source_version_id=source_version_id,
-                model_run_id=None,
-                reason_code="hotspot_judgement_failed",
-                detail={"reason": str(exc), "retry": "forbidden_after_uncertain_request"},
-                idempotency_key=f"{idempotency_key}:failed",
-            )
-        finalization = self.core.complete_discovery_run(
-            run_id=run_id,
-            domains=enabled_domains,
-            lifecycle_status=lifecycle_status,
-            failure_reason=failure_reason,
-            idempotency_key=f"{idempotency_key}:finalize",
-        )
-        result = {**finalization, "candidate_count": candidate_count}
-        self.core.record_completed_command(
-            command="stage1b_resubmit_hotspot_judgement",
-            idempotency_key=idempotency_key,
-            request=request,
-            task_id=run_id,
-            event="stage1b_hotspot_judgement_resubmitted",
-            result={key: str(value) for key, value in result.items()},
-        )
-        return result
+            if source["source_type"] in DAILY_REPORT_SOURCE_TYPES
+        ]
+        return {
+            "review_kind": "pre_run_daily_review",
+            "domain_label": domain_label,
+            "generated_at": now.isoformat(),
+            "hotspot_to_topic": "enabled_in_production_not_called_in_preview",
+            "configured_topics": list(sources_config["active_tags"]),
+            "registered_topics": registered_topics,
+            "topics_due_for_external_search": [
+                {"topic": row["tag"], "topic_id": row["tag_id"], "last_searched_at": row["last_searched_at"]}
+                for row in due_topics
+            ],
+            "topics_pending_registration": [
+                topic for topic in sources_config["active_tags"] if topic not in registered_topics
+            ],
+            "source_readiness": self.core.discovery_source_readiness(
+                domain_label=domain_label, daily_since=daily_since
+            ),
+            "sources": [
+                {
+                    "source_type": source["source_type"],
+                    "source_object_id": source["source_object_id"],
+                    "source_object_version": source["source_object_version"],
+                    "source_time": source["source_time"],
+                    "source": source["payload"],
+                    "rule_result": {
+                        "outcome": outcome,
+                        "reason": reason,
+                        "detail": detail,
+                    },
+                    "model": "not_called_in_preview",
+                }
+                for source in sources
+                for outcome, reason, detail in [
+                    self._deterministic_filter(domain_label=domain_label, source=source, now=now)
+                ]
+            ],
+        }
+
 
     def _process_hotspots_once(
         self,
@@ -906,6 +1048,7 @@ class Stage1BDailyDiscoveryService:
             "filtered": {domain: {} for domain in requested_domains},
             "source_evidence": {domain: dict(empty_evidence) for domain in requested_domains},
             "hotspot_audit": {"events": [], "hard_excluded": 0, "selected_for_detail": 0, "not_selected_after_top_ten": 0},
+            "technical_failure": None,
         }
         if "hotspot" not in requested_source_types:
             return result
@@ -980,14 +1123,6 @@ class Stage1BDailyDiscoveryService:
             eligible_sources.append((index, source, audit_entry))
 
         for selected_index, (index, source, audit_entry) in enumerate(eligible_sources):
-            if selected_index >= HOTSPOT_DAILY_PROCESS_LIMIT:
-                audit_entry.update({
-                    "status": "not_selected_after_top_ten",
-                    "reason_code": "daily_top_ten_limit",
-                    "detail": {"selected_before_this_event": HOTSPOT_DAILY_PROCESS_LIMIT},
-                })
-                result["hotspot_audit"]["not_selected_after_top_ten"] += 1
-                continue
             audit_entry.update({"status": "selected_for_detail", "reason_code": "hotspot_signal_priority"})
             result["hotspot_audit"]["selected_for_detail"] += 1
             detail_result: dict[str, Any] = {"status": "not_required"}
@@ -1036,15 +1171,23 @@ class Stage1BDailyDiscoveryService:
                 )
             except (ModelGatewayError, json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
                 audit_entry.update({"status": "judgement_failed", "reason_code": "hotspot_judgement_failed", "detail": {"reason": str(exc)}})
-                self.core.record_discovery_no_candidate(
-                    run_id=run_id, source_version_id=source_result["source_version_id"], model_run_id=None,
-                    reason_code="hotspot_judgement_failed", detail={"reason": str(exc), "retry": "forbidden_after_uncertain_request"},
-                    idempotency_key=f"{idempotency_key}:hotspot:absence:{index}",
+                failed_model_run_id = getattr(exc, "model_run_envelope_version_id", None)
+                raw_model_output = getattr(exc, "raw_model_output", None)
+                if failed_model_run_id is not None:
+                    self.core.record_discovery_model_validation_failure(
+                        model_run_id=failed_model_run_id, reason=str(exc), raw_model_output=raw_model_output,
+                    )
+                self.core.record_discovery_source_failure(
+                    run_id=run_id, source_version_id=source_result["source_version_id"], model_run_id=failed_model_run_id,
+                    failure_stage="model_output_validation" if failed_model_run_id else "model_execution",
+                    reason=str(exc), raw_model_output=raw_model_output,
+                    idempotency_key=f"{idempotency_key}:hotspot:failure:{index}",
                 )
                 for domain in requested_domains:
                     result["filtered"][domain]["hotspot_judgement_failed"] = result["filtered"][domain].get("hotspot_judgement_failed", 0) + 1
-                    result["source_evidence"][domain] = {"status": "no_candidate", "reason": "hotspot_judgement_failed", "source_refs": []}
-                continue
+                    result["source_evidence"][domain] = {"status": "failed", "reason": "hotspot_judgement_failed", "source_refs": []}
+                result["technical_failure"] = "hotspot model judgement failed; batch stopped without retry"
+                break
             if judgement["outcome"] == "no_candidate":
                 audit_entry.update({"status": "not_converted", "reason_code": "hotspot_not_converted", "detail": {"reason": judgement["reason"]}})
                 self.core.record_discovery_no_candidate(
@@ -1117,6 +1260,11 @@ class Stage1BDailyDiscoveryService:
         input_payload: dict[str, Any],
     ):
         contract = self.source_to_topic_contract
+        enforce_atomic_skill_runtime_guard(
+            entrypoint="stage1b_daily_discovery.source_to_topic",
+            operation=contract.formal_skill_id,
+        )
+        require_quality_cutover(contract)
         contract.validate_contract()
         validate_payload(input_payload, contract.input_schema)
         preprocessed = preprocess_formal_skill_input(contract.formal_skill_id, input_payload)
@@ -1137,11 +1285,17 @@ class Stage1BDailyDiscoveryService:
             model_input_payload=model_input,
         )
         model_result = self.gateway.complete(request)
-        model_output = parse_model_json(model_result.output_text)
-        validate_payload(model_output, contract.model_output_schema)
-        output_payload = apply_binding(contract.output_map, input_payload, model_output, preprocessed)
-        validate_payload(output_payload, contract.output_schema)
-        validate_source_to_topic_output_semantics(input_payload, output_payload)
+        try:
+            model_output = parse_model_json(model_result.output_text)
+            validate_payload(model_output, contract.model_output_schema)
+            output_payload = apply_binding(contract.output_map, input_payload, model_output, preprocessed)
+            validate_payload(output_payload, contract.output_schema)
+            validate_source_to_topic_output_semantics(input_payload, output_payload)
+        except (json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
+            raise FormalSkillValidationError(
+                str(exc), raw_model_output=model_result.output_text,
+                model_run_envelope_version_id=model_result.envelope_version_id,
+            ) from exc
         return model_result, output_payload
 
     def _run_hotspot_to_opportunity_skill(
@@ -1154,6 +1308,11 @@ class Stage1BDailyDiscoveryService:
         enabled_domains: tuple[str, ...],
     ):
         contract = self.hotspot_to_opportunity_contract
+        enforce_atomic_skill_runtime_guard(
+            entrypoint="stage1b_daily_discovery.hotspot_to_opportunity",
+            operation=contract.formal_skill_id,
+        )
+        require_quality_cutover(contract)
         contract.validate_contract()
         validate_payload(input_payload, contract.input_schema)
         model_input = apply_binding(contract.input_map, input_payload, {}, {})
@@ -1173,13 +1332,20 @@ class Stage1BDailyDiscoveryService:
             model_input_payload=model_input,
         )
         model_result = self.gateway.complete(request)
-        model_output = parse_model_json(model_result.output_text)
-        validate_payload(model_output, contract.model_output_schema)
-        output_payload = apply_binding(contract.output_map, input_payload, model_output, {})
-        validate_payload(output_payload, contract.output_schema)
-        return model_result, validate_hotspot_opportunity_judgement(
-            output_payload, enabled_domains=enabled_domains
-        )
+        try:
+            model_output = parse_model_json(model_result.output_text)
+            validate_payload(model_output, contract.model_output_schema)
+            output_payload = apply_binding(contract.output_map, input_payload, model_output, {})
+            validate_payload(output_payload, contract.output_schema)
+            judgement = validate_hotspot_opportunity_judgement(
+                output_payload, enabled_domains=enabled_domains
+            )
+        except (json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
+            raise FormalSkillValidationError(
+                str(exc), raw_model_output=model_result.output_text,
+                model_run_envelope_version_id=model_result.envelope_version_id,
+            ) from exc
+        return model_result, judgement
 
     @staticmethod
     def _hotspot_opportunity_input(
@@ -1209,7 +1375,7 @@ class Stage1BDailyDiscoveryService:
             "question_expansion", "saved_user_direction",
         }:
             return "excluded", "source_not_qualified", {}
-        if domain_label not in FORMAL_DOMAIN_LABELS:
+        if domain_label not in formal_domain_labels():
             return "excluded", "domain_mismatch", {}
         title, url = str(source["payload"].get("title") or ""), str(source["payload"].get("url") or "")
         if len(title.strip()) < 6 or (source["source_type"] not in {"question_expansion", "saved_user_direction"} and not url):
@@ -1235,8 +1401,6 @@ class Stage1BDailyDiscoveryService:
             return "excluded", "outside_domain_policy", {"matched_terms": matched_terms}
         if self.core.discovery_source_seen(source_type=source["source_type"], source_object_id=source["source_object_id"], source_object_version=source["source_object_version"]):
             return "excluded", "source_already_processed", {}
-        if self.core.discovery_candidate_in_cooldown(domain_label=domain_label, normalized_title=normalized_title, now=now.isoformat()):
-            return "excluded", "cooldown_active", {}
         if self.core.formal_topic_title_seen(domain_label=domain_label, normalized_title=normalized_title):
             return "excluded", "already_produced", {}
         return "eligible", "eligible", {"normalized_source_title": normalized_title}
@@ -1305,7 +1469,7 @@ class Stage1BDailyDiscoveryService:
             "source_content": source_content,
             "source_evidence_items": evidence_items[:63],
             "domain_label": domain_label,
-            "relation_summary": "deterministic prefilter passed; duplicate, cooldown and prior production checks are clear for this source version.",
+            "relation_summary": "deterministic prefilter passed; source duplication and prior production checks are clear for this source version. Candidate-level same-angle merging is handled with its formal support record.",
             "source_kind": source_kind,
             "event_cluster_summary": event_cluster_summary,
             "deterministic_prefilter": {
@@ -1342,7 +1506,7 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--domain", choices=APPROVED_DOMAINS, help="one authorized formal domain for a new batch")
+    parser.add_argument("--domain", choices=tuple(sorted(formal_domain_labels())), help="one authorized formal domain for a new batch")
     parser.add_argument(
         "--source-type",
         action="append",
@@ -1351,57 +1515,67 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--actor", required=True, help="audited actor for the explicit user authorization")
     parser.add_argument("--idempotency-key", required=True, help="stable key for this exact authorized run")
-    parser.add_argument("--mode", required=True, choices=EXECUTION_MODES, help="explicit execution identity; no mode can be promoted automatically")
+    parser.add_argument("--mode", choices=EXECUTION_MODES, help="explicit execution identity; no mode can be promoted automatically")
     parser.add_argument("--discovery-date", default=datetime.now(timezone.utc).date().isoformat(), help="YYYY-MM-DD (defaults to UTC today)")
-    parser.add_argument("--batch-timeout-seconds", type=int, default=600, help="bounded batch deadline; timed-out or interrupted batches are not retried")
     parser.add_argument("--reuse-hotspot-run", help="successful hotspot collection run whose temporary batch is reused without collecting again")
-    parser.add_argument("--resubmit-hotspot-judgement-run", help="processing real daily hotspot run whose frozen judgement the user explicitly authorizes to resubmit")
-    parser.add_argument("--purge-real-daily-validation-run", help="existing real daily validation run to physically purge after explicit confirmation")
-    parser.add_argument("--expected-candidate-count", type=int, help="required candidate count guard when purging a real daily validation run")
-    parser.add_argument("--confirmation", help="exact purge confirmation token")
-    parser.add_argument("--reason", help="required audit reason for a resubmission or purge")
+    parser.add_argument("--reason", help="required audit reason for a formal handoff")
+    parser.add_argument("--handoff-selected-candidate", help="candidate version selected by the user for Stage 1A handoff")
+    parser.add_argument("--verify-stage1-production-closure", action="store_true", help="verify completed production daily, user selection, and Stage 1A handoff evidence")
+    parser.add_argument("--inspect-discovery-run", help="read the persisted candidates and failures of one discovery run")
+    parser.add_argument("--preview-daily-review", action="store_true", help="read today's topics, sources and rule results without writes or model calls")
     args = parser.parse_args(argv)
-    special_actions = sum(bool(value) for value in (args.purge_real_daily_validation_run, args.reuse_hotspot_run, args.resubmit_hotspot_judgement_run))
+    special_actions = sum(bool(value) for value in (
+        args.reuse_hotspot_run,
+        args.handoff_selected_candidate,
+        args.verify_stage1_production_closure,
+        args.inspect_discovery_run,
+        args.preview_daily_review,
+    ))
     if special_actions > 1:
         parser.error("choose only one special action")
-    if args.purge_real_daily_validation_run:
-        if args.mode != "real_daily_validation" or not args.reason or args.domain or args.expected_candidate_count is None or not args.confirmation:
-            parser.error(
-                "purge requires --purge-real-daily-validation-run, --mode real_daily_validation, --actor, --reason, "
-                "--expected-candidate-count, --confirmation, and no --domain"
-            )
-    elif args.resubmit_hotspot_judgement_run:
-        if args.mode != "real_daily_validation" or not args.reason or args.domain or args.source_type:
-            parser.error("resubmission requires --resubmit-hotspot-judgement-run, --mode real_daily_validation, --actor, --reason, and no --domain or --source-type")
+    if args.handoff_selected_candidate:
+        if args.mode != "production_daily" or not args.reason or args.domain or args.source_type:
+            parser.error("handoff requires --handoff-selected-candidate, --mode production_daily, --actor, --reason, and no --domain or --source-type")
+    elif args.verify_stage1_production_closure:
+        if args.mode or args.domain or args.source_type:
+            parser.error("Stage 1 closure verification requires --verify-stage1-production-closure and --actor, with no --mode, --domain, or --source-type")
+    elif args.inspect_discovery_run:
+        if args.mode or args.domain or args.source_type or args.reason:
+            parser.error("run inspection requires --inspect-discovery-run and --actor, with no --mode, --domain, --source-type, or --reason")
+    elif args.preview_daily_review:
+        if args.mode or not args.domain or args.source_type or args.reason:
+            parser.error("daily review preview requires --preview-daily-review, --domain and --actor, with no --mode, --source-type, or --reason")
     elif not args.domain:
         parser.error("a new batch requires --domain")
+    elif not args.mode:
+        parser.error("a new batch requires --mode")
 
-    selected_source_types = tuple(args.source_type or SOURCE_TYPES)
+    selected_source_types = tuple(args.source_type or DAILY_REPORT_SOURCE_TYPES)
     if args.reuse_hotspot_run and set(selected_source_types) != {"hotspot"}:
         parser.error("--reuse-hotspot-run requires exactly --source-type hotspot")
     core = Stage0ContentProductionCore.open(FORMAL_DB_PATH, data_identity="production")
     try:
-        if args.purge_real_daily_validation_run:
-            result = core.purge_real_daily_validation_run(
-                run_id=args.purge_real_daily_validation_run,
-                actor=args.actor,
-                reason=args.reason or "",
-                expected_candidate_count=args.expected_candidate_count if args.expected_candidate_count is not None else -1,
-                confirmation=args.confirmation or "",
-            )
-            print(_canonical(result))
+        if args.verify_stage1_production_closure:
+            print(_canonical(core.latest_stage1_production_handoff()))
             return 0
-        if args.resubmit_hotspot_judgement_run:
+        if args.inspect_discovery_run:
+            print(_canonical(core.discovery_run_diagnostics(run_id=args.inspect_discovery_run)))
+            return 0
+        if args.preview_daily_review:
+            service = Stage1BDailyDiscoveryService(core=core, gateway=None)  # type: ignore[arg-type]
+            print(_canonical(service.preview_daily_review(domain_label=args.domain)))
+            return 0
+        if args.handoff_selected_candidate:
             gateway = build_production_daily_discovery_gateway(core)
             service = Stage1BDailyDiscoveryService(core=core, gateway=gateway)
-            result = service.resubmit_pending_hotspot_judgement(
-                run_id=args.resubmit_hotspot_judgement_run,
+            result = service.handoff_selected_candidate(
+                candidate_version_id=args.handoff_selected_candidate,
                 actor=args.actor,
                 reason=args.reason or "",
                 idempotency_key=args.idempotency_key,
             )
             print(_canonical(result))
-            return 0 if result["status"] == "completed" else 2
+            return 0
         source_acquirer = (
             build_production_source_acquirer(core, source_types=selected_source_types)
             if {"hotspot", "tag_discovery"} & set(selected_source_types)
@@ -1414,7 +1588,6 @@ def main(argv: list[str] | None = None) -> int:
             actor=args.actor,
             idempotency_key=args.idempotency_key,
             execution_mode=args.mode,
-            batch_timeout_seconds=args.batch_timeout_seconds,
             domains=(args.domain,),
             source_types=selected_source_types,
             reuse_hotspot_discovery_run_id=args.reuse_hotspot_run,
@@ -1424,7 +1597,3 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if result["status"] == "completed" else 2
     finally:
         core.close()
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

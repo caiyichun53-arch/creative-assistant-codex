@@ -1,85 +1,92 @@
 name: 泛科普-社会与生活
 formal_domain_label: fan_kepu_social_life
+description: 只讨论已经直接改变或即将明确改变普通人生活成本、家庭安排、工作学习、公共服务或日常规则的事实和规则。
 activation_status: approved
-hotspot_direction:
-  target_audience: 想弄明白身边真实变化、并需要据此作出日常判断的普通人
-  direct_problem_standard: 只有热点已直接改变或即将明确改变普通人的生活成本、家庭安排、工作学习、公共服务或日常规则时，才可转题；“可能影响”“引发热议”或“值得关注”不成立。
-  preferred_questions:
-    - 这件事已经怎样影响我的日常选择
-    - 我需要知道什么规则或误解什么
-  do_not_cover:
-    - 证券与投资市场波动
-    - 官员人事和政治表态
-    - 国际关系、全球治理或国家间博弈
-    - 只有远期或推测性价格影响的产业新闻
+workflow_mode: manual_guard
+runtime_requirements: []
 discovery:
-  hotspot_match_terms: [社会, 生活, 家庭, 养老, 教育, 职场, 就业, 消费, 住房, 房产, 婚姻, 人际, 规则, 民生, 经济, 社保]
-  risk_block_terms: [处方, 诊断, 偏方, 急救]
-  exclude_terms:
-    - 编程
-    - 代码
-    - 程序员
-    - 软件开发
-    - 算法
-    - 数据库
-    - 服务器
-    - 芯片
-    - 硬件
-    - 火箭
-    - 航天器
-    - 卫星
-    - 航空航天
-    - 材料科学
-    - 材料技术
-    - 合金
-    - 半导体
-    - 工程技术
-    - 机械工程
-    - 土木工程
-    - 音乐
-    - 歌曲
-    - 歌手
-    - 专辑
-    - 乐队
-    - 演唱会
-    - 乐理
-    - 编曲
-    - 娱乐圈
-    - 综艺
-    - 明星
-    - 粉丝
-    - 偶像
-    - 艺人
-    - 爱豆
-    - 网红
-    - 金融
-    - 证券
-    - 股市
-    - 股票
-    - 两融
-    - 融资融券
-    - 强平
-    - 期货
-    - 官员任免
-    - 人事任免
-    - 人事变动
-    - 政治
-    - 国际关系
-    - 国际政治
-    - 全球治理
-    - 国家利益
-    - 主旨讲话
-    - programming
-    - software
-    - algorithm
-    - database
-    - rocket
-    - aerospace
-    - material science
-    - music
-    - entertainment
+  hotspot_match_terms:
+  - 社会
+  - 生活
+  - 消费
+  - 家庭
+  - 工作
+  - 学习
+  - 公共服务
+  - 日常规则
+  risk_block_terms:
+  - 证券
+  - 投资
+  - 官员
+  - 政治表态
+  - 国际关系
+  - 全球治理
+  - 编程
+  - 软件
+  - 算法
+  - 数据库
+  - 服务器
+  - 芯片
+  - 工程技术
+  - 火箭
+  - 航天
+  - 卫星
+  - 音乐
+  - 歌曲
+  - 歌手
+  - 专辑
+  - 乐队
+  - 演唱会
+  - 娱乐圈
+  - 综艺
+  - 明星
+  - 粉丝
+  - 偶像
+  - 网红
+  - 处方
+  - 诊断
+  - 偏方
+  - 急救
+  exclude_terms: []
   topic_search:
-    active_tags: [科普, 知识]
-    broad_domain_tags: [科普, 知识, 涨知识, 生活, 干货]
-    generic_tags: [热点, 热门, 推荐, 上热门]
-    activity_review_terms: [挑战赛, 挑战, 活动, 打卡, 创作季, 征集, 大赛, 任务, 话题活动]
+    active_tags: []
+    broad_domain_tags:
+    - 社会生活
+    - 生活变化
+    - 日常规则
+    - 消费变化
+    - 家庭安排
+    - 工作学习
+    - 公共服务
+    generic_tags:
+    - 热点
+    - 热门
+    - 社会
+    - 生活
+    - 规则
+    minimum_source_support_floor: 2
+    minimum_source_support_ratio: 0.005
+    platform_generic_terms:
+    - 抖音
+    - 汽水
+    - 内容启发搜索
+    - 向全世界安利
+    activity_review_terms:
+    - 挑战赛
+    - 挑战
+    - 活动
+    - 打卡
+    - 创作季
+    - 征集
+    - 大赛
+    - 任务
+    - 话题活动
+    - 成长计划
+    - 种草计划
+    named_entity_terms: []
+    work_title_terms: []
+person_name_concept_allowlist:
+- 社会生活
+- 日常规则
+- 公共服务
+- 家庭安排

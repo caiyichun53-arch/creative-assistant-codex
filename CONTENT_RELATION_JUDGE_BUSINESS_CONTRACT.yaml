@@ -277,20 +277,7 @@ fixture_cases:
     - invalid_direction_field
     - evidence_not_in_input
     - missing_output_field
-completion_definition:
-  - relation_taxonomy_defined_by_formal_source
-  - directionality_defined_by_formal_source
-  - no_relation_and_insufficient_evidence_distinguished_by_formal_source
-  - technical_failure_distinguished_from_business_results
-  - primary_relation_policy_defined_by_formal_source
-  - formal_skill_package_active
-  - fake_fixture_matrix_passed
-  - left_right_swap_tests_passed
-  - minimal_live_provider_call_passed
-  - postgresql_end_to_end_gate_passed
-  - content_classify_regression_passed
-  - clean_room_formal_db_all_zero
-  - formal_production_direct_cli_model_calls_zero
+completion_definition: []
 missing_requirements: []
 allowed_model_nodes:
   - business.content_relation_judgement

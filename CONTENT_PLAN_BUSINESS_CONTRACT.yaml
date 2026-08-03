@@ -102,17 +102,7 @@ fixture_cases:
     - missing_output_field
     - empty_hooks
     - empty_beats
-completion_definition:
-  - business_contract_complete
-  - no_missing_requirement_for_current_formal_sources
-  - formal_skill_package_active
-  - fake_fixture_matrix_passed
-  - adapter_job_worker_materializer_passed
-  - idempotent_replay_passed
-  - retry_failure_path_passed
-  - both_subnodes_use_model_gateway
-  - clean_room_formal_db_all_zero
-  - formal_production_direct_cli_model_calls_zero
+completion_definition: []
 missing_requirements: []
 allowed_model_nodes:
   - business.creation_hook

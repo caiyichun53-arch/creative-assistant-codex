@@ -1,0 +1,136 @@
+{
+  "contract_version": "daily_operations_formal_v2",
+  "status": "active",
+  "scope": {
+    "platform": "douyin",
+    "requires_completed_cold_start": true,
+    "must_reuse_cold_start_assets": true,
+    "separate_temporary_pipeline_forbidden": true,
+    "formal_writes_through_core_only": true
+  },
+  "runtime_alignment": {
+    "automatic_daily_run_is_guarded": true,
+    "daily_human_formal_actions_are_guarded": true,
+    "current_daily_contract_is_checked_at_operation_time": true,
+    "mismatch_blocks_formal_operation": true
+  },
+  "schedule": {
+    "daily_local_time": "08:00",
+    "automatic_start_is_required": true,
+    "automatic_start_business_purpose": "collect_new_publications_from_confirmed_competitor_accounts",
+    "all_domains_share_one_schedule": true,
+    "newly_completed_competitor_joins_shared_task": true,
+    "automatic_start_must_not_be_disabled_for_lack_of_user_presence": true,
+    "automatic_start_does_not_bypass_formal_runtime_guard": true,
+    "cold_start_completion_triggers_first_run": true,
+    "restart_recovers_only_a_missing_never_scheduled_first_run": false,
+    "restart_restores_status_without_dispatching_tracking": true,
+    "first_run_domain_scope_is_recorded_before_external_work": true,
+    "started_failed_or_interrupted_first_run_counts_as_already_dispatched": true,
+    "nonproduction_or_validation_runs_do_not_satisfy_first_run": true,
+    "interrupted_or_failed_first_run_requires_user_retry": true,
+    "daily_collection_and_candidate_discovery_are_distinct_steps": true,
+    "failed_run_is_recorded": true,
+    "automatic_failure_retry": false
+  },
+  "competitor_tracking": {
+    "all_active_confirmed_accounts": true,
+    "tracking_starts_after_each_formal_competitor_registration": true,
+    "tracking_does_not_wait_for_topic_or_creation": true,
+    "candidate_discovery_waits_for_domain_cold_start_completion": true,
+    "reuse_one_retained_browser_session": true,
+    "daily_video_observation": "D0-D7",
+    "runtime_hit_policy_must_match_cold_start_contract": true,
+    "new_hits_continue_to_material_preparation_and_breakdown": true,
+    "material_preparation_and_breakdown_are_independent_states": true,
+    "same_day_user_retry_only_reprocesses_unfinished_hits": true,
+    "prepared_material_is_reused_for_breakdown_retry": true,
+    "next_day_automatic_retry_of_prior_failures": false
+  },
+  "discovery": {
+    "source_types": [
+      "daily_competitor_content",
+      "historical_high_signal",
+      "tag_discovery",
+      "question_expansion",
+      "saved_user_direction"
+    ],
+    "all_confirmed_sources_run_in_production": true,
+    "runtime_source_freeze_forbidden": true,
+    "tag_rotation_count": 3,
+    "tag_pages_per_search": 1,
+    "registered_competitor_videos_are_deduplicated": true,
+    "unregistered_account_observation_days": 30,
+    "unregistered_account_review_trigger_distinct_videos": 3,
+    "unregistered_account_review_recent_video_count": 10,
+    "confirmed_new_competitor_registers_immediately": true,
+    "candidate_relationships": {
+      "same_question_same_angle": "merge_support_and_rescore",
+      "same_question_different_angle": "retain_both_and_link"
+    },
+    "candidate_pool_observation_days": 14,
+    "candidate_reactivation_on_new_same_angle_support": true
+  },
+  "ranking": {
+    "weights": {
+      "demand_strength": 22,
+      "information_increment": 22,
+      "expression_pull": 18,
+      "distinct_angle": 16,
+      "question_focus": 12,
+      "timeliness": 10
+    },
+    "daily_report_limit": 10,
+    "daily_report_is_priority_view_only": true,
+    "daily_processing_limit_forbidden": true,
+    "daily_selection_limit_forbidden": true,
+    "zero_candidates_allowed": true
+  },
+  "human_boundaries": {
+    "candidate_selection_is_formal_topic_confirmation": true,
+    "selected_candidate_immediately_generates_research_plan": true,
+    "research_starts_only_after_plan_confirmation": true,
+    "direct_formal_topic_skips_candidate": true,
+    "direct_formal_topic_keeps_original_manual_source": true,
+    "direct_formal_topic_is_not_subject_to_daily_limit": true,
+    "person_name_routes_to_person_exploration": true,
+    "single_work_routes_to_work_exploration": true,
+    "work_list_routes_to_inventory_exploration": true,
+    "exploration_materials_are_retained_through_core": true,
+    "exploration_has_no_per_material_human_confirmation": true,
+    "exploration_stops_only_for_final_direction": true,
+    "confirmed_exploration_direction_immediately_generates_research_plan": true
+  },
+  "special_exploration": {
+    "person_initial_representative_works_minimum": 10,
+    "person_initial_representative_works_maximum": 12,
+    "person_initial_audience_material_view_limit": 600,
+    "person_platform_sessions_are_separate_and_reused_per_scan": true,
+    "platform_failure_is_reported_without_substitution_or_automatic_retry": true,
+    "single_work_requires_material_supported_3_to_5_minute_direction": true,
+    "playlist_minimum_works": 10,
+    "playlist_requires_shared_question_or_angle": true,
+    "playlist_does_not_default_to_final_ranking": true
+  },
+  "tag_library": {
+    "extraction_and_maintenance_use_llm": false,
+    "daily_search_records_are_retained": true,
+    "no_automatic_pause_or_delete": true,
+    "maintenance_is_whole_library_review": true,
+    "accepted_delete_is_irreversible": true
+  },
+  "knowledge_mirror": {
+    "automatic_after_formal_changes": true,
+    "bidirectional_relationships": true,
+    "read_only_for_business_state": true
+  },
+  "forbidden": [
+    "daily_hard_content_limit",
+    "top_ten_as_processing_cap",
+    "extra_topic_confirmation_after_selection",
+    "model_based_tag_extraction_or_maintenance",
+    "automatic_tag_pause_or_delete",
+    "automatic_model_or_provider_fallback",
+    "repeated_automatic_retry_after_failure"
+  ]
+}

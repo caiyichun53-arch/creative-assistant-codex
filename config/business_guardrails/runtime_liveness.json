@@ -1,0 +1,17 @@
+{
+  "contract_version": "runtime_liveness_v2",
+  "scope": "formal_business_execution_only",
+  "principles": {
+    "fixed_total_timeout_forbidden": true,
+    "activity_is_required_to_distinguish_slow_from_stalled": true,
+    "automatic_repeated_retry_forbidden": true,
+    "completed_work_must_be_reused_on_user_resume": true,
+    "failure_reason_and_last_activity_required": true
+  },
+  "budgets": {
+    "model": {"first_activity_seconds": 90, "stalled_seconds": 120},
+    "collection": {"first_activity_seconds": 90, "stalled_seconds": 120},
+    "transcription": {"first_activity_seconds": 120, "stalled_seconds": 180},
+    "audio_generation": {"first_activity_seconds": 120, "stalled_seconds": 300}
+  }
+}

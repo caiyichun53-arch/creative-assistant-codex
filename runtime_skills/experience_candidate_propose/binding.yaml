@@ -1,0 +1,29 @@
+schema_version: formal_skill_binding.v1
+binding_name: experience_candidate_frozen_breakdowns_v1
+binding_version: 1.0.0
+input_map:
+  domain_label: {source: input, key: domain_label}
+  content_plan_context: {source: input, key: content_plan_context}
+  frozen_breakdowns: {source: input, key: frozen_breakdowns}
+output_map:
+  decision: {source: model_output, key: decision}
+  candidate: {source: model_output, key: candidate}
+  source_ids: {source: model_output, key: source_ids}
+model_input_schema:
+  type: object
+  required: [domain_label, content_plan_context, frozen_breakdowns]
+  properties:
+    domain_label: {type: string}
+    content_plan_context: {type: object}
+    frozen_breakdowns: {type: array}
+  additional_properties: false
+model_output_schema:
+  type: object
+  required: [decision, candidate, source_ids]
+  properties:
+    decision: {type: string, enum: [proposal, no_proposal]}
+    candidate: {}
+    source_ids: {type: array}
+  additional_properties: false
+model_response_format:
+  type: json_object

@@ -1,0 +1,43 @@
+schema_version: formal_skill_binding.v1
+binding_name: research_plan_frozen_topic_v1
+binding_version: 1.0.0
+model_response_format: {type: json_object}
+input_map:
+  input_assembly: {source: input, key: input_assembly}
+output_map:
+  core_question: {source: model_output, key: core_question}
+  provisional_viewpoint: {source: model_output, key: provisional_viewpoint}
+  research_scope: {source: model_output, key: research_scope}
+  research_questions: {source: model_output, key: research_questions}
+  candidate_claims: {source: model_output, key: candidate_claims}
+  evidence_requirements: {source: model_output, key: evidence_requirements}
+  blocking_claims: {source: model_output, key: blocking_claims}
+  required_materials: {source: model_output, key: required_materials}
+  prohibited_materials: {source: model_output, key: prohibited_materials}
+  candidate_content_routes: {source: model_output, key: candidate_content_routes}
+  stop_conditions: {source: model_output, key: stop_conditions}
+  budget_boundary: {source: model_output, key: budget_boundary}
+  risks_uncertainties: {source: model_output, key: risks_uncertainties}
+model_input_schema:
+  type: object
+  required: [input_assembly]
+  properties: {input_assembly: {type: object}}
+  additional_properties: false
+model_output_schema:
+  type: object
+  required: [core_question, provisional_viewpoint, research_scope, research_questions, candidate_claims, evidence_requirements, blocking_claims, required_materials, prohibited_materials, candidate_content_routes, stop_conditions, budget_boundary, risks_uncertainties]
+  properties:
+    core_question: {type: string}
+    provisional_viewpoint: {type: string}
+    research_scope: {type: object}
+    research_questions: {type: array}
+    candidate_claims: {type: array}
+    evidence_requirements: {type: array}
+    blocking_claims: {type: array}
+    required_materials: {type: array}
+    prohibited_materials: {type: array}
+    candidate_content_routes: {type: array}
+    stop_conditions: {type: array}
+    budget_boundary: {type: object}
+    risks_uncertainties: {type: array}
+  additional_properties: false

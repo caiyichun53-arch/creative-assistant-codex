@@ -8,7 +8,13 @@ from scripts.core.persistence.goal01_store import PersistenceStore, content_hash
 
 
 class ModelGatewayError(RuntimeError):
-    pass
+    """A failed atomic model call, with its retained run record when available."""
+
+    def __init__(
+        self, message: str, *, model_run_envelope_version_id: str | None = None
+    ) -> None:
+        super().__init__(message)
+        self.model_run_envelope_version_id = model_run_envelope_version_id
 
 
 @dataclass(frozen=True)
@@ -36,6 +42,7 @@ class ModelRequest:
     binding_name: str | None = None
     binding_version: str | None = None
     binding_hash: str | None = None
+    response_format: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
 
 
@@ -203,6 +210,9 @@ class ModelGateway:
             provider_result = provider.complete(request, route)
         except Exception as exc:  # noqa: BLE001 - provider boundary records failure envelope.
             duration_ms = max(0, self.monotonic_ms() - start_ms)
+            provider_diagnostics = getattr(exc, "diagnostics", None)
+            if not isinstance(provider_diagnostics, dict):
+                provider_diagnostics = {}
             envelope = self._build_envelope(
                 request=request,
                 route=route,
@@ -213,9 +223,13 @@ class ModelGateway:
                 cost={},
                 provider_request_id=None,
                 error={"code": "provider_error", "message": str(exc)},
+                metadata={"provider_diagnostics": provider_diagnostics} if provider_diagnostics else None,
             )
-            self.materializer.persist_envelope(envelope)
-            raise ModelGatewayError(f"model provider failed: {exc}") from exc
+            envelope_version_id = self.materializer.persist_envelope(envelope)
+            raise ModelGatewayError(
+                f"model provider failed: {exc}",
+                model_run_envelope_version_id=envelope_version_id,
+            ) from exc
 
         duration_ms = max(0, self.monotonic_ms() - start_ms)
         if route.timeout_ms is not None and duration_ms > route.timeout_ms:
@@ -231,8 +245,11 @@ class ModelGateway:
                 error={"code": "timeout", "timeout_ms": route.timeout_ms, "duration_ms": duration_ms},
                 metadata=provider_result.metadata,
             )
-            self.materializer.persist_envelope(envelope)
-            raise ModelGatewayError(f"model provider timed out after {duration_ms}ms")
+            envelope_version_id = self.materializer.persist_envelope(envelope)
+            raise ModelGatewayError(
+                f"model provider timed out after {duration_ms}ms",
+                model_run_envelope_version_id=envelope_version_id,
+            )
 
         envelope = self._build_envelope(
             request=request,

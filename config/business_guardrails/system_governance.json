@@ -1,0 +1,104 @@
+{
+  "contract_version": "system_governance_v2",
+  "status": "active_implementation",
+  "scope": "implementation_and_formal_business_execution_only",
+  "skill_boundary": {
+    "business_model_judgment_requires_registered_atomic_skill": true,
+    "business_model_judgment_examples": [
+      "judgment",
+      "summarization",
+      "generation",
+      "review"
+    ],
+    "deterministic_work_must_remain_in_core_or_script": true,
+    "deterministic_work_examples": [
+      "collection",
+      "transcription",
+      "calculation",
+      "validation",
+      "persistence",
+      "scheduling",
+      "retry",
+      "state_transition",
+      "human_confirmation"
+    ],
+    "skill_must_not_write_formal_data": true,
+    "skill_must_not_change_business_state": true,
+    "skill_must_not_bypass_human_authority": true,
+    "skill_must_not_call_other_business_steps": true,
+    "direct_business_model_request_forbidden_after_cutover": true,
+    "quality_gate_required_before_formal_skill_cutover": true,
+    "quality_gate_requires_same_frozen_inputs": true,
+    "quality_gate_requires_output_structure_equivalence": true,
+    "quality_gate_requires_retained_evidence_equivalence": true,
+    "quality_gate_requires_human_acceptance": true,
+    "quality_gate_is_one_overall_decision_not_per_candidate": true,
+    "formal_result_requires_one_final_human_decision": true,
+    "silent_quality_downgrade_or_fallback_forbidden": true,
+    "unregistered_business_model_operation_blocks_at_runtime": true
+  },
+  "runtime_data_boundary": {
+    "formal_runtime_root_must_be_outside_build_root": true,
+    "formal_writes_must_use_one_runtime_root_resolver": true,
+    "daily_work_root_must_not_be_a_formal_data_store": true,
+    "legacy_build_root_formal_write_forbidden_after_cutover": true,
+    "old_and_new_formal_roots_must_not_be_writable_in_parallel": true,
+    "migration_requires_copy_verify_switch_verify": true,
+    "migration_requires_runtime_identity_receipt": true,
+    "runtime_identity_receipt_verifies_storage_identity_without_blocking_normal_formal_writes": true,
+    "wrong_root_must_block_formal_operation": true,
+    "runtime_startup_must_verify_active_root": true,
+    "automatic_legacy_fallback_forbidden": true
+  },
+  "runtime_liveness": {
+    "formal_execution_uses_activity_not_fixed_total_timeout": true,
+    "no_activity_and_stalled_activity_are_distinct": true,
+    "fixed_total_cutoff_forbidden": true,
+    "automatic_repeated_retry_forbidden": true
+  },
+  "execution_tasks": [
+    "register_atomic_skill_policy_and_build_guard",
+    "register_runtime_root_and_runtime_guard",
+    "convert_competitor_breakdown_to_atomic_skill",
+    "convert_daily_breakdown_to_shared_atomic_skill",
+    "audit_content_production_model_nodes",
+    "migrate_formal_runtime_data_copy_verify_switch_verify",
+    "implement_runtime_liveness_policy",
+    "prove_automatic_build_and_runtime_blocking"
+  ],
+  "temporarily_blocked_unconverted_model_operations": [
+    "hotspot_to_opportunity"
+  ],
+  "registered_atomic_model_operations": [
+    "competitor_breakdown_structural_v13",
+    "research_plan",
+    "content_deep_research",
+    "content_plan_generation",
+    "formal_draft_generate",
+    "copy_optimization",
+    "de_ai_revision",
+    "final_content_review",
+    "experience_candidate_propose",
+    "source_to_topic"
+  ],
+  "atomic_skill_quality_cutover": {
+    "competitor_breakdown_structural_v13": "accepted_same_input_comparison",
+    "research_plan": "same_input_comparison_pending",
+    "content_deep_research": "same_input_comparison_pending",
+    "content_plan_generation": "same_input_comparison_pending",
+    "formal_draft_generate": "same_input_comparison_pending",
+    "copy_optimization": "same_input_comparison_pending",
+    "de_ai_revision": "same_input_comparison_pending",
+    "final_content_review": "same_input_comparison_pending",
+    "experience_candidate_propose": "same_input_comparison_pending",
+    "source_to_topic": "same_input_comparison_pending"
+  },
+  "completion_requires": [
+    "no_direct_business_model_request_remains_in_registered_business_nodes",
+    "all_registered_atomic_skills_have_standalone_boundary_declarations",
+    "each_replaced_node_has_an_accepted_quality_comparison_receipt",
+    "formal_runtime_data_is_outside_the_build_root",
+    "formal_runtime_startup_blocks_old_or_wrong_roots",
+    "automatic_hook_events_prove_build_and_runtime_blocking"
+  ]
+}

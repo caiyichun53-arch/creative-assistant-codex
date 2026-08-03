@@ -5,8 +5,6 @@ from .goal06_formal_research import (
     FetchedDocument,
     FormalResearchMaterializer,
     FormalResearchService,
-    GOAL06_TOPIC_FIRST_JOB_KIND,
-    GOAL06_TOPIC_FIRST_WORKFLOW,
     ResearchBoundaryError,
     ResearchExtractor,
     ResearchFetcher,
@@ -15,7 +13,6 @@ from .goal06_formal_research import (
     SearchProvider,
     SearchResult,
     make_formal_research_runtime_handler,
-    start_topic_first_research_workflow,
 )
 
 __all__ = [
@@ -23,8 +20,6 @@ __all__ = [
     "FetchedDocument",
     "FormalResearchMaterializer",
     "FormalResearchService",
-    "GOAL06_TOPIC_FIRST_JOB_KIND",
-    "GOAL06_TOPIC_FIRST_WORKFLOW",
     "ResearchBoundaryError",
     "ResearchExtractor",
     "ResearchFetcher",
@@ -33,5 +28,4 @@ __all__ = [
     "SearchProvider",
     "SearchResult",
     "make_formal_research_runtime_handler",
-    "start_topic_first_research_workflow",
 ]

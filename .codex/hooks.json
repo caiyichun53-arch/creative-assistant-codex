@@ -1,12 +1,55 @@
 {
+  "description": "仅实施时启用：按当前阶段的小型契约执行本地前、中、后检查；普通讨论不启用。",
   "hooks": {
     "UserPromptSubmit": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "python I:/Creation_assistant-codex/.codex/hooks/turn_change_baseline.py",
-            "timeoutSec": 10
+            "command": "python I:/Creation_assistant-codex/.codex/hooks/implementation_precheck.py",
+            "commandWindows": "C:/Users/15891/anaconda3/python.exe I:/Creation_assistant-codex/.codex/hooks/implementation_precheck.py",
+            "timeout": 15,
+            "statusMessage": "核对正式设计与实施边界"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^(Bash|shell_command)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python I:/Creation_assistant-codex/.codex/hooks/business_command_gate.py",
+            "commandWindows": "C:/Users/15891/anaconda3/python.exe I:/Creation_assistant-codex/.codex/hooks/business_command_gate.py",
+            "timeout": 15,
+            "statusMessage": "Checking that business model work uses its registered entry"
+          }
+        ]
+      },
+      {
+        "matcher": "^apply_patch$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python I:/Creation_assistant-codex/.codex/hooks/implementation_before_edit.py",
+            "commandWindows": "C:/Users/15891/anaconda3/python.exe I:/Creation_assistant-codex/.codex/hooks/implementation_before_edit.py",
+            "timeout": 15,
+            "statusMessage": "按当前阶段契约检查本次写入"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^apply_patch$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python I:/Creation_assistant-codex/.codex/hooks/implementation_midcheck.py",
+            "commandWindows": "C:/Users/15891/anaconda3/python.exe I:/Creation_assistant-codex/.codex/hooks/implementation_midcheck.py",
+            "timeout": 20,
+            "statusMessage": "检查本次改到的阶段"
           }
         ]
       }
@@ -16,8 +59,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python I:/Creation_assistant-codex/.codex/hooks/stop_verification_gate.py",
-            "timeoutSec": 10
+            "command": "python I:/Creation_assistant-codex/.codex/hooks/implementation_postcheck.py",
+            "commandWindows": "C:/Users/15891/anaconda3/python.exe I:/Creation_assistant-codex/.codex/hooks/implementation_postcheck.py",
+            "timeout": 20,
+            "statusMessage": "运行当前阶段的本地完成检查"
           }
         ]
       }

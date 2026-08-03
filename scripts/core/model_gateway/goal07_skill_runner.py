@@ -54,7 +54,7 @@ class PortableSkillSpec:
     def skill_hash(self) -> str:
         return content_hash(self.as_payload(), "goal07.portable_skill.v1")
 
-    def validate_clean_room(self) -> None:
+    def validate_runtime_boundary(self) -> None:
         _assert_required("skill_name", self.skill_name)
         _assert_required("skill_version", self.skill_version)
         _assert_required("route_name", self.route_name)
@@ -64,7 +64,7 @@ class PortableSkillSpec:
         _assert_no_forbidden_tokens(self.as_payload())
 
     def render_prompt(self, input_payload: dict[str, Any]) -> str:
-        self.validate_clean_room()
+        self.validate_runtime_boundary()
         missing = [key for key in self.required_input_keys if key not in input_payload]
         if missing:
             raise SkillContractError(f"missing skill input keys: {missing}")

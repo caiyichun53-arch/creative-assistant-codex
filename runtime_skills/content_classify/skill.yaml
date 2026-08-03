@@ -1,4 +1,4 @@
-schema_version: formal_business_skill.v1
+﻿schema_version: formal_business_skill.v1
 formal_skill_id: content_classify
 skill_name: content_classify
 skill_version: 1.0.0

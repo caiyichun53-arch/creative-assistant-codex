@@ -1,19 +1,15 @@
 """领域话题标签库、爆款标签建议、每日轮换和单页搜索来源留存。
 
 搜索只产生可追溯来源记录，不直接建立候选、研究或经验对象。
-
-Usage:
-    python -m scripts.core.business_data.run_domain_search --domain-config config/domains/泛科普.yaml
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 import sqlite3
@@ -26,7 +22,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.core.business_data.domain_labels import (  # noqa: E402
     ALLOWED_DOMAIN_LABELS,
-    FORMAL_DOMAIN_LABELS,
+    formal_domain_labels,
     get_discovery_policy,
 )
 from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
@@ -38,19 +34,19 @@ DAILY_TAG_SEARCH_COUNT = 3
 SEARCH_PAGE_COUNT = 1
 # MediaCrawler 的抖音搜索每页为 10 条；max_items=10 只触发第一页。
 DOUYIN_FIRST_PAGE_MAX_ITEMS = 10
-CONSECUTIVE_CYCLES_BEFORE_PAUSE = 3
+CONSECUTIVE_CYCLES_BEFORE_REVIEW = 3
 _HASHTAG_PATTERN = re.compile(r"#([^#\s]+)")
 
 
 def validate_domain_search_execution_contract(domain_search_cfg: dict[str, Any]) -> dict[str, Any]:
     """BR-TOPIC-005: real live search must be an explicit opt-in
-    (domain_search.live_enabled: true in config/settings.yaml), same
+    (domain_search.live_enabled: true in config/external_collection.yaml), same
     discipline as BR-RESEARCH-003 -- default is dry-run/blocked, not
     silently allowed."""
     contract = require_baseline_citations(["3", "17"])
     if not bool(domain_search_cfg.get("live_enabled", False)):
         raise ValueError(
-            "domain_search.live_enabled is false (or unset) in config/settings.yaml -- "
+            "domain_search.live_enabled is false (or unset) in config/external_collection.yaml -- "
             "real MediaCrawler keyword search is not allowed until this is explicitly turned on"
         )
     if int(domain_search_cfg.get("daily_tag_count", DAILY_TAG_SEARCH_COUNT)) != DAILY_TAG_SEARCH_COUNT:
@@ -71,7 +67,7 @@ def load_sources_yaml(path: Path) -> dict[str, Any]:
     active_tags = data.get("active_tags", topic_search.get("active_tags"))
     if not domain_label or not isinstance(active_tags, list):
         raise ValueError(f"{path} must define formal_domain_label and discovery.topic_search.active_tags")
-    if domain_label not in FORMAL_DOMAIN_LABELS:
+    if domain_label not in formal_domain_labels():
         raise ValueError(f"{path} domain_label {domain_label!r} is not a configured formal domain")
     return {**data, "domain_label": domain_label, "active_tags": active_tags}
 
@@ -90,7 +86,7 @@ def register_activity_tag_exclusion(
     exclusion_reason: str,
 ) -> None:
     """Register the evidence required for an exact platform-activity exclusion."""
-    if domain_label not in FORMAL_DOMAIN_LABELS:
+    if domain_label not in formal_domain_labels():
         raise ValueError("activity tag exclusion requires a configured formal domain")
     required = (registry_id, tag, platform, activity_identity, evidence_ref, valid_from, valid_until, exclusion_reason)
     if any(not str(value).strip() for value in required):
@@ -225,8 +221,6 @@ def suggest_tags_from_hit_library(
         "pending_review": pending_review,
         "candidates_scanned": len(rows),
     }
-
-
 def select_tags_due_for_search(conn: sqlite3.Connection, *, domain_label: str, limit: int = DAILY_TAG_SEARCH_COUNT, now: datetime | None = None) -> list[sqlite3.Row]:
     """每天按从未搜索、最久未搜索的稳定顺序轮换最多三个活跃标签。"""
     del now
@@ -273,9 +267,7 @@ def record_search_cycle_result(
     produced_validated_topic: bool,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """更新轮换游标 + 标签预算计数器。produced_validated_topic 由调用方明确传入
-    (见模块顶部说明:目前没有真实的"这轮搜出来的视频变成正式选题了吗"查询路径,
-    不假装有)。"""
+    """更新轮换游标和人工查看计数器；标签绝不因计数被自动暂停。"""
     now_iso = (now or datetime.now(timezone.utc)).isoformat()
     conn.execute(
         "UPDATE domain_search_cursor SET last_searched_at = ?, run_id = ? WHERE tag_id = ?",
@@ -287,19 +279,92 @@ def record_search_cycle_result(
             (tag_id,),
         )
         new_count = 0
-        paused = False
+        requires_human_review = False
     else:
         row = conn.execute(
             "SELECT consecutive_cycles_without_validated_topic FROM domain_search_tags WHERE tag_id = ?", (tag_id,)
         ).fetchone()
         new_count = int(row["consecutive_cycles_without_validated_topic"]) + 1
-        paused = new_count >= CONSECUTIVE_CYCLES_BEFORE_PAUSE
+        requires_human_review = new_count >= CONSECUTIVE_CYCLES_BEFORE_REVIEW
         conn.execute(
-            "UPDATE domain_search_tags SET consecutive_cycles_without_validated_topic = ?, status = ? WHERE tag_id = ?",
-            (new_count, "paused" if paused else "active", tag_id),
+            "UPDATE domain_search_tags SET consecutive_cycles_without_validated_topic = ? WHERE tag_id = ?",
+            (new_count, tag_id),
         )
     conn.commit()
-    return {"tag_id": tag_id, "consecutive_cycles_without_validated_topic": new_count, "paused": paused}
+    return {
+        "tag_id": tag_id,
+        "consecutive_cycles_without_validated_topic": new_count,
+        "requires_human_review": requires_human_review,
+    }
+
+
+def create_discovered_account_reviews(
+    conn: sqlite3.Connection,
+    *,
+    domain_label: str,
+    run_id: str,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Create one human-review item when an unregistered account has three real videos in 30 days."""
+    observed_at = now or datetime.now(timezone.utc)
+    cutoff = (observed_at - timedelta(days=30)).isoformat()
+    rows = conn.execute(
+        """
+        SELECT account_platform_id, MAX(account_handle) AS account_handle,
+               COUNT(DISTINCT platform_item_id) AS video_count
+          FROM discovered_external_videos
+         WHERE domain_label=? AND is_tracked_account=0
+           AND account_platform_id IS NOT NULL AND account_platform_id<>''
+           AND discovered_at>=?
+         GROUP BY account_platform_id
+        HAVING COUNT(DISTINCT platform_item_id)>=3
+        """,
+        (domain_label, cutoff),
+    ).fetchall()
+    created: list[dict[str, Any]] = []
+    for row in rows:
+        existing = conn.execute(
+            "SELECT disposition FROM discovered_account_review WHERE account_platform_id=? AND domain_label=?",
+            (row["account_platform_id"], domain_label),
+        ).fetchone()
+        if existing is not None:
+            continue
+        review_id = f"account_review_{domain_label}_{row['account_platform_id']}"
+        conn.execute(
+            """
+            INSERT INTO discovered_account_review(
+                review_id, account_platform_id, account_handle, domain_label, video_count, run_id
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (review_id, row["account_platform_id"], row["account_handle"], domain_label, row["video_count"], run_id),
+        )
+        created.append({"review_id": review_id, "account_platform_id": row["account_platform_id"], "video_count": row["video_count"]})
+    conn.commit()
+    return created
+
+
+def list_discovered_account_review_material(conn: sqlite3.Connection, *, review_id: str) -> dict[str, Any]:
+    """Show the triggering count and the latest ten accessible videos for one human decision."""
+    review = conn.execute("SELECT * FROM discovered_account_review WHERE review_id=?", (review_id,)).fetchone()
+    if review is None:
+        raise ValueError("discovered account review was not found")
+    videos = conn.execute(
+        """
+        SELECT platform_item_id, title, url, discovered_at
+          FROM discovered_external_videos
+         WHERE account_platform_id=? AND domain_label=? AND is_tracked_account=0
+           AND COALESCE(url, '')<>''
+         ORDER BY discovered_at DESC, platform_item_id ASC
+         LIMIT 10
+        """,
+        (review["account_platform_id"], review["domain_label"]),
+    ).fetchall()
+    return {
+        "review_id": review["review_id"],
+        "account_platform_id": review["account_platform_id"],
+        "video_count": review["video_count"],
+        "videos": [dict(video) for video in videos],
+    }
 
 
 def search_one_tag(
@@ -339,13 +404,20 @@ def search_one_tag(
     if not isinstance(page_items, list):
         return {"tag_id": tag_row["tag_id"], "status": "failed", "reason": "invalid_items_payload"}
 
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    tracked_accounts = (
+        {row["sec_uid"] for row in conn.execute("SELECT sec_uid FROM competitor_accounts").fetchall()}
+        if "competitor_accounts" in tables else set()
+    )
     eligible_ids = {
         str(item.get("aweme_id") or item.get("note_id") or item.get("id") or "")
         for item in deterministic_filter(page_items, tag=tag_row["tag"], already_discovered_ids=already)
+        if str(item.get("sec_uid") or item.get("user_id") or "") not in tracked_accounts
     }
     seen_in_page: set[str] = set()
     for position, item in enumerate(page_items):
         platform_item_id = str(item.get("aweme_id") or item.get("note_id") or item.get("id") or "")
+        account_platform_id = str(item.get("sec_uid") or item.get("user_id") or "")
         text = str(item.get("desc") or item.get("title") or "")
         if not platform_item_id:
             outcome, reason = "excluded", "missing_platform_item_id"
@@ -353,6 +425,8 @@ def search_one_tag(
             outcome, reason = "excluded", "already_discovered"
         elif platform_item_id in seen_in_page:
             outcome, reason = "excluded", "duplicate_in_page"
+        elif account_platform_id and account_platform_id in tracked_accounts:
+            outcome, reason = "excluded", "tracked_competitor_account"
         elif tag_row["tag"] not in text:
             outcome, reason = "excluded", "tag_mismatch"
         else:
@@ -371,11 +445,6 @@ def search_one_tag(
              reason, json.dumps(item, ensure_ascii=False), run_id),
         )
 
-    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    tracked_accounts = (
-        {row["sec_uid"] for row in conn.execute("SELECT sec_uid FROM competitor_accounts").fetchall()}
-        if "competitor_accounts" in tables else set()
-    )
     inserted = 0
     for position, item in enumerate(page_items):
         platform_item_id = str(item.get("aweme_id") or item.get("note_id") or item.get("id") or "")
@@ -383,6 +452,8 @@ def search_one_tag(
             continue
         account_platform_id = str(item.get("sec_uid") or item.get("user_id") or "")
         is_tracked = 1 if account_platform_id in tracked_accounts else 0
+        if is_tracked:
+            continue
         discovered_video_id = f"disc_{platform}_{platform_item_id}"
         cur = conn.execute(
             """
@@ -401,7 +472,11 @@ def search_one_tag(
         )
         inserted += int(cur.rowcount > 0)
     conn.commit()
-    return {"tag_id": tag_row["tag_id"], "status": "completed", "page_number": 1, "raw_results": len(page_items), "inserted": inserted}
+    account_reviews = create_discovered_account_reviews(conn, domain_label=domain_label, run_id=run_id)
+    return {
+        "tag_id": tag_row["tag_id"], "status": "completed", "page_number": 1,
+        "raw_results": len(page_items), "inserted": inserted, "account_reviews_created": account_reviews,
+    }
 
 
 def run_daily_tag_searches(
@@ -445,32 +520,3 @@ def run_daily_tag_searches(
         "results": results,
         "failed": failed,
     }
-
-
-def main(argv: list[str] | None = None) -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-    parser = argparse.ArgumentParser(description="Seed a domain's active search tags from its sources.yaml.")
-    parser.add_argument("--sources-config", required=True)
-    parser.add_argument("--db", required=True)
-    parser.add_argument("--json", action="store_true")
-    args = parser.parse_args(argv)
-
-    conn = sqlite3.connect(args.db)
-    conn.row_factory = sqlite3.Row
-    try:
-        install_schema(conn)
-        sources_config = load_sources_yaml(Path(args.sources_config))
-        report = seed_active_tags_from_sources_yaml(conn, sources_config)
-    finally:
-        conn.close()
-
-    if args.json:
-        print(json.dumps(report, ensure_ascii=False, indent=2))
-    else:
-        print(yaml.safe_dump(report, allow_unicode=True, sort_keys=False))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

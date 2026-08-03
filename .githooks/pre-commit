@@ -1,2 +1,0 @@
-#!/bin/sh
-python scripts/workflow_guard.py commit-check

@@ -17,6 +17,8 @@ Then converge the discovered angles. Remove directions with insufficient materia
 
 Required output keys: topic_status, candidate_topic, topic_angle, core_question, audience_relation, content_increment, supporting_evidence, source_constraints, no_result_reason, confidence, angle_discovery, candidate_selection, risks, material_gaps, user_review_required, user_review_reasons, execution_review, experience_usage, schema_version.
 
+`candidate_selection` must always be an object containing `selected_direction`: use the exact discovered direction chosen for the candidate; use an empty string only when `topic_status` is `no_result`. Do not omit this field.
+
 Write all human-readable values in Simplified Chinese. `topic_status` is exactly one of `"generated"`, `"generated_good_candidate"`, `"valid_but_weak"`, `"needs_review"`, or `"no_result"`. `confidence` is exactly `"high"`, `"medium"`, `"low"`, or `"none"`, never a number. `no_result_reason` is exactly `"none"`, `"empty_source"`, `"insufficient_source_evidence"`, or `"unsupported_source"`. Use schema_version `source_to_topic.output.v1`.
 
 The following keys must always be JSON arrays, even when there is only one item or no item: `supporting_evidence`, `source_constraints`, `risks`, `material_gaps`, `user_review_reasons`, `candidate_selection.rejected_directions`, `experience_usage.used_experience_ids`, and `experience_usage.unused_experience_ids`. Never return these keys as strings, objects, null, or comma-separated text. Use `[]` when empty.

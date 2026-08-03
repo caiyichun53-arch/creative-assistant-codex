@@ -1,0 +1,7 @@
+type: object
+required: [decision, candidate, source_ids]
+properties:
+  decision: {type: string, enum: [proposal, no_proposal]}
+  candidate: {}
+  source_ids: {type: array}
+additional_properties: false

@@ -1,0 +1,169 @@
+{
+  "registry_version": "implementation_stage_registry_v1",
+  "pointer": "execution/current_implementation_stage.json",
+  "stages": {
+    "implementation_guard": {
+      "execution_document": "execution/stages/implementation_guard.md",
+      "contract": "config/business_guardrails/implementation_guard.json",
+      "validator": "scripts/stage_contract_guard.py",
+      "prompt_keywords": [
+        "hook",
+        "钩子",
+        "护栏",
+        "防跑偏"
+      ],
+      "path_prefixes": [
+        ".codex/hooks.json",
+        ".codex/hooks/",
+        "execution/current_implementation_stage.json",
+        "execution/stages/",
+        "config/business_guardrails/stage_registry.json",
+        "config/business_guardrails/implementation_guard.json",
+        "scripts/stage_contract_guard.py",
+        "AGENTS.md"
+      ]
+    },
+    "system_governance": {
+      "execution_document": "execution/stages/system_governance.md",
+      "contract": "config/business_guardrails/system_governance.json",
+      "validator": "scripts/stage_contract_guard.py",
+      "prompt_keywords": [
+        "Skill",
+        "原子",
+        "模型调用",
+        "运行数据",
+        "数据隔离",
+        "正式数据",
+        "治理"
+      ],
+      "path_prefixes": [
+        "execution/current_implementation_stage.json",
+        "execution/stages/system_governance.md",
+        "config/business_guardrails/system_governance.json",
+        "config/business_guardrails/runtime_liveness.json",
+        "config/business_guardrails/stage_registry.json",
+        "scripts/stage_contract_guard.py",
+        "scripts/core/model_gateway/formal_skill_adapter.py",
+        "scripts/core/model_gateway/hermes_model_provider.py",
+        "scripts/core/external_adapters/local_sensevoice_executor.py",
+        "scripts/core/external_adapters/local_mediacrawler_executor.py",
+        "scripts/core/external_adapters/local_voxcpm2_executor.py",
+        "scripts/tools/_local_asr_transcribe.py",
+        "scripts/core/model_gateway/goal07_skill_runner.py",
+        "scripts/core/production/stage0_content_core.py",
+        "scripts/core/production/stage1_competitor_registration.py",
+        "scripts/core/production/stage1_daily_operations.py",
+        "scripts/core/production/stage1b_daily_discovery.py",
+        "scripts/core/production/stage1c_content_pipeline.py",
+        "scripts/core/production/experience_candidate_proposal.py",
+        "scripts/core/production/stage1d_audio_production.py",
+        "scripts/core/production/business_runtime_guard.py",
+        "scripts/core/runtime/",
+        ".codex/hooks/implementation_before_edit.py",
+        ".codex/hooks/hook_common.py",
+        ".codex/hooks/implementation_midcheck.py",
+        ".codex/hooks/implementation_postcheck.py",
+        "scripts/agent_platform/cold_start_config_server.py",
+        "scripts/agent_platform/cold_start_config_ui.html",
+        "runtime_skills/competitor_breakdown_structural_v13/",
+        "runtime_skills/experience_candidate_propose/",
+        "config/runtime_storage.json",
+        "COMPETITOR_BREAKDOWN_BUSINESS_CONTRACT.yaml"
+      ]
+    },
+    "cold_start": {
+      "execution_document": "execution/stages/cold_start.md",
+      "contract": "config/business_guardrails/competitor_registration.json",
+      "validator": "scripts/stage_contract_guard.py",
+      "prompt_keywords": [
+        "冷启动",
+        "对标注册",
+        "首次采集",
+        "首采",
+        "爆款筛选",
+        "爆款备料",
+        "领域标签",
+        "领域话题",
+        "经验库",
+        "Obsidian"
+      ],
+      "path_prefixes": [
+        "execution/current_implementation_stage.json",
+        "scripts/stage_contract_guard.py",
+        "config/business_guardrails/competitor_registration.json",
+        "scripts/core/production/high_signal_policy.py",
+        "scripts/core/production/business_runtime_guard.py",
+        "scripts/core/production/cold_start_onboarding.py",
+        "scripts/core/production/stage1_competitor_registration.py",
+        "scripts/core/production/stage4_knowledge_mirror.py",
+        "scripts/core/production/stage0_content_core.py",
+        "scripts/core/business_data/competitor_accounts_schema.sqlite.sql",
+        "scripts/core/business_data/domain_labels.py",
+        "config/domain_packs/",
+        "scripts/core/external_adapters/competitor_registration_runtime.py",
+        "scripts/core/external_adapters/goal_phase4_external_adapters.py",
+        "scripts/core/external_adapters/local_mediacrawler_executor.py",
+        "scripts/core/production/stage1_daily_operations.py",
+        "scripts/agent_platform/cold_start_config_server.py",
+        "scripts/agent_platform/cold_start_config_ui.html",
+        "execution/stages/cold_start.md"
+      ]
+    },
+    "daily_operations": {
+      "execution_document": "execution/stages/daily_operations.md",
+      "contract": "config/business_guardrails/daily_operations.json",
+      "validator": "scripts/stage_contract_guard.py",
+      "prompt_keywords": [
+        "日常运营",
+        "每日运营",
+        "D0",
+        "D7",
+        "每日候选",
+        "候选前十"
+      ],
+      "path_prefixes": [
+        "execution/current_implementation_stage.json",
+        "scripts/stage_contract_guard.py",
+        "config/business_guardrails/daily_operations.json",
+        "scripts/agent_platform/daily_operations_runtime.py",
+        "scripts/agent_platform/cold_start_config_server.py",
+        "scripts/agent_platform/cold_start_config_ui.html",
+        "scripts/core/production/stage1_daily_operations.py",
+        "scripts/core/production/stage1_account_observation.py",
+        "scripts/core/production/stage1b_daily_discovery.py",
+        "scripts/core/production/stage4_knowledge_mirror.py",
+        "scripts/core/production/stage0_content_core.py",
+        "execution/stages/daily_operations.md"
+      ]
+    },
+    "content_production": {
+      "execution_document": "execution/stages/content_production.md",
+      "contract": "config/business_guardrails/content_production.json",
+      "validator": "scripts/stage_contract_guard.py",
+      "prompt_keywords": [
+        "内容生产",
+        "研究方案",
+        "深度研究",
+        "内容计划",
+        "正式稿",
+        "音频",
+        "内容交付"
+      ],
+      "path_prefixes": [
+        "execution/current_implementation_stage.json",
+        "scripts/stage_contract_guard.py",
+        "config/business_guardrails/content_production.json",
+        "scripts/agent_platform/cold_start_config_server.py",
+        "scripts/agent_platform/cold_start_config_ui.html",
+        "scripts/core/production/stage0_content_core.py",
+        "scripts/core/production/stage1a_research_plan.py",
+        "scripts/core/production/stage1c_content_pipeline.py",
+        "scripts/core/production/experience_candidate_proposal.py",
+        "scripts/core/production/stage1d_audio_production.py",
+        "scripts/core/production/stage4_knowledge_mirror.py",
+        "runtime_skills/experience_candidate_propose/",
+        "execution/stages/content_production.md"
+      ]
+    }
+  }
+}

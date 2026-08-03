@@ -28,6 +28,17 @@ model_providers:
     model_ref: HERMES_BUSINESS_MODEL_NAME
     model_class_ref: HERMES_BUSINESS_MODEL_CLASS
     billing_mode: subscription
+  codex_subscription:
+    # 已具备统一适配器；当前只绑定工作台验证入口，正式业务切换仍需单独验证。
+    type: codex_app_server
+    enabled: true
+    provider_name: codex_app_server
+    live_model_port: CodexAppServerProviderAdapter
+    command_ref: CODEX_CLI_PATH
+    model_ref: CODEX_WORKBENCH_MODEL
+    model_class_ref: CODEX_WORKBENCH_MODEL_CLASS
+    timeout_ref: CODEX_WORKBENCH_TIMEOUT_SECONDS
+    billing_mode: chatgpt_subscription
 
 model_routes:
   daily_chat:   # dialogue_model
@@ -35,6 +46,14 @@ model_routes:
     fallback: none
     allowed_task_types:
       - daily_conversation
+      - system_status_explanation
+      - user_instruction_intake
+
+  workbench_read_only_assistant:
+    # 这是订阅路线的工作台入口，不是第二套正式业务状态流转。
+    provider_ref: codex_subscription
+    fallback: none
+    allowed_task_types:
       - system_status_explanation
       - user_instruction_intake
 

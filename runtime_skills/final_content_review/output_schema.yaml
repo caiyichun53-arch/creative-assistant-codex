@@ -1,0 +1,4 @@
+type: object
+required: [node, document, source_boundaries, unresolved]
+properties: {node: {type: string, enum: [review]}, document: {type: object}, source_boundaries: {type: array}, unresolved: {type: array}}
+additional_properties: false

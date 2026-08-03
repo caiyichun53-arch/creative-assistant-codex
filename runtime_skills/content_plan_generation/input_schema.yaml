@@ -1,0 +1,4 @@
+type: object
+required: [correlation_id, input_assembly, schema_version]
+properties: {correlation_id: {type: string}, input_assembly: {type: object}, schema_version: {type: string, enum: [content_plan_generation.input.v1]}}
+additional_properties: false

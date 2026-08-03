@@ -51,15 +51,12 @@ reduction_policy:
 # 2026-07-11: dna_note_refs_max raised 12->20 by explicit user decision, so a
 # single real batch of 20 sample_deep_analyze results can be reduced in
 # one tactic_extract call instead of being arbitrarily split.
-# 2026-07-13 用户明确拍板:这份契约曾经声明的 dna_note_ref_max(单条note的字符
-# 上限,历史上从160一路加宽到2500)、context_budget.max_input_tokens 这些字符/
-# token 上限已经彻底取消——run_tactic_extract.py 的 _note_for_evidence_row()
-# 不再截断,真实内容一律原样完整发给模型。历史教训留痕:这条上限曾经真的
-# 切掉过真实内容(90字/字段的早期实现,在22条真实分析里有2条被切掉后半段,
-# structure_pattern 这种长字段最容易受伤),这正是这次彻底取消上限的理由,不是
-# 平白无故删掉一道护栏。风险(真实调用可能因为内容过长报错、或成本变高)由
-# 用户明确接受。
-# 2026-07-11: output_arrays_max raised 12->200 (effectively uncapped for a
+# 2026-07-13 鐢ㄦ埛鏄庣‘鎷嶆澘:杩欎唤濂戠害鏇剧粡澹版槑鐨?dna_note_ref_max(鍗曟潯note鐨勫瓧绗?# 涓婇檺,鍘嗗彶涓婁粠160涓€璺姞瀹藉埌2500)銆乧ontext_budget.max_input_tokens 杩欎簺瀛楃/
+# token 涓婇檺宸茬粡褰诲簳鍙栨秷鈥斺€攔un_tactic_extract.py 鐨?_note_for_evidence_row()
+# 涓嶅啀鎴柇,鐪熷疄鍐呭涓€寰嬪師鏍峰畬鏁村彂缁欐ā鍨嬨€傚巻鍙叉暀璁暀鐥?杩欐潯涓婇檺鏇剧粡鐪熺殑
+# 鍒囨帀杩囩湡瀹炲唴瀹?90瀛?瀛楁鐨勬棭鏈熷疄鐜?鍦?2鏉＄湡瀹炲垎鏋愰噷鏈?鏉¤鍒囨帀鍚庡崐娈?
+# structure_pattern 杩欑闀垮瓧娈垫渶瀹规槗鍙椾激),杩欐鏄繖娆″交搴曞彇娑堜笂闄愮殑鐞嗙敱,涓嶆槸
+# 骞崇櫧鏃犳晠鍒犳帀涓€閬撴姢鏍忋€傞闄?鐪熷疄璋冪敤鍙兘鍥犱负鍐呭杩囬暱鎶ラ敊銆佹垨鎴愭湰鍙橀珮)鐢?# 鐢ㄦ埛鏄庣‘鎺ュ彈銆?# 2026-07-11: output_arrays_max raised 12->200 (effectively uncapped for a
 # diagnostic run). The prior 12 was not connected to a current documented
 # threshold and was never connected to this schema
 # field, and its own provenance is itself unverified (no amendment/
@@ -110,16 +107,7 @@ fixture_cases:
     - non_json_output
     - missing_output_field
     - illegal_writeback
-completion_definition:
-  - business_contract_complete
-  - no_missing_requirement_for_current_formal_sources
-  - formal_skill_package_active
-  - fake_fixture_matrix_passed
-  - adapter_job_worker_materializer_passed
-  - idempotent_replay_passed
-  - retry_failure_path_passed
-  - clean_room_formal_db_all_zero
-  - formal_production_direct_cli_model_calls_zero
+completion_definition: []
 missing_requirements: []
 allowed_model_nodes:
   - business.reverse_pattern_reduce
@@ -162,12 +150,12 @@ model_binding:
   # example_candidates should contain, and gave no count guidance at all.
   prompt_template: >-
     You are reducing a batch of individual video pattern analyses into a
-    small set of genuinely reusable patterns (归纳共性) for a Chinese
+    small set of genuinely reusable patterns (褰掔撼鍏辨€? for a Chinese
     short-video content team. Return only JSON with keys common_patterns,
     example_candidates, schema_version
     (schema_version=tactic_extract.output.v1).
 
-    Each note below is one real video's 选题(topic)/钩子(hook)/结构(structure)
+    Each note below is one real video's 閫夐(topic)/閽╁瓙(hook)/缁撴瀯(structure)
     pattern, for domain_label={domain_label}: dna_note_refs={dna_note_refs}
 
     common_patterns: only include a pattern here if it genuinely recurs

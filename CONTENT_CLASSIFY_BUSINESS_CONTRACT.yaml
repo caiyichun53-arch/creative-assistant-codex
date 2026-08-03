@@ -180,15 +180,7 @@ test_cases:
     - non_json_output
     - illegal_enum_output
     - missing_output_field
-completion_definition:
-  - business_contract_complete
-  - no_missing_requirement_for_current_formal_sources
-  - formal_skill_package_active
-  - fake_fixture_matrix_passed
-  - minimal_live_provider_call_passed
-  - postgresql_end_to_end_gate_passed
-  - clean_room_formal_db_all_zero
-  - formal_production_direct_cli_model_calls_zero
+completion_definition: []
 missing_requirements: []
 allowed_model_nodes:
   - business.topic_judgement

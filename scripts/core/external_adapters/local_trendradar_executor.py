@@ -11,6 +11,7 @@ from scripts.core.external_adapters.goal_phase4_external_adapters import (
     ExternalAdapterError,
     ExternalCommandResult,
 )
+from scripts.core.external_adapters.windows_process import hidden_process_kwargs
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ class LocalTrendRadarExecutor:
                 timeout=min(self.timeout_seconds, command.timeout_seconds),
                 check=False,
                 shell=False,
+                **hidden_process_kwargs(),
             )
         except subprocess.TimeoutExpired:
             return ExternalCommandResult(
