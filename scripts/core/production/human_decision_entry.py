@@ -45,6 +45,7 @@ FORMAL_HUMAN_ACTIONS = frozenset({
     "prepare_p7_review",
     "confirm_p7_review",
     "review_two_week_tag_library",
+    "run_daily_operations",
 })
 
 
