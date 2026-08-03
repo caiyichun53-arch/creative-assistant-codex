@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import hashlib
 import os
@@ -46,6 +47,62 @@ SYSTEM_GOVERNANCE_CONTRACT_PATH = (
     ROOT / "config" / "business_guardrails" / "system_governance.json"
 )
 _RECORDED_PASS_KEYS: set[tuple[str, str, str, str]] = set()
+
+
+def _public_setting_binding_errors() -> list[str]:
+    """Find production modules that use shared guardrails without importing them.
+
+    Shared collection settings are defined once in high_signal_policy.py.  A
+    missing import used to remain invisible until the first real daily item
+    reached that code path, so this check fails before external collection.
+    """
+    policy_path = ROOT / "scripts" / "core" / "production" / "high_signal_policy.py"
+    try:
+        policy_tree = ast.parse(policy_path.read_text(encoding="utf-8"), filename=str(policy_path))
+    except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+        return [f"shared setting source cannot be inspected: {exc}"]
+
+    public_names: set[str] = set()
+    for node in policy_tree.body:
+        targets: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id.isupper() and target.id != "ROOT":
+                public_names.add(target.id)
+
+    errors: list[str] = []
+    production_dir = ROOT / "scripts" / "core" / "production"
+    for path in sorted(production_dir.glob("*.py")):
+        if path.name == "high_signal_policy.py":
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+            errors.append(f"{path.name}: source cannot be inspected: {exc}")
+            continue
+
+        loaded = {
+            node.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Load)
+            and node.id in public_names
+        }
+        bound: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+                bound.add(node.id)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                bound.add(node.name)
+            elif isinstance(node, ast.ImportFrom) and node.module == "scripts.core.production.high_signal_policy":
+                bound.update(alias.asname or alias.name for alias in node.names)
+        missing = sorted(loaded - bound)
+        if missing:
+            errors.append(f"{path.name}: shared settings are not bound: {', '.join(missing)}")
+    return errors
 
 
 def _now() -> str:
@@ -139,6 +196,7 @@ def enforce_runtime_startup_guard(
     selection = FORMAL_GUARDRAIL.get("historical_selection", {})
     formal_d = FORMAL_GUARDRAIL.get("formal_d_selection", {})
     deep_breakdown = FORMAL_GUARDRAIL.get("deep_breakdown", {})
+    errors = _public_setting_binding_errors()
     current_contract_path = (
         ROOT / "config" / "business_guardrails" / "competitor_registration.json"
     )
@@ -180,11 +238,11 @@ def enforce_runtime_startup_guard(
         "formal_d_single_metric_multiplier": 2.0,
         "formal_d_multi_metric_multiplier": 1.6,
     }
-    errors = [
+    errors.extend(
         f"{key}: runtime={actual.get(key)!r}, required={value!r}"
         for key, value in required.items()
         if actual.get(key) != value
-    ]
+    )
     try:
         current_contract = json.loads(current_contract_path.read_text(encoding="utf-8"))
         current_canonical = json.dumps(

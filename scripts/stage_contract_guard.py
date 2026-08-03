@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "config" / "business_guardrails" / "stage_registry.json"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def _read_object(path: Path) -> dict:
@@ -65,6 +68,12 @@ def _validate_system_governance() -> list[str]:
     }
     if not isinstance(registered, list) or not isinstance(cutover, dict):
         return ["atomic Skill quality-cutover rules are incomplete"]
+    try:
+        from scripts.core.production.business_runtime_guard import _public_setting_binding_errors
+
+        errors.extend(_public_setting_binding_errors())
+    except (ImportError, OSError, UnicodeDecodeError, SyntaxError) as exc:
+        errors.append("shared setting binding guard cannot run: " + str(exc))
     for skill_id in registered:
         if cutover.get(skill_id) not in allowed_statuses:
             errors.append(
