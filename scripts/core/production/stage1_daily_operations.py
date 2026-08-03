@@ -144,8 +144,10 @@ class ProductionDailyOperationsService:
             for hit in unfinished
         ]
 
-    def _active_accounts(self, domain_label: str) -> list[dict[str, Any]]:
-        rows = self.core.conn.execute(
+    def _active_accounts(
+        self, domain_label: str, *, validation_only: bool = False
+    ) -> list[dict[str, Any]]:
+        query = (
             "SELECT account.account_id, account.platform, account.account_name, account.homepage_url "
             "FROM competitor_accounts account "
             "JOIN stage0_competitor_registration registration "
@@ -155,8 +157,12 @@ class ProductionDailyOperationsService:
             "ON configuration.cold_start_id=registration.cold_start_id "
             "AND configuration.data_identity=registration.data_identity "
             "WHERE account.domain_label=? AND account.registration_status='active' "
-            "AND configuration.status IN ('started','completed') ORDER BY account.account_id",
-            (self.core.data_identity, domain_label),
+            "AND configuration.status IN ('started','completed') ORDER BY account.account_id"
+        )
+        if validation_only:
+            query += " LIMIT 1"
+        rows = self.core.conn.execute(
+            query, (self.core.data_identity, domain_label)
         ).fetchall()
         if not rows:
             raise StateTransitionError("daily operations require at least one formally registered tracking account")
@@ -173,7 +179,15 @@ class ProductionDailyOperationsService:
         ).fetchone()
         return row is not None
 
-    def run(self, *, domain_label: str, discovery_date: str, actor: str, attempt_ref: str) -> dict[str, Any]:
+    def run(
+        self,
+        *,
+        domain_label: str,
+        discovery_date: str,
+        actor: str,
+        attempt_ref: str,
+        validation_only: bool = False,
+    ) -> dict[str, Any]:
         if not actor.strip() or not attempt_ref.strip():
             raise StateTransitionError("daily operations require an actor and attempt identity")
         enforce_runtime_startup_guard(entrypoint="production_daily_operations")
@@ -182,7 +196,7 @@ class ProductionDailyOperationsService:
             source_types=DAILY_REPORT_SOURCE_TYPES,
             daily_report_limit=DAILY_PRIORITY_REPORT_LIMIT,
         )
-        accounts = self._active_accounts(domain_label)
+        accounts = self._active_accounts(domain_label, validation_only=validation_only)
         collector = self.collector or MediaCrawlerCollectorAdapter(LocalMediaCrawlerExecutor(
             archive_root=runtime_path(
                 "formal", "daily_operations", discovery_date, domain_label, "mediacrawler"
@@ -277,6 +291,8 @@ class ProductionDailyOperationsService:
             **result,
             "status": final_status,
             "domain_label": domain_label,
+            "validation_only": validation_only,
+            "account_count": len(accounts),
             "candidate_discovery": "completed" if self._is_ready_for_candidate_discovery(domain_label) else "waiting_for_domain_cold_start_completion",
             "collection": collection_results,
             "hit_processing": hit_processing,

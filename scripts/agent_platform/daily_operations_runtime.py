@@ -37,7 +37,7 @@ class DailyOperationsCoordinator:
         run_minute: int = 0,
         poll_seconds: float = 30,
         max_items_per_account: int = 50,
-        runner: Callable[[str, str, str], dict[str, Any]] | None = None,
+        runner: Callable[[str, str, str, bool], dict[str, Any]] | None = None,
         domain_provider: Callable[[], list[str]] | None = None,
         completed_run_lookup: Callable[[str, str], dict[str, Any] | None] | None = None,
         now_provider: Callable[[], datetime] | None = None,
@@ -140,7 +140,13 @@ class DailyOperationsCoordinator:
         finally:
             core.close()
 
-    def _run_production(self, domain_label: str, discovery_date: str, attempt_ref: str) -> dict[str, Any]:
+    def _run_production(
+        self,
+        domain_label: str,
+        discovery_date: str,
+        attempt_ref: str,
+        validation_only: bool = False,
+    ) -> dict[str, Any]:
         core = Stage0ContentProductionCore.open(self.db_path, data_identity=self.data_identity)  # type: ignore[arg-type]
         try:
             result = ProductionDailyOperationsService(
@@ -150,19 +156,26 @@ class DailyOperationsCoordinator:
                 discovery_date=discovery_date,
                 actor="daily_operations_automatic_worker",
                 attempt_ref=attempt_ref,
+                validation_only=validation_only,
             )
             return result
         finally:
             core.close()
 
     def _run_all_production(
-        self, domain_labels: tuple[str, ...], discovery_date: str, attempt_ref: str
+        self,
+        domain_labels: tuple[str, ...],
+        discovery_date: str,
+        attempt_ref: str,
+        validation_only: bool = False,
     ) -> dict[str, Any]:
         """Run one shared daily task while retaining an honest result per domain."""
         results: list[dict[str, Any]] = []
         for domain_label in domain_labels:
             try:
-                results.append(self.runner(domain_label, discovery_date, attempt_ref))
+                results.append(
+                    self.runner(domain_label, discovery_date, attempt_ref, validation_only)
+                )
             except Exception as exc:
                 results.append({
                     "domain_label": domain_label,
@@ -179,6 +192,7 @@ class DailyOperationsCoordinator:
         has_failure = any(item.get("status") not in {"completed"} for item in results)
         return {
             "status": "completed_with_failures" if has_failure else "completed",
+            "validation_only": validation_only,
             "domain_results": results,
             "candidate_count": sum(int(item.get("candidate_count") or 0) for item in results),
         }
@@ -259,6 +273,7 @@ class DailyOperationsCoordinator:
         trigger: str,
         force: bool,
         attempt_ref: str | None = None,
+        validation_only: bool = False,
     ) -> dict[str, Any]:
         discovery_date, now, _ = self._date_and_due()
         available = tuple(self.domain_provider())
@@ -275,28 +290,43 @@ class DailyOperationsCoordinator:
                 return dict(current)
             attempt = attempt_ref or uuid.uuid4().hex
             job = {
-                "job_kind": "all_domains_competitor_tracking",
+                "job_kind": (
+                    "single_account_smoke"
+                    if validation_only
+                    else "all_domains_competitor_tracking"
+                ),
                 "domain_labels": list(requested),
                 "discovery_date": discovery_date,
                 "attempt_ref": attempt,
                 "trigger": trigger,
+                "validation_only": validation_only,
                 "status": "queued",
                 "queued_at": now.isoformat(),
                 "error": None,
             }
             self.jobs[GLOBAL_DAILY_JOB_KEY] = job
             self._save_state()
-        self.executor.submit(self._execute_all, requested, discovery_date, attempt)
+        self.executor.submit(
+            self._execute_all, requested, discovery_date, attempt, validation_only
+        )
         return dict(job)
 
-    def _execute_all(self, domain_labels: tuple[str, ...], discovery_date: str, attempt_ref: str) -> None:
+    def _execute_all(
+        self,
+        domain_labels: tuple[str, ...],
+        discovery_date: str,
+        attempt_ref: str,
+        validation_only: bool = False,
+    ) -> None:
         with self.lock:
             job = self.jobs[GLOBAL_DAILY_JOB_KEY]
             job["status"] = "running"
             job["started_at"] = self.now_provider().astimezone(CHINA_TIME).isoformat()
             self._save_state()
         try:
-            result = self._run_all_production(domain_labels, discovery_date, attempt_ref)
+            result = self._run_all_production(
+                domain_labels, discovery_date, attempt_ref, validation_only
+            )
             with self.lock:
                 job = self.jobs[GLOBAL_DAILY_JOB_KEY]
                 job["status"] = "completed" if result.get("status") == "completed" else "completed_with_failures"

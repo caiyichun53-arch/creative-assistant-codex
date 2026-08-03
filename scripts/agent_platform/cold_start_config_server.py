@@ -2211,18 +2211,21 @@ class ColdStartConfigHandler(BaseHTTPRequestHandler):
     def _run_daily(self, body: dict[str, Any]) -> dict[str, Any]:
         actor = str(body.get("actor") or "").strip()
         reason = str(body.get("reason") or "").strip()
-        if not actor or not reason:
-            raise StateTransitionError("manual daily operation requires a user and reason")
+        scope = str(body.get("scope") or "").strip()
+        if not actor or not reason or scope != "single_account_smoke":
+            raise StateTransitionError(
+                "manual daily validation requires a user, reason and scope=single_account_smoke"
+            )
         core = self._open_core()
         try:
             command_result = self._formal_command(
                 core=core,
                 body=body,
                 action="run_daily_operations",
-                target_ref="all_active_competitor_domains",
-                payload={"actor": actor, "reason": reason},
+                target_ref="single_music_account_validation",
+                payload={"actor": actor, "reason": reason, "scope": scope},
                 handler=lambda command: {
-                    "scope": "all_active_competitor_domains",
+                    "scope": scope,
                     "status": "authorized",
                     "actor": command.actor,
                     "reason": reason,
@@ -2233,6 +2236,7 @@ class ColdStartConfigHandler(BaseHTTPRequestHandler):
                 trigger="user_authorized_run",
                 force=True,
                 attempt_ref=str(body.get("command_id") or "").strip(),
+                validation_only=True,
             )
             return command_result
         finally:
