@@ -27,7 +27,9 @@ from scripts.core.model_gateway.goal07_model_gateway import ModelRequest, ModelR
 from scripts.core.model_gateway.model_router import ModelRouter, ModelRouterError
 from scripts.core.production.high_signal_policy import (
     FIRST_REGISTRATION_COLLECTION_POLICY_VERSION,
+    FIRST_REGISTRATION_MAX_ITEMS,
     HIGH_SIGNAL_POLICY_VERSION,
+    HISTORICAL_MATURITY_DAYS,
     HISTORICAL_METRICS,
     MATURE_HISTORY_WINDOW_DAYS,
     MIN_RELIABLE_HISTORY_ITEMS,
@@ -7749,9 +7751,9 @@ class Stage0ContentProductionCore:
 
         mature_rows = self.conn.execute(
             "SELECT * FROM competitor_videos WHERE account_id=? AND excluded_reason IS NULL "
-            "AND publish_time IS NOT NULL AND datetime(publish_time)<=datetime('now','-7 days') "
+            "AND publish_time IS NOT NULL AND datetime(publish_time)<=datetime('now', ?) "
             "ORDER BY datetime(publish_time) DESC, video_id DESC",
-            (account_id,),
+            (account_id, f"-{HISTORICAL_MATURITY_DAYS} days"),
         ).fetchall()
         recent_cutoff = datetime.now(timezone.utc) - timedelta(days=MATURE_HISTORY_WINDOW_DAYS)
         def normalized_publish_time(row: sqlite3.Row) -> datetime:
