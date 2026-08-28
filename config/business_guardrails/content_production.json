@@ -24,6 +24,54 @@
     "single_work_routes_to_work_exploration": true,
     "work_list_routes_to_inventory_exploration": true
   },
+  "topic_intake": {
+    "common_sequence": [
+      "classify_input",
+      "retain_source_or_candidate",
+      "check_material_sufficiency",
+      "confirm_direction_when_required",
+      "create_formal_topic",
+      "generate_research_plan"
+    ],
+    "routes": {
+      "system_candidate_selected": {
+        "formal_topic_created": true,
+        "human_confirmation": "candidate_selection",
+        "research_plan": "immediate",
+        "requires_retained_support_material": true
+      },
+      "direct_formal_topic": {
+        "formal_topic_created": true,
+        "human_confirmation": "direct_user_instruction",
+        "research_plan": "immediate",
+        "requires_original_instruction": true,
+        "requires_core_question_and_scope": true
+      },
+      "user_unclear_input": {
+        "formal_topic_created": false,
+        "human_confirmation": "none_at_intake",
+        "next_step": "clarification_or_candidate_or_exploration"
+      },
+      "person_exploration": {
+        "formal_topic_created": false,
+        "human_confirmation": "final_direction_only",
+        "research_plan": "after_final_direction",
+        "no_per_material_confirmation": true
+      },
+      "single_object_exploration": {
+        "formal_topic_created": false,
+        "human_confirmation": "final_direction_only",
+        "research_plan": "after_final_direction",
+        "no_per_material_confirmation": true
+      },
+      "object_collection_exploration": {
+        "formal_topic_created": false,
+        "human_confirmation": "final_direction_only",
+        "research_plan": "after_final_direction",
+        "no_per_material_confirmation": true
+      }
+    }
+  },
   "formal_sequence": [
     "research_plan",
     "deep_research",

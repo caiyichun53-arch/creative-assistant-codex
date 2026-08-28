@@ -1,11 +1,11 @@
 schema_version: formal_skill_manifest.v1
 formal_skill_id: research_plan
-skill_version: 1.0.0
+skill_version: 1.9.0
 responsibility: Produce only a bounded research plan from one frozen formal-topic input.
 non_responsibilities: [collection, research_execution, formal_data_write, business_state_transition, human_confirmation, other_skill_invocation]
 runner: FormalBusinessSkillAdapter
 route_name: stage0.research_plan
-route_id: business_analysis
+route_id: research_planning
 input_schema: input_schema.yaml
 output_schema: output_schema.yaml
 binding: binding.yaml

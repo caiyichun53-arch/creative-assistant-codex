@@ -1,0 +1,141 @@
+Creation Assistant migration stage 0 pre-snapshot Git state
+Captured: 2026-08-28T13:11:33+08:00
+Project root: I:/Creation_assistant-codex
+Branch: implementation/v1.3-stage1b-daily-discovery
+HEAD: 0bfb7960c40d53fd96bc4d9ba2c6d57780ce6d7e
+
+This is the working-tree state before migration_snapshot/ was added.
+
+Status:
+## implementation/v1.3-stage1b-daily-discovery
+ M .codex/hooks/business_command_gate.py
+ M .env.example
+ M AGENTS.md
+ M SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml
+ M config/business_guardrails/competitor_registration.json
+ M config/business_guardrails/content_production.json
+ M config/business_guardrails/daily_operations.json
+ M config/business_guardrails/stage_registry.json
+ M config/business_guardrails/system_governance.json
+ D config/domain_packs/fan_kepu_social_life.yaml
+ M config/domain_packs/music_entertainment.yaml
+ M config/external_collection.yaml
+ M config/model_routes.yaml
+ M docs/CORE_BUSINESS_EXECUTION_GUIDE.md
+ M docs/EFFECTIVE_DESIGN_BASELINE.md
+ M docs/IMPLEMENTATION_STATUS_AFTER_FREEZE.md
+ M docs/PROJECT_CONSISTENCY_REMEDIATION_EXECUTION_PLAN.md
+ M execution/stages/cold_start.md
+ M execution/stages/daily_operations.md
+ D runtime_skills/competitor_breakdown_structural_v13/binding.yaml
+ D runtime_skills/competitor_breakdown_structural_v13/input_schema.yaml
+ D runtime_skills/competitor_breakdown_structural_v13/output_schema.yaml
+ D runtime_skills/competitor_breakdown_structural_v13/prompt.md
+ D runtime_skills/competitor_breakdown_structural_v13/skill.yaml
+ M runtime_skills/content_deep_research/binding.yaml
+ M runtime_skills/content_deep_research/output_schema.yaml
+ M runtime_skills/content_deep_research/prompt.md
+ M runtime_skills/content_deep_research/skill.yaml
+ M runtime_skills/content_plan_generation/prompt.md
+ M runtime_skills/experience_candidate_propose/binding.yaml
+ M runtime_skills/experience_candidate_propose/input_schema.yaml
+ M runtime_skills/experience_candidate_propose/output_schema.yaml
+ M runtime_skills/experience_candidate_propose/prompt.md
+ M runtime_skills/experience_candidate_propose/skill.yaml
+ M runtime_skills/research_plan/binding.yaml
+ M runtime_skills/research_plan/output_schema.yaml
+ M runtime_skills/research_plan/prompt.md
+ M runtime_skills/research_plan/skill.yaml
+ M runtime_skills/source_to_topic/binding.yaml
+ M runtime_skills/source_to_topic/input_schema.yaml
+ M runtime_skills/source_to_topic/output_schema.yaml
+ M runtime_skills/source_to_topic/prompt.md
+ M runtime_skills/source_to_topic/skill.yaml
+ D scripts/agent_platform/cold_start_config_server.py
+ D scripts/agent_platform/cold_start_config_ui.html
+ M scripts/agent_platform/daily_operations_runtime.py
+ A scripts/agent_platform/hermes_tool_registry.py
+ M scripts/core/business_data/competitor_accounts_schema.sqlite.sql
+ M scripts/core/business_data/daily_source_acquisition.py
+ M scripts/core/business_data/domain_labels.py
+ M scripts/core/business_data/run_domain_search.py
+ D scripts/core/execution_contract.py
+ M scripts/core/external_adapters/goal_phase4_external_adapters.py
+ M scripts/core/external_adapters/local_mediacrawler_executor.py
+ M scripts/core/external_adapters/music_audience_browser.py
+ M scripts/core/external_adapters/windows_process.py
+ M scripts/core/model_gateway/codex_app_server_provider.py
+ M scripts/core/model_gateway/configured_provider.py
+ M scripts/core/model_gateway/formal_skill_adapter.py
+ M scripts/core/model_gateway/goal07_model_gateway.py
+ M scripts/core/model_gateway/hermes_model_provider.py
+ M scripts/core/model_gateway/model_router.py
+ M scripts/core/production/business_runtime_guard.py
+ M scripts/core/production/cold_start_onboarding.py
+ A scripts/core/production/cold_start_orchestrator.py
+ M scripts/core/production/experience_candidate_proposal.py
+ M scripts/core/production/high_signal_policy.py
+ M scripts/core/production/human_decision_entry.py
+ M scripts/core/production/live_music_cold_start_preflight.py
+ M scripts/core/production/stage0_content_core.py
+ M scripts/core/production/stage1_account_observation.py
+ M scripts/core/production/stage1_competitor_registration.py
+ M scripts/core/production/stage1_daily_operations.py
+ M scripts/core/production/stage1_music_person_exploration.py
+ M scripts/core/production/stage1a_research_plan.py
+ M scripts/core/production/stage1b_daily_discovery.py
+ M scripts/core/production/stage1c_content_pipeline.py
+ M scripts/core/production/stage4_knowledge_mirror.py
+ M scripts/external_runtime/douyin_collector_browser.py
+ M scripts/stage_contract_guard.py
+?? .workbuddy/
+?? CREATION_ASSISTANT_MIGRATION_BASELINE.md
+?? config/domain_packs/domain_1833831517eb.yaml
+?? docs/CANDIDATE_SCORING_FEASIBILITY_VALIDATION_2A_CORRECTED.md
+?? docs/CANDIDATE_SCORING_FINAL_DESIGN.md
+?? docs/CANDIDATE_SCORING_MINIMAL_EVIDENCE_CONTRACT_2B.md
+?? docs/CANDIDATE_SCORING_MINIMAL_EVIDENCE_CONTRACT_2C.md
+?? docs/CANDIDATE_SCORING_MINIMAL_EVIDENCE_IMPLEMENTATION_2D.md
+?? docs/CARRIER_VALIDATION_SEMANTIC_BOUNDARY.md
+?? docs/COLD_START_EXECUTION_REFERENCE.md
+?? docs/CORE_BUSINESS_PROCESS_OVERVIEW.md
+?? docs/CURRENT_DESIGN_DECISION_STATUS.md
+?? docs/FEISHU_MINIMAL_INTEGRATION_BOUNDARY.md
+?? docs/MAIN_CHAIN_MATURITY_ALIGNMENT.md
+?? docs/TOPIC_MECHANISM_REMEDIATION_STAGE_SUMMARY.md
+?? docs/TOPIC_ROUTING_CURRENT.md
+?? docs/V1_PRODUCTION_BASELINE_CLOSURE.md
+?? docs/WORK_WORKBENCH_MCP_EXECUTION_PLAN.md
+?? runtime_skills/competitor_breakdown/
+?? scripts/agent_platform/cold_start_background_control.py
+?? scripts/agent_platform/cold_start_background_entry.py
+?? scripts/agent_platform/hermes_cold_start_action.py
+?? scripts/agent_platform/hermes_cold_start_control.py
+?? scripts/agent_platform/hermes_cold_start_management_entry.py
+?? scripts/agent_platform/hermes_cold_start_notifications.py
+?? scripts/agent_platform/hermes_competitor_breakdown_test_entry.py
+?? scripts/agent_platform/hermes_daily_entry.py
+?? scripts/agent_platform/hermes_daily_entry.sh
+?? scripts/agent_platform/hermes_daily_repair_entry.py
+?? scripts/agent_platform/hermes_formal_research_entry.py
+?? scripts/agent_platform/hermes_knowledge_convergence_entry.py
+?? scripts/agent_platform/hermes_native_feishu_outbound.py
+?? scripts/agent_platform/hermes_native_feishu_outbound_entry.py
+?? scripts/agent_platform/hermes_step4_notification_e2e.py
+?? scripts/agent_platform/run_daily_collection_once.py
+?? scripts/core/business_data/domain_boundaries.py
+?? scripts/core/external_adapters/anysearch_executor.py
+?? scripts/core/production/cold_start_completion.py
+?? scripts/core/production/domain_boundary_lifecycle.py
+?? tests/
+?? topic-structure-check-n_kg7psb/
+?? topic-structure-check-p2ju489s/
+?? topic-structure-check-t8qkkn_o/
+?? validation/
+?? "\357\201\234"
+
+Ignored but relevant:
+!! .env
+!! .env.runtime.local
+!! .stage_runtime/
+

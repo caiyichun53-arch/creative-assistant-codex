@@ -11,20 +11,44 @@ import json
 import math
 import re
 import sqlite3
+import unicodedata
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
-from scripts.core.execution_contract import require_baseline_citations
 from scripts.core.business_data.domain_labels import (
+    DOMAIN_CONFIG_DIR,
+    freeze_content_type_registry,
     formal_domain_labels,
     get_content_workflow_mode,
+    get_domain_pack,
     get_discovery_policy,
+    load_domain_packs,
+    project_content_type,
 )
-from scripts.core.model_gateway.goal07_model_gateway import ModelRequest, ModelRunEnvelope
-from scripts.core.model_gateway.model_router import ModelRouter, ModelRouterError
+from scripts.core.business_data.domain_boundaries import (
+    evaluate_production_boundary,
+    freeze_production_boundary_registry,
+    get_production_boundary_registry,
+    require_frozen_production_boundary,
+)
+from scripts.core.business_data.run_domain_search import TAG_CANDIDATE_LIKE_FLOOR
+from scripts.core.model_gateway.configured_provider import build_configured_model_provider
+from scripts.core.model_gateway.goal07_model_gateway import (
+    ModelGateway,
+    ModelGatewayError,
+    ModelRequest,
+    ModelRoute,
+    ModelRunEnvelope,
+)
+from scripts.core.model_gateway.model_router import (
+    HermesTaskModelBinding,
+    ModelRouter,
+    ModelRouterError,
+)
+from scripts.core.runtime.liveness import budget_for
 from scripts.core.production.high_signal_policy import (
     FIRST_REGISTRATION_COLLECTION_POLICY_VERSION,
     FIRST_REGISTRATION_MAX_ITEMS,
@@ -35,6 +59,7 @@ from scripts.core.production.high_signal_policy import (
     MIN_RELIABLE_HISTORY_ITEMS,
     build_historical_collection_artifact,
     build_high_signal_artifact,
+    derive_account_maturity_state,
     judge_against_formal_d_baseline,
     judge_against_mature_history,
     validate_historical_collection_artifact,
@@ -56,19 +81,38 @@ DISCOVERY_EXECUTION_MODES = frozenset({"test_isolated", "real_daily_validation",
 DISCOVERY_RUN_OUTCOMES = frozenset(
     {"processing", "completed", "completed_with_failures", "timed_out", "interrupted", "failed", "cancelled"}
 )
+EXTERNAL_INTELLIGENCE_EXECUTION_VERSION = "external_intelligence.v1"
 MANUAL_SOURCE_KINDS = frozenset({"direction", "link", "person", "work", "playlist"})
+MANUAL_SOURCE_TOPIC_ROUTES = {
+    "direction": "user_unclear_input",
+    "link": "user_unclear_input",
+    "person": "person_exploration",
+    "work": "single_object_exploration",
+    "playlist": "object_collection_exploration",
+}
+EXPLORATION_KIND_TO_TOPIC_ROUTE = {
+    "person_exploration": "person_exploration",
+    "work_exploration": "single_object_exploration",
+    "playlist_exploration": "object_collection_exploration",
+}
 MANUAL_SOURCE_TARGET_KINDS = frozenset(
     {"saved_user_direction", "candidate", "formal_topic", "person_exploration", "work_exploration", "playlist_exploration"}
 )
 CONTENT_ACCOUNT_ROLES = frozenset({"owned", "competitor"})
-COLD_START_COMPETITOR_MIN = 10
+COLD_START_CONTRACT_VERSION = "cold_start_guard_v14"
+COLD_START_COMPETITOR_MIN = 20
 COLD_START_COMPETITOR_MAX = 20
 COMPETITOR_REGISTRATION_STEPS = (
     "historical_material",
     "high_signal_identification",
     "transcripts_and_comments",
     "breakdown",
-    "tag_candidates",
+)
+COMPETITOR_TRACKING_ACTIVATION_STEPS = (
+    "historical_material",
+    "high_signal_identification",
+    "transcripts_and_comments",
+    "breakdown",
 )
 CANDIDATE_SCORE_WEIGHTS = {
     "demand_strength": 22,
@@ -79,6 +123,8 @@ CANDIDATE_SCORE_WEIGHTS = {
     "timeliness": 10,
 }
 DAILY_PRIORITY_REPORT_LIMIT = 10
+EXPERIENCE_CANDIDATE_BATCH_SIZE = 8
+EXPERIENCE_CANDIDATE_MIN_SOURCES = 3
 _SOURCE_HASHTAG_PATTERN = re.compile(r"#([^#\s]+)")
 _TAG_EDGE_PUNCTUATION = "，,。.！!?？:：;；、|/\\()（）[]【】<>《》“”'\"`~·…"
 
@@ -135,13 +181,22 @@ NEXT_ARTIFACT_NODE = {
     "de_ai_revision": "review",
 }
 MODEL_BINDINGS = {
-    "research_plan": ("business_analysis", "business_planning"),
+    "research_plan": ("research_planning", "external_research_planning"),
     "deep_research": ("business_analysis", "material_summary"),
     "content_plan": ("business_analysis", "business_planning"),
     "formal_draft": ("writing_generation", "rough_draft"),
     "copy_optimization": ("writing_generation", "polishing"),
     "de_ai_revision": ("writing_generation", "de_ai_style"),
     "review": ("writing_generation", "final_copy_review"),
+}
+FORMAL_SKILL_BY_NODE = {
+    "research_plan": "research_plan",
+    "deep_research": "content_deep_research",
+    "content_plan": "content_plan_generation",
+    "formal_draft": "formal_draft_generate",
+    "copy_optimization": "copy_optimization",
+    "de_ai_revision": "de_ai_revision",
+    "review": "final_content_review",
 }
 
 
@@ -223,6 +278,219 @@ def _canonical(value: Any) -> str:
 
 def _hash(value: Any) -> str:
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
+
+
+def _decode_json_object(output_text: str) -> dict[str, Any]:
+    text = str(output_text or "").strip()
+    fence = chr(96) * 3
+    if text.startswith(fence):
+        lines = text.splitlines()
+        if lines and lines[0].strip().startswith(fence):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == fence:
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    candidates = [text]
+    start, end = text.find("{"), text.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(text[start:end + 1])
+    last_error: Exception | None = None
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            value = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            continue
+        if isinstance(value, dict):
+            return value
+        last_error = ValueError("model boundary output must be an object")
+    raise StateTransitionError(f"model boundary output is not valid JSON: {last_error or 'empty output'}")
+
+
+_TOPIC_IDENTITY_STOPWORDS = frozenset({
+    "为什么", "为何", "怎么", "如何", "怎样", "是否", "能否", "可以", "应该", "到底",
+    "什么", "哪些", "哪个", "这个", "那个", "一个", "现在", "关于", "对于", "的", "了",
+    "吗", "呢", "啊", "会不会", "有没有",
+})
+
+
+def _topic_identity_tokens(value: str) -> set[str]:
+    """Build a small deterministic identity for merging rephrased questions.
+
+    This is deliberately a merge aid, not a new ranking or quality gate. It
+    removes question-function words and compares stable Chinese character
+    pairs, so equivalent wording can share one candidate card while different
+    angles remain separate.
+    """
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    for stopword in sorted(_TOPIC_IDENTITY_STOPWORDS, key=len, reverse=True):
+        normalized = normalized.replace(stopword, " ")
+    tokens: set[str] = set(re.findall(r"[a-z0-9]+", normalized))
+    for chunk in re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]+", normalized):
+        if len(chunk) == 1:
+            tokens.add(chunk)
+        else:
+            tokens.update(chunk[index:index + 2] for index in range(len(chunk) - 1))
+    return tokens
+
+
+def _topic_identity_matches(left: str, right: str) -> bool:
+    if unicodedata.normalize("NFKC", str(left or "")).strip().casefold() == unicodedata.normalize(
+        "NFKC", str(right or "")
+    ).strip().casefold():
+        return True
+    left_tokens, right_tokens = _topic_identity_tokens(left), _topic_identity_tokens(right)
+    if not left_tokens or not right_tokens:
+        return False
+    overlap = len(left_tokens & right_tokens)
+    if overlap < 2:
+        return False
+    similarity = overlap / min(len(left_tokens), len(right_tokens))
+    return (overlap >= 3 and similarity >= 0.5) or similarity >= 0.7
+
+
+def canonicalize_competitor_content_type(value: str) -> str:
+    """Keep one dominant content engine for retrieval without making a taxonomy."""
+    text = unicodedata.normalize("NFKC", str(value or "")).strip()
+    if not text:
+        return "其他内容"
+    compact = re.sub(r"[\s/、+&|]+", "", text)
+    if compact in {
+        "人物故事", "人物盘点", "人物观点评论", "人物解读", "人物经历",
+        "作品故事", "作品盘点", "作品背景说明", "作品观点评论", "作品解读",
+        "事件背景说明", "事件观点评论", "事件解读", "概念盘点", "概念观点评论",
+        "概念解读", "案例故事", "案例背景说明", "案例观点评论", "案例解读",
+        "合集故事", "合集盘点", "合集经历", "合集观点评论", "合集解读",
+    }:
+        return compact
+    if "盘点" in compact or "歌单" in compact or "清单" in compact:
+        if any(token in compact for token in ("人物", "歌手", "音乐人", "组合")):
+            return "人物盘点"
+        return "作品盘点"
+    if any(token in compact for token in ("故事", "经历")):
+        if any(token in compact for token in ("人物", "歌手", "音乐人", "组合")):
+            return "人物故事"
+        if any(token in compact for token in ("作品", "歌曲", "专辑")):
+            return "作品故事"
+        if "事件" in compact:
+            return "事件解读"
+    if "背景" in compact:
+        if any(token in compact for token in ("人物", "歌手", "音乐人", "组合")):
+            return "人物解读"
+        if any(token in compact for token in ("作品", "歌曲", "专辑")):
+            return "作品背景说明"
+        if "事件" in compact:
+            return "事件背景说明"
+    if any(token in compact for token in ("观点", "评论")):
+        if any(token in compact for token in ("人物", "歌手", "音乐人", "组合")):
+            return "人物观点评论"
+        if any(token in compact for token in ("作品", "歌曲", "专辑")):
+            return "作品观点评论"
+        if "事件" in compact:
+            return "事件观点评论"
+        return "概念观点评论"
+    if any(token in compact for token in ("解读", "解释", "机制")):
+        if any(token in compact for token in ("人物", "歌手", "音乐人", "组合")):
+            return "人物解读"
+        if any(token in compact for token in ("作品", "歌曲", "专辑")):
+            return "作品解读"
+        if "事件" in compact:
+            return "事件解读"
+        return "概念解读"
+    return "其他内容"
+
+
+_CONTENT_TYPE_SUBJECT_LABELS = {
+    "person": "人物",
+    "work": "作品",
+    "event": "事件",
+    "concept": "概念",
+    "case": "案例",
+    "method": "方法",
+    "collection": "合集",
+}
+_CONTENT_TYPE_EXPRESSION_LABELS = {
+    "story": "故事",
+    "profile": "经历",
+    "list": "盘点",
+    "analysis": "解读",
+    "explanation": "背景说明",
+    "commentary": "观点评论",
+    "event_response": "事件回应",
+    "interview": "访谈",
+}
+
+
+def _content_type_group_key(raw_type: str) -> tuple[str, str]:
+    """Return a deterministic semantic group without inventing a type."""
+    raw = unicodedata.normalize("NFKC", str(raw_type or "")).strip()
+    canonical = canonicalize_competitor_content_type(raw)
+    # ``canonicalize_competitor_content_type`` remains a legacy retrieval
+    # helper.  The cold-start proposal step may make only this explicit,
+    # evidence-backed equivalence: an observed person profile is the same
+    # dominant story engine as a person story.  No other unseen grouping is
+    # inferred here.
+    if canonical == "人物经历":
+        canonical = "人物故事"
+    if canonical != "其他内容":
+        return ("canonical", canonical.casefold())
+    compact = re.sub(r"\s+", "", raw).casefold()
+    return ("raw", compact or "其他内容")
+
+
+def _content_type_candidate_id(domain_label: str, group_key: tuple[str, str]) -> str:
+    return "content_type_" + hashlib.sha256(
+        _canonical({"domain_label": domain_label, "group_key": list(group_key)}).encode("utf-8")
+    ).hexdigest()[:20]
+
+
+def _content_type_candidate_canonical_id(domain_label: str, group_key: tuple[str, str]) -> str:
+    return "ct_" + hashlib.sha256(
+        _canonical({"domain_label": domain_label, "group_key": list(group_key)}).encode("utf-8")
+    ).hexdigest()[:16]
+
+
+def _content_type_candidate_definition(
+    *,
+    display_name: str,
+    observations: list[dict[str, Any]],
+) -> dict[str, str]:
+    subjects = sorted(
+        {
+            _CONTENT_TYPE_SUBJECT_LABELS.get(
+                str(item.get("content_subject_type") or "").strip(),
+                str(item.get("content_subject_type") or "").strip(),
+            )
+            for item in observations
+            if str(item.get("content_subject_type") or "").strip()
+            not in {"", "mixed", "unclear"}
+        }
+    )
+    expressions = sorted(
+        {
+            _CONTENT_TYPE_EXPRESSION_LABELS.get(
+                str(item.get("expression_form") or "").strip(),
+                str(item.get("expression_form") or "").strip(),
+            )
+            for item in observations
+            if str(item.get("expression_form") or "").strip()
+            not in {"", "mixed", "unclear"}
+        }
+    )
+    subject_text = "、".join(subjects) or "当前样本观察到的内容对象"
+    expression_text = "、".join(expressions) or "当前样本观察到的表达方式"
+    definition = f"主要围绕{subject_text}，采用{expression_text}组织一篇完整内容。"
+    return {
+        "definition": definition,
+        "content_expression": f"内容对象为{subject_text}；组织方式为{expression_text}。",
+        "distinction": f"与其它候选的区别：本候选主要由{subject_text}和{expression_text}共同决定，不因单个关键词相似自动归入。",
+        "core_subject": subject_text,
+        "content_promise": definition,
+        "required_delivery": f"明确呈现{subject_text}，并按{expression_text}形成可独立完成的内容推进。",
+        "scope_boundary": f"只覆盖本次样本中已观察到的{subject_text}与{expression_text}组合；不能仅凭标签、人物名称或领域关联扩展到其它类型。",
+    }
 
 
 def _contains_build_root_path(value: Any) -> bool:
@@ -504,17 +772,26 @@ class CoreDailyHitModelRunMaterializer:
 class Stage0ContentProductionCore:
     """The sole formal Core API for Stage 0's first vertical production chain."""
 
-    def __init__(self, connection: sqlite3.Connection, *, db_path: Path, data_identity: DataIdentity) -> None:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        db_path: Path,
+        data_identity: DataIdentity,
+        domain_config_dir: Path | None = None,
+    ) -> None:
         self.conn = connection
         self.db_path = db_path.resolve()
         self.data_identity = data_identity
+        self.domain_config_dir = (domain_config_dir or DOMAIN_CONFIG_DIR).resolve()
         self.conn.row_factory = sqlite3.Row
 
     @classmethod
-    def open(cls, db_path: Path | str, *, data_identity: DataIdentity) -> "Stage0ContentProductionCore":
+    def _validate_database_path(
+        cls, db_path: Path | str, *, data_identity: DataIdentity
+    ) -> Path:
         resolved = Path(db_path).resolve()
         if data_identity == "production":
-            require_baseline_citations(["3", "4", "5", "6", "7", "11", "12", "13"])
             if resolved != FORMAL_DB_PATH.resolve():
                 raise DataIdentityError("production identity may only use the configured formal runtime database")
         elif data_identity in NON_PRODUCTION_IDENTITIES:
@@ -528,10 +805,25 @@ class Stage0ContentProductionCore:
                 raise DataIdentityError("non-production identity must not open a database inside the build root")
         else:
             raise DataIdentityError(f"unsupported data identity: {data_identity}")
+        return resolved
+
+    @classmethod
+    def open(cls, db_path: Path | str, *, data_identity: DataIdentity) -> "Stage0ContentProductionCore":
+        resolved = cls._validate_database_path(db_path, data_identity=data_identity)
         connection = sqlite3.connect(resolved)
         core = cls(connection, db_path=resolved, data_identity=data_identity)
         core.install_schema()
         return core
+
+    @classmethod
+    def open_read_only(
+        cls, db_path: Path | str, *, data_identity: DataIdentity
+    ) -> "Stage0ContentProductionCore":
+        """Open an existing database without schema installation or writes."""
+
+        resolved = cls._validate_database_path(db_path, data_identity=data_identity)
+        connection = sqlite3.connect(f"{resolved.as_uri()}?mode=ro", uri=True)
+        return cls(connection, db_path=resolved, data_identity=data_identity)
 
     def close(self) -> None:
         self.conn.close()
@@ -840,9 +1132,21 @@ class Stage0ContentProductionCore:
                 created_at TEXT NOT NULL,
                 UNIQUE(task_id, audio_ref)
             );
+            CREATE TABLE IF NOT EXISTS stage0_experience_candidate_run (
+                experience_candidate_run_id TEXT PRIMARY KEY,
+                domain_label TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'completed_with_gaps', 'superseded')),
+                source_snapshot_json TEXT NOT NULL,
+                source_count INTEGER NOT NULL,
+                data_identity TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                completed_at TEXT
+            );
             CREATE TABLE IF NOT EXISTS stage0_experience_candidate (
                 experience_candidate_id TEXT PRIMARY KEY,
-                task_id TEXT NOT NULL REFERENCES stage0_content_task(task_id),
+                task_id TEXT REFERENCES stage0_content_task(task_id),
+                experience_candidate_run_id TEXT,
                 domain_label TEXT NOT NULL,
                 source_fingerprint TEXT NOT NULL,
                 frozen_sources_json TEXT NOT NULL,
@@ -880,6 +1184,10 @@ class Stage0ContentProductionCore:
                 method_json TEXT NOT NULL,
                 source_refs_json TEXT NOT NULL,
                 boundary_json TEXT NOT NULL,
+                experience_layer TEXT NOT NULL DEFAULT 'section_method',
+                use_positions_json TEXT NOT NULL DEFAULT '["body"]',
+                trigger_signals_json TEXT NOT NULL DEFAULT '[]',
+                not_applicable_when_json TEXT NOT NULL DEFAULT '[]',
                 status TEXT NOT NULL CHECK(status IN ('active', 'paused')),
                 data_identity TEXT NOT NULL,
                 confirmed_by TEXT NOT NULL,
@@ -928,7 +1236,6 @@ class Stage0ContentProductionCore:
             );
             CREATE TABLE IF NOT EXISTS stage0_cold_start_configuration (
                 configuration_id TEXT PRIMARY KEY,
-                confirmation_key TEXT NOT NULL,
                 domain_mode TEXT NOT NULL CHECK(domain_mode IN ('reuse', 'create')),
                 domain_label TEXT NOT NULL,
                 domain_name TEXT NOT NULL,
@@ -940,19 +1247,38 @@ class Stage0ContentProductionCore:
                 data_identity TEXT NOT NULL,
                 confirmed_by TEXT NOT NULL,
                 confirmed_at TEXT NOT NULL,
-                cold_start_id TEXT,
-                UNIQUE(confirmation_key, data_identity)
+                cold_start_id TEXT
             );
             CREATE TABLE IF NOT EXISTS stage0_cold_start (
                 cold_start_id TEXT PRIMARY KEY,
                 owned_account_id TEXT NOT NULL REFERENCES stage0_content_account(content_account_id),
                 domain_label TEXT NOT NULL,
-                status TEXT NOT NULL CHECK(status IN ('registering_competitors', 'awaiting_human_review', 'completed', 'cancelled')),
+                status TEXT NOT NULL CHECK(status IN ('running', 'stopped', 'failed', 'waiting_human', 'completed')),
                 data_identity TEXT NOT NULL,
                 created_by TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 completed_at TEXT,
                 UNIQUE(owned_account_id, domain_label, data_identity)
+            );
+            CREATE TABLE IF NOT EXISTS stage0_cold_start_run_contract (
+                cold_start_id TEXT PRIMARY KEY REFERENCES stage0_cold_start(cold_start_id),
+                domain_label TEXT NOT NULL,
+                owned_account_id TEXT NOT NULL,
+                competitor_account_ids_json TEXT NOT NULL,
+                input_snapshot_json TEXT NOT NULL,
+                cold_start_contract_version TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                data_identity TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS stage0_cold_start_onboarding_failure (
+                failure_id TEXT PRIMARY KEY,
+                configuration_id TEXT,
+                domain_label TEXT NOT NULL,
+                input_snapshot_json TEXT NOT NULL,
+                cold_start_contract_version TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                failed_at TEXT NOT NULL,
+                data_identity TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS stage0_competitor_registration (
                 registration_id TEXT PRIMARY KEY,
@@ -1006,6 +1332,23 @@ class Stage0ContentProductionCore:
                 usage_json TEXT NOT NULL,
                 cost_json TEXT NOT NULL,
                 duration_ms INTEGER NOT NULL,
+                data_identity TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS stage0_daily_hit_breakdown (
+                hit_id TEXT PRIMARY KEY REFERENCES hits(hit_id),
+                version INTEGER NOT NULL,
+                artifact_json TEXT NOT NULL,
+                model_run_id TEXT NOT NULL,
+                data_identity TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS stage0_daily_hit_processing_failure (
+                failure_id TEXT PRIMARY KEY,
+                hit_id TEXT NOT NULL REFERENCES hits(hit_id),
+                stage_name TEXT NOT NULL,
+                error_json TEXT NOT NULL,
+                run_id TEXT NOT NULL,
                 data_identity TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
@@ -1076,6 +1419,45 @@ class Stage0ContentProductionCore:
                 reviewed_by TEXT,
                 reviewed_at TEXT,
                 review_reason TEXT
+            );
+            CREATE TABLE IF NOT EXISTS stage0_cold_start_content_type_candidate (
+                content_type_candidate_id TEXT PRIMARY KEY,
+                cold_start_id TEXT NOT NULL REFERENCES stage0_cold_start(cold_start_id),
+                domain_label TEXT NOT NULL,
+                candidate_version TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('preparing', 'awaiting_human_decision', 'failed', 'accepted', 'rejected', 'frozen')),
+                source_snapshot_json TEXT NOT NULL,
+                proposal_json TEXT NOT NULL,
+                failure_json TEXT NOT NULL,
+                review_json TEXT NOT NULL,
+                freeze_provenance_json TEXT NOT NULL,
+                data_identity TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                reviewed_by TEXT,
+                reviewed_at TEXT,
+                review_reason TEXT,
+                UNIQUE(cold_start_id, candidate_version, data_identity)
+            );
+            CREATE TABLE IF NOT EXISTS stage0_cold_start_domain_boundary_candidate (
+                boundary_candidate_id TEXT PRIMARY KEY,
+                cold_start_id TEXT NOT NULL REFERENCES stage0_cold_start(cold_start_id),
+                domain_label TEXT NOT NULL,
+                candidate_version TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('preparing', 'awaiting_human_decision', 'failed', 'frozen')),
+                source_snapshot_json TEXT NOT NULL,
+                proposal_json TEXT NOT NULL,
+                failure_json TEXT NOT NULL,
+                review_json TEXT NOT NULL,
+                freeze_provenance_json TEXT NOT NULL,
+                model_run_json TEXT NOT NULL,
+                data_identity TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                reviewed_by TEXT,
+                reviewed_at TEXT,
+                review_reason TEXT,
+                UNIQUE(cold_start_id, candidate_version, data_identity)
             );
             CREATE TABLE IF NOT EXISTS stage0_two_week_tag_library_review (
                 tag_review_id TEXT PRIMARY KEY,
@@ -1154,6 +1536,17 @@ class Stage0ContentProductionCore:
             CREATE TRIGGER IF NOT EXISTS stage1a_artifact_payload_immutable_delete
             BEFORE DELETE ON stage1a_artifact_payload
             BEGIN SELECT RAISE(ABORT, 'stage1a artifact payloads are immutable'); END;
+            CREATE TABLE IF NOT EXISTS stage0_daily_run (
+                daily_run_id TEXT PRIMARY KEY,
+                domain_label TEXT NOT NULL,
+                business_date TEXT NOT NULL,
+                lifecycle TEXT NOT NULL CHECK(lifecycle IN ('running', 'failed', 'stopped', 'completed')),
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                data_identity TEXT NOT NULL,
+                UNIQUE(domain_label, business_date)
+            );
             CREATE TABLE IF NOT EXISTS stage1b_discovery_run (
                 run_id TEXT PRIMARY KEY,
                 discovery_date TEXT NOT NULL,
@@ -1171,7 +1564,8 @@ class Stage0ContentProductionCore:
                 classification_reason TEXT NOT NULL,
                 classified_by TEXT NOT NULL,
                 classified_at TEXT NOT NULL,
-                data_identity TEXT NOT NULL
+                data_identity TEXT NOT NULL,
+                daily_run_id TEXT REFERENCES stage0_daily_run(daily_run_id)
             );
             CREATE TABLE IF NOT EXISTS stage1b_run_domain_scope (
                 run_id TEXT NOT NULL REFERENCES stage1b_discovery_run(run_id),
@@ -1191,6 +1585,20 @@ class Stage0ContentProductionCore:
                 integrity_hash TEXT NOT NULL,
                 data_identity TEXT NOT NULL,
                 created_by TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS stage1_question_expansion_qualification (
+                qualification_id TEXT PRIMARY KEY,
+                expansion_id TEXT NOT NULL,
+                domain_label TEXT NOT NULL,
+                parent_source_ref_json TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('qualified', 'rejected', 'unresolved', 'blocked')),
+                rejection_reason TEXT NOT NULL,
+                material_refs_json TEXT NOT NULL,
+                checks_json TEXT NOT NULL,
+                evaluated_at TEXT NOT NULL,
+                data_identity TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                UNIQUE(expansion_id, data_identity)
             );
             CREATE TABLE IF NOT EXISTS stage1_saved_user_direction_source (
                 direction_id TEXT PRIMARY KEY,
@@ -1417,6 +1825,7 @@ class Stage0ContentProductionCore:
         )
         competitor_schema = Path(__file__).resolve().parents[1] / "business_data" / "competitor_accounts_schema.sqlite.sql"
         self.conn.executescript(competitor_schema.read_text(encoding="utf-8"))
+        self._migrate_daily_batch_dates()
         discovery_schema = Path(__file__).resolve().parents[1] / "business_data" / "domain_search_schema.sqlite.sql"
         self.conn.executescript(discovery_schema.read_text(encoding="utf-8"))
         self.conn.execute("DROP TABLE IF EXISTS stage1b_candidate_cooldown")
@@ -1438,14 +1847,123 @@ class Stage0ContentProductionCore:
             "FROM stage1b_daily_snapshot "
             "GROUP BY run_id, domain_label, data_identity"
         )
+        self._migrate_daily_run_schema()
         from scripts.core.production.publication_feedback import install_schema as install_publication_feedback_schema
         install_publication_feedback_schema(self.conn)
         # The former per-material trigger route has been retired.  Removing a
         # leftover table here makes an old process or an older database layout
         # unable to revive that route after the batch boundary was introduced.
         self.conn.execute("DROP TABLE IF EXISTS stage0_deep_breakdown_trigger")
+        self._migrate_hit_comments_purpose()
         self._migrate_competitor_registration_item_statuses()
+        self._migrate_question_expansion_qualification_statuses()
+        self._migrate_experience_candidate_scope()
+        self._migrate_experience_candidate_runs()
+        self._repair_experience_candidate_foreign_keys()
+        self._migrate_experience_usage_fields()
+        self.conn.execute(
+            "DROP INDEX IF EXISTS stage0_experience_candidate_pre_topic_unique"
+        )
+        self.conn.execute(
+            "CREATE UNIQUE INDEX stage0_experience_candidate_pre_topic_unique "
+            "ON stage0_experience_candidate(domain_label, experience_candidate_run_id, source_fingerprint) "
+            "WHERE task_id IS NULL AND experience_candidate_run_id IS NOT NULL "
+            "AND status IN ('preparing', 'awaiting_human_decision', 'accepted')"
+        )
         self.conn.commit()
+
+    def _migrate_daily_run_schema(self) -> None:
+        """Install the one formal daily lifecycle and its stage-run link."""
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS stage0_daily_run ("
+            "daily_run_id TEXT PRIMARY KEY, "
+            "domain_label TEXT NOT NULL, "
+            "business_date TEXT NOT NULL, "
+            "lifecycle TEXT NOT NULL CHECK(lifecycle IN ('running', 'failed', 'stopped', 'completed')), "
+            "created_at TEXT NOT NULL, "
+            "started_at TEXT, "
+            "finished_at TEXT, "
+            "data_identity TEXT NOT NULL, "
+            "UNIQUE(domain_label, business_date)"
+            ")"
+        )
+        context_columns = {
+            str(row["name"])
+            for row in self.conn.execute(
+                "PRAGMA table_info(stage1b_run_execution_context)"
+            ).fetchall()
+        }
+        if "daily_run_id" not in context_columns:
+            self.conn.execute(
+                "ALTER TABLE stage1b_run_execution_context "
+                "ADD COLUMN daily_run_id TEXT REFERENCES stage0_daily_run(daily_run_id)"
+            )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS stage1b_run_execution_context_daily_run_idx "
+            "ON stage1b_run_execution_context(daily_run_id, execution_mode)"
+        )
+
+    def _migrate_daily_batch_dates(self) -> None:
+        """Keep real observation clocks separate from daily business ownership."""
+
+        video_columns = {
+            str(row["name"])
+            for row in self.conn.execute("PRAGMA table_info(competitor_videos)").fetchall()
+        }
+        if "first_seen_business_date" not in video_columns:
+            self.conn.execute(
+                "ALTER TABLE competitor_videos ADD COLUMN first_seen_business_date TEXT"
+            )
+        check_columns = {
+            str(row["name"])
+            for row in self.conn.execute("PRAGMA table_info(video_checks)").fetchall()
+        }
+        if "business_date" not in check_columns:
+            self.conn.execute("ALTER TABLE video_checks ADD COLUMN business_date TEXT")
+        self.conn.execute(
+            "UPDATE competitor_videos "
+            "SET first_seen_business_date=date(datetime(first_seen_at), '+8 hours') "
+            "WHERE first_seen_business_date IS NULL OR first_seen_business_date=''"
+        )
+        self.conn.execute(
+            "UPDATE video_checks "
+            "SET business_date=date(datetime(checked_at), '+8 hours') "
+            "WHERE business_date IS NULL OR business_date=''"
+        )
+
+    def _migrate_hit_comments_purpose(self) -> None:
+        """Allow the formal daily-hit comment collection purpose on existing DBs."""
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='hit_comments'"
+        ).fetchone()
+        schema_sql = str(row["sql"] or "") if row is not None else ""
+        if "'daily_hit'" in schema_sql:
+            return
+        with self.conn:
+            self.conn.execute("ALTER TABLE hit_comments RENAME TO hit_comments_legacy")
+            self.conn.execute(
+                "CREATE TABLE hit_comments ("
+                "hit_id TEXT NOT NULL REFERENCES hits(hit_id) ON DELETE RESTRICT, "
+                "comment_id TEXT NOT NULL, text TEXT NOT NULL, like_count INTEGER NOT NULL DEFAULT 0, "
+                "parent_comment_id TEXT, sample_rank INTEGER NOT NULL, "
+                "purpose TEXT NOT NULL CHECK(purpose IN ('early_topic', 'mature_analysis', 'mature_history', 'external_snapshot', 'daily_hit')), "
+                "observation_point TEXT, sampling_strategy TEXT, run_id TEXT NOT NULL, "
+                "fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                "PRIMARY KEY (hit_id, comment_id, purpose))"
+            )
+            self.conn.execute(
+                "INSERT INTO hit_comments "
+                "(hit_id, comment_id, text, like_count, parent_comment_id, sample_rank, purpose, "
+                "observation_point, sampling_strategy, run_id, fetched_at) "
+                "SELECT hit_id, comment_id, text, like_count, parent_comment_id, sample_rank, purpose, "
+                "observation_point, sampling_strategy, run_id, fetched_at "
+                "FROM hit_comments_legacy"
+            )
+            self.conn.execute("DROP TABLE hit_comments_legacy")
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_hit_comments_hit "
+                "ON hit_comments(hit_id, sample_rank)"
+            )
 
     def _migrate_competitor_registration_item_statuses(self) -> None:
         """Allow a final, non-retry exclusion without mislabeling it as a model failure."""
@@ -1473,6 +1991,213 @@ class Stage0ContentProductionCore:
                 "attempt_count, data_identity, updated_at FROM stage0_competitor_registration_item_legacy"
             )
             self.conn.execute("DROP TABLE stage0_competitor_registration_item_legacy")
+
+    def _migrate_question_expansion_qualification_statuses(self) -> None:
+        """Keep unresolved external checks distinct from final rejection."""
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='stage1_question_expansion_qualification'"
+        ).fetchone()
+        schema_sql = str(row["sql"] or "") if row is not None else ""
+        if all(status in schema_sql for status in ("'unresolved'", "'blocked'")):
+            return
+        with self.conn:
+            self.conn.execute(
+                "ALTER TABLE stage1_question_expansion_qualification "
+                "RENAME TO stage1_question_expansion_qualification_legacy"
+            )
+            self.conn.execute(
+                "CREATE TABLE stage1_question_expansion_qualification ("
+                "qualification_id TEXT PRIMARY KEY, expansion_id TEXT NOT NULL, "
+                "domain_label TEXT NOT NULL, parent_source_ref_json TEXT NOT NULL, "
+                "status TEXT NOT NULL CHECK(status IN ('qualified', 'rejected', 'unresolved', 'blocked')), "
+                "rejection_reason TEXT NOT NULL, material_refs_json TEXT NOT NULL, "
+                "checks_json TEXT NOT NULL, evaluated_at TEXT NOT NULL, data_identity TEXT NOT NULL, "
+                "created_by TEXT NOT NULL, UNIQUE(expansion_id, data_identity))"
+            )
+            self.conn.execute(
+                "INSERT INTO stage1_question_expansion_qualification "
+                "(qualification_id, expansion_id, domain_label, parent_source_ref_json, status, "
+                "rejection_reason, material_refs_json, checks_json, evaluated_at, data_identity, created_by) "
+                "SELECT qualification_id, expansion_id, domain_label, parent_source_ref_json, status, "
+                "rejection_reason, material_refs_json, checks_json, evaluated_at, data_identity, created_by "
+                "FROM stage1_question_expansion_qualification_legacy"
+            )
+            self.conn.execute("DROP TABLE stage1_question_expansion_qualification_legacy")
+
+    def _migrate_experience_candidate_scope(self) -> None:
+        """Allow one shared experience-candidate path before a content task exists."""
+
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='stage0_experience_candidate'"
+        ).fetchone()
+        schema_sql = str(row["sql"] or "") if row is not None else ""
+        if "task_id TEXT NOT NULL" not in schema_sql:
+            return
+        with self.conn:
+            self.conn.execute(
+                "ALTER TABLE stage0_experience_candidate RENAME TO stage0_experience_candidate_legacy"
+            )
+            self.conn.execute(
+                "CREATE TABLE stage0_experience_candidate ("
+                "experience_candidate_id TEXT PRIMARY KEY, "
+                "task_id TEXT REFERENCES stage0_content_task(task_id), "
+                "experience_candidate_run_id TEXT, "
+                "domain_label TEXT NOT NULL, source_fingerprint TEXT NOT NULL, "
+                "frozen_sources_json TEXT NOT NULL, "
+                "status TEXT NOT NULL CHECK(status IN ('preparing', 'awaiting_human_decision', 'no_proposal', 'failed', 'accepted', 'rejected')), "
+                "proposal_json TEXT, failure_json TEXT NOT NULL, data_identity TEXT NOT NULL, "
+                "created_by TEXT NOT NULL, created_at TEXT NOT NULL, decided_by TEXT, "
+                "decided_at TEXT, decision_reason TEXT, "
+                "UNIQUE(task_id, source_fingerprint))"
+            )
+            self.conn.execute(
+                "INSERT INTO stage0_experience_candidate "
+                "(experience_candidate_id, task_id, experience_candidate_run_id, domain_label, source_fingerprint, "
+                "frozen_sources_json, status, proposal_json, failure_json, data_identity, "
+                "created_by, created_at, decided_by, decided_at, decision_reason) "
+                "SELECT experience_candidate_id, task_id, NULL, domain_label, source_fingerprint, "
+                "frozen_sources_json, status, proposal_json, failure_json, data_identity, "
+                "created_by, created_at, decided_by, decided_at, decision_reason "
+                "FROM stage0_experience_candidate_legacy"
+            )
+            self.conn.execute("DROP TABLE stage0_experience_candidate_legacy")
+
+    def _migrate_experience_candidate_runs(self) -> None:
+        """Add an explicit boundary for each independent pre-topic pass."""
+
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS stage0_experience_candidate_run ("
+            "experience_candidate_run_id TEXT PRIMARY KEY, "
+            "domain_label TEXT NOT NULL, "
+            "status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'completed_with_gaps', 'superseded')), "
+            "source_snapshot_json TEXT NOT NULL, source_count INTEGER NOT NULL, "
+            "data_identity TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL, "
+            "completed_at TEXT)"
+        )
+        columns = {
+            str(row["name"])
+            for row in self.conn.execute(
+                "PRAGMA table_info(stage0_experience_candidate)"
+            ).fetchall()
+        }
+        if "experience_candidate_run_id" not in columns:
+            self.conn.execute(
+                "ALTER TABLE stage0_experience_candidate "
+                "ADD COLUMN experience_candidate_run_id TEXT"
+            )
+
+    def _migrate_experience_usage_fields(self) -> None:
+        """Add the explicit layer and usage conditions to confirmed experiences."""
+
+        columns = {
+            str(row["name"])
+            for row in self.conn.execute(
+                "PRAGMA table_info(stage0_confirmed_experience)"
+            ).fetchall()
+        }
+        additions = {
+            "experience_layer": "TEXT NOT NULL DEFAULT 'section_method'",
+            "use_positions_json": "TEXT NOT NULL DEFAULT '[\"body\"]'",
+            "trigger_signals_json": "TEXT NOT NULL DEFAULT '[]'",
+            "not_applicable_when_json": "TEXT NOT NULL DEFAULT '[]'",
+        }
+        for name, definition in additions.items():
+            if name not in columns:
+                self.conn.execute(
+                    f"ALTER TABLE stage0_confirmed_experience ADD COLUMN {name} {definition}"
+                )
+        self.conn.execute(
+            "UPDATE stage0_confirmed_experience "
+            "SET trigger_signals_json=applicable_when_json "
+            "WHERE trigger_signals_json='[]' OR trigger_signals_json IS NULL"
+        )
+        self.conn.execute(
+            "UPDATE stage0_confirmed_experience "
+            "SET not_applicable_when_json=boundary_json "
+            "WHERE not_applicable_when_json='[]' OR not_applicable_when_json IS NULL"
+        )
+
+    def _repair_experience_candidate_foreign_keys(self) -> None:
+        """Repair child tables left pointing at the retired candidate table."""
+
+        stale_target = "stage0_experience_candidate_legacy"
+        table_definitions = {
+            "stage0_experience_candidate_model_run": (
+                "CREATE TABLE stage0_experience_candidate_model_run ("
+                "experience_candidate_model_run_id TEXT PRIMARY KEY, "
+                "experience_candidate_id TEXT NOT NULL REFERENCES stage0_experience_candidate(experience_candidate_id), "
+                "status TEXT NOT NULL CHECK(status IN ('succeeded', 'failed')), "
+                "route_name TEXT NOT NULL, provider_name TEXT NOT NULL, model_name TEXT NOT NULL, "
+                "input_hash TEXT NOT NULL, output_hash TEXT, envelope_json TEXT NOT NULL, "
+                "data_identity TEXT NOT NULL, created_at TEXT NOT NULL)",
+                (
+                    "experience_candidate_model_run_id", "experience_candidate_id", "status",
+                    "route_name", "provider_name", "model_name", "input_hash", "output_hash",
+                    "envelope_json", "data_identity", "created_at",
+                ),
+            ),
+            "stage0_confirmed_experience": (
+                "CREATE TABLE stage0_confirmed_experience ("
+                "experience_id TEXT PRIMARY KEY, "
+                "experience_candidate_id TEXT NOT NULL UNIQUE REFERENCES stage0_experience_candidate(experience_candidate_id), "
+                "domain_label TEXT NOT NULL, "
+                "classification TEXT NOT NULL CHECK(classification IN ('shared_pattern', 'single_source_feature')), "
+                "summary TEXT NOT NULL, applicable_when_json TEXT NOT NULL, method_json TEXT NOT NULL, "
+                "source_refs_json TEXT NOT NULL, boundary_json TEXT NOT NULL, "
+                "experience_layer TEXT NOT NULL DEFAULT 'section_method', "
+                "use_positions_json TEXT NOT NULL DEFAULT '[\"body\"]', "
+                "trigger_signals_json TEXT NOT NULL DEFAULT '[]', "
+                "not_applicable_when_json TEXT NOT NULL DEFAULT '[]', "
+                "status TEXT NOT NULL CHECK(status IN ('active', 'paused')), "
+                "data_identity TEXT NOT NULL, confirmed_by TEXT NOT NULL, confirmed_at TEXT NOT NULL)",
+                (
+                    "experience_id", "experience_candidate_id", "domain_label", "classification",
+                    "summary", "applicable_when_json", "method_json", "source_refs_json",
+                    "boundary_json", "experience_layer", "use_positions_json", "trigger_signals_json",
+                    "not_applicable_when_json", "status", "data_identity", "confirmed_by", "confirmed_at",
+                ),
+            ),
+        }
+        for table_name, (create_sql, columns) in table_definitions.items():
+            row = self.conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,),
+            ).fetchone()
+            if row is None or stale_target not in str(row["sql"] or ""):
+                continue
+            legacy_name = f"{table_name}_legacy_fk"
+            if self.conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (legacy_name,),
+            ).fetchone() is not None:
+                raise StateTransitionError(
+                    "experience foreign-key repair found an unfinished legacy table"
+                )
+            column_list = ", ".join(columns)
+            legacy_columns = {
+                str(item["name"])
+                for item in self.conn.execute(
+                    f"PRAGMA table_info({table_name})"
+                ).fetchall()
+            }
+            legacy_defaults = {
+                "experience_layer": "'section_method'",
+                "use_positions_json": "'[\"body\"]'",
+                "trigger_signals_json": "applicable_when_json",
+                "not_applicable_when_json": "boundary_json",
+            }
+            select_list = ", ".join(
+                name if name in legacy_columns else legacy_defaults.get(name, "NULL")
+                for name in columns
+            )
+            with self.conn:
+                self.conn.execute(f"ALTER TABLE {table_name} RENAME TO {legacy_name}")
+                self.conn.execute(create_sql)
+                self.conn.execute(
+                    f"INSERT INTO {table_name} ({column_list}) "
+                    f"SELECT {select_list} FROM {legacy_name}"
+                )
+                self.conn.execute(f"DROP TABLE {legacy_name}")
 
     def create_task(
         self,
@@ -1562,7 +2287,7 @@ class Stage0ContentProductionCore:
                     "formal_topic_payload",
                     "topic_submitted",
                     self.data_identity,
-                    actor,
+                    "",
                     now,
                     0,
                 ),
@@ -1672,7 +2397,7 @@ class Stage0ContentProductionCore:
         self._assert_current_node(task, version["node"], "processing", node_version_id)
         enforce_atomic_skill_runtime_guard(
             entrypoint="stage0_content_core.prepare_atomic_skill_binding",
-            operation=f"stage0.{version['node']}",
+            operation=FORMAL_SKILL_BY_NODE[version["node"]],
         )
         assembly = self._assembly(version["input_assembly_id"])
         payload = json.loads(assembly["payload_json"])
@@ -1784,6 +2509,58 @@ class Stage0ContentProductionCore:
             result = {"node_version_id": replacement, "task_revision": str(revision)}
             self._receipt("return_current_node", idempotency_key, request, result)
             self._audit(task_id, "human_returned_new_version", {**result, "returned_version_id": version_id})
+        return result
+
+    def requeue_failed_node_for_manual_retry(
+        self,
+        *,
+        task_id: str,
+        actor: str,
+        reason: str,
+        idempotency_key: str,
+    ) -> dict[str, str]:
+        """Requeue one failed node only after an explicit user retry request."""
+        task = self._task(task_id)
+        if task["current_status"] != "failed":
+            raise StateTransitionError("manual retry is available only for a failed node")
+        failed_version = self._version(str(task["current_version_id"]))
+        if failed_version["node"] != task["current_node"] or failed_version["status"] != "failed":
+            raise StateTransitionError("the current failed node version is inconsistent")
+        upstream_version_id = str(failed_version["upstream_version_id"] or "")
+        self._approved_upstream(task, str(failed_version["node"]), upstream_version_id)
+        if not actor.strip() or not reason.strip():
+            raise StateTransitionError("manual retry requires the user and a reason")
+        request = {
+            "task_id": task_id,
+            "node": str(failed_version["node"]),
+            "failed_version_id": str(failed_version["version_id"]),
+            "actor": actor,
+            "reason": reason,
+        }
+        replay = self._replay("manual_retry_failed_node", idempotency_key, request)
+        if replay:
+            return {str(key): str(value) for key, value in replay.items()}
+        revision = int(task["task_revision"]) + 1
+        with self.conn:
+            self._set_task(
+                task_id,
+                node=str(failed_version["node"]),
+                version_id=upstream_version_id,
+                status="not_started",
+                revision=revision,
+            )
+            result = {
+                "task_id": task_id,
+                "current_node": str(failed_version["node"]),
+                "current_status": "not_started",
+                "task_revision": str(revision),
+            }
+            self._receipt("manual_retry_failed_node", idempotency_key, request, result)
+            self._audit(
+                task_id,
+                "manual_retry_requested",
+                {**result, "failed_version_id": str(failed_version["version_id"]), "automatic_retry": False},
+            )
         return result
 
     def cancel_current_task(self, *, task_id: str, actor: str, reason: str, idempotency_key: str) -> dict[str, str]:
@@ -1982,13 +2759,11 @@ class Stage0ContentProductionCore:
             "AND NOT EXISTS (SELECT 1 FROM stage1b_candidate_decision decision WHERE decision.candidate_version_id=stage1b_candidate_version.candidate_version_id)",
             (domain_label, self.data_identity),
         ).fetchall()
-        normalized_question = core_question.strip().casefold()
-        normalized_angle = topic_angle.strip().casefold()
         for row in rows:
             payload = json.loads(row["payload_json"])
-            if str(payload.get("core_question", "")).strip().casefold() != normalized_question:
+            if not _topic_identity_matches(core_question, str(payload.get("core_question", ""))):
                 continue
-            if str(payload.get("topic_angle", "")).strip().casefold() == normalized_angle:
+            if _topic_identity_matches(topic_angle, str(payload.get("topic_angle", ""))):
                 same_angle.append(str(row["candidate_version_id"]))
             else:
                 different_angle.append(str(row["candidate_version_id"]))
@@ -2027,8 +2802,11 @@ class Stage0ContentProductionCore:
                 "SELECT video.video_id, video.last_checked_at, video.publish_time, video.title, video.url, video.raw_json, "
                 "video.raw_archive_ref, video.excluded_reason, account.domain_label, account.registration_status, "
                 "account.source_config_ref FROM competitor_videos video JOIN competitor_accounts account "
-                "ON account.account_id=video.account_id WHERE video.video_id=?",
-                (source_object_id,),
+                "ON account.account_id=video.account_id JOIN stage0_content_account formal_account "
+                "ON formal_account.content_account_id=account.account_id AND formal_account.data_identity=? "
+                "AND formal_account.account_role='competitor' AND formal_account.status='active' "
+                "WHERE video.video_id=?",
+                (self.data_identity, source_object_id),
             ).fetchone()
             expected_table, expected_version = "competitor_videos", "last_checked_at"
         elif source_type == "historical_high_signal":
@@ -2037,8 +2815,11 @@ class Stage0ContentProductionCore:
                 "video.raw_json, video.raw_archive_ref, video.excluded_reason, account.domain_label, "
                 "account.registration_status, account.source_config_ref FROM hits hit "
                 "JOIN competitor_videos video ON video.video_id=hit.video_id "
-                "JOIN competitor_accounts account ON account.account_id=hit.account_id WHERE hit.hit_id=?",
-                (source_object_id,),
+                "JOIN competitor_accounts account ON account.account_id=hit.account_id "
+                "JOIN stage0_content_account formal_account ON formal_account.content_account_id=account.account_id "
+                "AND formal_account.data_identity=? AND formal_account.account_role='competitor' "
+                "AND formal_account.status='active' WHERE hit.hit_id=?",
+                (self.data_identity, source_object_id),
             ).fetchone()
             expected_table, expected_version = "hits", "promoted_at"
         elif source_type == "hotspot":
@@ -2059,8 +2840,13 @@ class Stage0ContentProductionCore:
             expected_table, expected_version = "discovered_external_videos", "discovered_at"
         elif source_type == "question_expansion":
             row = self.conn.execute(
-                "SELECT * FROM stage1_question_expansion_source WHERE expansion_id=? "
-                "AND domain_label=? AND validation_outcome='supported' AND data_identity=?",
+                "SELECT source.* FROM stage1_question_expansion_source source "
+                "JOIN stage1_question_expansion_qualification qualification "
+                "ON qualification.expansion_id=source.expansion_id "
+                "AND qualification.data_identity=source.data_identity "
+                "AND qualification.status='qualified' "
+                "WHERE source.expansion_id=? AND source.domain_label=? "
+                "AND source.validation_outcome='supported' AND source.data_identity=?",
                 (source_object_id, domain_label, self.data_identity),
             ).fetchone()
             expected_table, expected_version = "stage1_question_expansion_source", "integrity_hash"
@@ -2082,6 +2868,11 @@ class Stage0ContentProductionCore:
                 not match_terms or not any(term.casefold() in folded_title for term in match_terms)
             ):
                 raise StateTransitionError("hotspot does not match the versioned domain policy")
+        if source_type == "tag_discovery":
+            if bool(row["is_tracked_account"]):
+                raise StateTransitionError("tag discovery source belongs to a tracked competitor account")
+            if int(row["like_count"] or 0) < TAG_CANDIDATE_LIKE_FLOOR:
+                raise StateTransitionError("tag discovery source does not meet the 10000-like candidate floor")
         if origin.get("table") != expected_table or origin.get("object_id") != source_object_id:
             raise StateTransitionError("daily discovery source mapping does not identify the formal origin")
         formal_version = str(row[expected_version])
@@ -2110,6 +2901,22 @@ class Stage0ContentProductionCore:
             if not str(row["core_question"] or "").strip():
                 raise StateTransitionError("daily discovery source lacks a concrete core question")
             raw_payload = row["payload_json"]
+            if source_type == "question_expansion":
+                try:
+                    stored_parent = json.loads(str(row["parent_source_ref_json"]))
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise StateTransitionError("question expansion parent reference is unreadable") from exc
+                supplied_parent = payload.get("parent_source_ref")
+                if stored_parent != supplied_parent:
+                    raise StaleResultError("question expansion parent reference does not match the formal source")
+                parent_type = str(stored_parent.get("source_type") or "") if isinstance(stored_parent, dict) else ""
+                parent_id = str(stored_parent.get("source_object_id") or "") if isinstance(stored_parent, dict) else ""
+                if not parent_type or not parent_id:
+                    raise StateTransitionError("question expansion parent reference is incomplete")
+                if parent_type == "question_expansion":
+                    raise StateTransitionError("question expansion cannot be derived from another question expansion")
+                if parent_type not in {"hit_breakdown", "competitor_breakdown"}:
+                    raise StateTransitionError("question expansion must be derived during a formal hit breakdown")
         else:
             if not str(row["title"] or "").strip() or not str(row["url"] or "").strip():
                 raise StateTransitionError("daily discovery source lacks required formal material")
@@ -2234,6 +3041,319 @@ class Stage0ContentProductionCore:
                 **failure,
             })
 
+    def get_daily_run(self, *, daily_run_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            "SELECT * FROM stage0_daily_run WHERE daily_run_id=?",
+            (str(daily_run_id).strip(),),
+        ).fetchone()
+        return {key: row[key] for key in row.keys()} if row is not None else None
+
+    def get_daily_run_for_domain_date(
+        self, *, domain_label: str, business_date: str
+    ) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            "SELECT * FROM stage0_daily_run "
+            "WHERE domain_label=? AND business_date=?",
+            (str(domain_label).strip(), str(business_date).strip()),
+        ).fetchone()
+        return {key: row[key] for key in row.keys()} if row is not None else None
+
+    def get_or_create_daily_run(
+        self, *, domain_label: str, business_date: str, actor: str
+    ) -> dict[str, Any]:
+        domain = str(domain_label).strip()
+        selected_date = str(business_date).strip()
+        if not domain:
+            raise StateTransitionError("daily run requires a formal domain")
+        try:
+            date.fromisoformat(selected_date)
+        except ValueError as exc:
+            raise StateTransitionError("daily run requires a valid business date") from exc
+        if not str(actor).strip():
+            raise StateTransitionError("daily run requires an actor")
+        existing = self.get_daily_run_for_domain_date(
+            domain_label=domain, business_date=selected_date
+        )
+        if existing is not None:
+            return existing
+        daily_run_id = _id("daily_run")
+        created_at = _now()
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO stage0_daily_run("
+                "daily_run_id, domain_label, business_date, lifecycle, created_at, "
+                "started_at, finished_at, data_identity"
+                ") VALUES (?, ?, ?, 'running', ?, NULL, NULL, ?)",
+                (daily_run_id, domain, selected_date, created_at, self.data_identity),
+            )
+            row = self.conn.execute(
+                "SELECT * FROM stage0_daily_run "
+                "WHERE domain_label=? AND business_date=?",
+                (domain, selected_date),
+            ).fetchone()
+            if row is None:
+                raise StateTransitionError("daily run could not be created")
+            result = {key: row[key] for key in row.keys()}
+            if str(row["daily_run_id"]) == daily_run_id:
+                self._audit(
+                    daily_run_id,
+                    "daily_run_created",
+                    {
+                        "daily_run_id": daily_run_id,
+                        "domain_label": domain,
+                        "business_date": selected_date,
+                        "actor": str(actor).strip(),
+                    },
+                )
+        return result
+
+    def start_daily_run(
+        self, *, daily_run_id: str, resume: bool, actor: str
+    ) -> dict[str, Any]:
+        run = self.get_daily_run(daily_run_id=daily_run_id)
+        if run is None:
+            raise StateTransitionError("daily run does not exist")
+        lifecycle = str(run["lifecycle"])
+        if lifecycle == "completed":
+            return run
+        if lifecycle in {"failed", "stopped"} and not resume:
+            return run
+        if lifecycle not in {"running", "failed", "stopped"}:
+            raise StateTransitionError("daily run lifecycle is invalid")
+        if not str(actor).strip():
+            raise StateTransitionError("daily run start requires an actor")
+        started_at = _now()
+        with self.conn:
+            if lifecycle == "running":
+                self.conn.execute(
+                    "UPDATE stage0_daily_run SET started_at=COALESCE(started_at, ?) "
+                    "WHERE daily_run_id=?",
+                    (started_at, daily_run_id),
+                )
+                event = "daily_run_started"
+            else:
+                self.conn.execute(
+                    "UPDATE stage0_daily_run SET lifecycle='running', started_at=?, "
+                    "finished_at=NULL WHERE daily_run_id=?",
+                    (started_at, daily_run_id),
+                )
+                event = "daily_run_resumed"
+            self._audit(
+                daily_run_id,
+                event,
+                {
+                    "daily_run_id": daily_run_id,
+                    "domain_label": run["domain_label"],
+                    "business_date": run["business_date"],
+                    "actor": str(actor).strip(),
+                    "resume": bool(resume),
+                },
+            )
+        refreshed = self.get_daily_run(daily_run_id=daily_run_id)
+        if refreshed is None:
+            raise StateTransitionError("daily run disappeared after start")
+        return refreshed
+
+    def finish_daily_run(
+        self,
+        *,
+        daily_run_id: str,
+        lifecycle: str,
+        actor: str,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        if lifecycle not in {"failed", "stopped", "completed"}:
+            raise StateTransitionError("daily run completion lifecycle is invalid")
+        if not str(actor).strip():
+            raise StateTransitionError("daily run completion requires an actor")
+        run = self.get_daily_run(daily_run_id=daily_run_id)
+        if run is None:
+            raise StateTransitionError("daily run does not exist")
+        current = str(run["lifecycle"])
+        if current == lifecycle:
+            return run
+        if current == "completed":
+            raise StateTransitionError("completed daily run cannot change lifecycle")
+        if current != "running":
+            raise StateTransitionError("only a running daily run can finish")
+        finished_at = _now()
+        with self.conn:
+            self.conn.execute(
+                "UPDATE stage0_daily_run SET lifecycle=?, finished_at=? "
+                "WHERE daily_run_id=?",
+                (lifecycle, finished_at, daily_run_id),
+            )
+            self._audit(
+                daily_run_id,
+                "daily_run_finished",
+                {
+                    "daily_run_id": daily_run_id,
+                    "domain_label": run["domain_label"],
+                    "business_date": run["business_date"],
+                    "lifecycle": lifecycle,
+                    "actor": str(actor).strip(),
+                    "reason": str(reason or "").strip() or None,
+                },
+            )
+        refreshed = self.get_daily_run(daily_run_id=daily_run_id)
+        if refreshed is None:
+            raise StateTransitionError("daily run disappeared after finish")
+        return refreshed
+
+    def daily_candidate_discovery_run(
+        self, *, daily_run_id: str
+    ) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            "SELECT run.run_id, run.discovery_date, run.status, run.completed_at, "
+            "run.failure_reason, context.lifecycle_status, context.execution_mode "
+            "FROM stage1b_run_execution_context context "
+            "JOIN stage1b_discovery_run run ON run.run_id=context.run_id "
+            "WHERE context.daily_run_id=? AND context.execution_mode='production_daily' "
+            "AND run.data_identity=? ORDER BY run.created_at DESC, run.run_id DESC LIMIT 1",
+            (str(daily_run_id).strip(), self.data_identity),
+        ).fetchone()
+        return {key: row[key] for key in row.keys()} if row is not None else None
+
+    def reconcile_prior_daily_discovery_for_resume(
+        self,
+        *,
+        daily_run_id: str,
+        prior_daily_lifecycle: str,
+        resume_started_at: str,
+        execution_attempt_ref: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Reconcile only prior processing discovery children during explicit resume."""
+        normalized_daily_run_id = str(daily_run_id or "").strip()
+        normalized_prior_lifecycle = str(prior_daily_lifecycle or "").strip()
+        normalized_started_at = str(resume_started_at or "").strip()
+        normalized_attempt_ref = str(execution_attempt_ref or "").strip()
+        if not normalized_daily_run_id or not normalized_started_at or not normalized_attempt_ref:
+            raise StateTransitionError(
+                "daily resume discovery reconciliation requires the exact daily run, start time, and execution attempt"
+            )
+        if normalized_prior_lifecycle not in {"failed", "stopped"}:
+            return {
+                "daily_run_id": normalized_daily_run_id,
+                "prior_daily_lifecycle": normalized_prior_lifecycle,
+                "resume_execution_attempt": normalized_attempt_ref,
+                "finalized_run_ids": [],
+                "finalized_count": 0,
+                "skipped": "parent daily run was not failed or stopped before resume",
+            }
+        daily_run = self.get_daily_run(daily_run_id=normalized_daily_run_id)
+        if daily_run is None:
+            raise StateTransitionError("daily run does not exist")
+        if str(daily_run["lifecycle"]) != "running":
+            raise StateTransitionError(
+                "daily resume discovery reconciliation requires the resumed daily run to be running"
+            )
+        request = {
+            "daily_run_id": normalized_daily_run_id,
+            "prior_daily_lifecycle": normalized_prior_lifecycle,
+            "resume_started_at": normalized_started_at,
+            "execution_attempt_ref": normalized_attempt_ref,
+        }
+        replay = self._replay(
+            "stage0_reconcile_prior_daily_discovery_for_resume",
+            idempotency_key,
+            request,
+        )
+        if replay:
+            return replay
+        rows = self.conn.execute(
+            "SELECT run.run_id, run.created_at, run.failure_reason "
+            "FROM stage1b_discovery_run run "
+            "JOIN stage1b_run_execution_context context ON context.run_id=run.run_id "
+            "WHERE context.daily_run_id=? AND context.execution_mode='production_daily' "
+            "AND run.data_identity=? AND context.data_identity=? "
+            "AND run.status='processing' AND context.lifecycle_status='processing' "
+            "AND run.created_at < ? "
+            "ORDER BY run.created_at, run.run_id",
+            (
+                normalized_daily_run_id,
+                self.data_identity,
+                self.data_identity,
+                normalized_started_at,
+            ),
+        ).fetchall()
+        finalized: list[dict[str, Any]] = []
+        for row in rows:
+            domain_rows = self.conn.execute(
+                "SELECT domain_label FROM stage1b_run_domain_scope "
+                "WHERE run_id=? AND data_identity=? ORDER BY domain_label",
+                (row["run_id"], self.data_identity),
+            ).fetchall()
+            domains = tuple(str(domain_row["domain_label"]) for domain_row in domain_rows)
+            if not domains or str(daily_run["domain_label"]) not in domains:
+                raise StateTransitionError(
+                    "prior discovery run does not match the resumed daily domain"
+                )
+            failure_reason = str(row["failure_reason"] or "").strip()
+            if not failure_reason:
+                audit_row = self.conn.execute(
+                    "SELECT payload_json FROM stage0_audit_event "
+                    "WHERE task_id=? AND action='daily_run_finished' AND data_identity=? "
+                    "ORDER BY created_at DESC, audit_id DESC LIMIT 1",
+                    (normalized_daily_run_id, self.data_identity),
+                ).fetchone()
+                if audit_row is not None:
+                    try:
+                        audit_payload = json.loads(str(audit_row["payload_json"]))
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        audit_payload = {}
+                    if isinstance(audit_payload, dict):
+                        failure_reason = str(audit_payload.get("reason") or "").strip()
+            if not failure_reason:
+                failure_reason = (
+                    "prior daily execution ended before candidate discovery failure finalization"
+                )
+            finalized.append(
+                self.complete_discovery_run(
+                    run_id=str(row["run_id"]),
+                    domains=domains,
+                    lifecycle_status="failed",
+                    failure_reason=failure_reason,
+                    idempotency_key=f"{idempotency_key}:discovery:{row['run_id']}",
+                )
+            )
+        result = {
+            "daily_run_id": normalized_daily_run_id,
+            "prior_daily_lifecycle": normalized_prior_lifecycle,
+            "resume_started_at": normalized_started_at,
+            "resume_execution_attempt": normalized_attempt_ref,
+            "finalized_run_ids": [item["run_id"] for item in finalized],
+            "finalized_count": len(finalized),
+        }
+        with self.conn:
+            self._receipt(
+                "stage0_reconcile_prior_daily_discovery_for_resume",
+                idempotency_key,
+                request,
+                result,
+            )
+            self._audit(
+                normalized_daily_run_id,
+                "daily_resume_prior_discovery_reconciled",
+                result,
+            )
+        return result
+
+    def daily_collection_account_ids(self, *, daily_run_id: str) -> set[str]:
+        normalized_run_id = str(daily_run_id).strip()
+        if not normalized_run_id:
+            return set()
+        rows = self.conn.execute(
+            "SELECT account_id FROM daily_collection_account_completion "
+            "WHERE daily_run_id=? ORDER BY account_id",
+            (normalized_run_id,),
+        ).fetchall()
+        return {
+            str(row["account_id"]).strip()
+            for row in rows
+            if str(row["account_id"] or "").strip()
+        }
+
     def create_discovery_run(
         self,
         *,
@@ -2242,6 +3362,7 @@ class Stage0ContentProductionCore:
         execution_mode: str,
         domains: tuple[str, ...],
         idempotency_key: str,
+        daily_run_id: str | None = None,
     ) -> dict[str, str]:
         self._validate_discovery_execution_mode(execution_mode)
         domain_scope = tuple(str(domain).strip() for domain in domains)
@@ -2249,6 +3370,8 @@ class Stage0ContentProductionCore:
             raise StateTransitionError("discovery run requires at least one formal domain")
         if len(set(domain_scope)) != len(domain_scope):
             raise StateTransitionError("discovery run domain scope may not contain duplicates")
+        if execution_mode == "production_daily" and not str(daily_run_id or "").strip():
+            raise StateTransitionError("production daily discovery requires a formal daily run")
         unknown_domains = sorted(set(domain_scope) - set(formal_domain_labels()))
         if unknown_domains:
             raise StateTransitionError(
@@ -2260,6 +3383,7 @@ class Stage0ContentProductionCore:
             "execution_mode": execution_mode,
             "domains": list(domain_scope),
             "data_identity": self.data_identity,
+            "daily_run_id": str(daily_run_id or "").strip() or None,
         }
         replay = self._replay("stage1b_create_discovery_run", idempotency_key, request)
         if replay:
@@ -2271,8 +3395,19 @@ class Stage0ContentProductionCore:
                 (run_id, discovery_date, self.data_identity, actor, _now()),
             )
             self.conn.execute(
-                "INSERT INTO stage1b_run_execution_context VALUES (?, ?, 'processing', ?, ?, ?, ?)",
-                (run_id, execution_mode, "run created with explicit execution mode", actor, _now(), self.data_identity),
+                "INSERT INTO stage1b_run_execution_context("
+                "run_id, execution_mode, lifecycle_status, classification_reason, "
+                "classified_by, classified_at, data_identity, daily_run_id"
+                ") VALUES (?, ?, 'processing', ?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    execution_mode,
+                    "run created with explicit execution mode",
+                    actor,
+                    _now(),
+                    self.data_identity,
+                    str(daily_run_id or "").strip() or None,
+                ),
             )
             recorded_at = _now()
             self.conn.executemany(
@@ -2288,9 +3423,1489 @@ class Stage0ContentProductionCore:
             self._audit(
                 run_id,
                 "stage1b_discovery_run_started",
-                {**result, "execution_mode": execution_mode, "domains": list(domain_scope)},
+                {
+                    **result,
+                    "execution_mode": execution_mode,
+                    "domains": list(domain_scope),
+                    "daily_run_id": str(daily_run_id or "").strip() or None,
+                },
             )
         return result
+
+    def _question_expansion_material_refs(
+        self, *, parent_source_ref: dict[str, Any]
+    ) -> list[dict[str, str]]:
+        """Read the already-recorded parent material without doing research."""
+        parent_type = str(parent_source_ref.get("source_type") or "").strip()
+        parent_id = str(parent_source_ref.get("source_object_id") or "").strip()
+        refs: list[dict[str, str]] = [{
+            "kind": "parent_source",
+            "ref": f"{parent_type}:{parent_id}",
+        }]
+        if parent_type == "competitor_breakdown":
+            registration_id = str(parent_source_ref.get("registration_id") or "").strip()
+            if not registration_id:
+                return []
+            row = self.conn.execute(
+                "SELECT artifact_json FROM stage0_competitor_registration_item "
+                "WHERE registration_id=? AND step_name='transcripts_and_comments' "
+                "AND item_ref=? AND status='completed' AND data_identity=? LIMIT 1",
+                (registration_id, parent_id, self.data_identity),
+            ).fetchone()
+            if row is None:
+                return []
+            try:
+                material = json.loads(str(row["artifact_json"] or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return []
+            if not isinstance(material, dict):
+                return []
+            for key in ("source_url", "transcript_ref", "comment_collection_ref"):
+                value = str(material.get(key) or "").strip()
+                if value:
+                    refs.append({"kind": key, "ref": value})
+            return refs
+        if parent_type == "hit_breakdown":
+            row = self.conn.execute(
+                "SELECT hit.url, analysis.artifact_json "
+                "FROM stage0_daily_hit_breakdown analysis "
+                "LEFT JOIN hits hit ON hit.hit_id=analysis.hit_id "
+                "WHERE analysis.hit_id=? AND analysis.data_identity=? "
+                "ORDER BY analysis.version DESC LIMIT 1",
+                (parent_id, self.data_identity),
+            ).fetchone()
+            if row is None:
+                return []
+            url = str(row["url"] or "").strip()
+            if url:
+                refs.append({"kind": "source_url", "ref": url})
+            try:
+                artifact = json.loads(str(row["artifact_json"] or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                artifact = {}
+            if isinstance(artifact, dict):
+                for key in ("transcript_ref", "comment_collection_ref"):
+                    value = str(artifact.get(key) or "").strip()
+                    if value:
+                        refs.append({"kind": key, "ref": value})
+            return refs
+        return []
+
+    @staticmethod
+    def _question_expansion_requires_external_check(reason: str) -> bool:
+        """Detect an explicitly unverified lead without judging its subject matter."""
+        return any(
+            marker in str(reason or "")
+            for marker in ("待核实", "有待确认", "需要后续研究核实", "尚需核实")
+        )
+
+    def _minimum_external_check(
+        self,
+        *,
+        question: str,
+        external_probe: Callable[[str], dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Do one bounded premise/material check, never formal research."""
+        if external_probe is not None:
+            try:
+                result = external_probe(question)
+            except Exception as exc:  # provider failure is unresolved, not rejection
+                return {
+                    "status": "unresolved",
+                    "rejection_reason": "",
+                    "material_refs": [],
+                    "checks": {
+                        "external_check": "blocked",
+                        "blocked_reason": "external_search_unavailable",
+                        "error_type": type(exc).__name__,
+                    },
+                }
+            if not isinstance(result, dict):
+                return {
+                    "status": "blocked",
+                    "rejection_reason": "",
+                    "material_refs": [],
+                    "checks": {
+                        "external_check": "blocked",
+                        "blocked_reason": "external_probe_invalid_result",
+                    },
+                }
+            status = str(result.get("status") or "").strip().casefold()
+            if status in {"passed", "qualified"}:
+                material_refs = [
+                    item for item in (result.get("material_refs") or [])
+                    if isinstance(item, dict) and str(item.get("ref") or "").strip()
+                ]
+                if not material_refs:
+                    return {
+                        "status": "rejected",
+                        "rejection_reason": "lead_no_reliable_public_material",
+                        "material_refs": [],
+                        "checks": {
+                            "external_check": "completed_without_usable_material",
+                        },
+                    }
+                return {
+                    "status": "passed",
+                    "rejection_reason": "",
+                    "material_refs": material_refs,
+                    "checks": dict(result.get("checks") or {}) | {
+                        "external_check": "passed",
+                    },
+                }
+            if status == "rejected":
+                return {
+                    "status": "rejected",
+                    "rejection_reason": str(result.get("rejection_reason") or "lead_no_reliable_public_material"),
+                    "material_refs": list(result.get("material_refs") or []),
+                    "checks": dict(result.get("checks") or {}) | {
+                        "external_check": "completed_no_support",
+                    },
+                }
+            if status in {"unresolved", "blocked"}:
+                return {
+                    "status": status,
+                    "rejection_reason": "",
+                    "material_refs": list(result.get("material_refs") or []),
+                    "checks": dict(result.get("checks") or {}) | {
+                        "external_check": "blocked",
+                        "blocked_reason": str(
+                            (result.get("checks") or {}).get("blocked_reason")
+                            or "external_search_unavailable"
+                        ),
+                    },
+                }
+            return {
+                "status": "blocked",
+                "rejection_reason": "",
+                "material_refs": [],
+                "checks": {
+                    "external_check": "blocked",
+                    "blocked_reason": "external_probe_invalid_status",
+                },
+            }
+
+        try:
+            from scripts.core.external_adapters.anysearch_executor import AnySearchExecutor
+
+            executor = AnySearchExecutor(core=self)
+            raw = executor._call("search", question, "--max_results", "5")
+            results = executor._parse_results(raw)
+        except Exception as exc:  # missing service, timeout, or network failure
+            return {
+                "status": "unresolved",
+                "rejection_reason": "",
+                "material_refs": [],
+                "checks": {
+                    "external_check": "blocked",
+                    "blocked_reason": "external_search_unavailable",
+                    "error_type": type(exc).__name__,
+                },
+            }
+
+        generic_terms = {"是否", "确实", "存在", "关系", "合作", "音乐", "作品", "共同", "录制"}
+        relation_groups: list[set[str]] = []
+        for group in re.split(r"与|和|及|同|、|共同|合作|在|中的|是否|\band\b|\bwith\b|\bfeaturing\b|\bin\b", question, flags=re.IGNORECASE):
+            terms = {
+                token.casefold()
+                for token in re.findall(r"[A-Za-z0-9]{2,}", group)
+                if token.casefold() not in generic_terms
+            }
+            for run in re.findall(r"[\u4e00-\u9fff]{2,}", group):
+                terms.update(
+                    run[index:index + 2]
+                    for index in range(len(run) - 1)
+                    if run[index:index + 2] not in generic_terms
+                )
+            if terms:
+                relation_groups.append(terms)
+        material_refs: list[dict[str, str]] = []
+        relation_supported = False
+        for result in results:
+            source_ref = str(result.get("source_ref") or "").strip()
+            if not source_ref or AnySearchExecutor._is_formal_blocked_source(source_ref):
+                continue
+            evidence_text = " ".join(
+                str(result.get(key) or "") for key in ("title", "snippet")
+            ).casefold()
+            matched_groups = sum(
+                1 for terms in relation_groups
+                if any(
+                    re.search(
+                        rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])",
+                        evidence_text,
+                    )
+                    if re.fullmatch(r"[a-z0-9]+", term)
+                    else term in evidence_text
+                    for term in terms
+                )
+            )
+            if matched_groups < 2:
+                continue
+            relation_supported = True
+            material_refs.append({
+                "kind": "external_public_source",
+                "ref": source_ref,
+                "title": str(result.get("title") or "").strip(),
+                "snippet": str(result.get("snippet") or "").strip()[:500],
+            })
+            if len(material_refs) >= 2:
+                break
+        if not material_refs or not relation_supported:
+            return {
+                "status": "rejected",
+                "rejection_reason": "lead_no_reliable_public_material",
+                "material_refs": [],
+                "checks": {
+                    "external_check": "completed_without_same_source_relation_evidence",
+                },
+            }
+        return {
+            "status": "passed",
+            "rejection_reason": "",
+            "material_refs": material_refs,
+            "checks": {
+                "external_check": "passed",
+                "minimum_premise": "reliable_public_material_found",
+            },
+        }
+
+    def qualify_question_expansion_lead(
+        self,
+        *,
+        domain_label: str,
+        question: str,
+        content_type: str,
+        reason: str,
+        parent_source_ref: dict[str, Any],
+        existing_questions: list[str] | None = None,
+        external_probe: Callable[[str], dict[str, Any]] | None = None,
+        content_type_projected: bool = False,
+        canonical_type_id: str | None = None,
+        exclude_expansion_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Apply the small pre-candidate gate; this is not formal research."""
+        checks: dict[str, str] = {}
+        parent_type = str(parent_source_ref.get("source_type") or "").strip()
+        parent_id = str(parent_source_ref.get("source_object_id") or "").strip()
+        if parent_type not in {"hit_breakdown", "competitor_breakdown"} or not parent_id:
+            return {"status": "rejected", "rejection_reason": "lead_parent_incomplete", "material_refs": [], "checks": checks}
+        checks["parent_relation"] = "passed"
+        if len(question.strip()) < 6 or not content_type.strip() or not reason.strip():
+            return {"status": "rejected", "rejection_reason": "lead_missing_concrete_question", "material_refs": [], "checks": checks}
+
+        material_refs = self._question_expansion_material_refs(parent_source_ref=parent_source_ref)
+        if len(material_refs) < 2:
+            checks["material_availability"] = "failed"
+            return {"status": "rejected", "rejection_reason": "lead_material_unavailable", "material_refs": material_refs, "checks": checks}
+        checks["material_availability"] = "passed"
+        if self._question_expansion_requires_external_check(reason):
+            external_result = self._minimum_external_check(
+                question=question,
+                external_probe=external_probe,
+            )
+            checks.update({f"minimum_external_{key}": value for key, value in external_result.get("checks", {}).items()})
+            external_status = str(external_result.get("status") or "blocked")
+            if external_status in {"unresolved", "blocked"}:
+                return {
+                    "status": external_status,
+                    "rejection_reason": "",
+                    "material_refs": material_refs + list(external_result.get("material_refs") or []),
+                    "checks": checks,
+                }
+            if external_status == "rejected":
+                return {
+                    "status": "rejected",
+                    "rejection_reason": str(external_result.get("rejection_reason") or "lead_no_reliable_public_material"),
+                    "material_refs": material_refs + list(external_result.get("material_refs") or []),
+                    "checks": checks,
+                }
+            material_refs.extend(external_result.get("material_refs") or [])
+            checks["minimum_premise"] = "passed_by_bounded_external_check"
+        else:
+            checks["minimum_premise"] = "passed_from_registered_parent_material"
+
+        if content_type_projected:
+            projected_type = project_content_type(
+                domain_label,
+                lifecycle="classify",
+                canonical_id=canonical_type_id or content_type,
+            )
+            if projected_type.get("status") != "matched":
+                checks["approved_type_projection"] = "failed"
+                return {
+                    "status": "rejected",
+                    "rejection_reason": "lead_missing_approved_type_projection",
+                    "material_refs": material_refs,
+                    "checks": checks,
+                }
+            checks["approved_type_projection"] = "passed"
+            checks["domain_carrier"] = "delegated_to_approved_type_registry"
+        else:
+            try:
+                domain_pack = get_domain_pack(domain_label)
+            except ValueError:
+                domain_pack = {}
+            policy = domain_pack.get("question_expansion_policy") if isinstance(domain_pack, dict) else None
+            if not isinstance(policy, dict) or not policy.get("primary_content_carrier_required") or not str(policy.get("primary_content_carrier_rule") or "").strip():
+                checks["domain_carrier"] = "failed"
+                return {"status": "rejected", "rejection_reason": "lead_domain_carrier_rule_missing", "material_refs": material_refs, "checks": checks}
+            signal_terms = [
+                str(term).strip().casefold()
+                for term in (policy.get("primary_carrier_signal_terms") or [])
+                if str(term).strip()
+            ]
+            if signal_terms and not any(term in question.casefold() for term in signal_terms):
+                checks["domain_carrier"] = "failed"
+                return {"status": "rejected", "rejection_reason": "lead_domain_carrier_not_evidenced", "material_refs": material_refs, "checks": checks}
+            checks["domain_carrier"] = "legacy_domain_policy_and_minimum_signal"
+
+        prior_questions = list(existing_questions or [])
+        prior_query = (
+            "SELECT core_question FROM stage1_question_expansion_source "
+            "WHERE domain_label=? AND data_identity=?"
+        )
+        prior_params: list[Any] = [domain_label, self.data_identity]
+        if exclude_expansion_id:
+            prior_query += " AND expansion_id<>?"
+            prior_params.append(exclude_expansion_id)
+        prior_questions.extend(
+            str(row["core_question"] or "").strip()
+            for row in self.conn.execute(prior_query, tuple(prior_params)).fetchall()
+        )
+        if any(_topic_identity_matches(question, prior) for prior in prior_questions if prior):
+            checks["independent_value"] = "failed"
+            return {"status": "rejected", "rejection_reason": "lead_duplicate_or_repeated", "material_refs": material_refs, "checks": checks}
+        checks["independent_value"] = "passed"
+        return {"status": "qualified", "rejection_reason": "", "material_refs": material_refs, "checks": checks}
+
+    def _record_question_expansion_qualification(
+        self,
+        *,
+        expansion_id: str,
+        domain_label: str,
+        parent_source_ref: dict[str, Any],
+        qualification: dict[str, Any],
+        actor: str,
+    ) -> dict[str, Any]:
+        status = str(qualification.get("status") or "rejected")
+        if status not in {"qualified", "rejected", "unresolved", "blocked"}:
+            status = "blocked"
+        reason = str(qualification.get("rejection_reason") or "")
+        evaluated_at = _now()
+        qualification_id = "question_expansion_qualification_" + _hash({
+            "expansion_id": expansion_id,
+            "data_identity": self.data_identity,
+        })[:24]
+        material_refs = list(qualification.get("material_refs") or [])
+        checks = dict(qualification.get("checks") or {})
+        existing = self.conn.execute(
+            "SELECT * FROM stage1_question_expansion_qualification "
+            "WHERE expansion_id=? AND data_identity=?",
+            (expansion_id, self.data_identity),
+        ).fetchone()
+        retryable_existing = existing is not None and (
+            str(existing["status"] or "") in {"unresolved", "blocked"}
+            or str(existing["rejection_reason"] or "") == "lead_premise_requires_verification"
+        )
+        if existing is not None and not retryable_existing:
+            try:
+                stored_material_refs = json.loads(str(existing["material_refs_json"] or "[]"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                stored_material_refs = []
+            try:
+                stored_checks = json.loads(str(existing["checks_json"] or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                stored_checks = {}
+            return {
+                "qualification_id": str(existing["qualification_id"]),
+                "status": str(existing["status"]),
+                "rejection_reason": str(existing["rejection_reason"] or ""),
+                "material_refs": stored_material_refs if isinstance(stored_material_refs, list) else [],
+                "checks": stored_checks if isinstance(stored_checks, dict) else {},
+                "evaluated_at": str(existing["evaluated_at"]),
+            }
+        with self.conn:
+            if existing is None:
+                self.conn.execute(
+                    "INSERT INTO stage1_question_expansion_qualification "
+                    "(qualification_id, expansion_id, domain_label, parent_source_ref_json, status, "
+                    "rejection_reason, material_refs_json, checks_json, evaluated_at, data_identity, created_by) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        qualification_id, expansion_id, domain_label, _canonical(parent_source_ref), status,
+                        reason, _canonical(material_refs), _canonical(checks), evaluated_at,
+                        self.data_identity, actor,
+                    ),
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE stage1_question_expansion_qualification SET status=?, rejection_reason=?, "
+                    "material_refs_json=?, checks_json=?, evaluated_at=?, created_by=? "
+                    "WHERE expansion_id=? AND data_identity=?",
+                    (
+                        status, reason, _canonical(material_refs), _canonical(checks), evaluated_at, actor,
+                        expansion_id, self.data_identity,
+                    ),
+                )
+        return {
+            "qualification_id": qualification_id,
+            "status": status,
+            "rejection_reason": reason,
+            "material_refs": material_refs,
+            "checks": checks,
+            "evaluated_at": evaluated_at,
+        }
+
+    def qualify_pending_question_expansion_sources(
+        self,
+        *,
+        actor: str,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Apply the existing qualification gate to recorded, unqualified leads."""
+        query = (
+            "SELECT source.* FROM stage1_question_expansion_source source "
+            "LEFT JOIN stage1_question_expansion_qualification qualification "
+            "ON qualification.expansion_id=source.expansion_id "
+            "AND qualification.data_identity=source.data_identity "
+            "WHERE source.data_identity=? AND qualification.expansion_id IS NULL "
+            "ORDER BY source.validated_at ASC, source.expansion_id ASC"
+        )
+        params: list[Any] = [self.data_identity]
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(int(limit))
+        rows = self.conn.execute(query, tuple(params)).fetchall()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+            derivation = payload.get("derivation") if isinstance(payload.get("derivation"), dict) else {}
+            parent_source_ref = payload.get("parent_source_ref")
+            if not isinstance(parent_source_ref, dict):
+                parent_source_ref = json.loads(str(row["parent_source_ref_json"] or "{}"))
+            projection = derivation.get("content_type_projection")
+            projection = projection if isinstance(projection, dict) else {}
+            canonical_id = str(
+                derivation.get("canonical_id")
+                or projection.get("canonical_id")
+                or ""
+            ).strip()
+            # Current production qualification is governed by the approved
+            # projection.  Legacy labels are not a substitute for that
+            # projection: using them here would let out-of-scope material
+            # re-enter the V1 candidate path.
+            content_type = canonical_id
+            qualification = self.qualify_question_expansion_lead(
+                domain_label=str(row["domain_label"]),
+                question=str(row["core_question"]),
+                content_type=content_type,
+                reason=str(derivation.get("reason") or ""),
+                parent_source_ref=parent_source_ref if isinstance(parent_source_ref, dict) else {},
+                content_type_projected=True,
+                canonical_type_id=canonical_id or None,
+                exclude_expansion_id=str(row["expansion_id"]),
+            )
+            record = self._record_question_expansion_qualification(
+                expansion_id=str(row["expansion_id"]),
+                domain_label=str(row["domain_label"]),
+                parent_source_ref=parent_source_ref if isinstance(parent_source_ref, dict) else {},
+                qualification=qualification,
+                actor=actor,
+            )
+            items.append({
+                "expansion_id": str(row["expansion_id"]),
+                "question": str(row["core_question"]),
+                "status": record["status"],
+                "rejection_reason": record.get("rejection_reason", ""),
+                "checks": record.get("checks", {}),
+            })
+        counts = {status: sum(1 for item in items if item["status"] == status) for status in ("qualified", "rejected", "unresolved", "blocked")}
+        return {"processed": len(items), "counts": counts, "items": items}
+
+    def register_breakdown_question_expansions(
+        self,
+        *,
+        domain_label: str,
+        breakdown: dict[str, Any],
+        parent_source_ref: dict[str, Any],
+        actor: str = "competitor_breakdown",
+        external_probe: Callable[[str], dict[str, Any]] | None = None,
+        content_type_lifecycle: str = "discover",
+    ) -> dict[str, Any]:
+        """Persist only the questions emitted together with one hit breakdown."""
+        if not isinstance(breakdown, dict):
+            raise StateTransitionError("breakdown question expansions require a breakdown object")
+        source_content_type = str(breakdown.get("source_content_type") or "").strip()
+        if not source_content_type:
+            raise StateTransitionError("breakdown question expansions require the source content type")
+        lifecycle = str(content_type_lifecycle or "discover").strip().casefold()
+        if lifecycle == "classify":
+            supplied_type_id = str(breakdown.get("source_content_type_id") or "").strip()
+            if supplied_type_id and supplied_type_id != source_content_type:
+                raise StateTransitionError(
+                    "production source_content_type_id must match the canonical source_content_type"
+                )
+        source_projection = project_content_type(
+            domain_label,
+            lifecycle=content_type_lifecycle,
+            canonical_id=source_content_type,
+        )
+        if lifecycle == "classify" and source_projection["status"] != "matched":
+            return {
+                "status": "completed",
+                "content_type_lifecycle": content_type_lifecycle,
+                "source_projection": source_projection,
+                "signals": [],
+                "typed_leads": [],
+                "created": [],
+                "rejected": [],
+                "unresolved": [],
+                "blocked": [],
+                "no_match": [{
+                    "status": "NO_MATCH" if source_projection["status"] == "no_match" else "OUT_OF_SCOPE",
+                    "reason": source_projection["status"],
+                }],
+                "count": 0,
+                "rejected_count": 0,
+                "unresolved_count": 0,
+                "blocked_count": 0,
+                "no_match_count": 1,
+            }
+        parent = dict(parent_source_ref or {})
+        parent_type = str(parent.get("source_type") or "").strip()
+        parent_id = str(parent.get("source_object_id") or "").strip()
+        if parent_type not in {"hit_breakdown", "competitor_breakdown"} or not parent_id:
+            raise StateTransitionError("question expansions must point to the completed hit breakdown")
+
+        signals = breakdown.get("expansion_signals")
+        typed_leads = breakdown.get("typed_expansion_leads")
+        if signals is not None or typed_leads is not None:
+            signals = [] if signals is None else signals
+            typed_leads = [] if typed_leads is None else typed_leads
+            if not isinstance(signals, list) or not isinstance(typed_leads, list):
+                raise StateTransitionError("expansion signals and typed leads must be arrays")
+            if len(typed_leads) > 3:
+                raise StateTransitionError("one breakdown may contain at most three typed expansion leads")
+            signal_ids: set[str] = set()
+            normalized_signals: list[dict[str, Any]] = []
+            for position, item in enumerate(signals, start=1):
+                if not isinstance(item, dict):
+                    raise StateTransitionError("expansion signal is not an object")
+                signal_id = str(item.get("signal_id") or f"signal_{position:02d}").strip()
+                signal_text = str(item.get("signal_text") or "").strip()
+                if not signal_text or signal_id in signal_ids:
+                    raise StateTransitionError("expansion signal needs unique identity and signal text")
+                signal_ids.add(signal_id)
+                normalized_signals.append({
+                    "signal_id": signal_id,
+                    "signal_kind": str(item.get("signal_kind") or "observation").strip(),
+                    "signal_text": signal_text,
+                    "source_anchor": str(item.get("source_anchor") or "").strip(),
+                    "reason": str(item.get("reason") or "").strip(),
+                    "status": "observed",
+                })
+            created: list[dict[str, str]] = []
+            if lifecycle != "classify":
+                return {
+                    "status": "observed",
+                    "content_type_lifecycle": content_type_lifecycle,
+                    "signals": normalized_signals,
+                    "typed_leads": typed_leads,
+                    "created": [],
+                    "rejected": [],
+                    "unresolved": [],
+                    "blocked": [],
+                    "no_match": [],
+                    "count": 0,
+                    "rejected_count": 0,
+                    "unresolved_count": 0,
+                    "blocked_count": 0,
+                    "no_match_count": 0,
+                }
+
+            rejected: list[dict[str, str]] = []
+            unresolved: list[dict[str, str]] = []
+            blocked: list[dict[str, str]] = []
+            no_match: list[dict[str, str]] = []
+            seen: set[str] = set()
+            prior_batch_questions: list[str] = []
+            for item in typed_leads:
+                if not isinstance(item, dict):
+                    raise StateTransitionError("typed expansion lead is not an object")
+                signal_id = str(item.get("signal_id") or "").strip()
+                question = str(item.get("core_question") or "").strip()
+                reason = str(item.get("reason") or "").strip()
+                canonical_id = str(item.get("canonical_id") or "").strip()
+                if signal_id not in signal_ids:
+                    no_match.append({
+                        "signal_id": signal_id,
+                        "status": "NO_MATCH",
+                        "reason": "typed_lead_missing_expansion_signal",
+                    })
+                    continue
+                projection = project_content_type(
+                    domain_label,
+                    lifecycle=content_type_lifecycle,
+                    canonical_id=canonical_id,
+                )
+                if projection["status"] != "matched":
+                    no_match.append({
+                        "signal_id": signal_id,
+                        "status": "NO_MATCH"
+                        if projection["status"] in {"no_match", "observed", "registry_not_frozen"}
+                        else "OUT_OF_SCOPE",
+                        "reason": projection["status"],
+                    })
+                    continue
+                if len(question) < 6 or not reason:
+                    rejected.append({
+                        "signal_id": signal_id,
+                        "rejection_reason": "lead_missing_concrete_question",
+                    })
+                    continue
+                identity = "".join(question.casefold().split())
+                if identity in seen:
+                    rejected.append({
+                        "signal_id": signal_id,
+                        "rejection_reason": "lead_duplicate_or_repeated",
+                    })
+                    continue
+                seen.add(identity)
+                expansion_id = "question_expansion_" + _hash({
+                    "parent": parent,
+                    "core_question": question,
+                })[:24]
+                qualification = self.qualify_question_expansion_lead(
+                    domain_label=domain_label,
+                    question=question,
+                    content_type=canonical_id,
+                    reason=reason,
+                    parent_source_ref=parent,
+                    existing_questions=prior_batch_questions,
+                    external_probe=external_probe,
+                    content_type_projected=True,
+                    canonical_type_id=canonical_id,
+                )
+                prior_batch_questions.append(question)
+                qualification_record = self._record_question_expansion_qualification(
+                    expansion_id=expansion_id,
+                    domain_label=domain_label,
+                    parent_source_ref=parent,
+                    qualification=qualification,
+                    actor=actor,
+                )
+                if qualification_record["status"] == "rejected":
+                    rejected.append({
+                        "signal_id": signal_id,
+                        "rejection_reason": str(qualification_record.get("rejection_reason") or "lead_not_qualified"),
+                    })
+                    continue
+                if qualification_record["status"] == "unresolved":
+                    unresolved.append({
+                        "signal_id": signal_id,
+                        "blocked_reason": str(qualification_record.get("checks", {}).get("blocked_reason") or "external_search_unavailable"),
+                    })
+                    continue
+                if qualification_record["status"] == "blocked":
+                    blocked.append({
+                        "signal_id": signal_id,
+                        "blocked_reason": str(qualification_record.get("checks", {}).get("blocked_reason") or "qualification_blocked"),
+                    })
+                    continue
+                derivation = {
+                    "stage": "competitor_breakdown",
+                    "expansion_signal": next(
+                        value for value in normalized_signals if value["signal_id"] == signal_id
+                    ),
+                    "content_type_projection": projection,
+                    "canonical_id": canonical_id,
+                    "reason": reason,
+                    "qualification": qualification_record,
+                }
+                existing = self.conn.execute(
+                    "SELECT core_question, parent_source_ref_json, integrity_hash, validated_at "
+                    "FROM stage1_question_expansion_source WHERE expansion_id=? AND data_identity=?",
+                    (expansion_id, self.data_identity),
+                ).fetchone()
+                if existing is None:
+                    result = self.register_question_expansion_source(
+                        expansion_id=expansion_id,
+                        domain_label=domain_label,
+                        core_question=question,
+                        parent_source_ref=parent,
+                        actor=actor,
+                        derivation=derivation,
+                    )
+                else:
+                    if str(existing["core_question"]) != question or str(existing["parent_source_ref_json"]) != _canonical(parent):
+                        raise StateTransitionError("question expansion identity conflicts with an existing formal source")
+                    result = {
+                        "expansion_id": expansion_id,
+                        "source_object_version": str(existing["integrity_hash"]),
+                        "validated_at": str(existing["validated_at"]),
+                    }
+                created.append({**result, "canonical_id": canonical_id, "signal_id": signal_id})
+            return {
+                "status": "completed",
+                "content_type_lifecycle": content_type_lifecycle,
+                "signals": normalized_signals,
+                "typed_leads": typed_leads,
+                "created": created,
+                "rejected": rejected,
+                "unresolved": unresolved,
+                "blocked": blocked,
+                "no_match": no_match,
+                "count": len(created),
+                "rejected_count": len(rejected),
+                "unresolved_count": len(unresolved),
+                "blocked_count": len(blocked),
+                "no_match_count": len(no_match),
+            }
+        expansions = breakdown.get("question_expansions")
+        if expansions is None:
+            return {"status": "not_present", "created": [], "count": 0}
+        if lifecycle != "classify":
+            return {
+                "status": "observed",
+                "content_type_lifecycle": content_type_lifecycle,
+                "question_expansions": expansions,
+                "created": [],
+                "rejected": [],
+                "unresolved": [],
+                "blocked": [],
+                "count": 0,
+                "rejected_count": 0,
+                "unresolved_count": 0,
+                "blocked_count": 0,
+            }
+
+        if str(content_type_lifecycle).casefold() == "classify":
+            return {
+                "status": "completed",
+                "content_type_lifecycle": content_type_lifecycle,
+                "source_projection": source_projection,
+                "created": [],
+                "rejected": [],
+                "unresolved": [],
+                "blocked": [],
+                "no_match": [{
+                    "status": "OUT_OF_SCOPE",
+                    "reason": "legacy_question_expansion_requires_approved_type_projection",
+                }],
+                "count": 0,
+                "rejected_count": 0,
+                "unresolved_count": 0,
+                "blocked_count": 0,
+                "no_match_count": 1,
+            }
+        if not isinstance(expansions, list) or len(expansions) > 3:
+            raise StateTransitionError("one breakdown may contain at most three question expansions")
+        created: list[dict[str, str]] = []
+        rejected: list[dict[str, str]] = []
+        unresolved: list[dict[str, str]] = []
+        blocked: list[dict[str, str]] = []
+        seen: set[str] = set()
+        prior_batch_questions: list[str] = []
+        for item in expansions:
+            if not isinstance(item, dict):
+                raise StateTransitionError("breakdown question expansion is not an object")
+            question = str(item.get("core_question") or "").strip()
+            content_type = str(item.get("content_type") or "").strip()
+            reason = str(item.get("reason") or "").strip()
+            if len(question) < 6 or not content_type or not reason:
+                raise StateTransitionError("breakdown question expansion is not a concrete question")
+            identity = "".join(question.casefold().split())
+            if identity in seen:
+                raise StateTransitionError("breakdown question expansions must be distinct")
+            seen.add(identity)
+            expansion_id = "question_expansion_" + _hash({
+                "parent": parent,
+                "core_question": question,
+            })[:24]
+            qualification = self.qualify_question_expansion_lead(
+                domain_label=domain_label,
+                question=question,
+                content_type=content_type,
+                reason=reason,
+                parent_source_ref=parent,
+                existing_questions=prior_batch_questions,
+                external_probe=external_probe,
+            )
+            prior_batch_questions.append(question)
+            qualification_record = self._record_question_expansion_qualification(
+                expansion_id=expansion_id,
+                domain_label=domain_label,
+                parent_source_ref=parent,
+                qualification=qualification,
+                actor=actor,
+            )
+            if qualification_record["status"] == "rejected":
+                rejected.append({
+                    "expansion_id": expansion_id,
+                    "rejection_reason": str(qualification_record.get("rejection_reason") or "lead_not_qualified"),
+                })
+                continue
+            if qualification_record["status"] == "unresolved":
+                unresolved.append({
+                    "expansion_id": expansion_id,
+                    "blocked_reason": str(
+                        qualification_record.get("checks", {}).get("blocked_reason")
+                        or "external_search_unavailable"
+                    ),
+                })
+                continue
+            if qualification_record["status"] == "blocked":
+                blocked.append({
+                    "expansion_id": expansion_id,
+                    "blocked_reason": str(
+                        qualification_record.get("checks", {}).get("blocked_reason")
+                        or "qualification_blocked"
+                    ),
+                })
+                continue
+            derivation = {
+                "stage": "competitor_breakdown",
+                "source_content_type": source_content_type,
+                "canonical_source_content_type": canonicalize_competitor_content_type(source_content_type),
+                "content_type": content_type,
+                "reason": reason,
+                "qualification": qualification_record,
+            }
+            existing = self.conn.execute(
+                "SELECT core_question, parent_source_ref_json, integrity_hash, validated_at "
+                "FROM stage1_question_expansion_source WHERE expansion_id=? AND data_identity=?",
+                (expansion_id, self.data_identity),
+            ).fetchone()
+            if existing is None:
+                result = self.register_question_expansion_source(
+                    expansion_id=expansion_id,
+                    domain_label=domain_label,
+                    core_question=question,
+                    parent_source_ref=parent,
+                    actor=actor,
+                    derivation=derivation,
+                )
+            else:
+                if str(existing["core_question"]) != question or str(existing["parent_source_ref_json"]) != _canonical(parent):
+                    raise StateTransitionError("question expansion identity conflicts with an existing formal source")
+                result = {
+                    "expansion_id": expansion_id,
+                    "source_object_version": str(existing["integrity_hash"]),
+                    "validated_at": str(existing["validated_at"]),
+                }
+            created.append(result)
+        return {
+            "status": "completed",
+            "created": created,
+            "rejected": rejected,
+            "count": len(created),
+            "rejected_count": len(rejected),
+            "unresolved": unresolved,
+            "unresolved_count": len(unresolved),
+            "blocked": blocked,
+            "blocked_count": len(blocked),
+        }
+
+    def observed_breakdown_content_types(self, *, domain_label: str) -> list[str]:
+        """Return the content types already observed across completed breakdowns in one domain."""
+        label = str(domain_label or "").strip()
+        if not label:
+            return []
+        rows = self.conn.execute(
+            "SELECT item.artifact_json FROM stage0_competitor_registration_item item "
+            "JOIN stage0_competitor_registration registration "
+            "ON registration.registration_id=item.registration_id "
+            "AND registration.data_identity=item.data_identity "
+            "JOIN stage0_cold_start cold_start "
+            "ON cold_start.cold_start_id=registration.cold_start_id "
+            "AND cold_start.data_identity=registration.data_identity "
+            "WHERE item.step_name='breakdown' AND item.status='completed' "
+            "AND cold_start.domain_label=? AND item.data_identity=?",
+            (label, self.data_identity),
+        ).fetchall()
+        daily_rows = self.conn.execute(
+            "SELECT analysis.artifact_json FROM stage0_daily_hit_breakdown analysis "
+            "JOIN hits hit ON hit.hit_id=analysis.hit_id "
+            "JOIN competitor_accounts account ON account.account_id=hit.account_id "
+            "JOIN stage0_content_account formal_account ON formal_account.content_account_id=account.account_id "
+            "AND formal_account.data_identity=? AND formal_account.account_role='competitor' AND formal_account.status='active' "
+            "WHERE account.domain_label=? AND analysis.data_identity=?",
+            (self.data_identity, label, self.data_identity),
+        ).fetchall()
+        values: set[str] = set()
+
+        subject_labels = {
+            "person": "人物",
+            "work": "作品",
+            "event": "事件",
+            "concept": "概念",
+            "case": "案例",
+            "method": "方法",
+            "collection": "合集",
+        }
+        expression_labels = {
+            "story": "故事",
+            "profile": "经历",
+            "list": "盘点",
+            "analysis": "解读",
+            "explanation": "背景说明",
+            "commentary": "观点评论",
+            "event_response": "事件回应",
+            "interview": "访谈",
+        }
+
+        def legacy_label(subject: str, expression: str) -> str:
+            subject_label = subject_labels.get(subject, subject)
+            expression_label = expression_labels.get(expression, expression)
+            return f"{subject_label}{expression_label}"
+
+        def collect(raw: Any) -> None:
+            try:
+                artifact = json.loads(str(raw or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return
+            breakdown = artifact.get("deep_breakdown") if isinstance(artifact, dict) else None
+            breakdown = breakdown if isinstance(breakdown, dict) else artifact
+            if not isinstance(breakdown, dict):
+                return
+            observed = str(breakdown.get("source_content_type") or "").strip()
+            if observed:
+                values.add(canonicalize_competitor_content_type(observed))
+                return
+            subject = str(breakdown.get("content_subject_type") or "").strip()
+            expression = str(breakdown.get("expression_form") or "").strip()
+            if subject and expression and subject not in {"mixed", "unclear"} and expression not in {"mixed", "unclear"}:
+                values.add(canonicalize_competitor_content_type(legacy_label(subject, expression)))
+
+        for row in (*rows, *daily_rows):
+            collect(row["artifact_json"])
+        return sorted(values, key=str.casefold)
+
+    def get_cold_start_content_type_observations(
+        self, *, cold_start_id: str
+    ) -> dict[str, Any]:
+        """Read only successful breakdown observations from one cold-start run.
+
+        This is deliberately separate from ``observed_breakdown_content_types``.
+        The older helper is a production-context convenience lookup by domain;
+        this lifecycle needs the exact run identity and must never read daily or
+        neighboring-run breakdowns.
+        """
+        cold_start = self.conn.execute(
+            "SELECT cold_start_id, domain_label, status FROM stage0_cold_start "
+            "WHERE cold_start_id=? AND data_identity=?",
+            (cold_start_id, self.data_identity),
+        ).fetchone()
+        if cold_start is None:
+            raise StateTransitionError("cold start content-type observations require the current data identity")
+        if str(cold_start["status"]) != "running":
+            raise StateTransitionError("only running cold starts can produce content-type candidates")
+        rows = self.conn.execute(
+            "SELECT item.registration_id, item.item_ref, item.artifact_json, "
+            "registration.competitor_account_id, account.display_name "
+            "FROM stage0_competitor_registration_item item "
+            "JOIN stage0_competitor_registration registration "
+            "ON registration.registration_id=item.registration_id "
+            "AND registration.data_identity=item.data_identity "
+            "JOIN stage0_content_account account "
+            "ON account.content_account_id=registration.competitor_account_id "
+            "AND account.data_identity=registration.data_identity "
+            "AND account.account_role='competitor' "
+            "WHERE registration.cold_start_id=? AND item.data_identity=? "
+            "AND item.step_name='breakdown' AND item.status='completed' "
+            "ORDER BY registration.competitor_account_id, item.item_ref",
+            (cold_start_id, self.data_identity),
+        ).fetchall()
+        observations: list[dict[str, Any]] = []
+        ignored: list[dict[str, Any]] = []
+        for row in rows:
+            item_ref = str(row["item_ref"] or "").strip()
+            try:
+                artifact = json.loads(str(row["artifact_json"] or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                ignored.append({
+                    "registration_id": str(row["registration_id"]),
+                    "source_id": item_ref,
+                    "reason": "breakdown_artifact_is_not_valid_json",
+                })
+                continue
+            breakdown = artifact.get("deep_breakdown") if isinstance(artifact, dict) else None
+            breakdown = breakdown if isinstance(breakdown, dict) else artifact
+            if not isinstance(breakdown, dict):
+                ignored.append({
+                    "registration_id": str(row["registration_id"]),
+                    "source_id": item_ref,
+                    "reason": "breakdown_artifact_has_no_deep_breakdown_object",
+                })
+                continue
+            raw_type = str(breakdown.get("source_content_type") or "").strip()
+            source_id = str(breakdown.get("source_id") or item_ref).strip()
+            if not raw_type:
+                ignored.append({
+                    "registration_id": str(row["registration_id"]),
+                    "source_id": source_id,
+                    "reason": "source_content_type_is_empty",
+                })
+                continue
+            evidence = breakdown.get("content_type_evidence")
+            observations.append({
+                "source_id": source_id,
+                "source_content_type": raw_type,
+                "canonical_observed_type": canonicalize_competitor_content_type(raw_type),
+                "content_subject_type": str(breakdown.get("content_subject_type") or "").strip(),
+                "expression_form": str(breakdown.get("expression_form") or "").strip(),
+                "content_type_evidence": evidence if isinstance(evidence, list) else [],
+                "source_ref": {
+                    "cold_start_id": cold_start_id,
+                    "registration_id": str(row["registration_id"]),
+                    "competitor_account_id": str(row["competitor_account_id"]),
+                    "account_display_name": str(row["display_name"] or ""),
+                    "source_id": source_id,
+                    "item_ref": item_ref,
+                    "data_identity": self.data_identity,
+                },
+            })
+        return {
+            "cold_start_id": cold_start_id,
+            "domain_label": str(cold_start["domain_label"]),
+            "cold_start_status": str(cold_start["status"]),
+            "valid_observations": observations,
+            "ignored_observations": ignored,
+            "valid_count": len(observations),
+            "ignored_count": len(ignored),
+        }
+
+    @staticmethod
+    def _content_type_candidate_view(row: sqlite3.Row) -> dict[str, Any]:
+        def read_json(name: str, fallback: Any) -> Any:
+            try:
+                value = json.loads(str(row[name] or ""))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return fallback
+            return value
+
+        proposal = read_json("proposal_json", {})
+        source_snapshot = read_json("source_snapshot_json", [])
+        failure = read_json("failure_json", {})
+        review = read_json("review_json", {})
+        provenance = read_json("freeze_provenance_json", {})
+        candidates = proposal.get("candidates", []) if isinstance(proposal, dict) else []
+        return {
+            "content_type_candidate_id": str(row["content_type_candidate_id"]),
+            "cold_start_id": str(row["cold_start_id"]),
+            "domain_label": str(row["domain_label"]),
+            "candidate_version": str(row["candidate_version"]),
+            "status": str(row["status"]),
+            "source_snapshot": source_snapshot if isinstance(source_snapshot, (dict, list)) else [],
+            "proposal": proposal if isinstance(proposal, dict) else {},
+            "candidates": candidates if isinstance(candidates, list) else [],
+            "failure": failure if isinstance(failure, dict) else {},
+            "review": review if isinstance(review, dict) else {},
+            "freeze_provenance": provenance if isinstance(provenance, dict) else {},
+            "created_by": str(row["created_by"]),
+            "created_at": str(row["created_at"]),
+            "reviewed_by": row["reviewed_by"],
+            "reviewed_at": row["reviewed_at"],
+            "review_reason": row["review_reason"],
+        }
+
+    def _latest_cold_start_content_type_candidate(
+        self, *, cold_start_id: str
+    ) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM stage0_cold_start_content_type_candidate "
+            "WHERE cold_start_id=? AND data_identity=? "
+            "ORDER BY created_at DESC, content_type_candidate_id DESC LIMIT 1",
+            (cold_start_id, self.data_identity),
+        ).fetchone()
+
+    def get_cold_start_content_type_candidate(
+        self, *, cold_start_id: str
+    ) -> dict[str, Any] | None:
+        row = self._latest_cold_start_content_type_candidate(cold_start_id=cold_start_id)
+        return self._content_type_candidate_view(row) if row is not None else None
+
+    @staticmethod
+    def _validate_cold_start_content_type_proposal(
+        *,
+        observations: list[dict[str, Any]],
+        proposal: dict[str, Any],
+    ) -> None:
+        candidates = proposal.get("candidates") if isinstance(proposal, dict) else None
+        assignments = proposal.get("observation_assignments") if isinstance(proposal, dict) else None
+        if not isinstance(candidates, list) or not candidates:
+            raise StateTransitionError("content-type candidate proposal is empty")
+        if not isinstance(assignments, list):
+            raise StateTransitionError("content-type candidate proposal lacks observation assignments")
+        observation_keys = {
+            f"{item['source_ref']['registration_id']}:{item['source_id']}"
+            for item in observations
+        }
+        candidate_ids: set[str] = set()
+        candidate_source_keys: set[str] = set()
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                raise StateTransitionError("content-type candidate must be an object")
+            candidate_id = str(candidate.get("candidate_id") or "").strip()
+            canonical_id = str(candidate.get("canonical_id") or "").strip()
+            source_refs = candidate.get("source_refs")
+            if not candidate_id or not canonical_id or candidate_id in candidate_ids:
+                raise StateTransitionError("content-type candidates need unique identities")
+            if not isinstance(source_refs, list) or not source_refs:
+                raise StateTransitionError("every content-type candidate needs source evidence")
+            candidate_ids.add(candidate_id)
+            for source_ref in source_refs:
+                if not isinstance(source_ref, dict):
+                    raise StateTransitionError("content-type source evidence must be an object")
+                key = f"{source_ref.get('registration_id')}:{source_ref.get('source_id')}"
+                if key not in observation_keys or key in candidate_source_keys:
+                    raise StateTransitionError("content-type candidate contains an unknown or repeated source")
+                candidate_source_keys.add(key)
+        assigned: set[str] = set()
+        for assignment in assignments:
+            if not isinstance(assignment, dict):
+                raise StateTransitionError("content-type observation assignment must be an object")
+            key = f"{assignment.get('registration_id')}:{assignment.get('source_id')}"
+            candidate_id = str(assignment.get("candidate_id") or "").strip()
+            if key not in observation_keys or key in assigned or candidate_id not in candidate_ids:
+                raise StateTransitionError("content-type observation assignment is incomplete or invalid")
+            assigned.add(key)
+        if assigned != observation_keys or candidate_source_keys != observation_keys:
+            raise StateTransitionError("every valid content-type observation must remain traceable")
+
+    def build_cold_start_content_type_candidates(
+        self, *, cold_start_id: str, actor: str | None = None
+    ) -> dict[str, Any]:
+        """Build one deterministic, run-scoped candidate proposal.
+
+        No model is called here.  Existing deterministic normalization groups
+        known equivalent observations; unknown observations remain separate so
+        they cannot be silently merged or discarded.
+        """
+        existing = self._latest_cold_start_content_type_candidate(cold_start_id=cold_start_id)
+        if existing is not None and str(existing["status"]) in {
+            "preparing", "awaiting_human_decision", "accepted", "frozen",
+        }:
+            return self._content_type_candidate_view(existing)
+        observations_payload = self.get_cold_start_content_type_observations(
+            cold_start_id=cold_start_id
+        )
+        observations = list(observations_payload["valid_observations"])
+        previous_rows = self.conn.execute(
+            "SELECT candidate_version FROM stage0_cold_start_content_type_candidate "
+            "WHERE cold_start_id=? AND data_identity=?",
+            (cold_start_id, self.data_identity),
+        ).fetchall()
+        version_number = max(
+            [
+                int(str(row["candidate_version"])[1:])
+                for row in previous_rows
+                if str(row["candidate_version"]).startswith("v")
+                and str(row["candidate_version"])[1:].isdigit()
+            ]
+            or [0]
+        ) + 1
+        candidate_version = f"v{version_number}"
+        candidate_id = _id("content_type_candidate")
+        now = _now()
+        if not observations:
+            failure = {
+                "reason": "当前冷启动没有可用的成功逐条拆解内容类型观察",
+                "retry_allowed": True,
+                "model_used": False,
+                "ignored_observations": observations_payload["ignored_observations"],
+            }
+            with self.conn:
+                self.conn.execute(
+                    "INSERT INTO stage0_cold_start_content_type_candidate "
+                    "VALUES (?, ?, ?, ?, 'failed', ?, '{}', ?, '{}', '{}', ?, ?, ?, NULL, NULL, NULL)",
+                    (
+                        candidate_id, cold_start_id, observations_payload["domain_label"],
+                        candidate_version, _canonical([]), _canonical(failure),
+                        self.data_identity, "", now,
+                    ),
+                )
+                self._audit(None, "cold_start_content_type_candidate_failed", {
+                    "cold_start_id": cold_start_id,
+                    "content_type_candidate_id": candidate_id,
+                    "reason": failure["reason"],
+                })
+            return self.get_cold_start_content_type_candidate(cold_start_id=cold_start_id) or {}
+
+        grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for observation in observations:
+            grouped.setdefault(
+                _content_type_group_key(str(observation["source_content_type"])),
+                [],
+            ).append(observation)
+        candidates: list[dict[str, Any]] = []
+        assignments: list[dict[str, Any]] = []
+        for group_key, group_observations in sorted(grouped.items(), key=lambda item: item[0]):
+            canonical_observation = str(group_key[1])
+            display_name = (
+                canonical_observation
+                if group_key[0] == "canonical"
+                else str(group_observations[0]["source_content_type"])
+            )
+            definition = _content_type_candidate_definition(
+                display_name=display_name,
+                observations=group_observations,
+            )
+            candidate = {
+                "candidate_id": _content_type_candidate_id(
+                    observations_payload["domain_label"], group_key
+                ),
+                "canonical_id": _content_type_candidate_canonical_id(
+                    observations_payload["domain_label"], group_key
+                ),
+                "name": display_name,
+                **definition,
+                "source_observation_types": sorted(
+                    {str(item["source_content_type"]) for item in group_observations},
+                    key=str.casefold,
+                ),
+                "support_sample_count": len(group_observations),
+                "representative_source_ids": [
+                    str(item["source_id"]) for item in group_observations[:5]
+                ],
+                "source_refs": [dict(item["source_ref"]) for item in group_observations],
+            }
+            candidates.append(candidate)
+            for item in group_observations:
+                assignments.append({
+                    "registration_id": item["source_ref"]["registration_id"],
+                    "source_id": item["source_id"],
+                    "source_content_type": item["source_content_type"],
+                    "candidate_id": candidate["candidate_id"],
+                })
+        proposal = {
+            "schema_version": "cold_start_content_type_candidate.v1",
+            "model_used": False,
+            "source_rule": "current_cold_start_successful_breakdown_observations_only",
+            "candidates": candidates,
+            "observation_assignments": assignments,
+            "ignored_observations": observations_payload["ignored_observations"],
+            "unmapped_observations": [],
+        }
+        self._validate_cold_start_content_type_proposal(
+            observations=observations, proposal=proposal
+        )
+        source_snapshot = {
+            "cold_start_id": cold_start_id,
+            "domain_label": observations_payload["domain_label"],
+            "data_identity": self.data_identity,
+            "observations": observations,
+            "ignored_observations": observations_payload["ignored_observations"],
+        }
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage0_cold_start_content_type_candidate "
+                "VALUES (?, ?, ?, ?, 'awaiting_human_decision', ?, ?, '{}', '{}', '{}', ?, ?, ?, NULL, NULL, NULL)",
+                (
+                    candidate_id, cold_start_id, observations_payload["domain_label"],
+                    candidate_version, _canonical(source_snapshot), _canonical(proposal),
+                    self.data_identity, "", now,
+                ),
+            )
+            self._audit(None, "cold_start_content_type_candidates_built", {
+                "cold_start_id": cold_start_id,
+                "content_type_candidate_id": candidate_id,
+                "candidate_version": candidate_version,
+                "candidate_count": len(candidates),
+                "observation_count": len(observations),
+                "model_used": False,
+            })
+        return self.get_cold_start_content_type_candidate(cold_start_id=cold_start_id) or {}
+
+    def review_cold_start_content_types(
+        self,
+        *,
+        cold_start_id: str,
+        decisions: tuple[dict[str, Any], ...],
+        actor_kind: str,
+        reason: str,
+        decision_id: str = "",
+        actor: str = "",
+    ) -> dict[str, Any]:
+        """Apply one whole-run user review and freeze the same formal registry."""
+        if actor_kind != "user" or not reason.strip():
+            raise StateTransitionError("content-type review requires an explicit user decision")
+        current = self.get_cold_start_content_type_candidate(cold_start_id=cold_start_id)
+        if current is None:
+            raise StateTransitionError("content-type candidates do not exist for this cold start")
+        if current["status"] == "frozen":
+            completion = self.try_complete_cold_start(
+                cold_start_id=cold_start_id,
+                trigger="content_type_freeze",
+                actor=actor,
+            )
+            result = dict(current)
+            result["cold_start_completion"] = completion
+            return result
+        if current["status"] != "awaiting_human_decision":
+            raise StateTransitionError("content-type candidates are not awaiting review")
+        source_candidates = [item for item in current["candidates"] if isinstance(item, dict)]
+        by_id = {str(item.get("candidate_id")): item for item in source_candidates}
+        submitted: dict[str, dict[str, Any]] = {}
+        for item in decisions:
+            if not isinstance(item, dict):
+                raise StateTransitionError("every content-type review item must be an object")
+            item_id = str(item.get("candidate_id") or "").strip()
+            decision = str(item.get("decision") or "").strip()
+            if item_id not in by_id or decision not in {"accepted", "rejected", "merged"}:
+                raise StateTransitionError("content-type review contains an unknown candidate or decision")
+            if item_id in submitted:
+                raise StateTransitionError("content-type review contains a duplicate candidate")
+            submitted[item_id] = dict(item)
+        if set(submitted) != set(by_id):
+            raise StateTransitionError("the whole content-type candidate set must be reviewed once")
+        accepted: dict[str, dict[str, Any]] = {}
+        merged: dict[str, str] = {}
+        editable = (
+            "name", "definition", "content_expression", "distinction",
+            "core_subject", "content_promise", "required_delivery", "scope_boundary",
+        )
+        for item_id, review in submitted.items():
+            decision = str(review["decision"])
+            if decision == "rejected":
+                continue
+            if decision == "merged":
+                target = str(review.get("merge_into_candidate_id") or "").strip()
+                if not target or target == item_id or target not in by_id:
+                    raise StateTransitionError("a merged content type must name another candidate")
+                merged[item_id] = target
+                continue
+            candidate = dict(by_id[item_id])
+            for field in editable:
+                edit_key = f"edited_{field}"
+                if edit_key in review:
+                    candidate[field] = str(review.get(edit_key) or "").strip()
+            if "edited_name" in review and not candidate.get("name"):
+                raise StateTransitionError("an accepted content type needs a name")
+            if "edited_definition" in review:
+                candidate["content_promise"] = str(candidate.get("definition") or "").strip()
+            if not all(str(candidate.get(field) or "").strip() for field in (
+                "name", "definition", "core_subject", "content_promise",
+                "required_delivery", "scope_boundary",
+            )):
+                raise StateTransitionError("an accepted content type needs a complete definition")
+            accepted[item_id] = candidate
+        if not accepted:
+            raise StateTransitionError("the frozen content-type registry cannot be empty")
+        for merged_id, target_id in merged.items():
+            if target_id not in accepted:
+                raise StateTransitionError("a merged content type must merge into an accepted candidate")
+            target = accepted[target_id]
+            source = by_id[merged_id]
+            target["source_observation_types"] = sorted(
+                {
+                    *list(target.get("source_observation_types") or []),
+                    *list(source.get("source_observation_types") or []),
+                },
+                key=str.casefold,
+            )
+            target["source_refs"] = [
+                *list(target.get("source_refs") or []),
+                *[
+                    item for item in list(source.get("source_refs") or [])
+                    if item not in list(target.get("source_refs") or [])
+                ],
+            ]
+            target["support_sample_count"] = len(target["source_refs"])
+            target["representative_source_ids"] = [
+                str(item.get("source_id") or "")
+                for item in target["source_refs"][:5]
+            ]
+            target.setdefault("merged_candidate_ids", []).append(merged_id)
+        final_candidates = list(accepted.values())
+        registry_types = [
+            {
+                "canonical_id": str(item["canonical_id"]),
+                "name": str(item["name"]),
+                "core_subject": str(item["core_subject"]),
+                "content_promise": str(item["content_promise"]),
+                "required_delivery": str(item["required_delivery"]),
+                "scope_boundary": str(item["scope_boundary"]),
+            }
+            for item in final_candidates
+        ]
+        reviewed_at = _now()
+        provenance = {
+            "cold_start_id": cold_start_id,
+            "content_type_candidate_id": current["content_type_candidate_id"],
+            "candidate_version": current["candidate_version"],
+            "human_decision_id": decision_id.strip() or "direct_content_type_review",
+            "frozen_at": reviewed_at,
+        }
+        pack = get_domain_pack(current["domain_label"])
+        pack_path = Path(str(pack["config_path"])).resolve()
+        original_pack = pack_path.read_text(encoding="utf-8")
+        try:
+            registry = freeze_content_type_registry(
+                current["domain_label"], registry_types, provenance=provenance
+            )
+            review_payload = {
+                "decision_id": decision_id.strip() or "direct_content_type_review",
+                "decisions": [dict(item) for item in decisions],
+                "final_candidates": final_candidates,
+                "rejected_candidate_ids": [
+                    item_id for item_id, item in submitted.items()
+                    if str(item["decision"]) == "rejected"
+                ],
+                "merged_candidate_ids": dict(merged),
+            }
+            with self.conn:
+                self.conn.execute(
+                    "UPDATE stage0_cold_start_content_type_candidate SET status='frozen', "
+                    "review_json=?, freeze_provenance_json=?, reviewed_by=?, reviewed_at=?, review_reason=? "
+                    "WHERE content_type_candidate_id=? AND data_identity=? AND status='awaiting_human_decision'",
+                    (
+                        _canonical(review_payload), _canonical(provenance), None, reviewed_at,
+                        reason.strip(), current["content_type_candidate_id"], self.data_identity,
+                    ),
+                )
+                self._audit(None, "cold_start_content_types_frozen", {
+                    "cold_start_id": cold_start_id,
+                    "content_type_candidate_id": current["content_type_candidate_id"],
+                    "candidate_version": current["candidate_version"],
+                    "registry_version": registry["version"],
+                    "type_count": len(registry["types"]),
+                    "human_decision_id": provenance["human_decision_id"],
+                })
+        except Exception:
+            try:
+                pack_path.write_text(original_pack, encoding="utf-8")
+            except Exception:
+                pass
+            raise
+        result = self.get_cold_start_content_type_candidate(cold_start_id=cold_start_id) or {}
+        result["cold_start_completion"] = self.try_complete_cold_start(
+            cold_start_id=cold_start_id,
+            trigger="content_type_freeze",
+            actor=actor,
+        )
+        return result
+
+    def cold_start_content_types_are_frozen(self, *, cold_start_id: str) -> bool:
+        current = self.get_cold_start_content_type_candidate(cold_start_id=cold_start_id)
+        if current is None or current["status"] != "frozen":
+            return False
+        provenance = current.get("freeze_provenance") or {}
+        if str(provenance.get("cold_start_id") or "") != cold_start_id:
+            return False
+        try:
+            registry = get_domain_pack(current["domain_label"]).get("content_type_registry")
+            registry_provenance = (registry or {}).get("provenance") or {}
+            return (
+                isinstance(registry, dict)
+                and str(registry.get("status") or "").casefold() == "frozen"
+                and str(registry_provenance.get("cold_start_id") or "") == cold_start_id
+                and str(registry_provenance.get("content_type_candidate_id") or "")
+                == str(current["content_type_candidate_id"])
+            )
+        except ValueError:
+            return False
 
     def register_question_expansion_source(
         self,
@@ -2300,16 +4915,66 @@ class Stage0ContentProductionCore:
         core_question: str,
         parent_source_ref: dict[str, Any],
         actor: str,
+        derivation: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         """Register only an already-supported bounded expansion as a source."""
         if domain_label not in formal_domain_labels():
             raise StateTransitionError("question expansion requires a configured formal domain")
-        if len(core_question.strip()) < 6 or not parent_source_ref:
+        if len(core_question.strip()) < 6 or not isinstance(parent_source_ref, dict):
             raise StateTransitionError("question expansion requires a concrete question and parent source")
+        parent_type = str(parent_source_ref.get("source_type") or "").strip()
+        parent_id = str(parent_source_ref.get("source_object_id") or "").strip()
+        if not parent_type or not parent_id:
+            raise StateTransitionError("question expansion parent requires source_type and source_object_id")
+        if parent_type == "question_expansion":
+            raise StateTransitionError("question expansion cannot be derived from another question expansion")
+        parent_tables = {
+            "hit_breakdown": ("stage0_daily_hit_breakdown", "hit_id"),
+            "competitor_breakdown": ("stage0_competitor_registration_item", "item_ref"),
+        }
+        parent_table = parent_tables.get(parent_type)
+        if parent_table is None:
+            raise StateTransitionError("question expansion must be derived during a formal hit breakdown")
+        table_name, id_column = parent_table
+        table_exists = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,)
+        ).fetchone()
+        if table_exists is None:
+            raise StateTransitionError("question expansion parent table is not available in the formal Core")
+        if parent_type == "competitor_breakdown":
+            registration_id = str(parent_source_ref.get("registration_id") or "").strip()
+            if not registration_id:
+                raise StateTransitionError("competitor breakdown parent requires registration_id")
+            parent_exists = self.conn.execute(
+                "SELECT 1 FROM stage0_competitor_registration_item "
+                "WHERE registration_id=? AND step_name='breakdown' AND item_ref=? "
+                "AND status='completed' AND data_identity=? LIMIT 1",
+                (registration_id, parent_id, self.data_identity),
+            ).fetchone()
+        elif table_name in {"hits", "hit_transcripts", "stage0_daily_hit_breakdown"}:
+            parent_exists = self.conn.execute(
+                f"SELECT 1 FROM {table_name} WHERE {id_column}=? LIMIT 1", (parent_id,)
+            ).fetchone()
+        else:
+            parent_exists = self.conn.execute(
+                f"SELECT 1 FROM {table_name} WHERE {id_column}=? AND data_identity=? LIMIT 1",
+                (parent_id, self.data_identity),
+            ).fetchone()
+        if parent_exists is None:
+            raise StateTransitionError("question expansion parent is not a registered formal material")
+        qualification = self.conn.execute(
+            "SELECT status FROM stage1_question_expansion_qualification "
+            "WHERE expansion_id=? AND data_identity=?",
+            (expansion_id, self.data_identity),
+        ).fetchone()
+        if qualification is None or str(qualification["status"] or "") != "qualified":
+            raise StateTransitionError("question expansion must pass lightweight qualification before source registration")
         payload = {
             "title": core_question.strip(),
             "core_question": core_question.strip(),
             "parent_source_ref": parent_source_ref,
+            "derivation": dict(derivation or {}),
+            "qualification_status": "qualified",
             "validation_outcome": "supported",
         }
         integrity_hash = _hash(payload)
@@ -2530,30 +5195,275 @@ class Stage0ContentProductionCore:
             )
         return results
 
-    def select_experience_candidate_sources(self, *, task_id: str) -> dict[str, Any] | None:
-        """Choose one bounded, same-type source set without inferring a reusable conclusion."""
-        task = self._task(task_id)
-        if task["current_node"] != "content_plan" or task["current_status"] != "not_started":
-            return None
-        topic = self.get_artifact_payload(str(task["topic_version_id"]))["payload"]
-        domain_label = str(topic.get("domain_label") or "").strip()
-        if not domain_label:
-            return None
-        existing = self.conn.execute(
-            "SELECT experience_candidate_id FROM stage0_experience_candidate WHERE task_id=? AND data_identity=?",
-            (task_id, self.data_identity),
-        ).fetchone()
-        if existing is not None:
-            return None
+    def _pre_topic_source_snapshot(self, *, domain_label: str) -> list[str]:
         rows = self.conn.execute(
             "SELECT item.item_ref, item.artifact_json FROM stage0_competitor_registration_item item "
             "JOIN stage0_competitor_registration registration ON registration.registration_id=item.registration_id "
             "JOIN stage0_content_account account ON account.content_account_id=registration.competitor_account_id "
             "WHERE item.step_name='breakdown' AND item.status='completed' AND item.data_identity=? "
             "AND registration.data_identity=? AND account.data_identity=? AND account.domain_label=? "
+            "AND account.status='active' ORDER BY item.updated_at, item.item_ref",
+            (self.data_identity, self.data_identity, self.data_identity, domain_label),
+        ).fetchall()
+        source_ids: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            try:
+                artifact = json.loads(str(row["artifact_json"]))
+                breakdown = artifact.get("deep_breakdown")
+                if not isinstance(breakdown, dict):
+                    continue
+                subject = str(breakdown.get("content_subject_type") or "unclear")
+                form = str(breakdown.get("expression_form") or "unclear")
+                structure_level = str(
+                    (breakdown.get("structure_assessment") or {}).get("level") or "unclear"
+                )
+                if subject == "unclear" or form == "unclear" or structure_level == "unclear":
+                    continue
+                source_id = str(breakdown.get("source_id") or row["item_ref"]).strip()
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if source_id and source_id not in seen:
+                seen.add(source_id)
+                source_ids.append(source_id)
+        return source_ids
+
+    @staticmethod
+    def _experience_candidate_run_view(row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            source_snapshot = json.loads(str(row["source_snapshot_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            source_snapshot = []
+        return {
+            "experience_candidate_run_id": str(row["experience_candidate_run_id"]),
+            "domain_label": str(row["domain_label"]),
+            "status": str(row["status"]),
+            "source_snapshot": source_snapshot if isinstance(source_snapshot, list) else [],
+            "source_count": int(row["source_count"]),
+            "created_by": str(row["created_by"]),
+            "created_at": str(row["created_at"]),
+            "completed_at": str(row["completed_at"]) if row["completed_at"] is not None else None,
+        }
+
+    def start_pre_topic_experience_run(
+        self, *, domain_label: str, actor: str
+    ) -> dict[str, Any]:
+        """Start an isolated pre-topic pass over a frozen source snapshot."""
+
+        normalized = self._require_configured_domain(
+            domain_label, context="pre-topic experience review"
+        )
+        if not actor.strip():
+            raise StateTransitionError("pre-topic experience run requires a user")
+        source_snapshot = self._pre_topic_source_snapshot(domain_label=normalized)
+        run_id = _id("experience_candidate_run")
+        created_at = _now()
+        with self.conn:
+            self.conn.execute(
+                "UPDATE stage0_experience_candidate_run SET status='superseded', completed_at=? "
+                "WHERE domain_label=? AND data_identity=? AND status!='superseded'",
+                (created_at, normalized, self.data_identity),
+            )
+            self.conn.execute(
+                "INSERT INTO stage0_experience_candidate_run VALUES (?, ?, 'running', ?, ?, ?, ?, ?, NULL)",
+                (
+                    run_id,
+                    normalized,
+                    _canonical(source_snapshot),
+                    len(source_snapshot),
+                    self.data_identity,
+                    actor.strip(),
+                    created_at,
+                ),
+            )
+            self._audit(
+                None,
+                "experience_candidate_run_started",
+                {
+                    "experience_candidate_run_id": run_id,
+                    "domain_label": normalized,
+                    "source_count": len(source_snapshot),
+                },
+            )
+        return self.get_pre_topic_experience_run(run_id=run_id)
+
+    def get_pre_topic_experience_run(self, *, run_id: str) -> dict[str, Any]:
+        row = self.conn.execute(
+            "SELECT * FROM stage0_experience_candidate_run "
+            "WHERE experience_candidate_run_id=? AND data_identity=?",
+            (run_id, self.data_identity),
+        ).fetchone()
+        if row is None:
+            raise StateTransitionError("pre-topic experience run does not exist in this data identity")
+        return self._experience_candidate_run_view(row)
+
+    def restore_superseded_pre_topic_experience_run(
+        self, *, run_id: str, actor: str, reason: str
+    ) -> dict[str, Any]:
+        """Restore a superseded pre-topic run after an interrupted administrative action."""
+        if not actor.strip() or not reason.strip():
+            raise StateTransitionError("experience candidate run restoration requires an actor and reason")
+        target = self.get_pre_topic_experience_run(run_id=run_id)
+        if target["status"] != "superseded":
+            raise StateTransitionError("only a superseded experience candidate run can be restored")
+        now = _now()
+        with self.conn:
+            self.conn.execute(
+                "UPDATE stage0_experience_candidate_run SET status='superseded', completed_at=? "
+                "WHERE data_identity=? AND domain_label=? AND status!='superseded'",
+                (now, self.data_identity, target["domain_label"]),
+            )
+            self.conn.execute(
+                "UPDATE stage0_experience_candidate_run SET status='completed', completed_at=? "
+                "WHERE experience_candidate_run_id=? AND data_identity=?",
+                (target["completed_at"] or now, run_id, self.data_identity),
+            )
+            self._audit(
+                None,
+                "experience_candidate_run_restored",
+                {
+                    "experience_candidate_run_id": run_id,
+                    "actor": actor.strip(),
+                    "reason": reason.strip(),
+                },
+            )
+        return self.get_pre_topic_experience_run(run_id=run_id)
+
+    def summarize_pre_topic_experience_run(self, *, run_id: str) -> dict[str, Any]:
+        run = self.get_pre_topic_experience_run(run_id=run_id)
+        snapshot_ids = {
+            str(source_id).strip()
+            for source_id in run["source_snapshot"]
+            if str(source_id).strip()
+        }
+        rows = self.conn.execute(
+            "SELECT frozen_sources_json, status FROM stage0_experience_candidate "
+            "WHERE task_id IS NULL AND experience_candidate_run_id=? AND data_identity=?",
+            (run_id, self.data_identity),
+        ).fetchall()
+        processed_ids: set[str] = set()
+        failed_ids: set[str] = set()
+        for row in rows:
+            try:
+                frozen_sources = json.loads(str(row["frozen_sources_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(frozen_sources, list):
+                continue
+            ids = {
+                str(item.get("source_id") or "").strip()
+                for item in frozen_sources
+                if isinstance(item, dict) and str(item.get("source_id") or "").strip()
+            }
+            if str(row["status"]) == "failed":
+                failed_ids.update(ids)
+            else:
+                processed_ids.update(ids)
+        processed_ids &= snapshot_ids
+        failed_ids = (failed_ids & snapshot_ids) - processed_ids
+        unprocessed_ids = snapshot_ids - processed_ids
+        return {
+            "experience_candidate_run_id": run_id,
+            "domain_label": run["domain_label"],
+            "run_status": run["status"],
+            "active_source_count": len(snapshot_ids),
+            "processed_source_count": len(processed_ids),
+            "failed_source_count": len(failed_ids),
+            "unprocessed_source_count": len(unprocessed_ids),
+            "failed_source_ids": sorted(failed_ids),
+            "unprocessed_source_ids": sorted(unprocessed_ids),
+        }
+
+    def complete_pre_topic_experience_run(self, *, run_id: str) -> dict[str, Any]:
+        summary = self.summarize_pre_topic_experience_run(run_id=run_id)
+        status = "completed" if summary["unprocessed_source_count"] == 0 else "completed_with_gaps"
+        completed_at = _now()
+        with self.conn:
+            self.conn.execute(
+                "UPDATE stage0_experience_candidate_run SET status=?, completed_at=? "
+                "WHERE experience_candidate_run_id=? AND data_identity=?",
+                (status, completed_at, run_id, self.data_identity),
+            )
+            self._audit(
+                None,
+                "experience_candidate_run_completed",
+                {**summary, "run_status": status},
+            )
+        summary["run_status"] = status
+        return summary
+
+    def _select_experience_candidate_sources_for_domain(
+        self,
+        *,
+        domain_label: str,
+        task_id: str | None,
+        additional_covered_source_ids: set[str] | None = None,
+        experience_candidate_run_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Choose one bounded, same-expression source set without inferring a conclusion."""
+
+        if task_id is not None:
+            existing = self.conn.execute(
+                "SELECT experience_candidate_id FROM stage0_experience_candidate "
+                "WHERE task_id=? AND data_identity=? LIMIT 1",
+                (task_id, self.data_identity),
+            ).fetchone()
+            if existing is not None:
+                return None
+        run_source_ids: set[str] | None = None
+        if task_id is None:
+            if not experience_candidate_run_id:
+                raise StateTransitionError(
+                    "pre-topic experience selection requires an explicit run"
+                )
+            run = self.get_pre_topic_experience_run(
+                run_id=experience_candidate_run_id
+            )
+            if run["domain_label"] != domain_label:
+                raise StateTransitionError("pre-topic experience run domain does not match selection domain")
+            if run["status"] == "superseded":
+                raise StateTransitionError("pre-topic experience run has been superseded")
+            run_source_ids = {
+                str(source_id).strip()
+                for source_id in run["source_snapshot"]
+                if str(source_id).strip()
+            }
+        rows = self.conn.execute(
+            "SELECT item.item_ref, item.artifact_json, account.content_account_id AS account_ref, "
+            "account.display_name AS account_name FROM stage0_competitor_registration_item item "
+            "JOIN stage0_competitor_registration registration ON registration.registration_id=item.registration_id "
+            "JOIN stage0_content_account account ON account.content_account_id=registration.competitor_account_id "
+            "WHERE item.step_name='breakdown' AND item.status='completed' AND item.data_identity=? "
+            "AND registration.data_identity=? AND account.data_identity=? AND account.domain_label=? "
+            "AND account.status='active' "
             "ORDER BY item.updated_at, item.item_ref",
             (self.data_identity, self.data_identity, self.data_identity, domain_label),
         ).fetchall()
+        covered_source_ids: set[str] = set()
+        covered_source_ids.update(additional_covered_source_ids or set())
+        if task_id is None:
+            candidate_rows = self.conn.execute(
+                "SELECT frozen_sources_json FROM stage0_experience_candidate "
+                "WHERE task_id IS NULL AND experience_candidate_run_id=? "
+                "AND domain_label=? AND data_identity=?",
+                (experience_candidate_run_id, domain_label, self.data_identity),
+            ).fetchall()
+            for candidate_row in candidate_rows:
+                try:
+                    frozen_sources = json.loads(str(candidate_row["frozen_sources_json"]))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                if not isinstance(frozen_sources, list):
+                    continue
+                covered_source_ids.update(
+                    str(item.get("source_id") or "").strip()
+                    for item in frozen_sources
+                    if isinstance(item, dict) and str(item.get("source_id") or "").strip()
+                )
+        if run_source_ids is not None:
+            covered_source_ids -= {
+                source_id for source_id in covered_source_ids if source_id not in run_source_ids
+            }
         groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for row in rows:
             try:
@@ -2563,67 +5473,221 @@ class Stage0ContentProductionCore:
                     continue
                 subject = str(breakdown.get("content_subject_type") or "unclear")
                 form = str(breakdown.get("expression_form") or "unclear")
-                if subject == "unclear" or form == "unclear":
+                structure_assessment = breakdown.get("structure_assessment") or {}
+                structure_level = str(
+                    structure_assessment.get("level") or "unclear"
+                )
+                if subject == "unclear" or form == "unclear" or structure_level == "unclear":
                     continue
                 source_id = str(breakdown.get("source_id") or row["item_ref"])
                 source = {
                     "source_id": source_id,
+                    "account_ref": str(row["account_ref"]),
+                    "account_name": str(row["account_name"]),
                     "content_subject_type": subject,
                     "expression_form": form,
                     "content_type_evidence": breakdown.get("content_type_evidence") or [],
+                    "structure_assessment": structure_assessment,
+                    "structure_grasp": breakdown.get("structure_grasp") or {},
                     "spoken_progression": breakdown.get("spoken_progression") or [],
-                    "writing_methods": breakdown.get("writing_methods") or [],
-                    "reference_boundary": breakdown.get("reference_boundary") or {},
+                    "recurring_evidence_patterns": breakdown.get("recurring_evidence_patterns") or [],
+                    "audience_reactions": breakdown.get("audience_reactions") or [],
+                    "full_analysis": breakdown.get("full_analysis") or {},
                     "cannot_infer": breakdown.get("cannot_infer") or [],
                 }
             except (TypeError, ValueError, json.JSONDecodeError):
                 continue
-            groups.setdefault((subject, form), []).append(source)
-        eligible = [(key, value[:6]) for key, value in groups.items() if len(value) >= 2]
-        for (subject, form), sources in sorted(
+            if run_source_ids is not None and source["source_id"] not in run_source_ids:
+                continue
+            groups.setdefault((form, structure_level), []).append(source)
+
+        def balanced_batch(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            by_account: dict[str, list[dict[str, Any]]] = {}
+            for value in values:
+                account_ref = str(value.get("account_ref") or value["source_id"])
+                by_account.setdefault(account_ref, []).append(value)
+            selected: list[dict[str, Any]] = []
+            while len(selected) < EXPERIENCE_CANDIDATE_BATCH_SIZE:
+                added = False
+                for account_ref in list(by_account):
+                    account_values = by_account[account_ref]
+                    if not account_values:
+                        continue
+                    selected.append(account_values.pop(0))
+                    added = True
+                    if len(selected) >= EXPERIENCE_CANDIDATE_BATCH_SIZE:
+                        break
+                if not added:
+                    break
+            return selected
+
+        eligible = []
+        for key, values in groups.items():
+            remaining = [
+                value for value in values
+                if str(value["source_id"]) not in covered_source_ids
+            ]
+            remaining_accounts = {
+                str(value.get("account_ref") or "") for value in remaining
+                if str(value.get("account_ref") or "")
+            }
+            if (
+                len(remaining) >= EXPERIENCE_CANDIDATE_MIN_SOURCES
+                and len(remaining_accounts) >= 2
+            ):
+                eligible.append((key, remaining))
+        for (form, structure_level), remaining in sorted(
             eligible, key=lambda item: (-len(item[1]), item[0][0], item[0][1])
         ):
+            sources = balanced_batch(remaining)
             fingerprint = _hash({"domain_label": domain_label, "source_ids": sorted(item["source_id"] for item in sources)})
-            seen = self.conn.execute(
-                "SELECT 1 FROM stage0_experience_candidate WHERE domain_label=? AND source_fingerprint=? AND data_identity=? LIMIT 1",
-                (domain_label, fingerprint, self.data_identity),
-            ).fetchone()
+            if task_id is None:
+                seen = self.conn.execute(
+                    "SELECT 1 FROM stage0_experience_candidate "
+                    "WHERE task_id IS NULL AND experience_candidate_run_id=? "
+                    "AND domain_label=? AND source_fingerprint=? "
+                    "AND data_identity=? LIMIT 1",
+                    (experience_candidate_run_id, domain_label, fingerprint, self.data_identity),
+                ).fetchone()
+            else:
+                seen = self.conn.execute(
+                    "SELECT 1 FROM stage0_experience_candidate "
+                    "WHERE task_id=? AND source_fingerprint=? AND data_identity=? LIMIT 1",
+                    (task_id, fingerprint, self.data_identity),
+                ).fetchone()
             if seen is None:
                 return {
                     "task_id": task_id,
+                    "experience_candidate_run_id": experience_candidate_run_id,
                     "domain_label": domain_label,
-                    "content_type": {"content_subject_type": subject, "expression_form": form},
+                    "content_type": {
+                        "expression_form": form,
+                        "structure_level": structure_level,
+                        "content_subject_types": sorted(
+                            {
+                                str(item["content_subject_type"])
+                                for item in sources
+                            }
+                        ),
+                    },
                     "sources": sources,
                 }
         return None
 
+    def select_experience_candidate_sources(self, *, task_id: str) -> dict[str, Any] | None:
+        """Choose sources for the existing content-plan experience suggestion."""
+
+        task = self._task(task_id)
+        if task["current_node"] != "content_plan" or task["current_status"] != "not_started":
+            return None
+        topic = self.get_artifact_payload(str(task["topic_version_id"]))["payload"]
+        domain_label = str(topic.get("domain_label") or "").strip()
+        if not domain_label:
+            return None
+        return self._select_experience_candidate_sources_for_domain(
+            domain_label=domain_label, task_id=task_id
+        )
+
+    def select_pre_topic_experience_candidate_sources(
+        self,
+        *,
+        domain_label: str,
+        additional_covered_source_ids: set[str] | None = None,
+        experience_candidate_run_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Choose sources for the quality-first experience review before topics exist."""
+
+        normalized = self._require_configured_domain(domain_label, context="pre-topic experience review")
+        return self._select_experience_candidate_sources_for_domain(
+            domain_label=normalized,
+            task_id=None,
+            additional_covered_source_ids=additional_covered_source_ids,
+            experience_candidate_run_id=experience_candidate_run_id,
+        )
+
     def open_experience_candidate(
         self,
         *,
-        task_id: str,
+        task_id: str | None,
         domain_label: str,
         frozen_sources: list[dict[str, Any]],
         actor: str,
+        experience_candidate_run_id: str | None = None,
     ) -> dict[str, str]:
-        if not actor.strip() or len(frozen_sources) < 2:
-            raise StateTransitionError("experience candidate requires at least two frozen source breakdowns and an actor")
+        if (
+            not actor.strip()
+            or len(frozen_sources) < EXPERIENCE_CANDIDATE_MIN_SOURCES
+            or len(frozen_sources) > EXPERIENCE_CANDIDATE_BATCH_SIZE
+        ):
+            raise StateTransitionError(
+                "experience candidate requires three to eight frozen source breakdowns and an actor"
+            )
         source_ids = [str(item.get("source_id") or "").strip() for item in frozen_sources]
         if any(not source_id for source_id in source_ids) or len(set(source_ids)) != len(source_ids):
             raise StateTransitionError("experience candidate sources need unique source IDs")
+        account_refs = {
+            str(item.get("account_ref") or "").strip()
+            for item in frozen_sources
+            if str(item.get("account_ref") or "").strip()
+        }
+        if len(account_refs) < 2:
+            raise StateTransitionError(
+                "experience candidate requires source breakdowns from at least two accounts"
+            )
         fingerprint = _hash({"domain_label": domain_label, "source_ids": sorted(source_ids)})
-        existing = self.conn.execute(
-            "SELECT experience_candidate_id, status FROM stage0_experience_candidate WHERE task_id=? AND source_fingerprint=? AND data_identity=?",
-            (task_id, fingerprint, self.data_identity),
-        ).fetchone()
+        if task_id is None:
+            if not experience_candidate_run_id:
+                raise StateTransitionError(
+                    "pre-topic experience candidate requires an explicit run"
+                )
+            run = self.get_pre_topic_experience_run(
+                run_id=experience_candidate_run_id
+            )
+            if run["domain_label"] != domain_label or run["status"] == "superseded":
+                raise StateTransitionError("pre-topic experience candidate run is not valid for this candidate")
+            existing = self.conn.execute(
+                "SELECT experience_candidate_id, status FROM stage0_experience_candidate "
+                "WHERE task_id IS NULL AND experience_candidate_run_id=? "
+                "AND domain_label=? AND source_fingerprint=? AND data_identity=?",
+                (experience_candidate_run_id, domain_label, fingerprint, self.data_identity),
+            ).fetchone()
+        else:
+            existing = self.conn.execute(
+                "SELECT experience_candidate_id, status FROM stage0_experience_candidate "
+                "WHERE task_id=? AND source_fingerprint=? AND data_identity=?",
+                (task_id, fingerprint, self.data_identity),
+            ).fetchone()
         if existing is not None:
             return {"experience_candidate_id": str(existing["experience_candidate_id"]), "status": str(existing["status"])}
         candidate_id = _id("experience_candidate")
         with self.conn:
             self.conn.execute(
-                "INSERT INTO stage0_experience_candidate VALUES (?, ?, ?, ?, ?, 'preparing', NULL, '{}', ?, ?, ?, NULL, NULL, NULL)",
-                (candidate_id, task_id, domain_label, fingerprint, _canonical(frozen_sources), self.data_identity, actor.strip(), _now()),
+                "INSERT INTO stage0_experience_candidate "
+                "(experience_candidate_id, task_id, experience_candidate_run_id, domain_label, "
+                "source_fingerprint, frozen_sources_json, status, proposal_json, failure_json, "
+                "data_identity, created_by, created_at, decided_by, decided_at, decision_reason) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'preparing', NULL, '{}', ?, ?, ?, NULL, NULL, NULL)",
+                (
+                    candidate_id,
+                    task_id,
+                    experience_candidate_run_id,
+                    domain_label,
+                    fingerprint,
+                    _canonical(frozen_sources),
+                    self.data_identity,
+                    actor.strip(),
+                    _now(),
+                ),
             )
-            self._audit(task_id, "experience_candidate_opened", {"experience_candidate_id": candidate_id, "source_count": len(source_ids)})
+            self._audit(
+                task_id,
+                "experience_candidate_opened",
+                {
+                    "experience_candidate_id": candidate_id,
+                    "experience_candidate_run_id": experience_candidate_run_id,
+                    "source_count": len(source_ids),
+                },
+            )
         return {"experience_candidate_id": candidate_id, "status": "preparing"}
 
     def complete_experience_candidate(
@@ -2638,7 +5702,7 @@ class Stage0ContentProductionCore:
                 "UPDATE stage0_experience_candidate SET status=?, proposal_json=? WHERE experience_candidate_id=?",
                 (status, _canonical(proposal), experience_candidate_id),
             )
-            self._audit(str(candidate["task_id"]), "experience_candidate_completed", {"experience_candidate_id": experience_candidate_id, "status": status, "model_run_id": model_run_id})
+            self._audit(candidate["task_id"], "experience_candidate_completed", {"experience_candidate_id": experience_candidate_id, "status": status, "model_run_id": model_run_id})
         return {"experience_candidate_id": experience_candidate_id, "status": status}
 
     def fail_experience_candidate(
@@ -2660,7 +5724,7 @@ class Stage0ContentProductionCore:
                 "UPDATE stage0_experience_candidate SET status='failed', failure_json=? WHERE experience_candidate_id=?",
                 (_canonical(failure), experience_candidate_id),
             )
-            self._audit(str(candidate["task_id"]), "experience_candidate_failed", {"experience_candidate_id": experience_candidate_id, **failure})
+            self._audit(candidate["task_id"], "experience_candidate_failed", {"experience_candidate_id": experience_candidate_id, **failure})
         return {"experience_candidate_id": experience_candidate_id, "status": "failed"}
 
     def decide_experience_candidate(
@@ -2679,15 +5743,608 @@ class Stage0ContentProductionCore:
                 experience_id = _id("confirmed_experience")
                 sources = list(proposal["source_ids"])
                 self.conn.execute(
-                    "INSERT INTO stage0_confirmed_experience VALUES (?, ?, ?, 'shared_pattern', ?, ?, ?, ?, ?, 'active', ?, ?, ?)",
-                    (experience_id, experience_candidate_id, candidate["domain_label"], body["summary"], _canonical(body["applicable_when"]), _canonical(body["method"]), _canonical(sources), _canonical(body["boundary"]), self.data_identity, actor.strip(), _now()),
+                    "INSERT INTO stage0_confirmed_experience "
+                    "(experience_id, experience_candidate_id, domain_label, classification, summary, "
+                    "applicable_when_json, method_json, source_refs_json, boundary_json, "
+                    "experience_layer, use_positions_json, trigger_signals_json, not_applicable_when_json, "
+                    "status, data_identity, confirmed_by, confirmed_at) "
+                    "VALUES (?, ?, ?, 'shared_pattern', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)",
+                    (
+                        experience_id, experience_candidate_id, candidate["domain_label"], body["summary"],
+                        _canonical(body["applicable_when"]), _canonical(body["method"]), _canonical(sources),
+                        _canonical(body["boundary"]), body.get("experience_layer", "section_method"),
+                        _canonical(body.get("use_positions") or ["body"]),
+                        _canonical(body.get("trigger_signals") or body["applicable_when"]),
+                        _canonical(body.get("not_applicable_when") or body["boundary"]),
+                        self.data_identity, "", _now(),
+                    ),
                 )
                 result["experience_id"] = experience_id
             self.conn.execute(
                 "UPDATE stage0_experience_candidate SET status=?, decided_by=?, decided_at=?, decision_reason=? WHERE experience_candidate_id=?",
                 (decision, actor.strip(), _now(), reason.strip(), experience_candidate_id),
             )
-            self._audit(str(candidate["task_id"]), "experience_candidate_decided", result)
+            self._audit(candidate["task_id"], "experience_candidate_decided", result)
+        return result
+
+    def purge_stale_experience_candidates(
+        self, *, actor: str, actor_kind: str, reason: str, idempotency_key: str
+    ) -> dict[str, int | str]:
+        """Delete only superseded or unbound candidate history, never the latest run."""
+        if actor_kind != "user" or not actor.strip() or not reason.strip():
+            raise StateTransitionError("stale experience cleanup requires an explicit user and reason")
+        request = {"actor": actor, "reason": reason}
+        replay = self._replay("purge_stale_experience_candidates", idempotency_key, request)
+        if replay:
+            return replay
+        rows = self.conn.execute(
+            "SELECT candidate.experience_candidate_id, candidate.experience_candidate_run_id, "
+            "candidate.status, run.status AS run_status "
+            "FROM stage0_experience_candidate candidate "
+            "LEFT JOIN stage0_experience_candidate_run run "
+            "ON run.experience_candidate_run_id=candidate.experience_candidate_run_id "
+            "AND run.data_identity=candidate.data_identity "
+            "WHERE candidate.data_identity=? AND candidate.task_id IS NULL "
+            "AND (candidate.experience_candidate_run_id IS NULL OR run.status='superseded')",
+            (self.data_identity,),
+        ).fetchall()
+        candidate_ids = [str(row["experience_candidate_id"]) for row in rows]
+        run_ids = sorted(
+            {
+                str(row["experience_candidate_run_id"])
+                for row in rows
+                if row["experience_candidate_run_id"] is not None
+            }
+        )
+        if candidate_ids:
+            placeholders = ",".join("?" for _ in candidate_ids)
+            confirmed = self.conn.execute(
+                "SELECT experience_candidate_id FROM stage0_confirmed_experience "
+                f"WHERE data_identity=? AND experience_candidate_id IN ({placeholders})",
+                [self.data_identity, *candidate_ids],
+            ).fetchall()
+            if confirmed:
+                raise StateTransitionError(
+                    "stale experience cleanup found a confirmed experience and stopped without deleting anything"
+                )
+        status_counts: dict[str, int] = {}
+        for row in rows:
+            status = str(row["status"])
+            status_counts[status] = status_counts.get(status, 0) + 1
+        model_run_count = 0
+        deleted_run_count = 0
+        with self.conn:
+            if candidate_ids:
+                placeholders = ",".join("?" for _ in candidate_ids)
+                model_run_count = int(
+                    self.conn.execute(
+                        "SELECT COUNT(*) FROM stage0_experience_candidate_model_run "
+                        f"WHERE data_identity=? AND experience_candidate_id IN ({placeholders})",
+                        [self.data_identity, *candidate_ids],
+                    ).fetchone()[0]
+                )
+                self.conn.execute(
+                    "DELETE FROM stage0_experience_candidate_model_run "
+                    f"WHERE data_identity=? AND experience_candidate_id IN ({placeholders})",
+                    [self.data_identity, *candidate_ids],
+                )
+                self.conn.execute(
+                    "DELETE FROM stage0_experience_candidate "
+                    f"WHERE data_identity=? AND experience_candidate_id IN ({placeholders})",
+                    [self.data_identity, *candidate_ids],
+                )
+            if run_ids:
+                placeholders = ",".join("?" for _ in run_ids)
+                deleted_run_count = int(
+                    self.conn.execute(
+                        "SELECT COUNT(*) FROM stage0_experience_candidate_run run "
+                        f"WHERE run.data_identity=? AND run.status='superseded' "
+                        f"AND run.experience_candidate_run_id IN ({placeholders}) "
+                        "AND NOT EXISTS (SELECT 1 FROM stage0_experience_candidate candidate "
+                        "WHERE candidate.experience_candidate_run_id=run.experience_candidate_run_id "
+                        "AND candidate.data_identity=run.data_identity)",
+                        [self.data_identity, *run_ids],
+                    ).fetchone()[0]
+                )
+                self.conn.execute(
+                    "DELETE FROM stage0_experience_candidate_run "
+                    f"WHERE data_identity=? AND status='superseded' "
+                    f"AND experience_candidate_run_id IN ({placeholders}) "
+                    "AND NOT EXISTS (SELECT 1 FROM stage0_experience_candidate candidate "
+                    "WHERE candidate.experience_candidate_run_id=stage0_experience_candidate_run.experience_candidate_run_id "
+                    "AND candidate.data_identity=stage0_experience_candidate_run.data_identity)",
+                    [self.data_identity, *run_ids],
+                )
+            result: dict[str, int | str] = {
+                "status": "completed",
+                "deleted_candidate_count": len(candidate_ids),
+                "deleted_model_run_count": model_run_count,
+                "deleted_superseded_run_count": deleted_run_count,
+                "deleted_status_counts": _canonical(status_counts),
+            }
+            self._receipt("purge_stale_experience_candidates", idempotency_key, request, result)
+            self._audit(None, "stale_experience_candidates_purged", result)
+        return result
+
+    def converge_knowledge_data(self, *, actor: str) -> dict[str, Any]:
+        """Collapse formal knowledge data to one current, readable path.
+
+        This is an explicit, user-authorized cleanup boundary.  It removes
+        disabled account data, obsolete discovery inputs, superseded experience
+        candidates, duplicate test tasks, and mirror-run history.  It keeps
+        active accounts, active user directions, current workbench tasks,
+        current experience review items, confirmed experience, and runtime
+        data required for future collection.
+        """
+        if not actor.strip():
+            raise StateTransitionError("knowledge convergence requires an explicit actor")
+
+        table_cache: dict[str, set[str]] = {}
+
+        def table_columns(table: str) -> set[str]:
+            if table not in table_cache:
+                table_cache[table] = {
+                    str(row[1])
+                    for row in self.conn.execute(f'PRAGMA table_info("{table}")').fetchall()
+                }
+            return table_cache[table]
+
+        def table_exists(table: str) -> bool:
+            return bool(
+                self.conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+                ).fetchone()
+            )
+
+        def delete_rows(table: str, where: str = "1=1", params: tuple[Any, ...] = ()) -> int:
+            if not table_exists(table):
+                return 0
+            before = int(self.conn.total_changes)
+            self.conn.execute(f'DELETE FROM "{table}" WHERE {where}', params)
+            return int(self.conn.total_changes) - before
+
+        def delete_identity_rows(table: str, extra: str = "", params: tuple[Any, ...] = ()) -> int:
+            if not table_exists(table):
+                return 0
+            columns = table_columns(table)
+            if "data_identity" in columns:
+                suffix = f"data_identity=?{(' AND ' + extra) if extra else ''}"
+                try:
+                    return delete_rows(table, suffix, (self.data_identity, *params))
+                except sqlite3.IntegrityError as exc:
+                    raise StateTransitionError(f"knowledge convergence cannot remove {table}: {exc}") from exc
+            try:
+                return delete_rows(table, extra or "1=1", params)
+            except sqlite3.IntegrityError as exc:
+                raise StateTransitionError(f"knowledge convergence cannot remove {table}: {exc}") from exc
+
+        immutable_triggers = [
+            (str(row["name"]), str(row["sql"]))
+            for row in self.conn.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type='trigger' "
+                "AND name LIKE '%immutable%' AND sql IS NOT NULL"
+            ).fetchall()
+        ]
+        for trigger_name, _ in immutable_triggers:
+            self.conn.execute(f'DROP TRIGGER IF EXISTS "{trigger_name}"')
+
+        deleted: dict[str, int] = {}
+        kept_task_ids: list[str] = []
+        try:
+            with self.conn:
+                # 1. Keep only active formal accounts as the account authority.
+                active_competitor_ids = {
+                    str(row["content_account_id"])
+                    for row in self.conn.execute(
+                        "SELECT content_account_id FROM stage0_content_account "
+                        "WHERE data_identity=? AND account_role='competitor' AND status='active'",
+                        (self.data_identity,),
+                    ).fetchall()
+                }
+                obsolete_formal_competitor_ids = {
+                    str(row["content_account_id"])
+                    for row in self.conn.execute(
+                        "SELECT content_account_id FROM stage0_content_account "
+                        "WHERE data_identity=? AND account_role='competitor' AND status!='active'",
+                        (self.data_identity,),
+                    ).fetchall()
+                }
+                obsolete_collection_ids = {
+                    str(row["account_id"])
+                    for row in self.conn.execute("SELECT account_id FROM competitor_accounts").fetchall()
+                    if str(row["account_id"]) not in active_competitor_ids
+                }
+
+                # Remove all registration details belonging to a disabled formal account.
+                registration_ids = {
+                    str(row["registration_id"])
+                    for row in self.conn.execute(
+                        "SELECT registration_id FROM stage0_competitor_registration "
+                        "WHERE data_identity=? AND competitor_account_id IN ({})".format(
+                            ",".join("?" for _ in obsolete_formal_competitor_ids) or "NULL"
+                        ),
+                        (self.data_identity, *sorted(obsolete_formal_competitor_ids)),
+                    ).fetchall()
+                } if obsolete_formal_competitor_ids else set()
+                if registration_ids:
+                    marks = ",".join("?" for _ in registration_ids)
+                    registration_params = tuple(sorted(registration_ids))
+                    card_ids = {
+                        str(row["evidence_card_id"])
+                        for row in self.conn.execute(
+                            f"SELECT evidence_card_id FROM stage0_evidence_card "
+                            f"WHERE registration_id IN ({marks})",
+                            registration_params,
+                        ).fetchall()
+                    } if table_exists("stage0_evidence_card") else set()
+                    if card_ids and table_exists("stage0_evidence_card_group_member"):
+                        card_marks = ",".join("?" for _ in card_ids)
+                        deleted["旧证据卡关联"] = delete_rows(
+                            "stage0_evidence_card_group_member",
+                            f"evidence_card_id IN ({card_marks})",
+                            tuple(sorted(card_ids)),
+                        )
+                    if card_ids:
+                        card_marks = ",".join("?" for _ in card_ids)
+                        deleted["旧证据卡"] = delete_rows(
+                            "stage0_evidence_card", f"evidence_card_id IN ({card_marks})", tuple(sorted(card_ids))
+                        )
+                    for table in (
+                        "stage0_competitor_registration_step",
+                        "stage0_competitor_registration_model_run",
+                        "stage0_competitor_registration_item",
+                        "stage0_competitor_breakdown_attempt",
+                        "stage0_competitor_material_collection_checkpoint",
+                    ):
+                        deleted[table] = delete_rows(
+                            table, f"registration_id IN ({marks})", registration_params
+                        )
+                    deleted["失效账号的登记记录"] = delete_rows(
+                        "stage0_competitor_registration",
+                        f"registration_id IN ({marks})",
+                        registration_params,
+                    )
+
+                if obsolete_collection_ids:
+                    marks = ",".join("?" for _ in obsolete_collection_ids)
+                    account_params = tuple(sorted(obsolete_collection_ids))
+                    video_ids = {
+                        str(row["video_id"])
+                        for row in self.conn.execute(
+                            f"SELECT video_id FROM competitor_videos WHERE account_id IN ({marks})", account_params
+                        ).fetchall()
+                    }
+                    hit_ids = {
+                        str(row["hit_id"])
+                        for row in self.conn.execute(
+                            f"SELECT hit_id FROM hits WHERE account_id IN ({marks})", account_params
+                        ).fetchall()
+                    }
+                    if hit_ids:
+                        hit_marks = ",".join("?" for _ in hit_ids)
+                        hit_params = tuple(sorted(hit_ids))
+                        for table in (
+                            "hit_comments",
+                            "hit_transcripts",
+                            "hit_deep_analysis",
+                            "stage0_daily_hit_model_run",
+                            "stage0_daily_hit_breakdown",
+                            "stage0_daily_hit_processing_failure",
+                        ):
+                            deleted[table] = delete_rows(table, f"hit_id IN ({hit_marks})", hit_params)
+                        deleted["高信号记录"] = delete_rows("hits", f"hit_id IN ({hit_marks})", hit_params)
+                    if video_ids:
+                        video_marks = ",".join("?" for _ in video_ids)
+                        video_params = tuple(sorted(video_ids))
+                        deleted["视频检查"] = delete_rows("video_checks", f"video_id IN ({video_marks})", video_params)
+                        deleted["视频记录"] = delete_rows("competitor_videos", f"video_id IN ({video_marks})", video_params)
+                    deleted["账号基线"] = delete_rows("baselines", f"account_id IN ({marks})", account_params)
+                    deleted["采集账号"] = delete_rows("competitor_accounts", f"account_id IN ({marks})", account_params)
+
+                if obsolete_formal_competitor_ids:
+                    marks = ",".join("?" for _ in obsolete_formal_competitor_ids)
+                    deleted["停用对标账号"] = delete_rows(
+                        "stage0_content_account",
+                        f"data_identity=? AND content_account_id IN ({marks})",
+                        (self.data_identity, *sorted(obsolete_formal_competitor_ids)),
+                    )
+
+                # Prevent an old cold-start snapshot from resurrecting a removed account.
+                if table_exists("stage0_cold_start_configuration"):
+                    config_rows = self.conn.execute(
+                        "SELECT configuration_id, competitor_account_ids_json FROM stage0_cold_start_configuration "
+                        "WHERE data_identity=?",
+                        (self.data_identity,),
+                    ).fetchall()
+                    for row in config_rows:
+                        try:
+                            raw_ids = json.loads(str(row["competitor_account_ids_json"] or "[]"))
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            raw_ids = []
+                        clean_ids = [
+                            str(item.get("content_account_id") or item.get("account_id") or "").strip()
+                            if isinstance(item, dict) else str(item).strip()
+                            for item in (raw_ids if isinstance(raw_ids, list) else [])
+                        ]
+                        clean_ids = [item for item in clean_ids if item in active_competitor_ids]
+                        if clean_ids != raw_ids:
+                            self.conn.execute(
+                                "UPDATE stage0_cold_start_configuration SET competitor_account_ids_json=? "
+                                "WHERE configuration_id=? AND data_identity=?",
+                                (_canonical(clean_ids), row["configuration_id"], self.data_identity),
+                            )
+
+                # 2. Keep the newest valid task for each topic/account/domain and remove test duplicates.
+                task_rows = self.conn.execute(
+                    "SELECT task_id, topic_version_id, current_status, created_at FROM stage0_content_task "
+                    "WHERE data_identity=? ORDER BY created_at DESC, task_id DESC",
+                    (self.data_identity,),
+                ).fetchall()
+                protected_task_ids = {
+                    str(row["task_id"])
+                    for row in self.conn.execute(
+                        "SELECT candidate.task_id FROM stage0_confirmed_experience experience "
+                        "JOIN stage0_experience_candidate candidate "
+                        "ON candidate.experience_candidate_id=experience.experience_candidate_id "
+                        "WHERE experience.data_identity=? AND experience.status='active' "
+                        "AND candidate.task_id IS NOT NULL",
+                        (self.data_identity,),
+                    ).fetchall()
+                }
+                task_descriptors: list[dict[str, Any]] = []
+                for row in task_rows:
+                    try:
+                        topic = self.get_artifact_payload(str(row["topic_version_id"]))
+                    except StateTransitionError:
+                        topic = {}
+                    if isinstance(topic, dict) and isinstance(topic.get("payload"), dict):
+                        topic = topic["payload"]
+                    title = str((topic or {}).get("title") or (topic or {}).get("core_question") or "").strip()
+                    domain = str((topic or {}).get("domain_label") or (topic or {}).get("domain") or "").strip()
+                    account = str(
+                        (topic or {}).get("account_ref")
+                        or (topic or {}).get("account_id")
+                        or (topic or {}).get("content_account_id")
+                        or ""
+                    ).strip()
+                    invalid_title = (
+                        not title
+                        or "\ufffd" in title
+                        or title.count("?") >= max(3, len(title) // 4)
+                    )
+                    task_descriptors.append({
+                        "task_id": str(row["task_id"]),
+                        "title": title,
+                        "domain": domain,
+                        "account": account,
+                        "created_at": str(row["created_at"]),
+                        "invalid": invalid_title,
+                    })
+
+                def same_topic(left: dict[str, Any], right: dict[str, Any]) -> bool:
+                    if left["domain"] != right["domain"] or left["account"] != right["account"]:
+                        return False
+                    a = re.sub(r"[^\w\u4e00-\u9fff]+", "", left["title"]).lower()
+                    b = re.sub(r"[^\w\u4e00-\u9fff]+", "", right["title"]).lower()
+                    return bool(a and b and (a == b or a in b or b in a or a[:3] == b[:3]))
+
+                keep_descriptors: list[dict[str, Any]] = []
+                task_ids_to_delete: list[str] = []
+                for descriptor in task_descriptors:
+                    if descriptor["invalid"] or (
+                        descriptor["task_id"] not in protected_task_ids
+                        and any(same_topic(descriptor, kept) for kept in keep_descriptors)
+                    ):
+                        task_ids_to_delete.append(descriptor["task_id"])
+                    else:
+                        keep_descriptors.append(descriptor)
+                        kept_task_ids.append(descriptor["task_id"])
+
+                for task_id in task_ids_to_delete:
+                    version_ids = [
+                        str(row["version_id"])
+                        for row in self.conn.execute(
+                            "SELECT version_id FROM stage0_content_node_version WHERE task_id=? AND data_identity=?",
+                            (task_id, self.data_identity),
+                        ).fetchall()
+                    ]
+                    assembly_ids = [
+                        str(row["assembly_id"])
+                        for row in self.conn.execute(
+                            "SELECT assembly_id FROM stage0_input_assembly WHERE task_id=? AND data_identity=?",
+                            (task_id, self.data_identity),
+                        ).fetchall()
+                    ]
+                    candidate_ids = [
+                        str(row["experience_candidate_id"])
+                        for row in self.conn.execute(
+                            "SELECT experience_candidate_id FROM stage0_experience_candidate WHERE task_id=? AND data_identity=?",
+                            (task_id, self.data_identity),
+                        ).fetchall()
+                    ]
+                    publication_ids = [
+                        str(row["publication_id"])
+                        for row in self.conn.execute(
+                            "SELECT publication_id FROM stage0_publication_registration WHERE task_id=? AND data_identity=?",
+                            (task_id, self.data_identity),
+                        ).fetchall()
+                    ] if table_exists("stage0_publication_registration") else []
+                    if publication_ids:
+                        marks = ",".join("?" for _ in publication_ids)
+                        deleted["旧发布复盘"] = delete_rows(
+                            "stage0_publication_observation", f"publication_id IN ({marks})", tuple(publication_ids)
+                        ) + delete_rows(
+                            "stage0_publication_p7_review", f"publication_id IN ({marks})", tuple(publication_ids)
+                        )
+                        deleted["旧发布记录"] = delete_rows(
+                            "stage0_publication_registration", f"publication_id IN ({marks})", tuple(publication_ids)
+                        )
+                    if candidate_ids:
+                        marks = ",".join("?" for _ in candidate_ids)
+                        deleted["旧经验模型记录"] = delete_rows(
+                            "stage0_experience_candidate_model_run",
+                            f"experience_candidate_id IN ({marks}) AND data_identity=?",
+                            (*candidate_ids, self.data_identity),
+                        )
+                        deleted["旧任务经验"] = delete_rows(
+                            "stage0_experience_candidate",
+                            f"experience_candidate_id IN ({marks}) AND data_identity=?",
+                            (*candidate_ids, self.data_identity),
+                        )
+                    if version_ids:
+                        marks = ",".join("?" for _ in version_ids)
+                        version_params = tuple(version_ids)
+                        audio_ids = [
+                            str(row["audio_production_id"])
+                            for row in self.conn.execute(
+                                f"SELECT audio_production_id FROM stage0_audio_production WHERE approved_content_version_id IN ({marks})",
+                                version_params,
+                            ).fetchall()
+                        ] if table_exists("stage0_audio_production") else []
+                        if audio_ids:
+                            audio_marks = ",".join("?" for _ in audio_ids)
+                            deleted["旧音频审核"] = delete_rows("stage0_audio_decision", f"audio_production_id IN ({audio_marks})", tuple(audio_ids))
+                            deleted["旧音频记录"] = delete_rows("stage0_audio_production", f"audio_production_id IN ({audio_marks})", tuple(audio_ids))
+                        deleted["旧音频交付"] = delete_rows("stage0_audio_delivery", f"approved_content_version_id IN ({marks})", version_params)
+                        deleted["旧模型运行"] = delete_rows("stage0_model_run", f"node_version_id IN ({marks})", version_params)
+                        deleted["旧失败记录"] = delete_rows("stage0_content_node_failure", f"failed_version_id IN ({marks}) OR request_version_id IN ({marks})", (*version_params, *version_params))
+                        deleted["旧人工决定"] = delete_rows("stage0_content_decision", f"version_id IN ({marks})", version_params)
+                        deleted["旧内容载荷"] = delete_rows("stage0_content_artifact_payload", f"version_id IN ({marks})", version_params)
+                        deleted["旧研究载荷"] = delete_rows("stage1a_artifact_payload", f"version_id IN ({marks})", version_params)
+                    if assembly_ids:
+                        marks = ",".join("?" for _ in assembly_ids)
+                        deleted["旧输入组装"] = delete_rows("stage0_model_run", f"input_assembly_id IN ({marks})", tuple(assembly_ids))
+                        deleted["旧输入记录"] = delete_rows("stage0_input_assembly", f"assembly_id IN ({marks})", tuple(assembly_ids))
+                    deleted["旧研究材料"] = delete_rows("stage0_research_material", "task_id=? AND data_identity=?", (task_id, self.data_identity))
+                    deleted["旧任务审计"] = delete_rows("stage0_audit_event", "task_id=? AND data_identity=?", (task_id, self.data_identity))
+                    deleted["旧节点版本"] = delete_rows("stage0_content_node_version", "task_id=? AND data_identity=?", (task_id, self.data_identity))
+                    deleted["旧任务"] = delete_rows("stage0_content_task", "task_id=? AND data_identity=?", (task_id, self.data_identity))
+
+                # 3. Delete discovery history and question expansions completely.
+                for table in (
+                    "stage1b_candidate_absence",
+                    "stage1b_source_failure",
+                    "stage1b_candidate_decision",
+                    "stage1b_candidate_support",
+                    "stage1b_candidate_relation",
+                    "stage1b_candidate_assessment_revision",
+                    "stage1b_candidate_assessment",
+                    "stage1b_candidate_pool_state",
+                    "stage1b_daily_snapshot",
+                    "stage1b_candidate_version",
+                    "stage1b_filter_result",
+                    "stage1b_model_run",
+                    "stage1b_input_assembly",
+                    "stage1b_source_version",
+                    "stage1b_run_execution_context",
+                    "stage1b_run_domain_scope",
+                    "stage1b_discovery_run",
+                    "stage1_question_expansion_source",
+                ):
+                    deleted[table] = delete_identity_rows(table)
+                deleted["已关闭的用户方向"] = delete_identity_rows("stage1_saved_user_direction_source", "status='closed'")
+                for table in (
+                    "domain_search_page_observation",
+                    "discovered_external_videos",
+                    "discovered_account_review",
+                    "trendradar_hotspot_observation",
+                    "trendradar_collection_run",
+                ):
+                    deleted[table] = delete_rows(table)
+
+                # 4. Remove obsolete mirror/evidence history, not active runtime settings.
+                deleted["旧知识库同步记录"] = delete_identity_rows("stage0_knowledge_mirror_run")
+                deleted["旧证据卡关联"] = delete_identity_rows("stage0_evidence_card_group_member")
+                deleted["旧证据卡"] = delete_identity_rows("stage0_evidence_card")
+                deleted["旧证据卡分组"] = delete_identity_rows("stage0_evidence_card_group")
+                deleted["已消费的启动检查"] = delete_identity_rows("stage0_live_cold_start_preflight", "status='consumed'")
+                deleted["已结束的账号发现"] = delete_identity_rows("stage0_unregistered_account_review", "status='rejected'")
+                deleted["已结束的账号视频发现"] = delete_identity_rows("stage0_unregistered_account_video", "qualified=0")
+                deleted["旧标签复核记录"] = delete_identity_rows("stage0_two_week_tag_library_review", "status!='awaiting_human_review'")
+                deleted["已结束拆解任务"] = delete_identity_rows(
+                    "stage0_competitor_breakdown_backlog_task",
+                    "status IN ('completed', 'completed_with_failures')",
+                )
+
+                # Keep only the current experience run and its preparing/awaiting candidates.
+                active_experience_ids = {
+                    str(row["experience_candidate_id"])
+                    for row in self.conn.execute(
+                        "SELECT experience_candidate_id FROM stage0_confirmed_experience "
+                        "WHERE data_identity=? AND status='active'",
+                        (self.data_identity,),
+                    ).fetchall()
+                }
+                latest_run = self.conn.execute(
+                    "SELECT experience_candidate_run_id FROM stage0_experience_candidate_run "
+                    "WHERE data_identity=? AND status!='superseded' "
+                    "ORDER BY created_at DESC, experience_candidate_run_id DESC LIMIT 1",
+                    (self.data_identity,),
+                ).fetchone()
+                latest_run_id = str(latest_run["experience_candidate_run_id"]) if latest_run else ""
+                keep_candidate_ids = set(active_experience_ids)
+                if latest_run_id:
+                    keep_candidate_ids.update(
+                        str(row["experience_candidate_id"])
+                        for row in self.conn.execute(
+                            "SELECT experience_candidate_id FROM stage0_experience_candidate "
+                            "WHERE data_identity=? AND experience_candidate_run_id=? "
+                            "AND status IN ('preparing', 'awaiting_human_decision')",
+                            (self.data_identity, latest_run_id),
+                        ).fetchall()
+                    )
+                if kept_task_ids:
+                    marks = ",".join("?" for _ in kept_task_ids)
+                    keep_candidate_ids.update(
+                        str(row["experience_candidate_id"])
+                        for row in self.conn.execute(
+                            f"SELECT experience_candidate_id FROM stage0_experience_candidate "
+                            f"WHERE data_identity=? AND task_id IN ({marks}) AND status IN ('preparing', 'awaiting_human_decision', 'accepted')",
+                            (self.data_identity, *kept_task_ids),
+                        ).fetchall()
+                    )
+                all_candidate_ids = {
+                    str(row["experience_candidate_id"])
+                    for row in self.conn.execute(
+                        "SELECT experience_candidate_id FROM stage0_experience_candidate WHERE data_identity=?",
+                        (self.data_identity,),
+                    ).fetchall()
+                }
+                stale_candidate_ids = sorted(all_candidate_ids - keep_candidate_ids)
+                if stale_candidate_ids:
+                    marks = ",".join("?" for _ in stale_candidate_ids)
+                    deleted["旧经验模型记录"] = delete_rows(
+                        "stage0_experience_candidate_model_run",
+                        f"data_identity=? AND experience_candidate_id IN ({marks})",
+                        (self.data_identity, *stale_candidate_ids),
+                    )
+                    deleted["旧经验候选"] = delete_rows(
+                        "stage0_experience_candidate",
+                        f"data_identity=? AND experience_candidate_id IN ({marks})",
+                        (self.data_identity, *stale_candidate_ids),
+                    )
+                deleted["暂停经验"] = delete_identity_rows("stage0_confirmed_experience", "status!='active'")
+                deleted["旧经验运行"] = delete_identity_rows(
+                    "stage0_experience_candidate_run",
+                    "status!='running' AND NOT EXISTS (SELECT 1 FROM stage0_experience_candidate candidate "
+                    "WHERE candidate.experience_candidate_run_id=stage0_experience_candidate_run.experience_candidate_run_id "
+                    "AND candidate.data_identity=stage0_experience_candidate_run.data_identity)",
+                )
+
+                result = {
+                    "status": "completed",
+                    "actor": actor.strip(),
+                    "kept_task_ids": kept_task_ids,
+                    "deleted": {key: value for key, value in deleted.items() if value},
+                    "active_competitor_count": len(active_competitor_ids),
+                    "current_experience_run_id": latest_run_id or None,
+                    "current_experience_candidate_count": len(keep_candidate_ids),
+                }
+                self._audit(None, "knowledge_data_converged", result)
+        finally:
+            for _, trigger_sql in immutable_triggers:
+                self.conn.execute(trigger_sql)
+            self.conn.commit()
         return result
 
     def list_active_experiences(
@@ -2700,9 +6357,11 @@ class Stage0ContentProductionCore:
         experiences: list[dict[str, Any]] = []
         for row in rows:
             applicable_when = json.loads(str(row["applicable_when_json"]))
+            trigger_signals = json.loads(str(row["trigger_signals_json"] or "[]"))
             explicit_context_match = (
                 _experience_context_matches(
-                    context_text=context_text, applicable_when=applicable_when
+                    context_text=context_text,
+                    applicable_when=[*trigger_signals, *applicable_when],
                 )
                 if context_text is not None
                 else []
@@ -2711,28 +6370,202 @@ class Stage0ContentProductionCore:
                 continue
             experiences.append({
                 "experience_id": str(row["experience_id"]), "classification": str(row["classification"]),
-                "summary": str(row["summary"]), "applicable_when": applicable_when,
+                "summary": str(row["summary"]), "claim": str(row["summary"]),
+                "accepted_at": str(row["confirmed_at"] or ""),
+                "evidence_count": len(json.loads(str(row["source_refs_json"] or "[]"))),
+                "applicable_when": applicable_when,
                 "method": json.loads(str(row["method_json"])), "source_ids": json.loads(str(row["source_refs_json"])),
                 "boundary": json.loads(str(row["boundary_json"])),
+                "experience_layer": str(row["experience_layer"] or "section_method"),
+                "use_positions": json.loads(str(row["use_positions_json"] or "[\"body\"]")),
+                "trigger_signals": trigger_signals,
+                "not_applicable_when": json.loads(str(row["not_applicable_when_json"] or "[]")),
                 "explicit_context_match": explicit_context_match,
             })
-            if limit is not None and len(experiences) >= limit:
-                break
-        return experiences
+        layer_order = {"structure": 0, "section_method": 1, "local_detail": 2}
+        experiences.sort(
+            key=lambda item: (
+                -len(item["explicit_context_match"]),
+                layer_order.get(str(item["experience_layer"]), 9),
+                str(item["experience_id"]),
+            )
+        )
+        return experiences[:limit] if limit is not None else experiences
+
+    @staticmethod
+    def _experience_candidate_view(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "experience_candidate_id": str(row["experience_candidate_id"]),
+            "task_id": str(row["task_id"]) if row["task_id"] is not None else None,
+            "experience_candidate_run_id": (
+                str(row["experience_candidate_run_id"])
+                if row["experience_candidate_run_id"] is not None
+                else None
+            ),
+            "domain_label": str(row["domain_label"]),
+            "status": str(row["status"]),
+            "proposal": json.loads(str(row["proposal_json"] or "{}")),
+            "failure": json.loads(str(row["failure_json"])),
+            "source_count": len(json.loads(str(row["frozen_sources_json"]))),
+        }
 
     def list_task_experience_candidates(self, *, task_id: str) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             "SELECT * FROM stage0_experience_candidate WHERE task_id=? AND data_identity=? ORDER BY created_at, experience_candidate_id",
             (task_id, self.data_identity),
         ).fetchall()
-        return [
-            {
-                "experience_candidate_id": str(row["experience_candidate_id"]), "status": str(row["status"]),
-                "proposal": json.loads(str(row["proposal_json"] or "{}")), "failure": json.loads(str(row["failure_json"])),
-                "source_count": len(json.loads(str(row["frozen_sources_json"]))),
-            }
-            for row in rows
-        ]
+        return [self._experience_candidate_view(row) for row in rows]
+
+    def list_pre_topic_experience_candidates(
+        self, *, domain_label: str | None = None, run_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        if run_id is not None:
+            clauses = [
+                "candidate.task_id IS NULL",
+                "candidate.experience_candidate_run_id=?",
+                "candidate.data_identity=?",
+            ]
+            params: list[Any] = [run_id, self.data_identity]
+            if domain_label is not None:
+                normalized = self._require_configured_domain(
+                    domain_label, context="pre-topic experience review"
+                )
+                clauses.append("candidate.domain_label=?")
+                params.append(normalized)
+            rows = self.conn.execute(
+                "SELECT candidate.* FROM stage0_experience_candidate candidate WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY candidate.created_at, candidate.experience_candidate_id",
+                tuple(params),
+            ).fetchall()
+        elif domain_label is None:
+            rows = self.conn.execute(
+                "SELECT candidate.* FROM stage0_experience_candidate candidate "
+                "JOIN stage0_experience_candidate_run run "
+                "ON run.experience_candidate_run_id=candidate.experience_candidate_run_id "
+                "AND run.data_identity=candidate.data_identity "
+                "WHERE candidate.task_id IS NULL AND candidate.data_identity=? "
+                "AND run.status!='superseded' AND run.experience_candidate_run_id=("
+                "SELECT current_run.experience_candidate_run_id FROM stage0_experience_candidate_run current_run "
+                "WHERE current_run.data_identity=? AND current_run.status!='superseded' "
+                "ORDER BY current_run.created_at DESC, current_run.experience_candidate_run_id DESC LIMIT 1"
+                ") ORDER BY candidate.created_at, candidate.experience_candidate_id",
+                (self.data_identity, self.data_identity),
+            ).fetchall()
+        else:
+            normalized = self._require_configured_domain(domain_label, context="pre-topic experience review")
+            rows = self.conn.execute(
+                "SELECT candidate.* FROM stage0_experience_candidate candidate "
+                "JOIN stage0_experience_candidate_run run "
+                "ON run.experience_candidate_run_id=candidate.experience_candidate_run_id "
+                "AND run.data_identity=candidate.data_identity "
+                "WHERE candidate.task_id IS NULL AND candidate.domain_label=? "
+                "AND candidate.data_identity=? AND run.status!='superseded' "
+                "AND run.experience_candidate_run_id=("
+                "SELECT current_run.experience_candidate_run_id FROM stage0_experience_candidate_run current_run "
+                "WHERE current_run.data_identity=? AND current_run.status!='superseded' "
+                "ORDER BY current_run.created_at DESC, current_run.experience_candidate_run_id DESC LIMIT 1"
+                ") "
+                "ORDER BY candidate.created_at, candidate.experience_candidate_id",
+                (normalized, self.data_identity, self.data_identity),
+            ).fetchall()
+        return [self._experience_candidate_view(row) for row in rows]
+
+    def list_experience_candidate_source_cards(
+        self, *, candidate_ids: list[str]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Resolve candidate evidence to human-readable formal source cards."""
+        if not candidate_ids:
+            return {}
+        placeholders = ",".join("?" for _ in candidate_ids)
+        rows = self.conn.execute(
+            "SELECT experience_candidate_id, frozen_sources_json "
+            "FROM stage0_experience_candidate "
+            f"WHERE data_identity=? AND experience_candidate_id IN ({placeholders})",
+            [self.data_identity, *candidate_ids],
+        ).fetchall()
+        result: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            try:
+                frozen_sources = json.loads(str(row["frozen_sources_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                frozen_sources = []
+            cards: list[dict[str, Any]] = []
+            if not isinstance(frozen_sources, list):
+                result[str(row["experience_candidate_id"])] = cards
+                continue
+            for frozen in frozen_sources:
+                if not isinstance(frozen, dict):
+                    continue
+                source_id = str(frozen.get("source_id") or "").strip()
+                if not source_id:
+                    continue
+                source = self.conn.execute(
+                    "SELECT hit.hit_id, hit.title, hit.url, hit.publish_time, hit.platform, "
+                    "account.account_name, video.raw_archive_ref "
+                    "FROM hits hit "
+                    "JOIN competitor_videos video ON video.video_id=hit.video_id "
+                    "JOIN competitor_accounts account ON account.account_id=hit.account_id "
+                    "WHERE hit.platform_item_id=? OR hit.video_id=? OR video.platform_item_id=? "
+                    "OR video.video_id=? LIMIT 1",
+                    (source_id, source_id, source_id, source_id),
+                ).fetchone()
+                evidence_actions: list[str] = []
+                evidence_quotes: list[str] = []
+                for pattern in frozen.get("recurring_evidence_patterns") or []:
+                    if not isinstance(pattern, dict):
+                        continue
+                    action = str(pattern.get("spoken_action") or "").strip()
+                    if action and action not in evidence_actions:
+                        evidence_actions.append(action)
+                    for evidence in pattern.get("source_evidence") or []:
+                        if not isinstance(evidence, dict):
+                            continue
+                        quote = str(evidence.get("text") or "").strip()
+                        if quote and quote not in evidence_quotes:
+                            evidence_quotes.append(quote)
+                        if len(evidence_quotes) >= 6:
+                            break
+                    if len(evidence_quotes) >= 6:
+                        break
+                if not evidence_actions:
+                    assessment = frozen.get("structure_assessment") or {}
+                    statement = str(assessment.get("statement") or "").strip()
+                    if statement:
+                        evidence_actions.append(statement)
+                cards.append({
+                    "source_key": source_id,
+                    "title": str(source["title"] if source is not None else "") or "未找到标题",
+                    "url": str(source["url"] if source is not None else "").strip(),
+                    "account_name": str(
+                        source["account_name"] if source is not None else frozen.get("account_name") or ""
+                    ).strip() or "未找到账号",
+                    "publish_time": str(source["publish_time"] if source is not None else "").strip(),
+                    "platform": str(source["platform"] if source is not None else "").strip(),
+                    "archive_status": (
+                        "已找到正式来源"
+                        if source is not None
+                        else "只找到拆解记录，未找到正式来源"
+                    ),
+                    "content_subject_type": str(
+                        frozen.get("content_subject_type") or "未说明"
+                    ),
+                    "expression_form": str(
+                        frozen.get("expression_form") or "未说明"
+                    ),
+                    "content_type_evidence": frozen.get("content_type_evidence") or [],
+                    "structure_assessment": frozen.get("structure_assessment") or {},
+                    "structure_grasp": frozen.get("structure_grasp") or {},
+                    "spoken_progression": frozen.get("spoken_progression") or [],
+                    "recurring_evidence_patterns": frozen.get("recurring_evidence_patterns") or [],
+                    "audience_reactions": frozen.get("audience_reactions") or [],
+                    "full_analysis": frozen.get("full_analysis") or {},
+                    "cannot_infer": frozen.get("cannot_infer") or [],
+                    "evidence_actions": evidence_actions[:4],
+                    "evidence_quotes": evidence_quotes[:6],
+                })
+            result[str(row["experience_candidate_id"])] = cards
+        return result
 
     def _experience_candidate(self, experience_candidate_id: str) -> sqlite3.Row:
         row = self.conn.execute(
@@ -2781,6 +6614,40 @@ class Stage0ContentProductionCore:
                 "SELECT * FROM stage0_audio_production "
                 "WHERE task_id=? AND data_identity=? "
                 "ORDER BY attempt_number DESC, created_at DESC",
+                (row["task_id"], self.data_identity),
+            ).fetchall()
+            version_rows = self.conn.execute(
+                "SELECT version_id, node, status, validation_status, output_ref, "
+                "created_by, created_at, task_revision "
+                "FROM stage0_content_node_version "
+                "WHERE task_id=? AND data_identity=? "
+                "ORDER BY created_at, version_id",
+                (row["task_id"], self.data_identity),
+            ).fetchall()
+            artifact_versions: list[dict[str, Any]] = []
+            for version in version_rows:
+                artifact: dict[str, Any] | None = None
+                try:
+                    artifact = self.get_artifact_payload(str(version["version_id"]))
+                except StateTransitionError:
+                    artifact = None
+                artifact_versions.append(
+                    {
+                        "version_id": str(version["version_id"]),
+                        "node": str(version["node"]),
+                        "status": str(version["status"]),
+                        "validation_status": str(version["validation_status"]),
+                        "output_ref": version["output_ref"],
+                        "created_by": str(version["created_by"]),
+                        "created_at": str(version["created_at"]),
+                        "task_revision": int(version["task_revision"] or 0),
+                        "artifact": artifact,
+                    }
+                )
+            decision_rows = self.conn.execute(
+                "SELECT node, version_id, decision, actor, actor_kind, reason, created_at "
+                "FROM stage0_content_decision WHERE task_id=? AND data_identity=? "
+                "ORDER BY created_at, decision_id",
                 (row["task_id"], self.data_identity),
             ).fetchall()
             results.append(
@@ -2835,9 +6702,658 @@ class Stage0ContentProductionCore:
                         }
                         for attempt in audio_attempts
                     ],
+                    "artifact_versions": artifact_versions,
+                    "content_decisions": [
+                        {
+                            "node": str(decision["node"]),
+                            "version_id": str(decision["version_id"]),
+                            "decision": str(decision["decision"]),
+                            "actor": str(decision["actor"]),
+                            "actor_kind": str(decision["actor_kind"]),
+                            "reason": str(decision["reason"]),
+                            "created_at": str(decision["created_at"]),
+                        }
+                        for decision in decision_rows
+                    ],
                 }
             )
         return results
+
+    @staticmethod
+    def _knowledge_json(value: Any) -> Any:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return _hide_build_root_paths(value)
+        try:
+            return _hide_build_root_paths(json.loads(value))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return value
+
+    def list_knowledge_source_records(self) -> list[dict[str, Any]]:
+        """Return all collected source records needed for readable operation."""
+        video_rows = self.conn.execute(
+            "SELECT video.*, account.account_name, account.domain_label, account.platform AS account_platform "
+            "FROM competitor_videos video JOIN competitor_accounts account "
+            "ON account.account_id=video.account_id "
+            "JOIN stage0_content_account formal_account "
+            "ON formal_account.content_account_id=account.account_id "
+            "AND formal_account.data_identity=? AND formal_account.account_role='competitor' "
+            "AND formal_account.status='active' "
+            "WHERE account.registration_status='active' AND COALESCE(video.excluded_reason, '')='' "
+            "ORDER BY COALESCE(video.publish_time, ''), video.video_id",
+            (self.data_identity,),
+        ).fetchall()
+        hit_rows = self.conn.execute(
+            "SELECT hit.* FROM hits hit JOIN competitor_videos video ON video.video_id=hit.video_id "
+            "JOIN competitor_accounts account ON account.account_id=hit.account_id "
+            "JOIN stage0_content_account formal_account ON formal_account.content_account_id=account.account_id "
+            "AND formal_account.data_identity=? AND formal_account.account_role='competitor' "
+            "AND formal_account.status='active' "
+            "WHERE account.registration_status='active' AND COALESCE(video.excluded_reason, '')='' "
+            "ORDER BY COALESCE(hit.publish_time, ''), hit.hit_id",
+            (self.data_identity,),
+        ).fetchall()
+        transcript_rows = self.conn.execute(
+            "WITH ranked AS (SELECT transcript.*, ROW_NUMBER() OVER (PARTITION BY hit_id "
+            "ORDER BY CASE WHEN processing_status='completed' THEN 0 ELSE 1 END, version DESC, created_at DESC, transcript_id DESC) AS row_no "
+            "FROM hit_transcripts transcript) SELECT * FROM ranked WHERE row_no=1 ORDER BY hit_id"
+        ).fetchall()
+        comment_rows = self.conn.execute(
+            "WITH ranked AS (SELECT comments.*, DENSE_RANK() OVER (PARTITION BY hit_id, purpose "
+            "ORDER BY fetched_at DESC, run_id DESC) AS batch_no FROM hit_comments comments) "
+            "SELECT * FROM ranked WHERE batch_no=1 ORDER BY hit_id, purpose, sample_rank, comment_id"
+        ).fetchall()
+        analysis_rows = self.conn.execute(
+            "WITH ranked AS (SELECT analysis.*, ROW_NUMBER() OVER (PARTITION BY hit_id "
+            "ORDER BY version DESC, created_at DESC, analysis_id DESC) AS row_no FROM hit_deep_analysis analysis) "
+            "SELECT * FROM ranked WHERE row_no=1 ORDER BY hit_id"
+        ).fetchall()
+        check_rows = self.conn.execute(
+            "SELECT * FROM video_checks ORDER BY video_id, checked_at, check_id"
+        ).fetchall()
+        baseline_rows = self.conn.execute(
+            "WITH ranked AS (SELECT baseline.*, ROW_NUMBER() OVER (PARTITION BY account_id, baseline_mode, metric, observation_point "
+            "ORDER BY computed_at DESC, baseline_id DESC) AS row_no FROM baselines baseline) "
+            "SELECT * FROM ranked WHERE row_no=1 ORDER BY account_id, metric, observation_point"
+        ).fetchall()
+
+        hits_by_video: dict[str, list[dict[str, Any]]] = {}
+        for row in hit_rows:
+            hits_by_video.setdefault(str(row["video_id"]), []).append({
+                "hit_id": str(row["hit_id"]),
+                "title": str(row["title"] or ""),
+                "url": str(row["url"] or ""),
+                "publish_time": str(row["publish_time"] or ""),
+                "metrics": {
+                    key: row[key]
+                    for key in ("like_count", "comment_count", "share_count", "collect_count")
+                },
+                "hit_channel": str(row["hit_channel"] or ""),
+                "judgment_confidence": str(row["judgment_confidence"] or ""),
+                "preparation_status": str(row["preparation_status"] or ""),
+                "promoted_at": str(row["promoted_at"] or ""),
+            })
+
+        transcripts_by_hit: dict[str, list[dict[str, Any]]] = {}
+        for row in transcript_rows:
+            transcripts_by_hit.setdefault(str(row["hit_id"]), []).append({
+                "transcript_id": str(row["transcript_id"]),
+                "version": int(row["version"] or 0),
+                "raw_text": str(row["raw_transcript_text"] or ""),
+                "cleaned_text": str(row["cleaned_transcript_text"] or ""),
+                "char_count": int(row["char_count"] or 0),
+                "asr_model": str(row["asr_model"] or ""),
+                "vad_model": str(row["vad_model"] or ""),
+                "processing_method": str(row["processing_method"] or ""),
+                "quality_flags": self._knowledge_json(row["quality_flags"]),
+                "processing_status": str(row["processing_status"] or ""),
+                "created_at": str(row["created_at"] or ""),
+            })
+
+        comments_by_hit: dict[str, list[dict[str, Any]]] = {}
+        for row in comment_rows:
+            comments_by_hit.setdefault(str(row["hit_id"]), []).append({
+                "comment_id": str(row["comment_id"]),
+                "text": str(row["text"] or ""),
+                "like_count": int(row["like_count"] or 0),
+                "sample_rank": int(row["sample_rank"] or 0),
+                "purpose": str(row["purpose"] or ""),
+                "observation_point": str(row["observation_point"] or ""),
+                "sampling_strategy": str(row["sampling_strategy"] or ""),
+                "fetched_at": str(row["fetched_at"] or ""),
+            })
+
+        analysis_by_hit: dict[str, list[dict[str, Any]]] = {}
+        for row in analysis_rows:
+            analysis_by_hit.setdefault(str(row["hit_id"]), []).append({
+                "analysis_id": str(row["analysis_id"]),
+                "version": int(row["version"] or 0),
+                "topic_pattern": self._knowledge_json(row["topic_pattern"]),
+                "hook_pattern": self._knowledge_json(row["hook_pattern"]),
+                "structure_pattern": self._knowledge_json(row["structure_pattern"]),
+                "model_name": str(row["model_name"] or ""),
+                "created_at": str(row["created_at"] or ""),
+            })
+
+        checks_by_video: dict[str, list[dict[str, Any]]] = {}
+        for row in check_rows:
+            checks_by_video.setdefault(str(row["video_id"]), []).append({
+                "checked_at": str(row["checked_at"] or ""),
+                "metrics": {
+                    key: row[key]
+                    for key in ("like_count", "comment_count", "share_count", "collect_count")
+                },
+                "day_since_publish": row["day_since_publish"],
+            })
+
+        baselines_by_account: dict[str, list[dict[str, Any]]] = {}
+        for row in baseline_rows:
+            baselines_by_account.setdefault(str(row["account_id"]), []).append({
+                "baseline_mode": str(row["baseline_mode"] or ""),
+                "metric": str(row["metric"] or ""),
+                "observation_point": str(row["observation_point"] or ""),
+                "sample_count": int(row["sample_count"] or 0),
+                "median_value": row["median_value"],
+                "computed_at": str(row["computed_at"] or ""),
+            })
+
+        records: list[dict[str, Any]] = []
+        for row in video_rows:
+            video_id = str(row["video_id"])
+            records.append({
+                "source_id": video_id,
+                "source_kind": "账号视频",
+                "account_name": str(row["account_name"] or "未登记账号"),
+                "domain_label": str(row["domain_label"] or ""),
+                "platform": str(row["platform"] or row["account_platform"] or ""),
+                "platform_item_id": str(row["platform_item_id"] or ""),
+                "title": str(row["title"] or video_id),
+                "url": str(row["url"] or ""),
+                "publish_time": str(row["publish_time"] or ""),
+                "duration_sec": row["duration_sec"],
+                "metrics": {
+                    key: row[key]
+                    for key in ("like_count", "comment_count", "share_count", "collect_count")
+                },
+                "tracking_completed": bool(row["tracking_completed"]),
+                "excluded_reason": str(row["excluded_reason"] or ""),
+                "raw_archive_ref": str(row["raw_archive_ref"] or ""),
+                "first_seen_at": str(row["first_seen_at"] or ""),
+                "last_checked_at": str(row["last_checked_at"] or ""),
+                "checks": checks_by_video.get(video_id, []),
+                "baselines": baselines_by_account.get(str(row["account_id"]), []),
+                "hits": hits_by_video.get(video_id, []),
+                "transcripts": [
+                    transcript
+                    for hit in hits_by_video.get(video_id, [])
+                    for transcript in transcripts_by_hit.get(str(hit["hit_id"]), [])
+                ],
+                "comments": [
+                    comment
+                    for hit in hits_by_video.get(video_id, [])
+                    for comment in comments_by_hit.get(str(hit["hit_id"]), [])
+                ],
+                "deep_analysis": [
+                    analysis
+                    for hit in hits_by_video.get(video_id, [])
+                    for analysis in analysis_by_hit.get(str(hit["hit_id"]), [])
+                ],
+            })
+        return records
+
+    def list_all_experience_candidates(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM stage0_experience_candidate WHERE data_identity=? "
+            "ORDER BY created_at, experience_candidate_id",
+            (self.data_identity,),
+        ).fetchall()
+        return [self._experience_candidate_view(row) for row in rows]
+
+    def list_knowledge_account_registry(self) -> dict[str, list[dict[str, Any]]]:
+        formal_accounts = self.conn.execute(
+            "SELECT * FROM stage0_content_account WHERE data_identity=? "
+            "AND status='active' ORDER BY domain_label, account_role, display_name, content_account_id",
+            (self.data_identity,),
+        ).fetchall()
+        collection_accounts = self.conn.execute(
+            "SELECT collection.* FROM competitor_accounts collection "
+            "JOIN stage0_content_account formal ON formal.content_account_id=collection.account_id "
+            "AND formal.data_identity=? AND formal.account_role='competitor' AND formal.status='active' "
+            "WHERE collection.registration_status='active' "
+            "ORDER BY collection.domain_label, collection.account_name, collection.account_id",
+            (self.data_identity,),
+        ).fetchall()
+        baseline_rows = self.conn.execute(
+            "SELECT * FROM baselines ORDER BY account_id, metric, observation_point, baseline_id"
+        ).fetchall()
+        return {
+            "formal_accounts": [
+                {key: row[key] for key in row.keys()} for row in formal_accounts
+            ],
+            "collection_accounts": [
+                {key: row[key] for key in row.keys()} for row in collection_accounts
+            ],
+            "baselines": [
+                {key: row[key] for key in row.keys()} for row in baseline_rows
+            ],
+        }
+
+    def resolve_owned_account_ref(self, *, domain_label: str, content_account_id: str) -> str:
+        row = self.conn.execute(
+            "SELECT external_account_ref FROM stage0_content_account "
+            "WHERE content_account_id=? AND account_role='owned' AND domain_label=? "
+            "AND status='active' AND data_identity=?",
+            (content_account_id.strip(), domain_label.strip(), self.data_identity),
+        ).fetchone()
+        if row is None or not str(row["external_account_ref"] or "").strip():
+            raise StateTransitionError("the selected owned account is not active in the requested domain")
+        return str(row["external_account_ref"]).strip()
+
+    def list_knowledge_processing_status(self) -> dict[str, list[dict[str, Any]]]:
+        registrations = self.conn.execute(
+            "SELECT registration.*, account.display_name, account.domain_label "
+            "FROM stage0_competitor_registration registration "
+            "LEFT JOIN stage0_content_account account "
+            "ON account.content_account_id=registration.competitor_account_id "
+            "AND account.data_identity=registration.data_identity "
+            "WHERE registration.data_identity=? ORDER BY registration.created_at, registration.registration_id",
+            (self.data_identity,),
+        ).fetchall()
+        steps = self.conn.execute(
+            "SELECT * FROM stage0_competitor_registration_step WHERE data_identity=? "
+            "ORDER BY completed_at, step_record_id",
+            (self.data_identity,),
+        ).fetchall()
+        items = self.conn.execute(
+            "SELECT registration_id, step_name, item_ref, status, artifact_json, error_json, "
+            "attempt_count, updated_at FROM stage0_competitor_registration_item "
+            "WHERE data_identity=? ORDER BY updated_at, registration_id, step_name, item_ref",
+            (self.data_identity,),
+        ).fetchall()
+        attempts = self.conn.execute(
+            "SELECT registration_id, source_id, attempt_kind, outcome, reason, "
+            "raw_model_output_status, created_at FROM stage0_competitor_breakdown_attempt "
+            "WHERE data_identity=? ORDER BY created_at, breakdown_attempt_id",
+            (self.data_identity,),
+        ).fetchall()
+        checkpoints = self.conn.execute(
+            "SELECT registration_id, item_ref, detail_json, comments_json, collection_ref, recorded_at "
+            "FROM stage0_competitor_material_collection_checkpoint WHERE data_identity=? "
+            "ORDER BY recorded_at, registration_id, item_ref",
+            (self.data_identity,),
+        ).fetchall()
+        backlog = self.conn.execute(
+            "SELECT * FROM stage0_competitor_breakdown_backlog_task WHERE data_identity=? "
+            "ORDER BY created_at, backlog_task_id",
+            (self.data_identity,),
+        ).fetchall()
+        daily_breakdown = self.conn.execute(
+            "SELECT * FROM stage0_daily_hit_breakdown WHERE data_identity=? "
+            "ORDER BY created_at, hit_id, version",
+            (self.data_identity,),
+        ).fetchall()
+        preflight = self.conn.execute(
+            "SELECT * FROM stage0_live_cold_start_preflight WHERE data_identity=? "
+            "ORDER BY inspected_at, preflight_receipt_id",
+            (self.data_identity,),
+        ).fetchall()
+        return {
+            "registrations": [
+                {key: row[key] for key in row.keys()} for row in registrations
+            ],
+            "steps": [
+                {
+                    "registration_id": str(row["registration_id"]),
+                    "step_name": str(row["step_name"]),
+                    "artifact_refs": self._knowledge_json(row["artifact_refs_json"]),
+                    "completed_by": str(row["completed_by"] or ""),
+                    "completed_at": str(row["completed_at"] or ""),
+                }
+                for row in steps
+            ],
+            "items": [
+                {
+                    "registration_id": str(row["registration_id"]),
+                    "step_name": str(row["step_name"]),
+                    "item_ref": str(row["item_ref"]),
+                    "status": str(row["status"]),
+                    "artifact": self._knowledge_json(row["artifact_json"]),
+                    "error": self._knowledge_json(row["error_json"]),
+                    "attempt_count": int(row["attempt_count"] or 0),
+                    "updated_at": str(row["updated_at"] or ""),
+                }
+                for row in items
+            ],
+            "attempts": [
+                {
+                    "registration_id": str(row["registration_id"]),
+                    "source_id": str(row["source_id"]),
+                    "attempt_kind": str(row["attempt_kind"]),
+                    "outcome": str(row["outcome"]),
+                    "reason": str(row["reason"] or ""),
+                    "raw_model_output_status": str(row["raw_model_output_status"] or ""),
+                    "created_at": str(row["created_at"] or ""),
+                }
+                for row in attempts
+            ],
+            "checkpoints": [
+                {
+                    "registration_id": str(row["registration_id"]),
+                    "item_ref": str(row["item_ref"]),
+                    "detail": self._knowledge_json(row["detail_json"]),
+                    "comments": self._knowledge_json(row["comments_json"]),
+                    "collection_ref": str(row["collection_ref"] or ""),
+                    "recorded_at": str(row["recorded_at"] or ""),
+                }
+                for row in checkpoints
+            ],
+            "backlog": [
+                {
+                    key: self._knowledge_json(row[key]) if key.endswith("_json") else row[key]
+                    for key in row.keys()
+                }
+                for row in backlog
+            ],
+            "daily_breakdown": [
+                {
+                    key: self._knowledge_json(row[key]) if key == "artifact_json" else row[key]
+                    for key in row.keys()
+                }
+                for row in daily_breakdown
+            ],
+            "preflight": [
+                {
+                    key: self._knowledge_json(row[key]) if key == "report_json" else row[key]
+                    for key in row.keys()
+                }
+                for row in preflight
+            ],
+        }
+
+    def list_knowledge_selection_inputs(self) -> dict[str, list[dict[str, Any]]]:
+        tags = self.conn.execute(
+            "SELECT * FROM domain_search_tags WHERE status='active' ORDER BY domain_label, tag, tag_id"
+        ).fetchall()
+        tag_library = self.conn.execute(
+            "SELECT * FROM stage0_cold_start_tag_library WHERE data_identity=? "
+            "ORDER BY created_at, tag_library_id",
+            (self.data_identity,),
+        ).fetchall()
+        hotspots = self.conn.execute(
+            "SELECT observation.*, run.status AS collection_status, run.discovery_run_id "
+            "FROM trendradar_hotspot_observation observation "
+            "LEFT JOIN trendradar_collection_run run ON run.collection_run_id=observation.collection_run_id "
+            "ORDER BY observation.observed_at, observation.observation_id"
+        ).fetchall()
+        question_sources = self.conn.execute(
+            "SELECT source.* FROM stage1_question_expansion_source source "
+            "JOIN stage1_question_expansion_qualification qualification "
+            "ON qualification.expansion_id=source.expansion_id "
+            "AND qualification.data_identity=source.data_identity "
+            "AND qualification.status='qualified' "
+            "WHERE source.data_identity=? AND source.validation_outcome='supported' "
+            "ORDER BY validated_at, expansion_id",
+            (self.data_identity,),
+        ).fetchall()
+        saved_directions = self.conn.execute(
+            "SELECT * FROM stage1_saved_user_direction_source WHERE data_identity=? "
+            "AND status='active' "
+            "ORDER BY saved_at, direction_id",
+            (self.data_identity,),
+        ).fetchall()
+        discovered_videos = self.conn.execute(
+            "SELECT * FROM discovered_external_videos ORDER BY discovered_at, discovered_video_id"
+        ).fetchall()
+        return {
+            "tags": [{key: row[key] for key in row.keys()} for row in tags],
+            "tag_library": [
+                {
+                    key: self._knowledge_json(row[key]) if key.endswith("_json") else row[key]
+                    for key in row.keys()
+                }
+                for row in tag_library
+            ],
+            "hotspots": [
+                {
+                    key: self._knowledge_json(row[key]) if key == "raw_json" else row[key]
+                    for key in row.keys()
+                }
+                for row in hotspots
+            ],
+            "question_sources": [
+                {
+                    key: self._knowledge_json(row[key]) if key == "payload_json" else row[key]
+                    for key in row.keys()
+                }
+                for row in question_sources
+            ],
+            "saved_directions": [
+                {
+                    key: self._knowledge_json(row[key]) if key == "payload_json" else row[key]
+                    for key in row.keys()
+                }
+                for row in saved_directions
+            ],
+            "discovered_videos": [
+                {
+                    key: self._knowledge_json(row[key]) if key == "raw_json" else row[key]
+                    for key in row.keys()
+                }
+                for row in discovered_videos
+            ],
+        }
+
+    def list_knowledge_candidate_pool(self) -> list[dict[str, Any]]:
+        """Return actual Stage 1B candidates awaiting a user decision.
+
+        Question expansions, search tags and other discovery inputs are not
+        candidates.  The mirror must read this candidate table instead of
+        presenting every input as a candidate direction.
+        """
+        rows = self.conn.execute(
+            "SELECT candidate.*, source.source_type, source.source_time, "
+            "source.expires_at, source.payload_json AS source_payload_json "
+            "FROM stage1b_candidate_version candidate "
+            "LEFT JOIN stage1b_source_version source "
+            "ON source.source_version_id=candidate.source_version_id "
+            "AND source.data_identity=candidate.data_identity "
+            "WHERE candidate.data_identity=? "
+            "AND candidate.status='awaiting_user_decision' "
+            "AND COALESCE((SELECT state.pool_status FROM stage1b_candidate_pool_state state "
+            "WHERE state.candidate_version_id=candidate.candidate_version_id AND state.data_identity=candidate.data_identity "
+            "ORDER BY state.effective_at DESC, state.pool_state_id DESC LIMIT 1), 'current')='current' "
+            "AND (source.expires_at IS NULL OR source.expires_at >= ?) "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM stage1b_candidate_decision decision "
+            "  WHERE decision.candidate_version_id=candidate.candidate_version_id "
+            "  AND decision.data_identity=candidate.data_identity"
+            ") "
+            "ORDER BY candidate.domain_label, candidate.created_at, candidate.candidate_version_id",
+            (self.data_identity, _now()),
+        ).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            assessment = self.conn.execute(
+                "SELECT total_score, dimension_scores_json, dimension_reasons_json, "
+                "assessed_by, assessed_at "
+                "FROM stage1b_candidate_assessment_revision "
+                "WHERE candidate_version_id=? AND data_identity=? "
+                "ORDER BY assessed_at DESC, assessment_revision_id DESC LIMIT 1",
+                (row["candidate_version_id"], self.data_identity),
+            ).fetchone()
+            if assessment is None:
+                assessment = self.conn.execute(
+                    "SELECT total_score, dimension_scores_json, dimension_reasons_json, "
+                    "assessed_by, assessed_at "
+                    "FROM stage1b_candidate_assessment "
+                    "WHERE candidate_version_id=? AND data_identity=? "
+                    "ORDER BY assessed_at DESC, assessment_id DESC LIMIT 1",
+                    (row["candidate_version_id"], self.data_identity),
+                ).fetchone()
+            pool_state = self.conn.execute(
+                "SELECT pool_status, reason, effective_at "
+                "FROM stage1b_candidate_pool_state "
+                "WHERE candidate_version_id=? AND data_identity=? "
+                "ORDER BY effective_at DESC, pool_state_id DESC LIMIT 1",
+                (row["candidate_version_id"], self.data_identity),
+            ).fetchone()
+            support_rows = self.conn.execute(
+                "SELECT support.support_kind, support.relation_reason, "
+                "source.source_type, source.source_time, source.payload_json "
+                "FROM stage1b_candidate_support support "
+                "LEFT JOIN stage1b_source_version source "
+                "ON source.source_version_id=support.source_version_id "
+                "AND source.data_identity=support.data_identity "
+                "WHERE support.candidate_version_id=? AND support.data_identity=? "
+                "ORDER BY support.created_at, support.support_id",
+                (row["candidate_version_id"], self.data_identity),
+            ).fetchall()
+            results.append(
+                {
+                    "candidate_version_id": str(row["candidate_version_id"]),
+                    "candidate_id": str(row["candidate_id"]),
+                    "run_id": str(row["run_id"]),
+                    "domain_label": str(row["domain_label"]),
+                    "source_version_id": str(row["source_version_id"]),
+                    "source_type": str(row["source_type"] or ""),
+                    "source_time": str(row["source_time"] or ""),
+                    "expires_at": str(row["expires_at"] or ""),
+                    "candidate": self._knowledge_json(row["payload_json"]),
+                    "source": self._knowledge_json(row["source_payload_json"]),
+                    "created_at": str(row["created_at"]),
+                    "pool_status": str(pool_state["pool_status"] if pool_state else "current"),
+                    "pool_reason": str(pool_state["reason"] if pool_state else ""),
+                    "pool_effective_at": str(pool_state["effective_at"] if pool_state else ""),
+                    "assessment": (
+                        {
+                            "total_score": assessment["total_score"],
+                            "dimension_scores": self._knowledge_json(assessment["dimension_scores_json"]),
+                            "dimension_reasons": self._knowledge_json(assessment["dimension_reasons_json"]),
+                            "assessed_by": str(assessment["assessed_by"] or ""),
+                            "assessed_at": str(assessment["assessed_at"] or ""),
+                        }
+                        if assessment is not None
+                        else None
+                    ),
+                    "support_materials": [
+                        {
+                            "support_kind": str(support["support_kind"] or ""),
+                            "reason": str(support["relation_reason"] or ""),
+                            "source_type": str(support["source_type"] or ""),
+                            "source_time": str(support["source_time"] or ""),
+                            "source": self._knowledge_json(support["payload_json"]),
+                        }
+                        for support in support_rows
+                    ],
+                }
+            )
+        return results
+
+    def list_knowledge_human_decisions(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT command.*, binding.carrier_kind, binding.entry_ref, binding.context_strategy "
+            "FROM stage0_human_decision_command command "
+            "LEFT JOIN stage0_human_decision_carrier_binding binding "
+            "ON binding.carrier_binding_id=command.carrier_binding_id "
+            "AND binding.data_identity=command.data_identity "
+            "WHERE command.data_identity=? ORDER BY command.received_at, command.command_id",
+            (self.data_identity,),
+        ).fetchall()
+        return [
+            {
+                key: self._knowledge_json(row[key]) if key.endswith("_json") else row[key]
+                for key in row.keys()
+            }
+            for row in rows
+        ]
+
+    def list_publication_workbench(self) -> list[dict[str, Any]]:
+        publications = self.conn.execute(
+            "SELECT * FROM stage0_publication_registration WHERE data_identity=? "
+            "ORDER BY created_at, publication_id",
+            (self.data_identity,),
+        ).fetchall()
+        results: list[dict[str, Any]] = []
+        for publication in publications:
+            publication_id = str(publication["publication_id"])
+            observations = self.conn.execute(
+                "SELECT * FROM stage0_publication_observation WHERE publication_id=? AND data_identity=? "
+                "ORDER BY observed_at, observation_id",
+                (publication_id, self.data_identity),
+            ).fetchall()
+            reviews = self.conn.execute(
+                "SELECT * FROM stage0_publication_p7_review WHERE publication_id=? AND data_identity=? "
+                "ORDER BY decided_at, review_id",
+                (publication_id, self.data_identity),
+            ).fetchall()
+            results.append({
+                "publication": {key: row[key] for key in publication.keys()},
+                "observations": [
+                    {
+                        key: self._knowledge_json(row[key]) if key == "metrics_json" else row[key]
+                        for key in observation.keys()
+                    }
+                    for observation in observations
+                ],
+                "reviews": [
+                    {
+                        key: self._knowledge_json(row[key]) if key == "feedback_candidate_json" else row[key]
+                        for key in review.keys()
+                    }
+                    for review in reviews
+                ],
+            })
+        return results
+
+    @staticmethod
+    def _split_platform_account_ref(external_account_ref: str) -> tuple[str, str]:
+        value = str(external_account_ref or "").strip()
+        platform, separator, account_ref = value.partition(":")
+        if not separator:
+            return "", value
+        return platform.strip().casefold(), account_ref.strip()
+
+    def _assert_account_domain_ownership(
+        self,
+        *,
+        external_account_ref: str,
+        domain_label: str,
+        account_role: str,
+    ) -> None:
+        """Reject cross-domain reuse before any account row or sync update."""
+        ref = str(external_account_ref or "").strip()
+        if not ref:
+            return
+        existing = self.conn.execute(
+            "SELECT account_role, domain_label FROM stage0_content_account "
+            "WHERE external_account_ref=? AND data_identity=?",
+            (ref, self.data_identity),
+        ).fetchall()
+        for row in existing:
+            existing_domain = str(row["domain_label"] or "").strip()
+            if existing_domain and existing_domain != domain_label:
+                raise StateTransitionError(
+                    f"external account {ref} already belongs to domain {existing_domain}; "
+                    "cross-domain reuse and overwrite are forbidden"
+                )
+            if existing_domain == domain_label and str(row["account_role"] or "") != account_role:
+                raise StateTransitionError(
+                    f"external account {ref} is already registered with a different account role"
+                )
+        platform, account_ref = self._split_platform_account_ref(ref)
+        if platform and account_ref:
+            formal_rows = self.conn.execute(
+                "SELECT domain_label FROM competitor_accounts WHERE platform=? AND sec_uid=?",
+                (platform, account_ref.rstrip("/").rsplit("/", 1)[-1].split("?", 1)[0]),
+            ).fetchall()
+            for row in formal_rows:
+                existing_domain = str(row["domain_label"] or "").strip()
+                if existing_domain and existing_domain != domain_label:
+                    raise StateTransitionError(
+                        f"external account {ref} is already active in domain {existing_domain}; "
+                        "the original domain cannot be overwritten"
+                    )
 
     def register_content_account(
         self,
@@ -2858,6 +7374,11 @@ class Stage0ContentProductionCore:
             raise StateTransitionError("content account requires an identity, display name and actor")
         if account_role == "competitor" and not str(external_account_ref or "").strip():
             raise StateTransitionError("competitor account requires its external account reference")
+        self._assert_account_domain_ownership(
+            external_account_ref=str(external_account_ref or ""),
+            domain_label=domain_label,
+            account_role=account_role,
+        )
         now = _now()
         with self.conn:
             self.conn.execute(
@@ -2875,44 +7396,198 @@ class Stage0ContentProductionCore:
             )
         return {"content_account_id": content_account_id.strip(), "account_role": account_role, "created_at": now}
 
+    def domain_business_state(self, *, domain_label: str) -> dict[str, Any]:
+        """Return only formal, non-draft business state for one domain.
+
+        Account input rows and pending configuration rows are intentionally
+        excluded: they are onboarding material, not proof that a cold start
+        has been created.  A real cold-start row or downstream domain-owned
+        result is what closes the zero-state gate.
+        """
+        label = str(domain_label or "").strip()
+        if not label:
+            raise StateTransitionError("domain zero-state check requires a domain")
+        blockers: list[dict[str, Any]] = []
+        ignored_tables = {
+            "stage0_content_account",
+            "stage0_unregistered_account_video",
+            "stage0_unregistered_account_review",
+            "stage0_cold_start_onboarding_failure",
+        }
+        table_rows = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+        for table_row in table_rows:
+            table = str(table_row["name"])
+            if table in ignored_tables:
+                continue
+            columns = {
+                str(column["name"])
+                for column in self.conn.execute(f'PRAGMA table_info("{table.replace(chr(34), chr(34) * 2)}")').fetchall()
+            }
+            if "domain_label" not in columns or "data_identity" not in columns:
+                continue
+            if table == "stage0_cold_start_configuration":
+                rows = self.conn.execute(
+                    "SELECT configuration_id, status, cold_start_id FROM stage0_cold_start_configuration "
+                    "WHERE domain_label=? AND data_identity=? "
+                    "AND (status IN ('started', 'completed') OR COALESCE(cold_start_id, '')<>'')",
+                    (label, self.data_identity),
+                ).fetchall()
+            else:
+                status_column = "status" if "status" in columns else None
+                if status_column:
+                    rows = self.conn.execute(
+                        f'SELECT 1 AS _rowid, status FROM "{table.replace(chr(34), chr(34) * 2)}" '
+                        f'WHERE domain_label=? AND data_identity=? '
+                        f"AND COALESCE(status, '') NOT IN ('cancelled', 'rejected', 'failed', 'draft', 'pending_confirmation')",
+                        (label, self.data_identity),
+                    ).fetchall()
+                else:
+                    rows = self.conn.execute(
+                        f'SELECT 1 AS _rowid FROM "{table.replace(chr(34), chr(34) * 2)}" '
+                        "WHERE domain_label=? AND data_identity=?",
+                        (label, self.data_identity),
+                    ).fetchall()
+            for row in rows:
+                row_keys = set(row.keys())
+                row_id = (
+                    row["_rowid"] if "_rowid" in row_keys
+                    else row["configuration_id"] if "configuration_id" in row_keys
+                    else ""
+                )
+                blockers.append({
+                    "table": table,
+                    "row_id": str(row_id or ""),
+                    "status": str(row["status"] if "status" in row_keys else "active"),
+                })
+        return {"domain_label": label, "zero_state": not blockers, "blockers": blockers}
+
+    def require_domain_zero_state(self, *, domain_label: str) -> dict[str, Any]:
+        state = self.domain_business_state(domain_label=domain_label)
+        if not state["zero_state"]:
+            summary = "; ".join(
+                f"{item['table']}:{item['status']}" for item in state["blockers"][:8]
+            )
+            raise StateTransitionError(
+                f"domain {domain_label} already has formal cold-start/business state; "
+                f"new cold start is forbidden ({summary})"
+            )
+        return state
+
+    def record_cold_start_onboarding_failure(
+        self,
+        *,
+        configuration_id: str | None,
+        domain_label: str,
+        input_snapshot: dict[str, Any],
+        reason: str,
+    ) -> dict[str, Any]:
+        failure = {
+            "failure_id": _id("cold_start_onboarding_failure"),
+            "configuration_id": str(configuration_id or "") or None,
+            "domain_label": str(domain_label or "").strip(),
+            "input_snapshot": input_snapshot,
+            "cold_start_contract_version": COLD_START_CONTRACT_VERSION,
+            "reason": str(reason or "").strip() or "cold-start creation failed",
+            "failed_at": _now(),
+            "data_identity": self.data_identity,
+        }
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage0_cold_start_onboarding_failure("
+                "failure_id, configuration_id, domain_label, input_snapshot_json, "
+                "cold_start_contract_version, reason, failed_at, data_identity) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    failure["failure_id"], failure["configuration_id"], failure["domain_label"],
+                    _canonical(input_snapshot), failure["cold_start_contract_version"],
+                    failure["reason"], failure["failed_at"], self.data_identity,
+                ),
+            )
+        return failure
+
+    def discard_unstarted_cold_start_configuration(
+        self,
+        *,
+        configuration_id: str,
+        preflight_receipt_id: str | None = None,
+    ) -> None:
+        """Remove only the just-created, never-started onboarding records."""
+        configuration = self.get_cold_start_configuration(configuration_id=configuration_id)
+        cold_start_id = str(configuration.get("cold_start_id") or "").strip()
+        if cold_start_id:
+            existing_run = self.conn.execute(
+                "SELECT 1 FROM stage0_cold_start WHERE cold_start_id=? AND data_identity=?",
+                (cold_start_id, self.data_identity),
+            ).fetchone()
+            if existing_run is not None:
+                raise StateTransitionError("a cold-start run already exists and cannot be discarded")
+        account_ids = [str(configuration["owned_account_id"]), *[
+            str(item) for item in configuration.get("competitor_account_ids") or []
+        ]]
+        other_account_ids: set[str] = set()
+        for row in self.conn.execute(
+            "SELECT configuration_id, owned_account_id, competitor_account_ids_json "
+            "FROM stage0_cold_start_configuration WHERE data_identity=? AND configuration_id<>?",
+            (self.data_identity, configuration_id),
+        ).fetchall():
+            other_account_ids.add(str(row["owned_account_id"]))
+            try:
+                other_account_ids.update(str(item) for item in json.loads(row["competitor_account_ids_json"] or "[]"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
+        with self.conn:
+            if preflight_receipt_id:
+                self.conn.execute(
+                    "DELETE FROM stage0_live_cold_start_preflight WHERE preflight_receipt_id=? "
+                    "AND data_identity=? AND status='ready'",
+                    (preflight_receipt_id, self.data_identity),
+                )
+            self.conn.execute(
+                "DELETE FROM stage0_cold_start_configuration WHERE configuration_id=? AND data_identity=?",
+                (configuration_id, self.data_identity),
+            )
+            for account_id in account_ids:
+                if account_id in other_account_ids:
+                    continue
+                registration = self.conn.execute(
+                    "SELECT 1 FROM stage0_competitor_registration WHERE competitor_account_id=? AND data_identity=?",
+                    (account_id, self.data_identity),
+                ).fetchone()
+                if registration is None:
+                    self.conn.execute(
+                        "DELETE FROM stage0_content_account WHERE content_account_id=? AND data_identity=?",
+                        (account_id, self.data_identity),
+                    )
+
     def configure_cold_start_subjects(
         self,
         *,
-        confirmation_key: str,
         domain_mode: str,
         domain_label: str,
         domain_name: str,
-        domain_boundary: str,
         platform: str,
         owned_account: dict[str, str],
         competitor_accounts: tuple[dict[str, str], ...],
-        actor: str,
+        actor: str | None = None,
     ) -> dict[str, Any]:
         """Confirm one complete cold-start configuration through the formal Core entry."""
         required = (
-            confirmation_key, domain_mode, domain_label, domain_name, domain_boundary,
-            platform, actor, str(owned_account.get("display_name") or ""),
+            domain_mode, domain_label, domain_name,
+            platform, str(owned_account.get("display_name") or ""),
             str(owned_account.get("external_account_ref") or ""),
         )
         if not all(str(value).strip() for value in required):
-            raise StateTransitionError("cold-start configuration requires domain, owned account, platform and actor")
+            raise StateTransitionError("cold-start configuration requires domain, owned account and platform")
         if domain_mode not in {"reuse", "create"}:
             raise StateTransitionError("cold-start domain mode must be reuse or create")
         if domain_label not in formal_domain_labels():
             raise StateTransitionError("cold-start configuration requires a configured formal domain")
-        existing = self.conn.execute(
-            "SELECT configuration_id FROM stage0_cold_start_configuration WHERE confirmation_key=? AND data_identity=?",
-            (confirmation_key.strip(), self.data_identity),
-        ).fetchone()
-        if existing is not None:
-            return self.get_cold_start_configuration(configuration_id=existing["configuration_id"])
-        if not (
-            COLD_START_COMPETITOR_MIN
-            <= len(competitor_accounts)
-            <= COLD_START_COMPETITOR_MAX
-        ):
+        self.require_domain_zero_state(domain_label=domain_label)
+        if len(competitor_accounts) != COLD_START_COMPETITOR_MIN:
             raise StateTransitionError(
-                "cold-start configuration requires between 10 and 20 competitor accounts"
+                f"cold-start configuration requires exactly {COLD_START_COMPETITOR_MIN} competitor accounts"
             )
         competitor_refs = [str(item.get("external_account_ref") or "").strip() for item in competitor_accounts]
         competitor_names = [str(item.get("display_name") or "").strip() for item in competitor_accounts]
@@ -2921,6 +7596,13 @@ class Stage0ContentProductionCore:
             raise StateTransitionError("every competitor account requires a name and platform identity")
         if len(set(competitor_refs)) != len(competitor_refs) or owned_ref in set(competitor_refs):
             raise StateTransitionError("owned and competitor account identities must be distinct")
+        self._assert_account_domain_ownership(
+            external_account_ref=owned_ref, domain_label=domain_label, account_role="owned"
+        )
+        for competitor_ref in competitor_refs:
+            self._assert_account_domain_ownership(
+                external_account_ref=competitor_ref, domain_label=domain_label, account_role="competitor"
+            )
 
         def ensure_account(role: str, display_name: str, external_ref: str) -> str:
             row = self.conn.execute(
@@ -2935,13 +7617,11 @@ class Stage0ContentProductionCore:
                 "INSERT INTO stage0_content_account(content_account_id, account_role, display_name, domain_label, "
                 "external_account_ref, status, data_identity, created_by, created_at) "
                 "VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)",
-                (account_id, role, display_name, domain_label, external_ref, self.data_identity, actor.strip(), _now()),
+                (account_id, role, display_name, domain_label, external_ref, self.data_identity, "", _now()),
             )
             return account_id
 
-        configuration_id = "cold_start_configuration_" + hashlib.sha256(
-            f"{self.data_identity}:{confirmation_key.strip()}".encode("utf-8")
-        ).hexdigest()[:24]
+        configuration_id = _id("cold_start_configuration")
         now = _now()
         with self.conn:
             owned_account_id = ensure_account(
@@ -2952,14 +7632,14 @@ class Stage0ContentProductionCore:
                 for name, ref in zip(competitor_names, competitor_refs)
             ]
             self.conn.execute(
-                "INSERT INTO stage0_cold_start_configuration(configuration_id, confirmation_key, domain_mode, "
+                "INSERT INTO stage0_cold_start_configuration(configuration_id, domain_mode, "
                 "domain_label, domain_name, domain_boundary, platform, owned_account_id, "
                 "competitor_account_ids_json, status, data_identity, confirmed_by, confirmed_at, cold_start_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, NULL)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, NULL)",
                 (
-                    configuration_id, confirmation_key.strip(), domain_mode, domain_label,
-                    domain_name.strip(), domain_boundary.strip(), platform.strip(), owned_account_id,
-                    _canonical(competitor_account_ids), self.data_identity, actor.strip(), now,
+                    configuration_id, domain_mode, domain_label,
+                    domain_name.strip(), "", platform.strip(), owned_account_id,
+                    _canonical(competitor_account_ids), self.data_identity, "", now,
                 ),
             )
             self._audit(None, "cold_start_configuration_confirmed_by_user", {
@@ -2971,7 +7651,10 @@ class Stage0ContentProductionCore:
 
     def get_cold_start_configuration(self, *, configuration_id: str) -> dict[str, Any]:
         row = self.conn.execute(
-            "SELECT * FROM stage0_cold_start_configuration WHERE configuration_id=? AND data_identity=?",
+            "SELECT configuration_id, domain_mode, domain_label, domain_name, domain_boundary, "
+            "platform, owned_account_id, competitor_account_ids_json, status, data_identity, "
+            "confirmed_by, confirmed_at, cold_start_id "
+            "FROM stage0_cold_start_configuration WHERE configuration_id=? AND data_identity=?",
             (configuration_id, self.data_identity),
         ).fetchone()
         if row is None:
@@ -2998,25 +7681,157 @@ class Stage0ContentProductionCore:
         ).fetchall()
         return [self.get_cold_start_configuration(configuration_id=row["configuration_id"]) for row in rows]
 
+    def get_cold_start_run_model_binding(
+        self, *, cold_start_id: str
+    ) -> dict[str, Any]:
+        """Return the credential-free model binding for the current execution."""
+        row = self.conn.execute(
+            "SELECT input_snapshot_json FROM stage0_cold_start_run_contract "
+            "WHERE cold_start_id=? AND data_identity=?",
+            (str(cold_start_id or "").strip(), self.data_identity),
+        ).fetchone()
+        if row is None:
+            raise StateTransitionError("cold-start run has no execution model binding")
+        try:
+            snapshot = json.loads(str(row["input_snapshot_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise StateTransitionError("cold-start run contract is not valid JSON") from exc
+        binding = snapshot.get("run_model") if isinstance(snapshot, dict) else None
+        required = ("route_id", "provider_ref", "provider_name", "provider_type", "model_name", "endpoint", "source")
+        if not isinstance(binding, dict) or any(
+            not str(binding.get(key) or "").strip() for key in required
+        ):
+            raise StateTransitionError("cold-start run has no complete execution model binding")
+        return dict(binding)
+
+    def _replace_cold_start_run_model_binding(
+        self,
+        *,
+        cold_start_id: str,
+        task_model_binding: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Store the model binding for the next execution of an existing run."""
+        try:
+            normalized = HermesTaskModelBinding.from_payload(task_model_binding).as_payload()
+        except Exception as exc:
+            raise StateTransitionError(
+                f"cold-start resume requires a complete current model binding: {exc}"
+            ) from exc
+        row = self.conn.execute(
+            "SELECT input_snapshot_json FROM stage0_cold_start_run_contract "
+            "WHERE cold_start_id=? AND data_identity=?",
+            (str(cold_start_id or "").strip(), self.data_identity),
+        ).fetchone()
+        if row is None:
+            raise StateTransitionError("cold-start run has no run contract to update")
+        try:
+            snapshot = json.loads(str(row["input_snapshot_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise StateTransitionError("cold-start run contract is not valid JSON") from exc
+        if not isinstance(snapshot, dict):
+            raise StateTransitionError("cold-start run contract snapshot must be an object")
+        snapshot["run_model"] = dict(normalized)
+        self.conn.execute(
+            "UPDATE stage0_cold_start_run_contract SET input_snapshot_json=? "
+            "WHERE cold_start_id=? AND data_identity=?",
+            (_canonical(snapshot), str(cold_start_id or "").strip(), self.data_identity),
+        )
+        return normalized
+
     def start_configured_cold_start(
         self,
         *,
         configuration_id: str,
         actor: str,
-        idempotency_key: str,
-        preflight_receipt_id: str,
+        preflight_receipt_id: str | None = None,
+        task_model_binding: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Consume one confirmed configuration and queue every competitor registration."""
+        """Create or continue exactly one run for one confirmed configuration."""
         configuration = self.get_cold_start_configuration(configuration_id=configuration_id)
         cold_start_id = str(configuration.get("cold_start_id") or f"cold_start_{configuration_id}")
-        result = self.start_cold_start(
-            cold_start_id=cold_start_id,
-            owned_account_id=configuration["owned_account_id"],
-            competitor_account_ids=tuple(configuration["competitor_account_ids"]),
-            actor=actor,
-            idempotency_key=idempotency_key,
-            preflight_receipt_id=preflight_receipt_id,
-        )
+        competitor_snapshot = []
+        for account_id in configuration["competitor_account_ids"]:
+            account = next(
+                (
+                    item for item in configuration["accounts"]
+                    if str(item.get("content_account_id")) == str(account_id)
+                ),
+                None,
+            )
+            if account is not None:
+                competitor_snapshot.append({
+                    "display_name": str(account.get("display_name") or ""),
+                    "external_account_ref": str(account.get("external_account_ref") or ""),
+                })
+        input_snapshot = {
+            "domain_label": str(configuration["domain_label"]),
+            "domain_name": str(configuration["domain_name"]),
+            "platform": str(configuration["platform"]),
+            "owned_account": next(
+                (
+                    {
+                        "display_name": str(item.get("display_name") or ""),
+                        "external_account_ref": str(item.get("external_account_ref") or ""),
+                    }
+                    for item in configuration["accounts"]
+                    if item.get("account_role") == "owned"
+                ),
+                {},
+            ),
+            "competitor_accounts": competitor_snapshot,
+        }
+        existing_run = self.conn.execute(
+            "SELECT * FROM stage0_cold_start WHERE cold_start_id=? AND data_identity=?",
+            (cold_start_id, self.data_identity),
+        ).fetchone()
+        if existing_run is not None:
+            registration_rows = self.conn.execute(
+                "SELECT registration_id FROM stage0_competitor_registration "
+                "WHERE cold_start_id=? AND data_identity=? ORDER BY created_at, registration_id",
+                (cold_start_id, self.data_identity),
+            ).fetchall()
+            result = {
+                "cold_start_id": cold_start_id,
+                "registration_ids": [str(row["registration_id"]) for row in registration_rows],
+                "status": str(existing_run["status"]),
+            }
+            task_model_binding = self.get_cold_start_run_model_binding(
+                cold_start_id=cold_start_id
+            )
+        else:
+            if configuration["status"] not in {"confirmed", "started"}:
+                raise StateTransitionError(
+                    "only a confirmed configuration can create or continue a cold-start run"
+                )
+            if not isinstance(task_model_binding, dict) or not task_model_binding:
+                raise StateTransitionError(
+                    "new Hermes cold-start run requires its current task model binding"
+                )
+            input_snapshot["run_model"] = dict(task_model_binding)
+            try:
+                result = self.start_cold_start(
+                    cold_start_id=cold_start_id,
+                    owned_account_id=configuration["owned_account_id"],
+                    competitor_account_ids=tuple(configuration["competitor_account_ids"]),
+                    actor=actor,
+                    preflight_receipt_id=preflight_receipt_id,
+                    run_contract={
+                        "domain_label": configuration["domain_label"],
+                        "owned_account_id": configuration["owned_account_id"],
+                        "competitor_account_ids": list(configuration["competitor_account_ids"]),
+                        "input_snapshot": input_snapshot,
+                        "cold_start_contract_version": COLD_START_CONTRACT_VERSION,
+                    },
+                )
+            except Exception:
+                if preflight_receipt_id:
+                    with self.conn:
+                        self.conn.execute(
+                            "DELETE FROM stage0_live_cold_start_preflight WHERE preflight_receipt_id=? "
+                            "AND data_identity=? AND status='ready'",
+                            (preflight_receipt_id, self.data_identity),
+                        )
+                raise
         with self.conn:
             self.conn.execute(
                 "UPDATE stage0_cold_start_configuration SET status='started', cold_start_id=? "
@@ -3026,8 +7841,15 @@ class Stage0ContentProductionCore:
             self._audit(None, "configured_cold_start_started", {
                 "configuration_id": configuration_id, "cold_start_id": cold_start_id,
                 "registration_ids": result["registration_ids"],
+                "cold_start_contract_version": COLD_START_CONTRACT_VERSION,
+                "run_model": dict(task_model_binding),
             })
-        return {**result, "configuration_id": configuration_id}
+        return {
+            **result,
+            "configuration_id": configuration_id,
+            "run_model": str(task_model_binding.get("model_name") or ""),
+            "run_model_binding": dict(task_model_binding),
+        }
 
     def pause_configured_cold_start(
         self,
@@ -3070,6 +7892,278 @@ class Stage0ContentProductionCore:
             })
             self._receipt("pause_configured_cold_start", idempotency_key, request, result)
         return result
+
+    def stop_configured_cold_start(
+        self,
+        *,
+        configuration_id: str,
+        actor: str | None = None,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Stop one existing run without command-level replay/dedup state."""
+        reason_value = str(reason or "").strip()
+        if not reason_value:
+            raise StateTransitionError("stopping a configured cold start requires a reason")
+        configuration = self.get_cold_start_configuration(
+            configuration_id=configuration_id
+        )
+        cold_start_id = str(configuration.get("cold_start_id") or "").strip()
+        if not cold_start_id:
+            raise StateTransitionError("there is no existing cold-start run to stop")
+        run = self.conn.execute(
+            "SELECT status FROM stage0_cold_start "
+            "WHERE cold_start_id=? AND data_identity=?",
+            (cold_start_id, self.data_identity),
+        ).fetchone()
+        if run is None:
+            raise StateTransitionError("the configured cold-start run does not exist")
+        prior_status = str(run["status"])
+        if prior_status == "stopped":
+            return {
+                "configuration_id": configuration_id,
+                "cold_start_id": cold_start_id,
+                "status": "stopped",
+                "prior_status": "stopped",
+                "stopped": True,
+                "created_new_run": False,
+                "message": "当前冷启动已经停止。",
+            }
+        if prior_status != "running":
+            raise StateTransitionError("only a running cold start can be stopped")
+        result = {
+            "configuration_id": configuration_id,
+            "cold_start_id": cold_start_id,
+            "status": "stopped",
+            "prior_status": prior_status,
+            "resumable": True,
+            "reason": reason_value,
+        }
+        with self.conn:
+            self.conn.execute(
+                "UPDATE stage0_cold_start SET status='stopped' "
+                "WHERE cold_start_id=? AND data_identity=? AND status='running'",
+                (cold_start_id, self.data_identity),
+            )
+            self.conn.execute(
+                "UPDATE stage0_cold_start_configuration SET status='cancelled' "
+                "WHERE configuration_id=? AND data_identity=? AND status<>'completed'",
+                (configuration_id, self.data_identity),
+            )
+            self._audit(None, "configured_cold_start_stopped", {
+                **result,
+            })
+        return result
+
+    def resume_stopped_cold_start(
+        self,
+        *,
+        configuration_id: str,
+        actor: str | None = None,
+        task_model_binding: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Reactivate the same run with the current execution model."""
+        configuration = self.get_cold_start_configuration(
+            configuration_id=configuration_id
+        )
+        cold_start_id = str(configuration.get("cold_start_id") or "").strip()
+        if not cold_start_id:
+            raise StateTransitionError("there is no existing cold-start run to resume")
+        run = self.conn.execute(
+            "SELECT status FROM stage0_cold_start "
+            "WHERE cold_start_id=? AND data_identity=?",
+            (cold_start_id, self.data_identity),
+        ).fetchone()
+        if run is None:
+            raise StateTransitionError("the configured cold-start run does not exist")
+        prior_status = str(run["status"])
+        if prior_status == "running":
+            return {
+                "configuration_id": configuration_id,
+                "cold_start_id": cold_start_id,
+                "status": "running",
+                "prior_status": "running",
+                "resumed": False,
+                "created_new_run": False,
+                "message": "当前冷启动已经在运行。",
+            }
+        if prior_status not in {"stopped", "failed"}:
+            raise StateTransitionError("only a stopped or failed cold start can be resumed")
+        if configuration["status"] not in {"started", "cancelled"}:
+            raise StateTransitionError("the interrupted cold-start configuration cannot be resumed")
+        if not isinstance(task_model_binding, dict) or not task_model_binding:
+            raise StateTransitionError(
+                "cold-start resume requires the current Hermes model binding"
+            )
+        with self.conn:
+            normalized_binding = self._replace_cold_start_run_model_binding(
+                cold_start_id=cold_start_id,
+                task_model_binding=task_model_binding,
+            )
+            result = {
+                "configuration_id": configuration_id,
+                "cold_start_id": cold_start_id,
+                "status": "running",
+                "prior_status": prior_status,
+                "resumed": True,
+                "created_new_run": False,
+                "run_model": str(normalized_binding.get("model_name") or ""),
+                "run_model_binding": dict(normalized_binding),
+            }
+            self.conn.execute(
+                "UPDATE stage0_cold_start SET status='running', "
+                "completed_at=NULL WHERE cold_start_id=? AND data_identity=? "
+                "AND status IN ('stopped', 'failed')",
+                (cold_start_id, self.data_identity),
+            )
+            self.conn.execute(
+                "UPDATE stage0_cold_start_configuration SET status='started' "
+                "WHERE configuration_id=? AND data_identity=? AND status IN ('started', 'cancelled')",
+                (configuration_id, self.data_identity),
+            )
+            self._audit(None, "configured_cold_start_resumed", {
+                **result,
+            })
+        return result
+
+    def fail_configured_cold_start(
+        self,
+        *,
+        configuration_id: str,
+        actor: str | None = None,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Record an execution failure without changing completed work."""
+
+        reason_value = str(reason or "").strip()
+        if not reason_value:
+            raise StateTransitionError("failing a configured cold start requires a reason")
+        configuration = self.get_cold_start_configuration(
+            configuration_id=configuration_id
+        )
+        cold_start_id = str(configuration.get("cold_start_id") or "").strip()
+        if not cold_start_id:
+            raise StateTransitionError("there is no existing cold-start run to fail")
+        run = self.conn.execute(
+            "SELECT status FROM stage0_cold_start "
+            "WHERE cold_start_id=? AND data_identity=?",
+            (cold_start_id, self.data_identity),
+        ).fetchone()
+        if run is None or str(run["status"]) != "running":
+            raise StateTransitionError("only a running cold start can fail")
+        result = {
+            "configuration_id": configuration_id,
+            "cold_start_id": cold_start_id,
+            "status": "failed",
+            "prior_status": "running",
+            "resumable": True,
+            "reason": reason_value,
+        }
+        with self.conn:
+            self.conn.execute(
+                "UPDATE stage0_cold_start SET status='failed' "
+                "WHERE cold_start_id=? AND data_identity=? AND status='running'",
+                (cold_start_id, self.data_identity),
+            )
+            self._audit(None, "configured_cold_start_failed", {
+                **result,
+            })
+        return result
+
+    def refresh_cold_start_run_lifecycle(
+        self, *, cold_start_id: str, actor: str = "system"
+    ) -> dict[str, Any]:
+        """Derive running or waiting-human from existing detailed progress."""
+
+        run = self.conn.execute(
+            "SELECT status FROM stage0_cold_start "
+            "WHERE cold_start_id=? AND data_identity=?",
+            (cold_start_id, self.data_identity),
+        ).fetchone()
+        if run is None:
+            raise StateTransitionError("cold-start lifecycle refresh requires an existing run")
+        prior_status = str(run["status"])
+        if prior_status in {"stopped", "failed", "completed"}:
+            return {
+                "cold_start_id": cold_start_id,
+                "status": prior_status,
+                "prior_status": prior_status,
+                "changed": False,
+            }
+        registrations = self.conn.execute(
+            "SELECT current_step, status FROM stage0_competitor_registration "
+            "WHERE cold_start_id=? AND data_identity=?",
+            (cold_start_id, self.data_identity),
+        ).fetchall()
+        if any(str(row["status"]) == "failed" for row in registrations):
+            target_status = "failed"
+        else:
+            automatic_registration_work = any(
+                str(row["status"]) == "processing"
+                or (
+                    str(row["status"]) == "awaiting_human_review"
+                    and str(row["current_step"]) != "historical_material"
+                )
+                for row in registrations
+            )
+            orchestration = self.get_cold_start_orchestration_status(
+                cold_start_id=cold_start_id
+            )
+            tag_exists = self.conn.execute(
+                "SELECT 1 FROM stage0_cold_start_tag_library "
+                "WHERE cold_start_id=? AND data_identity=?",
+                (cold_start_id, self.data_identity),
+            ).fetchone() is not None
+            content_type = self.conn.execute(
+                "SELECT status FROM stage0_cold_start_content_type_candidate "
+                "WHERE cold_start_id=? AND data_identity=? "
+                "ORDER BY created_at DESC, candidate_version DESC LIMIT 1",
+                (cold_start_id, self.data_identity),
+            ).fetchone()
+            boundary = self.conn.execute(
+                "SELECT status FROM stage0_cold_start_domain_boundary_candidate "
+                "WHERE cold_start_id=? AND data_identity=? "
+                "ORDER BY created_at DESC, candidate_version DESC LIMIT 1",
+                (cold_start_id, self.data_identity),
+            ).fetchone()
+            if any(
+                row is not None and str(row["status"]) == "failed"
+                for row in (content_type, boundary)
+            ):
+                target_status = "failed"
+            else:
+                automatic_branch_work = (
+                    bool(orchestration["tag_input_ready"]) and not tag_exists
+                ) or (
+                    bool(orchestration["breakdown_complete"])
+                    and (content_type is None or boundary is None)
+                )
+                target_status = (
+                    "running"
+                    if automatic_registration_work or automatic_branch_work
+                    else "waiting_human"
+                )
+        changed = target_status != prior_status
+        if changed:
+            with self.conn:
+                self.conn.execute(
+                    "UPDATE stage0_cold_start SET status=? "
+                    "WHERE cold_start_id=? AND data_identity=? "
+                    "AND status IN ('running', 'waiting_human')",
+                    (target_status, cold_start_id, self.data_identity),
+                )
+                self._audit(None, "cold_start_run_lifecycle_refreshed", {
+                    "cold_start_id": cold_start_id,
+                    "prior_status": prior_status,
+                    "status": target_status,
+                    "actor": str(actor or "system").strip() or "system",
+                })
+        return {
+            "cold_start_id": cold_start_id,
+            "status": target_status,
+            "prior_status": prior_status,
+            "changed": changed,
+        }
+
 
     def record_live_cold_start_preflight(
         self,
@@ -3118,13 +8212,17 @@ class Stage0ContentProductionCore:
         cold_start_id: str,
         owned_account_id: str,
         competitor_account_ids: tuple[str, ...],
-        actor: str,
-        idempotency_key: str,
+        actor: str | None = None,
         preflight_receipt_id: str | None = None,
+        run_contract: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Start all required competitor registrations from one owned-account and domain decision."""
-        if not cold_start_id.strip() or not actor.strip() or not competitor_account_ids:
-            raise StateTransitionError("cold start requires an owned account, at least one competitor and an actor")
+        if not cold_start_id.strip() or not competitor_account_ids:
+            raise StateTransitionError("cold start requires an owned account and 20 competitors")
+        if len(competitor_account_ids) != COLD_START_COMPETITOR_MIN:
+            raise StateTransitionError(
+                f"a complete cold start requires exactly {COLD_START_COMPETITOR_MIN} competitor accounts"
+            )
         if len(set(competitor_account_ids)) != len(competitor_account_ids):
             raise StateTransitionError("cold start competitor accounts must be distinct")
         owned = self.conn.execute(
@@ -3143,7 +8241,7 @@ class Stage0ContentProductionCore:
         if any(str(row["domain_label"]) != str(owned["domain_label"]) for row in competitors if row is not None):
             raise StateTransitionError("cold start accounts must belong to one domain")
         preflight = None
-        if self.data_identity == "production":
+        if self.data_identity == "production" and preflight_receipt_id:
             preflight = self.conn.execute(
                 "SELECT * FROM stage0_live_cold_start_preflight WHERE preflight_receipt_id=? AND data_identity=?",
                 (str(preflight_receipt_id or ""), self.data_identity),
@@ -3164,10 +8262,6 @@ class Stage0ContentProductionCore:
                 raise StateTransitionError("live preflight receipt time is invalid") from exc
             if datetime.now(timezone.utc) - inspected_at > timedelta(minutes=15):
                 raise StateTransitionError("live preflight receipt expired; all real connectors must be checked again")
-        request = {"cold_start_id": cold_start_id, "owned_account_id": owned_account_id, "competitor_account_ids": list(competitor_account_ids), "actor": actor}
-        replay = self._replay("start_cold_start", idempotency_key, request)
-        if replay:
-            return replay
         now = _now()
         registration_ids = [_id("competitor_registration") for _ in competitor_account_ids]
         with self.conn:
@@ -3175,10 +8269,29 @@ class Stage0ContentProductionCore:
                 """
                 INSERT INTO stage0_cold_start(
                     cold_start_id, owned_account_id, domain_label, status, data_identity, created_by, created_at
-                ) VALUES (?, ?, ?, 'registering_competitors', ?, ?, ?)
+                ) VALUES (?, ?, ?, 'running', ?, ?, ?)
                 """,
-                (cold_start_id, owned_account_id, owned["domain_label"], self.data_identity, actor, now),
+                (cold_start_id, owned_account_id, owned["domain_label"], self.data_identity, "", now),
             )
+            if run_contract is not None:
+                input_snapshot = run_contract.get("input_snapshot")
+                if not isinstance(input_snapshot, dict) or not isinstance(
+                    input_snapshot.get("run_model"), dict
+                ):
+                    raise StateTransitionError(
+                        "formal cold-start run contract requires an execution task model"
+                    )
+                self.conn.execute(
+                    "INSERT INTO stage0_cold_start_run_contract("
+                    "cold_start_id, domain_label, owned_account_id, competitor_account_ids_json,"
+                    "input_snapshot_json, cold_start_contract_version, created_at, data_identity"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        cold_start_id, str(run_contract["domain_label"]), owned_account_id,
+                        _canonical(list(competitor_account_ids)), _canonical(input_snapshot),
+                        str(run_contract["cold_start_contract_version"]), now, self.data_identity,
+                    ),
+                )
             if preflight is not None and preflight["status"] == "ready":
                 self.conn.execute(
                     "UPDATE stage0_live_cold_start_preflight SET status='consumed', consumed_by_cold_start_id=? WHERE preflight_receipt_id=?",
@@ -3193,10 +8306,319 @@ class Stage0ContentProductionCore:
                     """,
                     (registration_id, cold_start_id, competitor_id, self.data_identity, now),
                 )
-            result = {"cold_start_id": cold_start_id, "registration_ids": registration_ids, "status": "registering_competitors"}
-            self._receipt("start_cold_start", idempotency_key, request, result)
+            result = {"cold_start_id": cold_start_id, "registration_ids": registration_ids, "status": "running"}
             self._audit(None, "cold_start_started", result)
         return result
+
+    def cold_start_original_competitor_account_ids(
+        self, *, cold_start_id: str
+    ) -> tuple[str, ...] | None:
+        """Return the frozen basic-chain account set, excluding later additions."""
+        row = self.conn.execute(
+            "SELECT competitor_account_ids_json FROM stage0_cold_start_run_contract "
+            "WHERE cold_start_id=? AND data_identity=?",
+            (str(cold_start_id), self.data_identity),
+        ).fetchone()
+        if row is None:
+            return None
+        values = json.loads(str(row["competitor_account_ids_json"]))
+        if not isinstance(values, list) or any(not str(value).strip() for value in values):
+            raise StateTransitionError("cold-start run contract has invalid competitor accounts")
+        return tuple(str(value).strip() for value in values)
+
+    def create_incremental_competitor_registrations(
+        self,
+        *,
+        cold_start_id: str,
+        competitor_accounts: tuple[dict[str, Any], ...],
+        actor: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Attach new competitors to an already completed run, without a new run."""
+        run_id = str(cold_start_id or "").strip()
+        actor_value = str(actor or "").strip() or "system"
+        key = str(idempotency_key or "").strip()
+        if not run_id or not key or not competitor_accounts:
+            raise StateTransitionError("incremental competitor registration requires a run, accounts and idempotency key")
+        run = self.conn.execute(
+            "SELECT domain_label, status FROM stage0_cold_start WHERE cold_start_id=? AND data_identity=?",
+            (run_id, self.data_identity),
+        ).fetchone()
+        configuration = self.conn.execute(
+            "SELECT status FROM stage0_cold_start_configuration WHERE cold_start_id=? AND data_identity=?",
+            (run_id, self.data_identity),
+        ).fetchone()
+        if run is None or configuration is None or str(run["status"]) != "completed" or str(configuration["status"]) != "completed":
+            raise StateTransitionError("incremental competitors require a completed cold-start and configuration")
+        normalized: list[dict[str, str]] = []
+        seen_refs: set[str] = set()
+        for item in competitor_accounts:
+            if not isinstance(item, dict):
+                raise StateTransitionError("incremental competitor account must be an object")
+            external_ref = str(item.get("external_account_ref") or item.get("account_ref") or "").strip()
+            display_name = str(item.get("display_name") or item.get("name") or "").strip()
+            if not external_ref or not display_name:
+                raise StateTransitionError("incremental competitor account requires a display name and external account reference")
+            if external_ref in seen_refs:
+                raise StateTransitionError("incremental competitor accounts must be distinct")
+            seen_refs.add(external_ref)
+            account_id = str(item.get("content_account_id") or "").strip()
+            if not account_id:
+                account_id = f"content_account_{_hash({'domain': run['domain_label'], 'ref': external_ref})[:24]}"
+            normalized.append({"content_account_id": account_id, "display_name": display_name, "external_account_ref": external_ref})
+        request = {"cold_start_id": run_id, "competitor_accounts": normalized}
+        replay = self._replay("create_incremental_competitor_registrations", key, request)
+        if replay:
+            return replay
+        registration_ids: list[str] = []
+        now = _now()
+        with self.conn:
+            for item in normalized:
+                self._assert_account_domain_ownership(
+                    external_account_ref=item["external_account_ref"],
+                    domain_label=str(run["domain_label"]), account_role="competitor",
+                )
+                existing = self.conn.execute(
+                    "SELECT content_account_id, account_role, domain_label, status FROM stage0_content_account WHERE content_account_id=? AND data_identity=?",
+                    (item["content_account_id"], self.data_identity),
+                ).fetchone()
+                if existing is not None:
+                    if str(existing["account_role"]) != "competitor" or str(existing["domain_label"]) != str(run["domain_label"]) or str(existing["status"]) != "active":
+                        raise StateTransitionError("incremental competitor account identity is already used by another account")
+                    account_id = str(existing["content_account_id"])
+                else:
+                    self.conn.execute(
+                        "INSERT INTO stage0_content_account(content_account_id, account_role, display_name, domain_label, external_account_ref, status, data_identity, created_by, created_at) VALUES (?, 'competitor', ?, ?, ?, 'active', ?, ?, ?)",
+                        (item["content_account_id"], item["display_name"], str(run["domain_label"]), item["external_account_ref"], self.data_identity, actor_value, now),
+                    )
+                    account_id = item["content_account_id"]
+                duplicate = self.conn.execute(
+                    "SELECT registration_id FROM stage0_competitor_registration WHERE cold_start_id=? AND competitor_account_id=? AND data_identity=?",
+                    (run_id, account_id, self.data_identity),
+                ).fetchone()
+                if duplicate is not None:
+                    raise StateTransitionError("incremental competitor is already registered in this cold-start run")
+                registration_id = _id("competitor_registration")
+                self.conn.execute(
+                    "INSERT INTO stage0_competitor_registration(registration_id, cold_start_id, competitor_account_id, current_step, status, data_identity, created_at) VALUES (?, ?, ?, 'historical_material', 'processing', ?, ?)",
+                    (registration_id, run_id, account_id, self.data_identity, now),
+                )
+                registration_ids.append(registration_id)
+            result = {"cold_start_id": run_id, "registration_ids": registration_ids, "account_count": len(registration_ids), "status": "processing", "created_new_run": False}
+            self._receipt("create_incremental_competitor_registrations", key, request, result)
+            self._audit(None, "incremental_competitor_registrations_created", {**result, "actor": actor_value})
+        return result
+
+
+    def get_cold_start_orchestration_status(self, *, cold_start_id: str) -> dict[str, Any]:
+        """Return the two independent cold-start hand-off counters.
+
+        The tag branch is allowed to start as soon as every registration has
+        a completed high-signal artifact.  It deliberately does not inspect
+        transcript, comment, or breakdown results.  The counters are derived
+        from the existing step receipts so no second run identifier or new
+        business state column is needed.
+        """
+        if not str(cold_start_id or "").strip():
+            raise StateTransitionError("cold-start orchestration status requires a run identity")
+        cold_start = self.conn.execute(
+            "SELECT cold_start_id, domain_label, status FROM stage0_cold_start "
+            "WHERE cold_start_id=? AND data_identity=?",
+            (cold_start_id, self.data_identity),
+        ).fetchone()
+        if cold_start is None:
+            raise StateTransitionError("cold-start run does not exist")
+        registration_rows = self.conn.execute(
+            "SELECT registration_id, competitor_account_id FROM stage0_competitor_registration "
+            "WHERE cold_start_id=? AND data_identity=? ORDER BY created_at, registration_id",
+            (cold_start_id, self.data_identity),
+        ).fetchall()
+        original_account_ids = self.cold_start_original_competitor_account_ids(
+            cold_start_id=cold_start_id
+        )
+        if original_account_ids is not None:
+            original_set = set(original_account_ids)
+            registration_rows = [
+                row for row in registration_rows
+                if str(row["competitor_account_id"]) in original_set
+            ]
+        registration_ids = [str(row["registration_id"]) for row in registration_rows]
+        if registration_ids:
+            placeholders = ",".join("?" for _ in registration_ids)
+            step_rows = self.conn.execute(
+                "SELECT registration_id, step_name FROM stage0_competitor_registration_step "
+                f"WHERE data_identity=? AND registration_id IN ({placeholders})",
+                (self.data_identity, *registration_ids),
+            ).fetchall()
+        else:
+            step_rows = []
+        completed_by_step: dict[str, set[str]] = {}
+        for row in step_rows:
+            completed_by_step.setdefault(str(row["step_name"]), set()).add(
+                str(row["registration_id"])
+            )
+
+        total = len(registration_ids)
+        selection_ids = completed_by_step.get("high_signal_identification", set())
+        preparation_ids = completed_by_step.get("transcripts_and_comments", set())
+        breakdown_ids = completed_by_step.get("breakdown", set())
+        tag_candidate_ids = completed_by_step.get("tag_candidates", set())
+        expected = COLD_START_COMPETITOR_MIN
+        selection_complete = total == expected and len(selection_ids) == expected
+        breakdown_complete = total == expected and len(breakdown_ids) == expected
+        return {
+            "cold_start_id": str(cold_start["cold_start_id"]),
+            "domain_label": str(cold_start["domain_label"]),
+            "cold_start_status": str(cold_start["status"]),
+            "registration_total": total,
+            "expected_registration_total": expected,
+            "selection_completed_count": len(selection_ids),
+            "selection_completed_registration_ids": [
+                registration_id for registration_id in registration_ids if registration_id in selection_ids
+            ],
+            "selection_complete": selection_complete,
+            "tag_input_ready": selection_complete,
+            "tag_input_source": "high_signal_identification.selected_items[].title",
+            "preparation_completed_count": len(preparation_ids),
+            "breakdown_completed_count": len(breakdown_ids),
+            "breakdown_complete": breakdown_complete,
+            "tag_candidate_step_completed_count": len(tag_candidate_ids),
+            "tag_branch_waits_for_breakdown": False,
+        }
+
+    def record_cold_start_orchestration_failure(
+        self,
+        *,
+        cold_start_id: str,
+        registration_id: str,
+        step_name: str,
+        actor: str,
+        error_type: str,
+        reason: str,
+    ) -> dict[str, str]:
+        """Keep an account-step failure without closing its resumable state."""
+        values = {
+            "cold_start_id": str(cold_start_id).strip(),
+            "registration_id": str(registration_id).strip(),
+            "step_name": str(step_name).strip(),
+            "actor": str(actor).strip(),
+            "error_type": str(error_type).strip() or "unknown",
+            "reason": str(reason).strip() or "unknown failure",
+        }
+        if not values["cold_start_id"] or not values["registration_id"] or not values["step_name"] or not values["actor"]:
+            raise StateTransitionError("cold-start orchestration failure needs its run, account, step and actor")
+        registration = self.conn.execute(
+            "SELECT 1 FROM stage0_competitor_registration "
+            "WHERE registration_id=? AND cold_start_id=? AND data_identity=?",
+            (values["registration_id"], values["cold_start_id"], self.data_identity),
+        ).fetchone()
+        if registration is None:
+            raise StateTransitionError("cold-start orchestration failure refers to an unrelated account")
+        with self.conn:
+            self._audit(None, "cold_start_registration_step_failed", values)
+        return {
+            "cold_start_id": values["cold_start_id"],
+            "registration_id": values["registration_id"],
+            "step_name": values["step_name"],
+            "status": "recorded_and_resumable",
+        }
+
+    def record_competitor_historical_page_progress(
+        self,
+        *,
+        registration_id: str,
+        phase: str,
+        status: str,
+        evaluated_at: int,
+        next_cursor: str,
+        has_more: bool,
+        reached_time_boundary: bool,
+        stop_reason: str,
+        page_request_count: int,
+        raw_archive_refs: list[str] | tuple[str, ...],
+        mature_item_count: int,
+        recent_item_count: int,
+    ) -> dict[str, Any]:
+        """Keep resumable page progress in the existing audit stream.
+
+        A cursor is execution progress only.  The page archives remain the
+        source for reconstructing collected items after an interruption.
+        """
+        phase_value = str(phase or "").strip()
+        status_value = str(status or "").strip()
+        if phase_value not in {"recent_window", "older_backfill"}:
+            raise StateTransitionError("historical page progress phase is invalid")
+        if status_value not in {"running", "completed", "history_exhausted_insufficient"}:
+            raise StateTransitionError("historical page progress status is invalid")
+        registration = self.conn.execute(
+            "SELECT registration_id, cold_start_id, competitor_account_id "
+            "FROM stage0_competitor_registration "
+            "WHERE registration_id=? AND data_identity=?",
+            (registration_id, self.data_identity),
+        ).fetchone()
+        if registration is None:
+            raise StateTransitionError("historical page progress refers to an unknown registration")
+        refs = list(dict.fromkeys(str(value).strip() for value in raw_archive_refs if str(value).strip()))
+        if not refs or int(page_request_count) < 1:
+            raise StateTransitionError("historical page progress requires a page count and archive receipt")
+        payload = {
+            "registration_id": str(registration["registration_id"]),
+            "cold_start_id": str(registration["cold_start_id"]),
+            "phase": phase_value,
+            "status": status_value,
+            "evaluated_at": int(evaluated_at),
+            "next_cursor": str(next_cursor or "").strip(),
+            "has_more": bool(has_more),
+            "reached_time_boundary": bool(reached_time_boundary),
+            "stop_reason": str(stop_reason or "unknown").strip() or "unknown",
+            "page_request_count": int(page_request_count),
+            "raw_archive_refs": refs,
+            "mature_item_count": max(0, int(mature_item_count)),
+            "recent_item_count": max(0, int(recent_item_count)),
+        }
+        with self.conn:
+            self._audit(None, "competitor_historical_page_progress", payload)
+        return payload
+
+    def get_competitor_historical_page_progress(
+        self, *, registration_id: str
+    ) -> dict[str, Any] | None:
+        self.get_competitor_registration(registration_id=registration_id)
+        rows = self.conn.execute(
+            "SELECT payload_json FROM stage0_audit_event "
+            "WHERE action='competitor_historical_page_progress' AND data_identity=? "
+            "ORDER BY created_at DESC, audit_id DESC",
+            (self.data_identity,),
+        ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"] or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict) and str(payload.get("registration_id") or "") == str(registration_id):
+                return payload
+        return None
+
+    def get_competitor_registration_history_shortfall(
+        self, *, registration_id: str
+    ) -> dict[str, Any] | None:
+        registration = self.get_competitor_registration(registration_id=registration_id)
+        if registration["status"] != "awaiting_human_review":
+            return None
+        rows = self.conn.execute(
+            "SELECT payload_json FROM stage0_audit_event "
+            "WHERE action='competitor_historical_collection_exhausted_before_mature_target' "
+            "AND data_identity=? ORDER BY created_at DESC, audit_id DESC",
+            (self.data_identity,),
+        ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"] or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict) and str(payload.get("registration_id") or "") == str(registration_id):
+                return payload
+        return None
 
     def record_competitor_registration_step(
         self,
@@ -3213,12 +8635,14 @@ class Stage0ContentProductionCore:
         registration = self.conn.execute(
             "SELECT * FROM stage0_competitor_registration WHERE registration_id=? AND data_identity=?", (registration_id, self.data_identity)
         ).fetchone()
-        if registration is None or registration["status"] != "processing" or registration["current_step"] != step_name:
-            raise StateTransitionError("registration step is not the next required step")
+        if registration is None:
+            raise StateTransitionError("registration step refers to an unknown registration")
         request = {"registration_id": registration_id, "step_name": step_name, "artifact_refs": list(artifact_refs), "actor": actor}
         replay = self._replay("record_competitor_registration_step", idempotency_key, request)
         if replay:
             return replay
+        if registration["status"] != "processing" or registration["current_step"] != step_name:
+            raise StateTransitionError("registration step is not the next required step")
         if step_name == "historical_material":
             if len(artifact_refs) != 1:
                 raise StateTransitionError("historical collection must contain one formal artifact")
@@ -3238,6 +8662,39 @@ class Stage0ContentProductionCore:
                 outcome="passed",
                 details={"registration_id": registration_id},
             )
+            if artifact_refs[0].get("collection_status") == "history_exhausted_insufficient":
+                result = {
+                    "registration_id": registration_id,
+                    "status": "awaiting_human_review",
+                    "current_step": "awaiting_human_review",
+                    "history_insufficient": True,
+                    "mature_item_count": int(
+                        sum(
+                            0 < int(item.get("published_at") or 0)
+                            <= int(artifact_refs[0].get("evaluated_at") or 0) - 7 * 86400
+                            for item in artifact_refs[0].get("items", [])
+                            if isinstance(item, dict)
+                        )
+                    ),
+                }
+                with self.conn:
+                    self.conn.execute(
+                        "UPDATE stage0_competitor_registration "
+                        "SET current_step='awaiting_human_review', status='awaiting_human_review' "
+                        "WHERE registration_id=? AND data_identity=?",
+                        (registration_id, self.data_identity),
+                    )
+                    self._receipt("record_competitor_registration_step", idempotency_key, request, result)
+                    self._audit(
+                        None,
+                        "competitor_historical_collection_exhausted_before_mature_target",
+                        {
+                            **result,
+                            "cold_start_id": str(registration["cold_start_id"]),
+                            "artifact": artifact_refs[0],
+                        },
+                    )
+                return result
         if step_name == "high_signal_identification":
             historical_row = self.conn.execute(
                 "SELECT artifact_refs_json FROM stage0_competitor_registration_step "
@@ -3332,6 +8789,112 @@ class Stage0ContentProductionCore:
             for row in rows
         ]
 
+    def repair_completed_registration_breakdown_step(
+        self,
+        *,
+        registration_id: str,
+        actor: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Rebuild one missing aggregate breakdown step from completed item records."""
+        if not actor.strip() or not idempotency_key.strip():
+            raise StateTransitionError("legacy registration repair requires an actor and idempotency key")
+        registration = self.get_competitor_registration(registration_id=registration_id)
+        if registration["status"] != "completed":
+            raise StateTransitionError("legacy registration repair only accepts completed registrations")
+        steps = {
+            str(item["step_name"]): item["artifact_refs"]
+            for item in self.list_competitor_registration_steps(registration_id=registration_id)
+        }
+        if "breakdown" in steps:
+            return {
+                "registration_id": registration_id,
+                "status": "already_present",
+                "step_name": "breakdown",
+                "artifact_count": len(steps["breakdown"]),
+            }
+        if any(step not in steps for step in ("historical_material", "high_signal_identification")):
+            raise StateTransitionError("legacy registration repair lacks its historical or high-signal step")
+        selected_ids = {
+            str(item.get("source_id") or "").strip()
+            for item in steps["high_signal_identification"][0].get("selected_items", [])
+            if isinstance(item, dict) and str(item.get("source_id") or "").strip()
+        }
+        completed_items = [
+            item for item in self.list_competitor_registration_items(
+                registration_id=registration_id, step_name="breakdown"
+            )
+            if item["status"] == "completed" and isinstance(item.get("artifact"), dict)
+        ]
+        artifacts: list[dict[str, Any]] = []
+        artifact_source_ids: set[str] = set()
+        for item in completed_items:
+            artifact = dict(item["artifact"])
+            source_id = str(artifact.get("source_id") or item["item_ref"]).strip()
+            if not source_id or source_id != str(item["item_ref"]).strip():
+                raise StateTransitionError("legacy breakdown item source identity is inconsistent")
+            if artifact.get("artifact_kind") != "deep_breakdown":
+                raise StateTransitionError("legacy breakdown item is not a deep-breakdown artifact")
+            if source_id in artifact_source_ids:
+                raise StateTransitionError("legacy breakdown items contain duplicate source identities")
+            artifact_source_ids.add(source_id)
+            artifacts.append(artifact)
+        material_ids = {
+            str(item["item_ref"]).strip()
+            for item in self.list_competitor_registration_items(
+                registration_id=registration_id, step_name="transcripts_and_comments"
+            )
+            if item["status"] == "completed"
+        }
+        if artifact_source_ids != selected_ids or material_ids != selected_ids:
+            raise StateTransitionError(
+                "legacy registration repair requires complete selected material and breakdown item coverage"
+            )
+        payload = {"artifact_refs": artifacts}
+        now = _now()
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage0_competitor_registration_step("
+                "step_record_id, registration_id, step_name, artifact_refs_json, integrity_hash, "
+                "completed_by, completed_at, data_identity"
+                ") VALUES (?, ?, 'breakdown', ?, ?, ?, ?, ?)",
+                (
+                    _id("competitor_registration_step_repair"),
+                    registration_id,
+                    _canonical(payload),
+                    _hash(payload),
+                    actor.strip(),
+                    now,
+                    self.data_identity,
+                ),
+            )
+            self._audit(
+                None,
+                "completed_registration_breakdown_step_repaired",
+                {
+                    "registration_id": registration_id,
+                    "artifact_count": len(artifacts),
+                    "actor": actor.strip(),
+                },
+            )
+            self._receipt(
+                "repair_completed_registration_breakdown_step",
+                idempotency_key,
+                {"registration_id": registration_id, "actor": actor.strip()},
+                {
+                    "registration_id": registration_id,
+                    "status": "repaired",
+                    "step_name": "breakdown",
+                    "artifact_count": len(artifacts),
+                },
+            )
+        return {
+            "registration_id": registration_id,
+            "status": "repaired",
+            "step_name": "breakdown",
+            "artifact_count": len(artifacts),
+        }
+
     def list_competitor_registration_items(
         self, *, registration_id: str, step_name: str
     ) -> list[dict[str, Any]]:
@@ -3352,6 +8915,120 @@ class Stage0ContentProductionCore:
             }
             for row in rows
         ]
+
+    def repair_completed_competitor_material_comments(
+        self,
+        *,
+        registration_id: str,
+        item_ref: str,
+        comments: list[dict[str, Any]],
+        actor: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Restore comments from the matching saved collection checkpoint.
+
+        This repair changes only the comment portion of an already completed
+        material.  It accepts comment records only when their identities are
+        present in the same formal collection checkpoint, so a repair cannot
+        inject unrelated text into a source material.
+        """
+        if not registration_id.strip() or not item_ref.strip() or not actor.strip() or not idempotency_key.strip():
+            raise StateTransitionError("comment repair requires a registration, source, actor and idempotency key")
+        if not isinstance(comments, list):
+            raise StateTransitionError("comment repair requires a comment list")
+        registration = self.get_competitor_registration(registration_id=registration_id)
+        if registration["status"] != "completed":
+            raise StateTransitionError("comment repair only accepts completed registrations")
+        checkpoint = self.conn.execute(
+            "SELECT comments_json, collection_ref FROM stage0_competitor_material_collection_checkpoint "
+            "WHERE registration_id=? AND item_ref=? AND data_identity=?",
+            (registration_id, item_ref.strip(), self.data_identity),
+        ).fetchone()
+        if checkpoint is None:
+            raise StateTransitionError("comment repair has no matching saved collection checkpoint")
+        try:
+            collected_comments = json.loads(str(checkpoint["comments_json"] or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise StateTransitionError("saved comment checkpoint is invalid") from exc
+        collected_ids = {
+            str(value.get("comment_id") or value.get("id") or "").strip()
+            for value in collected_comments
+            if isinstance(value, dict)
+        }
+
+        normalized: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for position, comment in enumerate(comments, start=1):
+            if not isinstance(comment, dict):
+                continue
+            comment_id = str(comment.get("comment_id") or comment.get("id") or "").strip()
+            text = str(comment.get("text") or comment.get("content") or "").strip()
+            if not comment_id or comment_id not in collected_ids or not text or comment_id in seen:
+                continue
+            seen.add(comment_id)
+            normalized.append({
+                "comment_id": comment_id,
+                "text": text,
+                "like_count": int(comment.get("like_count") or 0),
+                "sample_rank": int(comment.get("sample_rank") or position),
+            })
+        request = {
+            "registration_id": registration_id,
+            "item_ref": item_ref.strip(),
+            "comments": normalized,
+            "actor": actor.strip(),
+        }
+        replay = self._replay("repair_completed_competitor_material_comments", idempotency_key, request)
+        if replay:
+            return replay
+        row = self.conn.execute(
+            "SELECT artifact_json, status FROM stage0_competitor_registration_item "
+            "WHERE registration_id=? AND step_name='transcripts_and_comments' AND item_ref=? AND data_identity=?",
+            (registration_id, item_ref.strip(), self.data_identity),
+        ).fetchone()
+        if row is None or str(row["status"]) != "completed":
+            raise StateTransitionError("comment repair requires a completed material item")
+        try:
+            artifact = json.loads(str(row["artifact_json"] or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise StateTransitionError("completed material artifact is invalid") from exc
+        if not isinstance(artifact, dict) or artifact.get("artifact_kind") != "transcript_and_comments":
+            raise StateTransitionError("comment repair target is not a transcript-and-comments material")
+        current_comments = artifact.get("comments")
+        if isinstance(current_comments, list) and current_comments:
+            result = {
+                "registration_id": registration_id,
+                "item_ref": item_ref.strip(),
+                "status": "already_present",
+                "comment_count": len(current_comments),
+            }
+            with self.conn:
+                self._receipt("repair_completed_competitor_material_comments", idempotency_key, request, result)
+            return result
+        artifact["comments"] = normalized
+        if str(checkpoint["collection_ref"] or "").strip():
+            artifact["comment_collection_ref"] = str(checkpoint["collection_ref"]).strip()
+        now = _now()
+        with self.conn:
+            self.conn.execute(
+                "UPDATE stage0_competitor_registration_item "
+                "SET artifact_json=?, attempt_count=attempt_count+1, updated_at=? "
+                "WHERE registration_id=? AND step_name='transcripts_and_comments' AND item_ref=? AND data_identity=?",
+                (
+                    _canonical(artifact), now, registration_id, item_ref.strip(), self.data_identity,
+                ),
+            )
+            result = {
+                "registration_id": registration_id,
+                "item_ref": item_ref.strip(),
+                "status": "repaired",
+                "comment_count": len(normalized),
+            }
+            self._receipt("repair_completed_competitor_material_comments", idempotency_key, request, result)
+            self._audit(None, "completed_competitor_material_comments_repaired", {
+                **result, "actor": actor.strip(), "checkpoint_comment_count": len(collected_ids),
+            })
+        return result
 
     def record_competitor_registration_item(
         self,
@@ -3390,6 +9067,51 @@ class Stage0ContentProductionCore:
                 ),
             )
         return {"registration_id": registration_id, "step_name": step_name, "item_ref": item_ref, "status": status}
+
+    def record_competitor_breakdown_optional_result(
+        self,
+        *,
+        registration_id: str,
+        item_ref: str,
+        optional_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Attach optional expansion status without changing core success."""
+        if not str(registration_id or "").strip() or not str(item_ref or "").strip():
+            raise StateTransitionError("optional breakdown result needs a registration and item")
+        if not isinstance(optional_result, dict):
+            raise StateTransitionError("optional breakdown result must be an object")
+        row = self.conn.execute(
+            "SELECT status, artifact_json FROM stage0_competitor_registration_item "
+            "WHERE registration_id=? AND step_name='breakdown' AND item_ref=? AND data_identity=?",
+            (registration_id, item_ref.strip(), self.data_identity),
+        ).fetchone()
+        if row is None or str(row["status"] or "") != "completed":
+            raise StateTransitionError("optional breakdown result requires a completed core breakdown")
+        try:
+            artifact = json.loads(str(row["artifact_json"] or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise StateTransitionError("completed breakdown artifact is not valid JSON") from exc
+        if not isinstance(artifact, dict):
+            raise StateTransitionError("completed breakdown artifact must be an object")
+        artifact["optional_enhancements"] = dict(optional_result)
+        with self.conn:
+            self.conn.execute(
+                "UPDATE stage0_competitor_registration_item SET artifact_json=?, updated_at=? "
+                "WHERE registration_id=? AND step_name='breakdown' AND item_ref=? AND data_identity=?",
+                (
+                    _canonical(artifact), _now(), registration_id, item_ref.strip(), self.data_identity,
+                ),
+            )
+            self._audit(None, "competitor_breakdown_optional_result_recorded", {
+                "registration_id": registration_id,
+                "item_ref": item_ref.strip(),
+                "status": str(optional_result.get("status") or "unknown"),
+            })
+        return {
+            "registration_id": registration_id,
+            "item_ref": item_ref.strip(),
+            "status": str(optional_result.get("status") or "unknown"),
+        }
 
     def record_competitor_breakdown_attempt(
         self,
@@ -3535,30 +9257,44 @@ class Stage0ContentProductionCore:
             "AND step_name='breakdown' AND item_ref=? AND data_identity=?",
             (registration_id, item_ref.strip(), self.data_identity),
         ).fetchone()
-        if prior is not None and str(prior["status"]) != "excluded":
-            prior_error = json.loads(str(prior["error_json"] or "{}"))
-            if not (
-                automatic_delivery_retry
-                and str(prior["status"]) == "failed"
-                and prior_error.get("retry_disposition") == "one_post_batch_delivery_retry_pending"
-            ):
-                raise StateTransitionError("independent breakdown may replace only a retired breakdown record")
+        prior_error: dict[str, Any] = {}
+        prior_status = str(prior["status"] or "") if prior is not None else ""
         if prior is not None:
             prior_error = json.loads(str(prior["error_json"] or "{}"))
-            allowed_dispositions = {
-                "retired_by_user", "repair_retry_authorized_by_user",
+            if prior_status == "completed":
+                raise StateTransitionError("independent breakdown will not replace a completed result")
+            if prior_status not in {"failed", "excluded"}:
+                raise StateTransitionError("independent breakdown has an unsupported prior result")
+            if prior_status == "excluded":
+                allowed_dispositions = {
+                    "retired_by_user", "repair_retry_authorized_by_user",
+                }
+                if automatic_delivery_retry:
+                    allowed_dispositions.add("one_post_batch_delivery_retry_pending")
+                if prior_error.get("disposition") not in allowed_dispositions and prior_error.get("retry_disposition") not in allowed_dispositions:
+                    raise StateTransitionError("independent breakdown cannot replace a non-retired record")
+        persisted_error = dict(error or {})
+        if prior_status == "failed" and status == "completed":
+            persisted_error = {
+                "disposition": "replaced_failed_by_retry",
+                "previous_breakdown": prior_error,
+                "automatic_retry": bool(automatic_delivery_retry),
             }
-            if automatic_delivery_retry:
-                allowed_dispositions.add("one_post_batch_delivery_retry_pending")
-            if prior_error.get("disposition") not in allowed_dispositions and prior_error.get("retry_disposition") not in allowed_dispositions:
-                raise StateTransitionError("independent breakdown cannot replace a non-retired record")
+        if prior_error.get("disposition") == "retired_by_user":
+            persisted_error = {
+                "disposition": "replaced_by_user_prompt_rerun",
+                "replacement_reason": str(prior_error.get("reason") or ""),
+                "previous_breakdown": prior_error,
+                "automatic_retry": False,
+            }
+        now = _now()
         with self.conn:
             self.conn.execute(
                 "INSERT INTO stage0_competitor_registration_item VALUES (?, 'breakdown', ?, ?, ?, ?, 1, ?, ?) "
                 "ON CONFLICT(registration_id, step_name, item_ref) DO UPDATE SET "
                 "status=excluded.status, artifact_json=excluded.artifact_json, error_json=excluded.error_json, "
                 "attempt_count=stage0_competitor_registration_item.attempt_count+1, updated_at=excluded.updated_at",
-                (registration_id, item_ref.strip(), status, _canonical(artifact or {}), _canonical(error or {}), self.data_identity, _now()),
+                (registration_id, item_ref.strip(), status, _canonical(artifact or {}), _canonical(persisted_error), self.data_identity, now),
             )
         return {"registration_id": registration_id, "step_name": "breakdown", "item_ref": item_ref, "status": status}
 
@@ -3614,6 +9350,108 @@ class Stage0ContentProductionCore:
                 ),
             )
         return {"registration_id": registration_id, "step_name": "breakdown", "item_ref": item_ref, "status": "failed"}
+
+    def record_human_excluded_competitor_breakdown(
+        self,
+        *,
+        registration_id: str,
+        item_ref: str,
+        actor: str,
+        reason: str,
+        prompt_rerun: bool = False,
+    ) -> dict[str, Any]:
+        """Retire one breakdown by an explicit user decision.
+
+        A completed result can be retired for an explicit prompt rerun.  Its
+        prior artifact is retained in the exclusion record and is carried into
+        the replacement audit when the new formal result is written.
+        """
+        if not item_ref.strip() or not actor.strip() or not reason.strip():
+            raise StateTransitionError("breakdown exclusion needs an item, the user and a reason")
+        prior = self.conn.execute(
+            "SELECT status, artifact_json, error_json FROM stage0_competitor_registration_item "
+            "WHERE registration_id=? AND step_name='breakdown' AND item_ref=? AND data_identity=?",
+            (registration_id, item_ref.strip(), self.data_identity),
+        ).fetchone()
+        if prior is None or str(prior["status"]) not in {"failed", "completed"}:
+            raise StateTransitionError("breakdown exclusion requires a current failed or completed breakdown")
+        try:
+            prior_error = json.loads(str(prior["error_json"] or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise StateTransitionError("failed breakdown record cannot be preserved") from exc
+        now = _now()
+        if str(prior["status"]) == "completed":
+            try:
+                prior_artifact = json.loads(str(prior["artifact_json"] or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise StateTransitionError("completed breakdown artifact cannot be preserved") from exc
+            exclusion_error = {
+                "reason": reason.strip(),
+                "failure_stage": "manual_prompt_rerun",
+                "failure_type": "UserRequestedPromptRerun",
+                "disposition": "retired_by_user",
+                "exclusion_scope": "manual_prompt_rerun",
+                "excluded_by": actor.strip(),
+                "excluded_at": now,
+                "retry_allowed": True,
+                "automatic_retry": False,
+                "prior_artifact": prior_artifact,
+                "prior_error": prior_error,
+            }
+        else:
+            if prompt_rerun:
+                try:
+                    prior_artifact = json.loads(str(prior["artifact_json"] or "{}"))
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise StateTransitionError("previous breakdown artifact cannot be preserved") from exc
+                exclusion_error = {
+                    **prior_error,
+                    "reason": reason.strip(),
+                    "failure_stage": "manual_prompt_rerun",
+                    "failure_type": "UserRequestedPromptRerun",
+                    "disposition": "retired_by_user",
+                    "exclusion_scope": "manual_prompt_rerun",
+                    "excluded_by": actor.strip(),
+                    "excluded_at": now,
+                    "retry_allowed": True,
+                    "automatic_retry": False,
+                    "prior_artifact": prior_artifact,
+                    "prior_error": prior_error,
+                }
+            else:
+                exclusion_error = {
+                    **prior_error,
+                    "original_failure": prior_error,
+                    "reason": reason.strip(),
+                    "disposition": "excluded_by_user",
+                    "exclusion_scope": "current_cold_start_review",
+                    "exclusion_reason": reason.strip(),
+                    "excluded_by": actor.strip(),
+                    "excluded_at": now,
+                    "retry_allowed": False,
+                    "automatic_retry": False,
+                }
+        with self.conn:
+            self.conn.execute(
+                "UPDATE stage0_competitor_registration_item "
+                "SET status='excluded', error_json=?, attempt_count=attempt_count+1, updated_at=? "
+                "WHERE registration_id=? AND step_name='breakdown' AND item_ref=? "
+                "AND data_identity=? AND status IN ('failed', 'completed')",
+                (
+                    _canonical(exclusion_error),
+                    now,
+                    registration_id,
+                    item_ref.strip(),
+                    self.data_identity,
+                ),
+            )
+        return {
+            "registration_id": registration_id,
+            "step_name": "breakdown",
+            "item_ref": item_ref,
+            "status": "excluded",
+            "disposition": str(exclusion_error["disposition"]),
+        }
 
     def record_replenished_competitor_material_collection_checkpoint(
         self,
@@ -3783,10 +9621,8 @@ class Stage0ContentProductionCore:
         self,
         *,
         cold_start_id: str,
-        actor: str,
+        actor: str | None = None,
     ) -> dict[str, Any]:
-        if not actor.strip():
-            raise StateTransitionError("tag-library construction requires an actor")
         existing = self.conn.execute(
             "SELECT 1 FROM stage0_cold_start_tag_library WHERE cold_start_id=? AND data_identity=?",
             (cold_start_id, self.data_identity),
@@ -4006,7 +9842,7 @@ class Stage0ContentProductionCore:
                     _canonical(candidate_set),
                     _canonical(tag_ids),
                     self.data_identity,
-                    actor,
+                    "",
                     now,
                 ),
             )
@@ -4130,7 +9966,14 @@ class Stage0ContentProductionCore:
             (tag_id,),
         )
 
-    def _hard_delete_cold_start_tag(self, *, cold_start_id: str, tag_id: str) -> None:
+    def _remove_cold_start_tag_records(self, *, cold_start_id: str, tag_id: str) -> None:
+        """Remove one tag owned by the current cold-start library.
+
+        The generic domain-tag deletion path is intentionally retired for
+        already-established search assets.  A pending or explicitly revised
+        cold-start library still needs its existing one-review delete/edit
+        semantics, so remove only records proven to belong to this library.
+        """
         row = self.conn.execute(
             "SELECT candidate_set_json, tag_ids_json FROM stage0_cold_start_tag_library "
             "WHERE cold_start_id=? AND data_identity=?",
@@ -4138,21 +9981,46 @@ class Stage0ContentProductionCore:
         ).fetchone()
         if row is None:
             raise StateTransitionError("the tag library does not exist")
-        if tag_id not in {str(value) for value in json.loads(row["tag_ids_json"])}:
+        original_ids = [str(value) for value in json.loads(row["tag_ids_json"])]
+        if tag_id not in set(original_ids):
             raise StateTransitionError("the tag does not belong to this cold-start library")
-        self._hard_delete_domain_tag(tag_id=tag_id)
+        candidate_set = json.loads(row["candidate_set_json"])
+        for key in ("retained", "filtered"):
+            candidate_set[key] = [
+                item
+                for item in candidate_set.get(key, [])
+                if not isinstance(item, dict) or str(item.get("tag_id") or "") != tag_id
+            ]
+        self.conn.execute(
+            "UPDATE stage0_cold_start_tag_library SET candidate_set_json=?, tag_ids_json=? "
+            "WHERE cold_start_id=? AND data_identity=?",
+            (
+                _canonical(candidate_set),
+                _canonical([value for value in original_ids if value != tag_id]),
+                cold_start_id,
+                self.data_identity,
+            ),
+        )
+        self.conn.execute("DELETE FROM discovered_external_videos WHERE tag_id=?", (tag_id,))
+        self.conn.execute("DELETE FROM domain_search_page_observation WHERE tag_id=?", (tag_id,))
+        self.conn.execute("DELETE FROM domain_search_cursor WHERE tag_id=?", (tag_id,))
+        self.conn.execute("DELETE FROM domain_search_tags WHERE tag_id=?", (tag_id,))
+
+    def _hard_delete_cold_start_tag(self, *, cold_start_id: str, tag_id: str) -> None:
+        """Compatibility name for the current cold-start review paths."""
+        self._remove_cold_start_tag_records(cold_start_id=cold_start_id, tag_id=tag_id)
 
     def delete_pending_cold_start_tag(
         self,
         *,
         cold_start_id: str,
         tag_id: str,
-        actor: str,
         actor_kind: str,
         reason: str,
+        actor: str = "",
     ) -> dict[str, Any]:
         """Permanently remove one pending tag when the user clicks delete."""
-        if actor_kind != "user" or not actor.strip() or not reason.strip():
+        if actor_kind != "user" or not reason.strip():
             raise StateTransitionError("tag deletion requires an explicit user decision")
         library = self.get_cold_start_tag_library(cold_start_id=cold_start_id)
         if library is None or library["status"] != "awaiting_human_review":
@@ -4176,7 +10044,7 @@ class Stage0ContentProductionCore:
                 "tag": candidate["tag"],
                 "status": "deleted",
                 "deleted_at": now,
-                "deleted_by": actor,
+                "deleted_by": None,
             }
             self._audit(None, "cold_start_tag_deleted_by_user", result)
         return result
@@ -4186,12 +10054,12 @@ class Stage0ContentProductionCore:
         *,
         cold_start_id: str,
         deleted_tag_ids: tuple[str, ...],
-        actor: str,
         actor_kind: str,
         reason: str,
+        actor: str = "",
     ) -> dict[str, Any]:
         """Apply one confirmed batch of deletions to an accepted tag library."""
-        if actor_kind != "user" or not actor.strip() or not reason.strip():
+        if actor_kind != "user" or not reason.strip():
             raise StateTransitionError("accepted tag-library revision requires an explicit user decision")
         normalized_ids = tuple(dict.fromkeys(
             str(tag_id).strip() for tag_id in deleted_tag_ids if str(tag_id).strip()
@@ -4223,7 +10091,7 @@ class Stage0ContentProductionCore:
                 "UPDATE stage0_cold_start_tag_library "
                 "SET reviewed_by=?, reviewed_at=?, review_reason=? "
                 "WHERE cold_start_id=? AND data_identity=? AND status='accepted'",
-                (actor, now, reason, cold_start_id, self.data_identity),
+                (None, now, reason, cold_start_id, self.data_identity),
             )
             result = {
                 "tag_library_id": library["tag_library_id"],
@@ -4232,7 +10100,7 @@ class Stage0ContentProductionCore:
                 "deleted_count": len(deleted_items),
                 "remaining_count": len(approved) - len(deleted_items),
                 "deleted_items": deleted_items,
-                "reviewed_by": actor,
+                "reviewed_by": None,
                 "reviewed_at": now,
             }
             self._audit(None, "accepted_cold_start_tag_library_revised_by_user", result)
@@ -4243,11 +10111,11 @@ class Stage0ContentProductionCore:
         *,
         cold_start_id: str,
         decisions: tuple[dict[str, str], ...],
-        actor: str,
         actor_kind: str,
         reason: str,
+        actor: str = "",
     ) -> dict[str, Any]:
-        if actor_kind != "user" or not actor.strip() or not reason.strip():
+        if actor_kind != "user" or not reason.strip():
             raise StateTransitionError("whole tag-library review requires an explicit user decision")
         library = self.get_cold_start_tag_library(cold_start_id=cold_start_id)
         if library is None or library["status"] != "awaiting_human_review":
@@ -4317,7 +10185,7 @@ class Stage0ContentProductionCore:
             self.conn.execute(
                 "UPDATE stage0_cold_start_tag_library SET status='accepted', reviewed_by=?, reviewed_at=?, "
                 "review_reason=? WHERE cold_start_id=? AND data_identity=? AND status='awaiting_human_review'",
-                (actor, _now(), reason, cold_start_id, self.data_identity),
+                (None, _now(), reason, cold_start_id, self.data_identity),
             )
             result = {
                 "tag_library_id": library["tag_library_id"],
@@ -4328,6 +10196,11 @@ class Stage0ContentProductionCore:
                 "rejected_count": rejected,
             }
             self._audit(None, "cold_start_tag_library_reviewed_as_a_whole", result)
+        result["cold_start_completion"] = self.try_complete_cold_start(
+            cold_start_id=cold_start_id,
+            trigger="tag_library_review",
+            actor="system",
+        )
         return result
 
     def build_two_week_tag_library_review(
@@ -4369,9 +10242,11 @@ class Stage0ContentProductionCore:
         hit_rows = self.conn.execute(
             "SELECT hit.hit_id, hit.platform_item_id, hit.title, account.account_name "
             "FROM hits hit JOIN competitor_accounts account ON account.account_id=hit.account_id "
+            "JOIN stage0_content_account formal_account ON formal_account.content_account_id=account.account_id "
+            "AND formal_account.data_identity=? AND formal_account.account_role='competitor' AND formal_account.status='active' "
             "WHERE account.domain_label=? AND hit.promoted_at>=? AND hit.promoted_at<? "
             "ORDER BY hit.promoted_at, hit.hit_id",
-            (domain_label, window_start, window_end),
+            (self.data_identity, domain_label, window_start, window_end),
         ).fetchall()
         raw_candidates: dict[str, dict[str, Any]] = {}
         author_names = {
@@ -4869,6 +10744,243 @@ class Stage0ContentProductionCore:
             )
         return model_run_id
 
+    def complete_daily_hit_material(
+        self,
+        *,
+        hit_id: str,
+        transcript_ref: str,
+        transcript_hash: str,
+        asr_model_ref: str,
+        vad_model_ref: str,
+        source_media_hash: str,
+        comments: list[dict[str, Any]],
+        run_id: str,
+    ) -> dict[str, Any]:
+        """Persist one daily hit's retained material before model analysis."""
+        hit = self.conn.execute(
+            "SELECT hit_id, preparation_status FROM hits WHERE hit_id=?",
+            (hit_id,),
+        ).fetchone()
+        if hit is None:
+            raise StateTransitionError("daily hit material refers to a missing hit")
+        transcript_path = Path(str(transcript_ref or "").strip())
+        if not transcript_path.is_file():
+            raise StateTransitionError("daily hit material lacks its retained transcript file")
+        transcript_text = transcript_path.read_text(encoding="utf-8").strip()
+        if not transcript_text:
+            raise StateTransitionError("daily hit material has an empty transcript")
+        normalized_comments: list[dict[str, Any]] = []
+        for position, comment in enumerate(comments, start=1):
+            if not isinstance(comment, dict):
+                continue
+            comment_id = str(comment.get("comment_id") or "").strip()
+            text = str(comment.get("text") or "").strip()
+            if not comment_id or not text:
+                continue
+            normalized_comments.append({
+                "comment_id": comment_id,
+                "text": text,
+                "like_count": int(comment.get("like_count") or 0),
+                "sample_rank": int(comment.get("sample_rank") or position),
+            })
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO hit_transcripts("
+                "transcript_id, hit_id, version, raw_transcript_text, cleaned_transcript_text, char_count, asr_model, "
+                "vad_model, processing_method, audio_sha256, quality_flags, processing_status, run_id"
+                ") VALUES (?, ?, 1, ?, ?, ?, ?, ?, 'local_sensevoice', ?, '', 'completed', ?)",
+                (
+                    f"{hit_id}_v1",
+                    hit_id,
+                    transcript_text,
+                    transcript_text,
+                    len(transcript_text),
+                    str(asr_model_ref or "not_reported"),
+                    str(vad_model_ref or "not_reported"),
+                    str(source_media_hash or ""),
+                    str(run_id or "daily_material"),
+                ),
+            )
+            for comment in normalized_comments:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO hit_comments("
+                    "hit_id, comment_id, text, like_count, parent_comment_id, sample_rank, purpose, observation_point, sampling_strategy, run_id"
+                    ") VALUES (?, ?, ?, ?, NULL, ?, 'daily_hit', NULL, 'top_n_by_platform_popularity', ?)",
+                    (
+                        hit_id,
+                        comment["comment_id"],
+                        comment["text"],
+                        comment["like_count"],
+                        comment["sample_rank"],
+                        str(run_id or "daily_material"),
+                    ),
+                )
+            self.conn.execute(
+                "UPDATE hits SET preparation_status='completed' WHERE hit_id=?",
+                (hit_id,),
+            )
+        return {
+            "hit_id": hit_id,
+            "status": "completed",
+            "transcript_hash": str(transcript_hash or ""),
+            "comment_count": len(normalized_comments),
+        }
+
+    def repair_daily_hit_comments(
+        self,
+        *,
+        hit_id: str,
+        platform_item_id: str,
+        comments: list[dict[str, Any]],
+        actor: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Restore comments for a completed daily hit from a saved detail capture."""
+        if not hit_id.strip() or not platform_item_id.strip() or not actor.strip() or not idempotency_key.strip():
+            raise StateTransitionError("daily comment repair requires a hit, source, actor and idempotency key")
+        if not isinstance(comments, list):
+            raise StateTransitionError("daily comment repair requires a comment list")
+        hit = self.conn.execute(
+            "SELECT hit_id, preparation_status, platform_item_id FROM hits WHERE hit_id=?",
+            (hit_id.strip(),),
+        ).fetchone()
+        if hit is None or str(hit["platform_item_id"]) != platform_item_id.strip():
+            raise StateTransitionError("daily comment repair source does not match the formal hit")
+        if str(hit["preparation_status"]) != "completed":
+            raise StateTransitionError("daily comment repair requires a completed hit material")
+        normalized: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for position, comment in enumerate(comments, start=1):
+            if not isinstance(comment, dict):
+                continue
+            comment_id = str(comment.get("comment_id") or comment.get("id") or "").strip()
+            text = str(comment.get("text") or comment.get("content") or "").strip()
+            if not comment_id or not text or comment_id in seen:
+                continue
+            seen.add(comment_id)
+            normalized.append({
+                "comment_id": comment_id,
+                "text": text,
+                "like_count": int(comment.get("like_count") or 0),
+                "sample_rank": int(comment.get("sample_rank") or position),
+            })
+        request = {
+            "hit_id": hit_id.strip(),
+            "platform_item_id": platform_item_id.strip(),
+            "comments": normalized,
+            "actor": actor.strip(),
+        }
+        replay = self._replay("repair_daily_hit_comments", idempotency_key, request)
+        if replay:
+            return replay
+        inserted = 0
+        with self.conn:
+            for comment in normalized:
+                cursor = self.conn.execute(
+                    "INSERT OR IGNORE INTO hit_comments("
+                    "hit_id, comment_id, text, like_count, parent_comment_id, sample_rank, purpose, "
+                    "observation_point, sampling_strategy, run_id"
+                    ") VALUES (?, ?, ?, ?, NULL, ?, 'daily_hit', NULL, 'top_n_by_platform_popularity', ?)",
+                    (
+                        hit_id.strip(), comment["comment_id"], comment["text"], comment["like_count"],
+                        comment["sample_rank"], f"{actor.strip()}:{platform_item_id.strip()}",
+                    ),
+                )
+                del cursor
+                inserted += int(self.conn.execute("SELECT changes()").fetchone()[0] or 0)
+            result = {
+                "hit_id": hit_id.strip(),
+                "platform_item_id": platform_item_id.strip(),
+                "status": "repaired" if inserted else "already_present",
+                "comment_count": inserted,
+            }
+            self._receipt("repair_daily_hit_comments", idempotency_key, request, result)
+            self._audit(None, "daily_hit_comments_repaired", {
+                **result, "actor": actor.strip(), "candidate_comment_count": len(normalized),
+            })
+        return result
+
+    def record_daily_hit_breakdown(
+        self,
+        *,
+        hit_id: str,
+        artifact: dict[str, Any],
+        model_run_id: str,
+    ) -> dict[str, Any]:
+        """Persist one validated daily breakdown as the current formal result."""
+        if not isinstance(artifact, dict) or not str(artifact.get("source_id") or "").strip():
+            raise StateTransitionError("daily breakdown artifact is missing its source identity")
+        hit = self.conn.execute(
+            "SELECT preparation_status FROM hits WHERE hit_id=?",
+            (hit_id,),
+        ).fetchone()
+        if hit is None or hit["preparation_status"] != "completed":
+            raise StateTransitionError("daily breakdown requires completed hit material")
+        existing = self.conn.execute(
+            "SELECT hit_id, model_run_id FROM stage0_daily_hit_breakdown "
+            "WHERE hit_id=? AND data_identity=?",
+            (hit_id, self.data_identity),
+        ).fetchone()
+        if existing is not None:
+            return {
+                "hit_id": hit_id,
+                "status": "already_completed",
+                "model_run_id": str(existing["model_run_id"]),
+            }
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage0_daily_hit_breakdown("
+                "hit_id, version, artifact_json, model_run_id, data_identity, created_at"
+                ") VALUES (?, 1, ?, ?, ?, ?)",
+                (
+                    hit_id,
+                    _canonical(artifact),
+                    str(model_run_id or "configured_business_analysis"),
+                    self.data_identity,
+                    _now(),
+                ),
+            )
+        return {"hit_id": hit_id, "status": "completed", "model_run_id": str(model_run_id)}
+
+    def record_daily_hit_processing_failure(
+        self,
+        *,
+        hit_id: str,
+        stage_name: str,
+        error: dict[str, Any],
+        run_id: str,
+    ) -> dict[str, Any]:
+        """Keep one durable failure receipt without falsely completing the hit."""
+        if not str(stage_name or "").strip() or not isinstance(error, dict):
+            raise StateTransitionError("daily hit failure record is incomplete")
+        hit = self.conn.execute(
+            "SELECT hit_id FROM hits WHERE hit_id=?",
+            (hit_id,),
+        ).fetchone()
+        if hit is None:
+            raise StateTransitionError("daily hit failure refers to a missing hit")
+        failure_id = _id("daily_hit_processing_failure")
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage0_daily_hit_processing_failure("
+                "failure_id, hit_id, stage_name, error_json, run_id, data_identity, created_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    failure_id,
+                    hit_id,
+                    str(stage_name).strip(),
+                    _canonical(error),
+                    str(run_id or "daily_processing"),
+                    self.data_identity,
+                    _now(),
+                ),
+            )
+        return {
+            "failure_id": failure_id,
+            "hit_id": hit_id,
+            "status": "recorded",
+        }
+
     def observe_unregistered_account(
         self,
         *,
@@ -4981,10 +11093,6 @@ class Stage0ContentProductionCore:
             content_account_id=competitor_id, account_role="competitor", display_name=review["account_display_name"],
             domain_label=review["domain_label"], external_account_ref=review["account_ref"], actor=actor,
         )
-        cold_start = self.start_cold_start(
-            cold_start_id=_id("competitor_registration_batch"), owned_account_id=str(owned_account_id),
-            competitor_account_ids=(competitor_id,), actor=actor, idempotency_key=idempotency_key,
-        )
         with self.conn:
             self.conn.execute(
                 "UPDATE stage0_unregistered_account_review SET status='accepted', decided_by=?, decided_at=?, decision_reason=? WHERE account_review_id=?",
@@ -4992,13 +11100,14 @@ class Stage0ContentProductionCore:
             )
         return {
             "account_review_id": account_review_id, "status": "accepted", "competitor_account_id": competitor_id,
-            "registration_id": cold_start["registration_ids"][0], "registration_status": "processing",
+            "registration_id": None,
+            "registration_status": "pending_full_cold_start",
         }
 
     def _activate_competitor_daily_tracking(self, *, registration_id: str) -> str:
         registration = self.get_competitor_registration(registration_id=registration_id)
         steps = {item["step_name"]: item["artifact_refs"] for item in self.list_competitor_registration_steps(registration_id=registration_id)}
-        if any(step not in steps for step in COMPETITOR_REGISTRATION_STEPS):
+        if any(step not in steps for step in COMPETITOR_TRACKING_ACTIVATION_STEPS):
             raise StateTransitionError("daily tracking activation requires every competitor registration step")
         account = self.conn.execute(
             "SELECT * FROM stage0_content_account WHERE content_account_id=? AND data_identity=?",
@@ -5020,8 +11129,13 @@ class Stage0ContentProductionCore:
         )
         sec_uid = source_value.rstrip("/").rsplit("/", 1)[-1].split("?", 1)[0]
         existing_account = self.conn.execute(
-            "SELECT account_id FROM competitor_accounts WHERE platform=? AND sec_uid=?", (platform, sec_uid)
+            "SELECT account_id, domain_label FROM competitor_accounts WHERE platform=? AND sec_uid=?", (platform, sec_uid)
         ).fetchone()
+        if existing_account is not None and str(existing_account["domain_label"] or "") != str(account["domain_label"]):
+            raise StateTransitionError(
+                f"external account {external_ref} already belongs to domain {existing_account['domain_label']}; "
+                "daily tracking cannot overwrite the original domain"
+            )
         tracking_account_id = str(existing_account["account_id"]) if existing_account else str(account["content_account_id"])
         now = datetime.now(timezone.utc)
         selected = {str(item.get("source_id")): item for item in signals[0].get("selected_items", [])}
@@ -5049,10 +11163,10 @@ class Stage0ContentProductionCore:
                 )
             else:
                 self.conn.execute(
-                    "UPDATE competitor_accounts SET domain_label=?, domain_name=?, account_name=?, homepage_url=?, "
+                    "UPDATE competitor_accounts SET account_name=?, homepage_url=?, "
                     "source_config_ref=?, registration_status='active' WHERE account_id=?",
                     (
-                        account["domain_label"], account["domain_label"], account["display_name"], homepage_url,
+                        account["display_name"], homepage_url,
                         f"stage0_competitor_registration:{registration_id}", tracking_account_id,
                     ),
                 )
@@ -5170,6 +11284,94 @@ class Stage0ContentProductionCore:
                     )
         return tracking_account_id
 
+    def reconcile_completed_competitor_hit_index(
+        self,
+        *,
+        domain_label: str | None = None,
+        actor: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Reconcile completed cold-start selections into the formal hit index.
+
+        This only replays already-saved registration artifacts.  It never
+        collects, downloads, transcribes, or calls a model.
+        """
+        if not actor.strip() or not idempotency_key.strip():
+            raise StateTransitionError("hit-index reconciliation requires an actor and idempotency key")
+        query = (
+            "SELECT registration_id FROM stage0_competitor_registration "
+            "WHERE status='completed' AND data_identity=?"
+        )
+        params: list[str] = [self.data_identity]
+        if domain_label is not None:
+            query += (
+                " AND competitor_account_id IN ("
+                "SELECT content_account_id FROM stage0_content_account "
+                "WHERE domain_label=? AND data_identity=?"
+                ")"
+            )
+            params.extend([str(domain_label), self.data_identity])
+        query += " ORDER BY registration_id"
+        registrations = self.conn.execute(query, tuple(params)).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in registrations:
+            registration_id = str(row["registration_id"])
+            step_names = {
+                str(step["step_name"])
+                for step in self.list_competitor_registration_steps(
+                    registration_id=registration_id
+                )
+            }
+            missing_steps = sorted(
+                set(COMPETITOR_TRACKING_ACTIVATION_STEPS) - step_names
+            )
+            if missing_steps:
+                if missing_steps != ["breakdown"]:
+                    results.append({
+                        "registration_id": registration_id,
+                        "status": "blocked_incomplete_formal_steps",
+                        "missing_steps": missing_steps,
+                    })
+                    continue
+                repair = self.repair_completed_registration_breakdown_step(
+                    registration_id=registration_id,
+                    actor=actor,
+                    idempotency_key=f"{idempotency_key}:{registration_id}:breakdown",
+                )
+                if repair["status"] not in {"repaired", "already_present"}:
+                    raise StateTransitionError("legacy registration breakdown repair did not complete")
+            before = self.conn.execute(
+                "SELECT COUNT(*) AS count FROM hits hit "
+                "JOIN competitor_accounts account ON account.account_id=hit.account_id "
+                "JOIN stage0_competitor_registration registration "
+                "ON account.source_config_ref='stage0_competitor_registration:' || registration.registration_id "
+                "WHERE registration.registration_id=?",
+                (registration_id,),
+            ).fetchone()
+            tracking_account_id = self._activate_competitor_daily_tracking(
+                registration_id=registration_id,
+            )
+            after = self.conn.execute(
+                "SELECT COUNT(*) AS count FROM hits WHERE account_id=?",
+                (tracking_account_id,),
+            ).fetchone()
+            results.append({
+                "registration_id": registration_id,
+                "status": "completed",
+                "tracking_account_id": tracking_account_id,
+                "hit_count_before": int(before["count"] if before else 0),
+                "hit_count_after": int(after["count"] if after else 0),
+            })
+        blocked = any(
+            item.get("status") == "blocked_incomplete_formal_steps"
+            for item in results
+        )
+        return {
+            "status": "completed_with_blocks" if blocked else "completed",
+            "registration_count": len(results),
+            "registrations": results,
+        }
+
     def complete_competitor_registration(
         self,
         *,
@@ -5215,23 +11417,16 @@ class Stage0ContentProductionCore:
                     "AND status='awaiting_human_review'",
                     (now, registration_id, self.data_identity),
                 )
-                remaining = self.conn.execute(
-                    "SELECT 1 FROM stage0_competitor_registration "
-                    "WHERE cold_start_id=? AND data_identity=? AND status!='completed' LIMIT 1",
-                    (registration["cold_start_id"], self.data_identity),
-                ).fetchone()
-                if remaining is None:
-                    self.conn.execute(
-                        "UPDATE stage0_cold_start SET status='awaiting_human_review' "
-                        "WHERE cold_start_id=? AND data_identity=? "
-                        "AND status='registering_competitors'",
-                        (registration["cold_start_id"], self.data_identity),
-                    )
                 self._audit(
                     None,
                     "competitor_registration_completion_reconciled_from_receipt",
                     result,
                 )
+            result["cold_start_completion"] = self.try_complete_cold_start(
+                cold_start_id=str(registration["cold_start_id"]),
+                trigger="competitor_registration_ready",
+                actor=actor,
+            )
             return result
         tracking_account_id = self._activate_competitor_daily_tracking(registration_id=registration_id)
         now = _now()
@@ -5240,71 +11435,14 @@ class Stage0ContentProductionCore:
                 "UPDATE stage0_competitor_registration SET current_step='completed', status='completed', completed_at=? WHERE registration_id=?",
                 (now, registration_id),
             )
-            remaining = self.conn.execute(
-                "SELECT 1 FROM stage0_competitor_registration WHERE cold_start_id=? AND data_identity=? AND status!='completed' LIMIT 1",
-                (registration["cold_start_id"], self.data_identity),
-            ).fetchone()
-            if remaining is None:
-                self.conn.execute(
-                    "UPDATE stage0_cold_start SET status='awaiting_human_review' WHERE cold_start_id=? AND data_identity=? AND status='registering_competitors'",
-                    (registration["cold_start_id"], self.data_identity),
-                )
             result = {"registration_id": registration_id, "status": "completed", "daily_tracking_account_id": tracking_account_id}
             self._receipt("complete_competitor_registration", idempotency_key, request, result)
             self._audit(None, "competitor_registration_completed_automatically", result)
-        return result
-
-    def confirm_cold_start(
-        self,
-        *,
-        cold_start_id: str,
-        actor: str,
-        actor_kind: str,
-        reason: str,
-        idempotency_key: str,
-    ) -> dict[str, str]:
-        """Accept a cold start only after every required competitor registration is complete."""
-        if actor_kind != "user" or not actor.strip() or not reason.strip():
-            raise StateTransitionError("cold start confirmation requires an explicit user decision")
-        cold_start = self.conn.execute(
-            "SELECT * FROM stage0_cold_start WHERE cold_start_id=? AND data_identity=?", (cold_start_id, self.data_identity)
-        ).fetchone()
-        if cold_start is None or cold_start["status"] != "awaiting_human_review":
-            raise StateTransitionError("cold start is not awaiting human review")
-        missing_breakdowns = self.conn.execute(
-            "SELECT COUNT(*) FROM stage0_competitor_registration_item material "
-            "JOIN stage0_competitor_registration registration "
-            "ON registration.registration_id=material.registration_id "
-            "LEFT JOIN stage0_competitor_registration_item breakdown "
-            "ON breakdown.registration_id=material.registration_id AND breakdown.item_ref=material.item_ref "
-            "AND breakdown.data_identity=material.data_identity AND breakdown.step_name='breakdown' "
-            "WHERE registration.cold_start_id=? AND material.data_identity=? "
-            "AND material.step_name='transcripts_and_comments' AND material.status='completed' "
-            "AND (breakdown.status IS NULL OR breakdown.status!='completed')",
-            (cold_start_id, self.data_identity),
-        ).fetchone()[0]
-        if int(missing_breakdowns):
-            raise StateTransitionError(
-                f"cold start still needs {int(missing_breakdowns)} completed deep breakdowns before final confirmation"
-            )
-        request = {"cold_start_id": cold_start_id, "actor": actor, "reason": reason}
-        replay = self._replay("confirm_cold_start", idempotency_key, request)
-        if replay:
-            return replay
-        now = _now()
-        with self.conn:
-            self.conn.execute(
-                "UPDATE stage0_cold_start SET status='completed', completed_at=? WHERE cold_start_id=?",
-                (now, cold_start_id),
-            )
-            self.conn.execute(
-                "UPDATE stage0_cold_start_configuration SET status='completed' "
-                "WHERE cold_start_id=? AND data_identity=? AND status='started'",
-                (cold_start_id, self.data_identity),
-            )
-            result = {"cold_start_id": cold_start_id, "status": "completed"}
-            self._receipt("confirm_cold_start", idempotency_key, request, result)
-            self._audit(None, "cold_start_confirmed", result)
+        result["cold_start_completion"] = self.try_complete_cold_start(
+            cold_start_id=str(registration["cold_start_id"]),
+            trigger="competitor_registration_ready",
+            actor=actor,
+        )
         return result
 
     def discard_cold_start_breakdown_history(
@@ -5328,7 +11466,7 @@ class Stage0ContentProductionCore:
             "SELECT status FROM stage0_cold_start WHERE cold_start_id=? AND data_identity=?",
             (cold_start_id, self.data_identity),
         ).fetchone()
-        if cold_start is None or str(cold_start["status"]) != "awaiting_human_review":
+        if cold_start is None or str(cold_start["status"]) != "waiting_human":
             raise StateTransitionError("breakdown replacement requires a cold start awaiting final review")
         request = {"cold_start_id": cold_start_id, "actor": actor, "reason": reason}
         replay = self._replay("discard_cold_start_breakdown_history", idempotency_key, request)
@@ -5400,6 +11538,119 @@ class Stage0ContentProductionCore:
             self._audit(None, "cold_start_breakdown_history_discarded", result)
         return result
 
+    def list_prepared_material_cards(self) -> list[dict[str, Any]]:
+        """Return source-bound material cards for the readable knowledge mirror.
+
+        The formal registration item is the source of truth.  This read model
+        joins the completed or failed preparation record with the original
+        high-signal selection and the latest breakdown record, so the mirror
+        can update one stable card as the source moves through the pipeline.
+        """
+        rows = self.conn.execute(
+            "SELECT item.registration_id, item.item_ref, item.status, "
+            "item.artifact_json, item.error_json, item.updated_at, "
+            "registration.cold_start_id, account.display_name, account.domain_label "
+            "FROM stage0_competitor_registration_item item "
+            "JOIN stage0_competitor_registration registration "
+            "ON registration.registration_id=item.registration_id "
+            "AND registration.data_identity=item.data_identity "
+            "JOIN stage0_content_account account "
+            "ON account.content_account_id=registration.competitor_account_id "
+            "AND account.data_identity=registration.data_identity "
+            "WHERE item.data_identity=? AND item.step_name='transcripts_and_comments' "
+            "AND item.status IN ('completed', 'failed') "
+            "ORDER BY item.updated_at, item.registration_id, item.item_ref",
+            (self.data_identity,),
+        ).fetchall()
+        if not rows:
+            return []
+
+        registration_ids = sorted({str(row["registration_id"]) for row in rows})
+        selection_by_registration: dict[str, dict[str, dict[str, Any]]] = {}
+        for registration_id in registration_ids:
+            step = self.conn.execute(
+                "SELECT artifact_refs_json FROM stage0_competitor_registration_step "
+                "WHERE registration_id=? AND step_name='high_signal_identification' "
+                "AND data_identity=? ORDER BY completed_at DESC, step_record_id DESC LIMIT 1",
+                (registration_id, self.data_identity),
+            ).fetchone()
+            if step is None:
+                continue
+            try:
+                payload = _hide_build_root_paths(json.loads(str(step["artifact_refs_json"])))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+            selected: dict[str, dict[str, Any]] = {}
+            for artifact in payload.get("artifact_refs", []) if isinstance(payload, dict) else []:
+                if not isinstance(artifact, dict):
+                    continue
+                for item in artifact.get("selected_items", []):
+                    if not isinstance(item, dict):
+                        continue
+                    source_id = str(item.get("source_id") or "").strip()
+                    if source_id:
+                        selected[source_id] = item
+            selection_by_registration[registration_id] = selected
+
+        breakdown_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+        breakdown_rows = self.conn.execute(
+            "SELECT registration_id, item_ref, status, artifact_json, error_json, updated_at "
+            "FROM stage0_competitor_registration_item "
+            "WHERE data_identity=? AND step_name='breakdown' "
+            "AND registration_id IN (" + ",".join("?" for _ in registration_ids) + ")",
+            [self.data_identity, *registration_ids],
+        ).fetchall()
+        for row in breakdown_rows:
+            try:
+                artifact = _hide_build_root_paths(json.loads(str(row["artifact_json"])))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                artifact = {}
+            try:
+                error = _hide_build_root_paths(json.loads(str(row["error_json"])))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                error = {}
+            breakdown_by_key[(str(row["registration_id"]), str(row["item_ref"]))] = {
+                "status": str(row["status"]),
+                "artifact": artifact if isinstance(artifact, dict) else {},
+                "error": error if isinstance(error, dict) else {},
+                "updated_at": str(row["updated_at"]),
+            }
+
+        cards: list[dict[str, Any]] = []
+        for row in rows:
+            registration_id = str(row["registration_id"])
+            source_id = str(row["item_ref"])
+            try:
+                material = _hide_build_root_paths(json.loads(str(row["artifact_json"])))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                material = {}
+            try:
+                material_error = _hide_build_root_paths(json.loads(str(row["error_json"])))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                material_error = {}
+            selected = dict(selection_by_registration.get(registration_id, {}).get(source_id) or {})
+            breakdown = breakdown_by_key.get((registration_id, source_id))
+            cards.append({
+                "registration_id": registration_id,
+                "cold_start_id": str(row["cold_start_id"]),
+                "source_id": source_id,
+                "domain_label": str(row["domain_label"]),
+                "account_name": str(row["display_name"]),
+                "title": str(selected.get("title") or source_id),
+                "url": str(selected.get("url") or (material.get("source_url") if isinstance(material, dict) else "") or ""),
+                "publish_time": str(selected.get("publish_time") or selected.get("published_at") or ""),
+                "metrics": dict((material or {}).get("metrics") or {}) if isinstance(material, dict) else {},
+                "material_status": str(row["status"]),
+                "material": material if isinstance(material, dict) else {},
+                "material_error": material_error if isinstance(material_error, dict) else {},
+                "material_updated_at": str(row["updated_at"]),
+                "breakdown_status": str(breakdown["status"]) if breakdown else "pending",
+                "breakdown": dict(breakdown["artifact"]) if breakdown else {},
+                "breakdown_error": dict(breakdown["error"]) if breakdown else {},
+                "breakdown_updated_at": str(breakdown["updated_at"]) if breakdown else "",
+            })
+        return cards
+
     def list_cold_start_breakdown_materials(self, *, cold_start_id: str) -> list[dict[str, Any]]:
         """Return retained formal source materials for the one current replacement run."""
         rows = self.conn.execute(
@@ -5457,7 +11708,7 @@ class Stage0ContentProductionCore:
         snapshot = [
             {"registration_id": str(item["registration_id"]), "source_id": str(item["source_id"])}
             for item in materials
-            if (str(item["registration_id"]), str(item["source_id"])) not in existing
+            if existing.get((str(item["registration_id"]), str(item["source_id"]))) in {None, "failed"}
         ]
         if len(snapshot) != expected_pending_count:
             raise StateTransitionError(
@@ -5496,31 +11747,245 @@ class Stage0ContentProductionCore:
             "completed_at": row["completed_at"],
         }
 
+    def create_active_mixed_breakdown_replacement_task(
+        self,
+        *,
+        approval: dict[str, str],
+        expected_count: int,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Freeze exactly the active completed records still using mixed or unclear labels."""
+        actor = str(approval.get("actor") or "").strip()
+        conversation_ref = str(
+            approval.get("session_ref") or approval.get("conversation_ref") or ""
+        ).strip()
+        if not actor or not conversation_ref or expected_count < 1 or not reason.strip():
+            raise StateTransitionError("mixed breakdown replacement needs explicit approval, count and reason")
+        rows = self.conn.execute(
+            "SELECT item.registration_id, item.item_ref, item.artifact_json, registration.cold_start_id "
+            "FROM stage0_competitor_registration_item item "
+            "JOIN stage0_competitor_registration registration "
+            "ON registration.registration_id=item.registration_id "
+            "AND registration.data_identity=item.data_identity "
+            "JOIN stage0_content_account account "
+            "ON account.content_account_id=registration.competitor_account_id "
+            "AND account.data_identity=registration.data_identity "
+            "WHERE item.data_identity=? AND item.step_name='breakdown' "
+            "AND item.status='completed' AND account.status='active' "
+            "ORDER BY item.item_ref",
+            (self.data_identity,),
+        ).fetchall()
+        selected: list[dict[str, str]] = []
+        cold_start_ids: set[str] = set()
+        for row in rows:
+            try:
+                artifact = json.loads(str(row["artifact_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            deep = artifact.get("deep_breakdown") if isinstance(artifact, dict) else None
+            if not isinstance(deep, dict):
+                continue
+            subject = str(deep.get("content_subject_type") or "unclear")
+            expression = str(deep.get("expression_form") or "unclear")
+            if subject not in {"mixed", "unclear"} and expression not in {"mixed", "unclear"}:
+                continue
+            selected.append({
+                "registration_id": str(row["registration_id"]),
+                "source_id": str(row["item_ref"]),
+            })
+            cold_start_ids.add(str(row["cold_start_id"]))
+        if len(selected) != expected_count:
+            raise StateTransitionError(
+                f"active mixed breakdown set changed before launch: expected {expected_count}, found {len(selected)}"
+            )
+        if len(cold_start_ids) != 1:
+            raise StateTransitionError("active mixed breakdown replacement must belong to one cold start")
+        cold_start_id = next(iter(cold_start_ids))
+        active = self.conn.execute(
+            "SELECT 1 FROM stage0_competitor_breakdown_backlog_task "
+            "WHERE cold_start_id=? AND data_identity=? AND status IN ('queued', 'running') LIMIT 1",
+            (cold_start_id, self.data_identity),
+        ).fetchone()
+        if active is not None:
+            raise StateTransitionError("this cold start already has an active formal breakdown task")
+        task_id = _id("competitor_breakdown_backlog")
+        now = _now()
+        summary = {
+            "mode": "replace_active_mixed",
+            "source_count": len(selected),
+            "completed": 0,
+            "failed": 0,
+            "pending": len(selected),
+            "failed_source_ids": [],
+            "failure_reasons": {},
+            "failure_details": {},
+            "automatic_retry": False,
+        }
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage0_competitor_breakdown_backlog_task("
+                "backlog_task_id, cold_start_id, status, source_snapshot_json, approval_json, summary_json, "
+                "data_identity, created_at, updated_at, completed_at) VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, NULL)",
+                (
+                    task_id,
+                    cold_start_id,
+                    _canonical(selected),
+                    _canonical(approval),
+                    _canonical(summary),
+                    self.data_identity,
+                    now,
+                    now,
+                ),
+            )
+            result = self.get_competitor_breakdown_backlog_task(backlog_task_id=task_id)
+            self._receipt(
+                "create_active_mixed_breakdown_replacement_task",
+                f"{conversation_ref}:{task_id}",
+                {"expected_count": expected_count, "reason": reason.strip(), "actor": actor},
+                result,
+            )
+            self._audit(None, "active_mixed_breakdown_replacement_task_created", result)
+        return result
+
+    @staticmethod
+    def _breakdown_uses_mixed_or_unclear(artifact_json: str) -> bool:
+        try:
+            artifact = json.loads(artifact_json)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False
+        deep = artifact.get("deep_breakdown") if isinstance(artifact, dict) else None
+        if not isinstance(deep, dict):
+            return False
+        subject = str(deep.get("content_subject_type") or "unclear")
+        expression = str(deep.get("expression_form") or "unclear")
+        return subject in {"mixed", "unclear"} or expression in {"mixed", "unclear"}
+
+    def replace_completed_mixed_competitor_breakdown(
+        self,
+        *,
+        registration_id: str,
+        source_id: str,
+        artifact: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Atomically swap one validated candidate for its current mixed result."""
+        deep = artifact.get("deep_breakdown") if isinstance(artifact, dict) else None
+        if not isinstance(deep, dict) or str(artifact.get("source_id") or "") != source_id:
+            raise StateTransitionError("replacement breakdown candidate is invalid")
+        if (
+            str(deep.get("content_subject_type") or "unclear") in {"mixed", "unclear"}
+            or str(deep.get("expression_form") or "unclear") in {"mixed", "unclear"}
+        ):
+            raise StateTransitionError("replacement breakdown still uses mixed or unclear classification")
+        prior = self.conn.execute(
+            "SELECT item.artifact_json FROM stage0_competitor_registration_item item "
+            "JOIN stage0_competitor_registration registration "
+            "ON registration.registration_id=item.registration_id AND registration.data_identity=item.data_identity "
+            "JOIN stage0_content_account account "
+            "ON account.content_account_id=registration.competitor_account_id "
+            "AND account.data_identity=registration.data_identity "
+            "WHERE item.registration_id=? AND item.item_ref=? AND item.step_name='breakdown' "
+            "AND item.status='completed' AND item.data_identity=? AND account.status='active'",
+            (registration_id, source_id, self.data_identity),
+        ).fetchone()
+        if prior is None or not self._breakdown_uses_mixed_or_unclear(str(prior["artifact_json"])):
+            raise StateTransitionError("replacement target is no longer an active mixed breakdown")
+        new_model_run_id = str(artifact.get("model_run_id") or "").strip()
+        old_model_run_ids = [
+            str(row["model_run_id"])
+            for row in self.conn.execute(
+                "SELECT DISTINCT model_run_id FROM stage0_competitor_breakdown_attempt "
+                "WHERE registration_id=? AND source_id=? AND data_identity=? AND model_run_id IS NOT NULL",
+                (registration_id, source_id, self.data_identity),
+            ).fetchall()
+            if str(row["model_run_id"]) != new_model_run_id
+        ]
+        now = _now()
+        with self.conn:
+            self.conn.execute(
+                "DELETE FROM stage0_competitor_breakdown_attempt "
+                "WHERE registration_id=? AND source_id=? AND data_identity=?",
+                (registration_id, source_id, self.data_identity),
+            )
+            if old_model_run_ids:
+                placeholders = ",".join("?" for _ in old_model_run_ids)
+                self.conn.execute(
+                    "DELETE FROM stage0_competitor_registration_model_run "
+                    f"WHERE registration_model_run_id IN ({placeholders}) AND data_identity=?",
+                    [*old_model_run_ids, self.data_identity],
+                )
+            self.conn.execute(
+                "UPDATE stage0_competitor_registration_item "
+                "SET artifact_json=?, error_json='{}', attempt_count=attempt_count+1, updated_at=? "
+                "WHERE registration_id=? AND step_name='breakdown' AND item_ref=? "
+                "AND data_identity=? AND status='completed'",
+                (_canonical(artifact), now, registration_id, source_id, self.data_identity),
+            )
+            self.conn.execute(
+                "INSERT INTO stage0_competitor_breakdown_attempt VALUES (?, ?, ?, 'initial', 'completed', '', ?, "
+                "'available', ?, ?, ?)",
+                (
+                    _id("competitor_breakdown_attempt"),
+                    registration_id,
+                    source_id,
+                    str(artifact.get("raw_model_output") or ""),
+                    new_model_run_id or None,
+                    self.data_identity,
+                    now,
+                ),
+            )
+        return {"registration_id": registration_id, "source_id": source_id, "status": "completed"}
+
     def competitor_breakdown_backlog_task_progress(self, *, backlog_task_id: str) -> dict[str, Any]:
         task = self.get_competitor_breakdown_backlog_task(backlog_task_id=backlog_task_id)
         snapshot = task["source_snapshot"]
         rows = self.conn.execute(
-            "SELECT item.registration_id, item.item_ref, item.status "
+            "SELECT item.registration_id, item.item_ref, item.status, item.artifact_json "
             "FROM stage0_competitor_registration_item item "
             "WHERE item.data_identity=? AND item.step_name='breakdown'",
             (self.data_identity,),
         ).fetchall()
-        states = {(str(row["registration_id"]), str(row["item_ref"])): str(row["status"]) for row in rows}
+        states = {
+            (str(row["registration_id"]), str(row["item_ref"])): (
+                str(row["status"]), str(row["artifact_json"])
+            )
+            for row in rows
+        }
+        prior_summary = task.get("summary") if isinstance(task.get("summary"), dict) else {}
+        mode = str(prior_summary.get("mode") or "")
+        failed_source_ids = {
+            str(value) for value in prior_summary.get("failed_source_ids") or [] if str(value)
+        }
         completed = failed = 0
         for item in snapshot:
-            status = states.get((str(item["registration_id"]), str(item["source_id"])))
-            if status == "completed":
+            source_id = str(item["source_id"])
+            state = states.get((str(item["registration_id"]), source_id))
+            status = state[0] if state is not None else None
+            if mode == "replace_active_mixed":
+                if source_id in failed_source_ids:
+                    failed += 1
+                elif status == "completed" and state is not None and not self._breakdown_uses_mixed_or_unclear(state[1]):
+                    completed += 1
+            elif status == "completed":
                 completed += 1
             elif status == "failed":
                 failed += 1
+        summary = {
+            "source_count": len(snapshot),
+            "completed": completed,
+            "failed": failed,
+            "pending": len(snapshot) - completed - failed,
+        }
+        if mode:
+            summary.update({
+                "mode": mode,
+                "failed_source_ids": sorted(failed_source_ids),
+                "failure_reasons": dict(prior_summary.get("failure_reasons") or {}),
+                "failure_details": dict(prior_summary.get("failure_details") or {}),
+                "automatic_retry": bool(prior_summary.get("automatic_retry")),
+            })
         return {
             **task,
-            "summary": {
-                "source_count": len(snapshot),
-                "completed": completed,
-                "failed": failed,
-                "pending": len(snapshot) - completed - failed,
-            },
+            "summary": summary,
         }
 
     def update_competitor_breakdown_backlog_task(
@@ -5542,6 +12007,121 @@ class Stage0ContentProductionCore:
                 (status, _canonical(summary), now, completed_at, backlog_task_id, self.data_identity),
             )
         return self.get_competitor_breakdown_backlog_task(backlog_task_id=backlog_task_id)
+
+    def replace_competitor_breakdown_batch(
+        self,
+        *,
+        cold_start_id: str,
+        approval: dict[str, str],
+        reason: str,
+    ) -> dict[str, Any]:
+        """Delete one cold-start's old breakdown material and queue a clean replacement batch."""
+        actor = str(approval.get("actor") or "").strip()
+        conversation_ref = str(approval.get("conversation_ref") or "").strip()
+        if not actor or not conversation_ref or not reason.strip():
+            raise StateTransitionError("breakdown batch replacement needs explicit user approval and a reason")
+        cold_start = self.conn.execute(
+            "SELECT 1 FROM stage0_cold_start WHERE cold_start_id=? AND data_identity=?",
+            (cold_start_id, self.data_identity),
+        ).fetchone()
+        if cold_start is None:
+            raise StateTransitionError("breakdown batch replacement does not belong to this data identity")
+        active = self.conn.execute(
+            "SELECT 1 FROM stage0_competitor_breakdown_backlog_task "
+            "WHERE cold_start_id=? AND data_identity=? AND status IN ('queued', 'running') LIMIT 1",
+            (cold_start_id, self.data_identity),
+        ).fetchone()
+        if active is not None:
+            raise StateTransitionError("cannot replace a breakdown batch while another batch is running")
+        materials = self.list_cold_start_breakdown_materials(cold_start_id=cold_start_id)
+        if not materials:
+            raise StateTransitionError("breakdown batch replacement found no retained prepared materials")
+        registration_ids = sorted({str(item["registration_id"]) for item in materials})
+        placeholders = ",".join("?" for _ in registration_ids)
+        query_args = [*registration_ids, self.data_identity]
+        snapshot = [
+            {"registration_id": str(item["registration_id"]), "source_id": str(item["source_id"])}
+            for item in materials
+        ]
+        old_attempt_count = int(self.conn.execute(
+            "SELECT COUNT(*) FROM stage0_competitor_breakdown_attempt "
+            f"WHERE registration_id IN ({placeholders}) AND data_identity=?",
+            query_args,
+        ).fetchone()[0])
+        old_item_count = int(self.conn.execute(
+            "SELECT COUNT(*) FROM stage0_competitor_registration_item "
+            f"WHERE registration_id IN ({placeholders}) AND step_name=? AND data_identity=?",
+            [*registration_ids, "breakdown", self.data_identity],
+        ).fetchone()[0])
+        old_model_run_count = int(self.conn.execute(
+            "SELECT COUNT(*) FROM stage0_competitor_registration_model_run "
+            f"WHERE registration_id IN ({placeholders}) AND step_name=? AND data_identity=?",
+            [*registration_ids, "breakdown", self.data_identity],
+        ).fetchone()[0])
+        old_backlog_count = int(self.conn.execute(
+            "SELECT COUNT(*) FROM stage0_competitor_breakdown_backlog_task "
+            "WHERE cold_start_id=? AND data_identity=?",
+            (cold_start_id, self.data_identity),
+        ).fetchone()[0])
+        task_id = _id("competitor_breakdown_backlog")
+        now = _now()
+        summary = {"source_count": len(snapshot), "completed": 0, "failed": 0, "pending": len(snapshot)}
+        request = {
+            "cold_start_id": cold_start_id,
+            "actor": actor,
+            "conversation_ref": conversation_ref,
+            "reason": reason.strip(),
+            "source_count": len(snapshot),
+        }
+        with self.conn:
+            self.conn.execute(
+                "DELETE FROM stage0_competitor_breakdown_attempt "
+                f"WHERE registration_id IN ({placeholders}) AND data_identity=?",
+                query_args,
+            )
+            self.conn.execute(
+                "DELETE FROM stage0_competitor_registration_model_run "
+                f"WHERE registration_id IN ({placeholders}) AND step_name=? AND data_identity=?",
+                [*registration_ids, "breakdown", self.data_identity],
+            )
+            self.conn.execute(
+                "DELETE FROM stage0_competitor_registration_item "
+                f"WHERE registration_id IN ({placeholders}) AND step_name=? AND data_identity=?",
+                [*registration_ids, "breakdown", self.data_identity],
+            )
+            self.conn.execute(
+                "DELETE FROM stage0_competitor_breakdown_backlog_task "
+                "WHERE cold_start_id=? AND data_identity=?",
+                (cold_start_id, self.data_identity),
+            )
+            self.conn.execute(
+                "INSERT INTO stage0_competitor_breakdown_backlog_task("
+                "backlog_task_id, cold_start_id, status, source_snapshot_json, approval_json, summary_json, "
+                "data_identity, created_at, updated_at, completed_at) VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, NULL)",
+                (
+                    task_id,
+                    cold_start_id,
+                    _canonical(snapshot),
+                    _canonical({"kind": "natural_dialogue", "actor": actor, "conversation_ref": conversation_ref}),
+                    _canonical(summary),
+                    self.data_identity,
+                    now,
+                    now,
+                ),
+            )
+            result = self.get_competitor_breakdown_backlog_task(backlog_task_id=task_id)
+            result.update({
+                "replacement": True,
+                "source_count": len(snapshot),
+                "deleted_breakdown_attempts": old_attempt_count,
+                "deleted_breakdown_items": old_item_count,
+                "deleted_breakdown_model_runs": old_model_run_count,
+                "deleted_backlog_tasks": old_backlog_count,
+                "formal_business_data_written": True,
+            })
+            self._receipt("replace_competitor_breakdown_batch", f"{conversation_ref}:{cold_start_id}", request, result)
+            self._audit(None, "competitor_breakdown_batch_replaced", result)
+        return result
 
     def discard_failed_breakdown_for_replacement(
         self,
@@ -5582,16 +12162,24 @@ class Stage0ContentProductionCore:
         if material is None or failed is None or str(failed["status"]) != "failed":
             raise StateTransitionError("only one current failed breakdown with retained source material may be retried")
         with self.conn:
-            model_run_count = int(self.conn.execute(
-                "SELECT COUNT(*) FROM stage0_competitor_registration_model_run "
-                "WHERE registration_id=? AND data_identity=? AND step_name='breakdown'",
-                (registration_id, self.data_identity),
-            ).fetchone()[0])
-            self.conn.execute(
-                "DELETE FROM stage0_competitor_registration_model_run "
-                "WHERE registration_id=? AND data_identity=? AND step_name='breakdown'",
-                (registration_id, self.data_identity),
-            )
+            failed_model_run_ids = [
+                str(row["model_run_id"])
+                for row in self.conn.execute(
+                    "SELECT DISTINCT model_run_id FROM stage0_competitor_breakdown_attempt "
+                    "WHERE registration_id=? AND source_id=? AND data_identity=? "
+                    "AND outcome!='completed' AND model_run_id IS NOT NULL",
+                    (registration_id, source_id, self.data_identity),
+                ).fetchall()
+            ]
+            model_run_count = len(failed_model_run_ids)
+            if failed_model_run_ids:
+                placeholders = ",".join("?" for _ in failed_model_run_ids)
+                self.conn.execute(
+                    "DELETE FROM stage0_competitor_registration_model_run "
+                    f"WHERE registration_model_run_id IN ({placeholders}) "
+                    "AND registration_id=? AND data_identity=? AND step_name='breakdown'",
+                    [*failed_model_run_ids, registration_id, self.data_identity],
+                )
             self.conn.execute(
                 "DELETE FROM stage0_competitor_registration_item WHERE registration_id=? AND item_ref=? "
                 "AND data_identity=? AND step_name='breakdown' AND status='failed'",
@@ -6470,6 +13058,42 @@ class Stage0ContentProductionCore:
             result.append(item)
         return result
 
+    def retire_human_decision_carrier(
+        self,
+        *,
+        carrier_binding_id: str,
+        reason: str,
+        actor: str,
+    ) -> dict[str, str]:
+        """Retire a removed transport without leaving it as an active carrier."""
+        if not all(str(value).strip() for value in (carrier_binding_id, reason, actor)):
+            raise StateTransitionError("retiring a human decision carrier requires an identity, reason and actor")
+        binding = self.conn.execute(
+            "SELECT * FROM stage0_human_decision_carrier_binding WHERE carrier_binding_id=? AND data_identity=?",
+            (carrier_binding_id.strip(), self.data_identity),
+        ).fetchone()
+        if binding is None:
+            raise StateTransitionError("human decision carrier does not exist in this data identity")
+        if binding["status"] == "retired":
+            return {"carrier_binding_id": carrier_binding_id.strip(), "status": "retired"}
+        try:
+            evidence = json.loads(binding["validation_evidence_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            evidence = {}
+        evidence = dict(evidence) if isinstance(evidence, dict) else {}
+        evidence.update({"retired_reason": reason.strip(), "retired_at": _now()})
+        now = _now()
+        with self.conn:
+            self.conn.execute(
+                "UPDATE stage0_human_decision_carrier_binding SET status='retired', validation_evidence_json=?, validated_by=?, validated_at=? WHERE carrier_binding_id=? AND data_identity=?",
+                (_canonical(evidence), actor.strip(), now, carrier_binding_id.strip(), self.data_identity),
+            )
+            self._audit(None, "human_decision_carrier_retired", {
+                "carrier_binding_id": carrier_binding_id.strip(),
+                "reason": reason.strip(),
+            })
+        return {"carrier_binding_id": carrier_binding_id.strip(), "status": "retired"}
+
     def receive_human_decision_command(
         self,
         *,
@@ -6481,15 +13105,16 @@ class Stage0ContentProductionCore:
         payload: dict[str, Any],
         actor: str,
         actor_kind: str,
+        trusted_internal_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if actor_kind != "user" or not all(str(value).strip() for value in (command_id, session_ref, action, target_ref, actor)):
             raise StateTransitionError("formal human command requires a user, session, action and target")
         binding = self.conn.execute(
-            "SELECT status FROM stage0_human_decision_carrier_binding WHERE carrier_binding_id=? AND data_identity=?",
+            "SELECT status, carrier_kind, entry_ref FROM stage0_human_decision_carrier_binding WHERE carrier_binding_id=? AND data_identity=?",
             (carrier_binding_id, self.data_identity),
         ).fetchone()
-        if binding is None or binding["status"] != "validated":
-            raise StateTransitionError("formal human command requires a validated carrier binding")
+        if binding is None:
+            raise StateTransitionError("formal human command requires a registered carrier binding")
         existing = self.conn.execute(
             "SELECT * FROM stage0_human_decision_command WHERE command_id=? AND data_identity=?",
             (command_id, self.data_identity),
@@ -6665,6 +13290,8 @@ class Stage0ContentProductionCore:
         prompt_version: str,
         skill_version: str,
         idempotency_key: str,
+        model_route: ModelRoute | None = None,
+        external_execution: bool = False,
     ) -> dict[str, str]:
         run, source = self._discovery_run(run_id), self._discovery_source(source_version_id)
         if run["status"] != "processing" or source["run_id"] != run_id:
@@ -6672,17 +13299,27 @@ class Stage0ContentProductionCore:
         filter_row = self.conn.execute("SELECT outcome FROM stage1b_filter_result WHERE source_version_id=?", (source_version_id,)).fetchone()
         if filter_row is None or filter_row["outcome"] != "eligible":
             raise StateTransitionError("LLM input may only be assembled for deterministically eligible sources")
-        route = self._resolve_discovery_model_route()
+        if external_execution and model_route is not None:
+            raise StateTransitionError("external intelligence assembly cannot contain a model route")
+        route = None if external_execution else (model_route or self._resolve_discovery_model_route())
         stored_payload = dict(payload)
-        stored_payload["model_binding"] = {
-            "route_id": route.route_id,
-            "provider_name": route.provider_name,
-            "provider_ref": route.provider_ref,
-            "model_name": route.model_name,
-            "config_version": route.config_version,
-            "config_hash": route.config_hash,
-        }
-        request = {"run_id": run_id, "source_version_id": source_version_id, "payload": stored_payload, "prompt_version": prompt_version, "skill_version": skill_version, "model_config_version": route.config_version}
+        if external_execution:
+            stored_payload["execution_boundary"] = "external_intelligence"
+            model_config_version = EXTERNAL_INTELLIGENCE_EXECUTION_VERSION
+            model_config_hash = _hash({"execution_boundary": "external_intelligence", "version": model_config_version})
+        else:
+            assert route is not None
+            stored_payload["model_binding"] = {
+                "route_id": route.route_id,
+                "provider_name": route.provider_name,
+                "provider_ref": route.provider_ref,
+                "model_name": route.model_name,
+                "config_version": route.config_version,
+                "config_hash": route.config_hash,
+            }
+            model_config_version = route.config_version
+            model_config_hash = route.config_hash
+        request = {"run_id": run_id, "source_version_id": source_version_id, "payload": stored_payload, "prompt_version": prompt_version, "skill_version": skill_version, "model_config_version": model_config_version, "external_execution": external_execution}
         replay = self._replay("stage1b_create_discovery_input", idempotency_key, request)
         if replay:
             return replay
@@ -6690,12 +13327,169 @@ class Stage0ContentProductionCore:
         with self.conn:
             self.conn.execute(
                 "INSERT INTO stage1b_input_assembly VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (assembly_id, run_id, source_version_id, _canonical(stored_payload), integrity_hash, prompt_version, skill_version, route.config_version, self.data_identity, _now()),
+                (assembly_id, run_id, source_version_id, _canonical(stored_payload), integrity_hash, prompt_version, skill_version, model_config_version, self.data_identity, _now()),
             )
-            result = {"assembly_id": assembly_id, "input_integrity_hash": integrity_hash, "model_config_hash": route.config_hash}
+            result = {"assembly_id": assembly_id, "input_integrity_hash": integrity_hash, "model_config_hash": model_config_hash}
             self._receipt("stage1b_create_discovery_input", idempotency_key, request, result)
             self._audit(run_id, "stage1b_input_assembly_created", result)
         return result
+
+    def prepare_discovery_external_task(
+        self,
+        *,
+        run_id: str,
+        source_version_id: str,
+        assembly_id: str,
+        skill: dict[str, Any],
+        input_payload: dict[str, Any],
+        constraints: dict[str, Any],
+        output_requirements: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Prepare one external intelligent task from the current Core facts.
+
+        This reuses the processing discovery run and input assembly.  It does
+        not create a task queue or a second lifecycle, and it deliberately
+        carries no model or provider choice.
+        """
+        run, source, assembly = (
+            self._discovery_run(run_id),
+            self._discovery_source(source_version_id),
+            self._discovery_assembly(assembly_id),
+        )
+        filter_row = self.conn.execute(
+            "SELECT outcome FROM stage1b_filter_result WHERE source_version_id=?",
+            (source_version_id,),
+        ).fetchone()
+        if (
+            run["status"] != "processing"
+            or source["run_id"] != run_id
+            or assembly["run_id"] != run_id
+            or assembly["source_version_id"] != source_version_id
+            or filter_row is None
+            or filter_row["outcome"] != "eligible"
+        ):
+            raise StateTransitionError("external intelligence task has stale or ineligible input")
+        stored_payload = json.loads(str(assembly["payload_json"]))
+        if stored_payload.get("execution_boundary") != "external_intelligence":
+            raise StateTransitionError("external intelligence task requires an external execution assembly")
+        if not isinstance(skill, dict) or not str(skill.get("formal_skill_id") or "").strip():
+            raise StateTransitionError("external intelligence task requires a formal Skill")
+        if not isinstance(input_payload, dict) or not isinstance(constraints, dict) or not isinstance(output_requirements, dict):
+            raise StateTransitionError("external intelligence task payload is malformed")
+        if (
+            str(input_payload.get("fixture_id") or "") != str(stored_payload.get("request_id") or "")
+            or str(input_payload.get("domain_label") or "") != str(stored_payload.get("domain_label") or "")
+            or list(input_payload.get("source_evidence_refs") or [])
+            != list(stored_payload.get("source_evidence_items") or [])
+            or " ".join(str(input_payload.get("source_content") or "").split())
+            != " ".join(str(stored_payload.get("source_content") or "").split())
+        ):
+            raise StateTransitionError("external intelligence task material does not match the Core assembly")
+        context = self._discovery_context(run_id)
+        return {
+            "task_type": str(skill["formal_skill_id"]),
+            "business_context": {
+                "daily_run_id": str(context["daily_run_id"] or "") or None,
+                "discovery_run_id": run_id,
+                "source_version_id": source_version_id,
+                "input_assembly_id": assembly_id,
+                "data_identity": self.data_identity,
+            },
+            "skill": dict(skill),
+            "input": dict(input_payload),
+            "constraints": dict(constraints),
+            "output_requirements": dict(output_requirements),
+            "source_identity": {
+                "source_version_id": source_version_id,
+                "source_type": str(source["source_type"]),
+                "source_object_id": str(source["source_object_id"]),
+                "source_object_version": str(source["source_object_version"]),
+            },
+        }
+
+    def record_discovery_external_execution(
+        self,
+        *,
+        run_id: str,
+        source_version_id: str,
+        assembly_id: str,
+        execution_id: str,
+        executor_id: str,
+        model_ref: str | None,
+        submitted_at: str | None,
+        output_payload: dict[str, Any],
+    ) -> str:
+        """Record an externally executed result as an auditable fact."""
+        run, source, assembly = (
+            self._discovery_run(run_id),
+            self._discovery_source(source_version_id),
+            self._discovery_assembly(assembly_id),
+        )
+        execution_id = str(execution_id or "").strip()
+        executor_id = str(executor_id or "").strip()
+        if not execution_id or not executor_id:
+            raise StateTransitionError("external result requires execution and executor identity")
+        if not isinstance(output_payload, dict):
+            raise StateTransitionError("external result must be structured fields")
+        if (
+            run["status"] != "processing"
+            or source["run_id"] != run_id
+            or assembly["run_id"] != run_id
+            or assembly["source_version_id"] != source_version_id
+        ):
+            raise StateTransitionError("external result has stale or mismatched input")
+        stored_payload = json.loads(str(assembly["payload_json"]))
+        if stored_payload.get("execution_boundary") != "external_intelligence":
+            raise StateTransitionError("external result requires an external execution assembly")
+        if self.conn.execute(
+            "SELECT 1 FROM stage1b_model_run WHERE run_id=? AND source_version_id=? AND input_assembly_id=?",
+            (run_id, source_version_id, assembly_id),
+        ).fetchone():
+            raise StateTransitionError("this intelligent input already has an execution result")
+        model_run_id = _id("discovery_external_execution")
+        model_ref = str(model_ref or "not_reported").strip() or "not_reported"
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage1b_model_run VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    model_run_id,
+                    run_id,
+                    source_version_id,
+                    assembly_id,
+                    "succeeded",
+                    execution_id,
+                    str(assembly["prompt_version"]),
+                    str(assembly["skill_version"]),
+                    None,
+                    EXTERNAL_INTELLIGENCE_EXECUTION_VERSION,
+                    executor_id,
+                    "external_executor",
+                    model_ref,
+                    str(assembly["integrity_hash"]),
+                    _hash(output_payload),
+                    "not_validated",
+                    _canonical({}),
+                    "not_requested",
+                    _canonical({}),
+                    _canonical({}),
+                    0,
+                    self.data_identity,
+                    _now(),
+                    0,
+                ),
+            )
+            self._audit(
+                run_id,
+                "stage1b_external_intelligence_result_recorded",
+                {
+                    "model_run_id": model_run_id,
+                    "execution_id": execution_id,
+                    "executor_id": executor_id,
+                    "model_ref": model_ref,
+                    "submitted_at": submitted_at,
+                },
+            )
+        return model_run_id
 
     def pending_hotspot_judgement(self, *, run_id: str) -> dict[str, Any]:
         """Return one frozen hotspot judgement that an authorized user may resubmit once."""
@@ -6748,12 +13542,14 @@ class Stage0ContentProductionCore:
         binding_version: str | None = None,
         binding_hash: str | None = None,
         model_input_payload: dict[str, Any] | None = None,
+        model_route: ModelRoute | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> ModelRequest:
         run, source = self._discovery_run(run_id), self._discovery_source(source_version_id)
         assembly = self._discovery_assembly(assembly_id)
         if run["status"] != "processing" or source["run_id"] != run_id or assembly["run_id"] != run_id or assembly["source_version_id"] != source_version_id:
             raise StateTransitionError("discovery model request has stale or mismatched input")
-        route = self._resolve_discovery_model_route()
+        route = model_route or self._resolve_discovery_model_route()
         payload = json.loads(assembly["payload_json"])
         expected_binding = {
             "route_id": route.route_id,
@@ -6779,6 +13575,7 @@ class Stage0ContentProductionCore:
             binding_name=binding_name,
             binding_version=binding_version,
             binding_hash=binding_hash,
+            response_format=dict(response_format) if response_format else None,
             metadata={"stage1b_core": {"run_id": run_id, "source_version_id": source_version_id, "input_assembly_id": assembly_id, "data_identity": self.data_identity, "prompt_version": assembly["prompt_version"], "skill_version": skill_version or assembly["skill_version"], "expected_binding": {**expected_binding, "binding_name": binding_name, "binding_version": binding_version, "binding_hash": binding_hash}}},
         )
 
@@ -6791,30 +13588,38 @@ class Stage0ContentProductionCore:
         run, source, assembly = self._discovery_run(run_id), self._discovery_source(source_version_id), self._discovery_assembly(assembly_id)
         if run["status"] != "processing" or source["run_id"] != run_id or assembly["run_id"] != run_id or assembly["source_version_id"] != source_version_id:
             raise StaleResultError("discovery ModelGateway envelope belongs to stale input")
-        route = self._resolve_discovery_model_route()
-        expected_binding = {
-            "route_id": route.route_id,
-            "provider_name": route.provider_name,
-            "provider_ref": route.provider_ref,
-            "model_name": route.model_name,
-            "config_version": route.config_version,
-            "config_hash": route.config_hash,
-        }
         expected_request_binding = dict(binding.get("expected_binding") or {})
-        expected_model_binding = {key: expected_request_binding.get(key) for key in expected_binding}
-        if expected_model_binding != expected_binding:
-            raise ModelGatewayRequiredError("discovery ModelGateway request lacks the current explicit binding")
-        expected_binding_name = str(expected_request_binding.get("binding_name") or route.route_name)
-        expected_binding_version = str(expected_request_binding.get("binding_version") or route.config_version)
-        expected_binding_hash = str(expected_request_binding.get("binding_hash") or route.config_hash)
+        expected_model_binding = {
+            key: expected_request_binding.get(key)
+            for key in (
+                "route_id",
+                "provider_name",
+                "provider_ref",
+                "model_name",
+                "config_version",
+                "config_hash",
+            )
+        }
+        stored_payload = json.loads(assembly["payload_json"])
+        stored_model_binding = stored_payload.get("model_binding")
         if (
-            envelope.route_name != route.route_name
-            or envelope.route_id != route.route_id
-            or envelope.provider_name != route.provider_name
-            or envelope.provider_ref != route.provider_ref
-            or envelope.model_name != route.model_name
-            or envelope.config_version != route.config_version
-            or envelope.config_hash != route.config_hash
+            not isinstance(stored_model_binding, dict)
+            or stored_model_binding != expected_model_binding
+            or any(not str(value or "").strip() for value in expected_model_binding.values())
+            or str(assembly["model_config_version"] or "") != str(expected_model_binding["config_version"] or "")
+        ):
+            raise ModelGatewayRequiredError("discovery ModelGateway request lacks the frozen explicit binding")
+        expected_binding_name = str(expected_request_binding.get("binding_name") or "")
+        expected_binding_version = str(expected_request_binding.get("binding_version") or "")
+        expected_binding_hash = str(expected_request_binding.get("binding_hash") or "")
+        if (
+            envelope.route_name != "business.source_to_topic"
+            or envelope.route_id != expected_model_binding["route_id"]
+            or envelope.provider_name != expected_model_binding["provider_name"]
+            or envelope.provider_ref != expected_model_binding["provider_ref"]
+            or envelope.model_name != expected_model_binding["model_name"]
+            or envelope.config_version != expected_model_binding["config_version"]
+            or envelope.config_hash != expected_model_binding["config_hash"]
             or envelope.binding_name != expected_binding_name
             or envelope.binding_version != expected_binding_version
             or envelope.binding_hash != expected_binding_hash
@@ -6946,11 +13751,11 @@ class Stage0ContentProductionCore:
         run, source, model_run = self._discovery_run(run_id), self._discovery_source(source_version_id), self._discovery_model_run(model_run_id)
         if run["status"] != "processing" or source["run_id"] != run_id or model_run["run_id"] != run_id or model_run["source_version_id"] != source_version_id:
             raise StateTransitionError("candidate does not belong to the active source run")
-        if model_run["status"] != "succeeded" or model_run["via_model_gateway"] != 1 or (
+        if model_run["status"] != "succeeded" or (
             model_run["validation_status"] != "not_validated"
             and not (allow_multiple_from_model_run and model_run["validation_status"] == "passed")
         ):
-            raise ModelGatewayRequiredError("candidate requires one successful unconsumed ModelGateway run")
+            raise ModelGatewayRequiredError("candidate requires one successful unconsumed intelligent execution")
         forbidden_fields = {"score", "rank", "weight", "recommendation_score", "quality_rank"}
         if forbidden_fields & set(payload):
             raise StateTransitionError("discovery candidates must not contain business-ranking fields")
@@ -7555,9 +14360,12 @@ class Stage0ContentProductionCore:
         items: tuple[dict[str, Any], ...],
         raw_archive_ref: str,
         collection_run_id: str,
+        business_date: str,
+        daily_run_id: str | None = None,
         observed_at: datetime | None = None,
     ) -> dict[str, Any]:
         """Retain one real daily creator snapshot through the formal Core boundary."""
+        normalized_daily_run_id = str(daily_run_id).strip()
         account = self.conn.execute(
             "SELECT * FROM competitor_accounts WHERE account_id=? AND registration_status='active'",
             (account_id,),
@@ -7568,9 +14376,31 @@ class Stage0ContentProductionCore:
             raise StateTransitionError("daily competitor snapshot currently supports Douyin only")
         if not raw_archive_ref.strip() or not collection_run_id.strip():
             raise StateTransitionError("daily competitor snapshot requires retained raw evidence and a collection run identity")
+        if normalized_daily_run_id:
+            daily_run = self.conn.execute(
+                "SELECT domain_label, business_date FROM stage0_daily_run WHERE daily_run_id=?",
+                (normalized_daily_run_id,),
+            ).fetchone()
+            if daily_run is None:
+                raise StateTransitionError("daily competitor snapshot requires an existing daily run")
+            if (
+                str(daily_run["domain_label"]) != str(account["domain_label"])
+                or str(daily_run["business_date"]) != str(business_date)
+            ):
+                raise StateTransitionError(
+                    "daily competitor snapshot daily run does not match the account domain and business date"
+                )
+        try:
+            batch_date = date.fromisoformat(business_date)
+        except ValueError as exc:
+            raise StateTransitionError("daily competitor snapshot requires a valid business date") from exc
         now = observed_at or datetime.now(timezone.utc)
         if now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)
+        if now.astimezone(timezone(timedelta(hours=8))).date() != batch_date:
+            raise StateTransitionError(
+                "daily competitor snapshot effective time must match its business date"
+            )
 
         def published_time(value: Any) -> datetime | None:
             if value is None or value == "":
@@ -7590,7 +14420,10 @@ class Stage0ContentProductionCore:
             return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
         inserted = updated = checks_recorded = 0
+        skipped_older_than_window = skipped_missing_publish_time = 0
+        skipped_published_after_effective_at = 0
         source_refs: list[dict[str, str]] = []
+        daily_cutoff = now - timedelta(days=HISTORICAL_MATURITY_DAYS)
         with self.conn:
             for item in items:
                 if not isinstance(item, dict):
@@ -7606,12 +14439,37 @@ class Stage0ContentProductionCore:
                     for key in ("like_count", "comment_count", "share_count", "collect_count")
                 }
                 published = published_time(item.get("published_at"))
+                if published is None:
+                    skipped_missing_publish_time += 1
+                    continue
+                if published > now:
+                    skipped_published_after_effective_at += 1
+                    continue
                 publish_iso = published.isoformat() if published is not None else None
                 video_id = "competitor_video_" + _hash({"account_id": account_id, "source_id": source_id})[:20]
                 existing = self.conn.execute(
                     "SELECT * FROM competitor_videos WHERE account_id=? AND platform_item_id=?",
                     (account_id, source_id),
                 ).fetchone()
+                if published < daily_cutoff:
+                    retain_for_due_tracking = False
+                    if existing is not None:
+                        category = str(existing["first_contact_category"] or "")
+                        if category == "formal_new" and not int(existing["tracking_completed"] or 0):
+                            try:
+                                first_batch_date = date.fromisoformat(
+                                    str(existing["first_seen_business_date"] or "")
+                                )
+                            except ValueError:
+                                first_batch_date = batch_date
+                            batch_age = (batch_date - first_batch_date).days
+                            retain_for_due_tracking = 0 <= batch_age <= 7
+                        elif category == "transition" and existing["mature_snapshot_taken_at"] is None:
+                            existing_published = published_time(existing["publish_time"]) or published
+                            retain_for_due_tracking = 0 <= (now - existing_published).days <= 7
+                    if not retain_for_due_tracking:
+                        skipped_older_than_window += 1
+                        continue
                 if existing is None:
                     delay_hours = round((now - published).total_seconds() / 3600, 2) if published is not None else None
                     if delay_hours is None:
@@ -7626,14 +14484,14 @@ class Stage0ContentProductionCore:
                         "INSERT INTO competitor_videos("
                         "video_id, account_id, platform, platform_item_id, title, url, publish_time, duration_sec, "
                         "like_count, comment_count, share_count, collect_count, first_contact_category, discovery_delay_hours, "
-                        "excluded_reason, registration_run_id, raw_archive_ref, raw_json"
-                        ") VALUES (?, ?, 'douyin', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "excluded_reason, registration_run_id, raw_archive_ref, raw_json, first_seen_business_date"
+                        ") VALUES (?, ?, 'douyin', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             video_id, account_id, source_id, title, url, publish_iso,
                             int(item.get("duration_seconds") or 0), counts["like_count"], counts["comment_count"],
                             counts["share_count"], counts["collect_count"], first_contact_category, delay_hours,
                             None if published is not None else "missing_publish_time", collection_run_id,
-                            raw_archive_ref, _canonical(item),
+                            raw_archive_ref, _canonical(item), business_date,
                         ),
                     )
                     if first_contact_category in {"formal_new", "transition"}:
@@ -7646,16 +14504,17 @@ class Stage0ContentProductionCore:
                         self.conn.execute(
                             "INSERT OR IGNORE INTO video_checks("
                             "check_id, video_id, discovery_batch_index, day_since_publish, like_count, comment_count, "
-                            "share_count, collect_count, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            "share_count, collect_count, run_id, business_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                             (
                                 "video_check_" + _hash({
                                     "video_id": video_id,
                                     "d_index": check_index,
                                     "day_since_publish": day_since_publish,
+                                    "business_date": business_date,
                                 })[:20],
                                 video_id, check_index, day_since_publish, counts["like_count"],
                                 counts["comment_count"], counts["share_count"],
-                                counts["collect_count"], collection_run_id,
+                                counts["collect_count"], collection_run_id, business_date,
                             ),
                         )
                         checks_recorded += 1
@@ -7677,11 +14536,15 @@ class Stage0ContentProductionCore:
                     check_index: int | None = None
                     day_since_publish: int | None = None
                     if category == "formal_new" and not tracking_completed:
-                        first_seen = published_time(existing["first_seen_at"]) or now
-                        check_index = min(
-                            7,
-                            max(0, (now.date() - first_seen.astimezone(timezone.utc).date()).days),
-                        )
+                        first_seen_business_date = str(existing["first_seen_business_date"] or "").strip()
+                        try:
+                            first_batch_date = date.fromisoformat(first_seen_business_date)
+                        except ValueError as exc:
+                            raise StateTransitionError(
+                                "tracked video lacks a valid first-seen business date"
+                            ) from exc
+                        batch_age = (batch_date - first_batch_date).days
+                        check_index = batch_age if 0 <= batch_age <= 7 else None
                     elif category == "transition" and mature_at is None:
                         existing_published = published_time(existing["publish_time"]) or published
                         if existing_published is not None:
@@ -7693,21 +14556,37 @@ class Stage0ContentProductionCore:
                                 )
                     if check_index is not None or day_since_publish is not None:
                         check_identity = (
-                            {"video_id": existing["video_id"], "d_index": check_index}
+                            {
+                                "video_id": existing["video_id"],
+                                "d_index": check_index,
+                                "business_date": business_date,
+                            }
                             if check_index is not None
-                            else {"video_id": existing["video_id"], "day_since_publish": day_since_publish}
+                            else {
+                                "video_id": existing["video_id"],
+                                "day_since_publish": day_since_publish,
+                                "business_date": business_date,
+                            }
                         )
-                        cursor = self.conn.execute(
-                            "INSERT OR IGNORE INTO video_checks("
-                            "check_id, video_id, discovery_batch_index, day_since_publish, like_count, comment_count, "
-                            "share_count, collect_count, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            (
-                                "video_check_" + _hash(check_identity)[:20],
-                                existing["video_id"], check_index, day_since_publish, counts["like_count"],
-                                counts["comment_count"], counts["share_count"], counts["collect_count"], collection_run_id,
-                            ),
-                        )
-                        checks_recorded += int(cursor.rowcount > 0)
+                        same_business_check = self.conn.execute(
+                            "SELECT 1 FROM video_checks WHERE video_id=? "
+                            "AND discovery_batch_index IS ? AND day_since_publish IS ? "
+                            "AND business_date=? LIMIT 1",
+                            (existing["video_id"], check_index, day_since_publish, business_date),
+                        ).fetchone()
+                        if same_business_check is None:
+                            cursor = self.conn.execute(
+                                "INSERT OR IGNORE INTO video_checks("
+                                "check_id, video_id, discovery_batch_index, day_since_publish, like_count, comment_count, "
+                                "share_count, collect_count, run_id, business_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                (
+                                    "video_check_" + _hash(check_identity)[:20],
+                                    existing["video_id"], check_index, day_since_publish, counts["like_count"],
+                                    counts["comment_count"], counts["share_count"], counts["collect_count"], collection_run_id,
+                                    business_date,
+                                ),
+                            )
+                            checks_recorded += int(cursor.rowcount > 0)
                         if category == "formal_new":
                             completed_points = int(self.conn.execute(
                                 "SELECT COUNT(DISTINCT discovery_batch_index) FROM video_checks "
@@ -7724,12 +14603,660 @@ class Stage0ContentProductionCore:
             result = {
                 "account_id": account_id,
                 "collection_run_id": collection_run_id,
+                "business_date": business_date,
+                "effective_at": now.isoformat(),
                 "inserted": inserted,
                 "updated": updated,
                 "checks_recorded": checks_recorded,
+                "skipped_older_than_window": skipped_older_than_window,
+                "skipped_missing_publish_time": skipped_missing_publish_time,
+                "skipped_published_after_effective_at": skipped_published_after_effective_at,
                 "source_refs": source_refs,
             }
+            if normalized_daily_run_id:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO daily_collection_account_completion "
+                    "(daily_run_id, account_id, completed_at) VALUES (?, ?, ?)",
+                    (normalized_daily_run_id, account_id, _now()),
+                )
             self._audit(None, "daily_competitor_snapshot_recorded", result)
+        return result
+
+    def repair_delayed_daily_batch_d_points(
+        self,
+        *,
+        video_ids: tuple[str, ...],
+        prior_run_id: str,
+        catchup_run_id: str,
+        prior_business_date: str,
+        catchup_business_date: str,
+        actor: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Repair only verified cross-midnight D0 rows from one delayed batch."""
+
+        requested = tuple(dict.fromkeys(str(value).strip() for value in video_ids))
+        if not requested or any(not value for value in requested):
+            raise StateTransitionError("delayed daily batch repair requires explicit video identities")
+        if not actor.strip() or not reason.strip():
+            raise StateTransitionError("delayed daily batch repair requires actor and reason")
+        try:
+            prior_date = date.fromisoformat(prior_business_date)
+            catchup_date = date.fromisoformat(catchup_business_date)
+        except ValueError as exc:
+            raise StateTransitionError("delayed daily batch repair requires valid business dates") from exc
+        if catchup_date - prior_date != timedelta(days=1):
+            raise StateTransitionError("delayed daily batch repair only supports adjacent business dates")
+        if f":{prior_business_date}:" not in prior_run_id or f":{catchup_business_date}:" not in catchup_run_id:
+            raise StateTransitionError("delayed daily batch repair run identities do not match their dates")
+
+        repaired: list[dict[str, str]] = []
+        with self.conn:
+            for video_id in requested:
+                video = self.conn.execute(
+                    "SELECT registration_run_id, first_seen_business_date FROM competitor_videos "
+                    "WHERE video_id=? AND first_contact_category='formal_new'",
+                    (video_id,),
+                ).fetchone()
+                if (
+                    video is None
+                    or str(video["registration_run_id"] or "") != prior_run_id
+                    or str(video["first_seen_business_date"] or "") != catchup_business_date
+                ):
+                    raise StateTransitionError(
+                        "delayed daily batch repair target no longer matches the verified video state"
+                    )
+                prior_check = self.conn.execute(
+                    "SELECT check_id FROM video_checks WHERE video_id=? AND run_id=? "
+                    "AND discovery_batch_index=0 AND business_date=?",
+                    (video_id, prior_run_id, catchup_business_date),
+                ).fetchall()
+                catchup_check = self.conn.execute(
+                    "SELECT check_id FROM video_checks WHERE video_id=? AND run_id=? "
+                    "AND discovery_batch_index=0 AND business_date=?",
+                    (video_id, catchup_run_id, catchup_business_date),
+                ).fetchall()
+                if len(prior_check) != 1 or len(catchup_check) != 1:
+                    raise StateTransitionError(
+                        "delayed daily batch repair requires exactly one verified row from each batch"
+                    )
+                self.conn.execute(
+                    "UPDATE competitor_videos SET first_seen_business_date=? WHERE video_id=?",
+                    (prior_business_date, video_id),
+                )
+                self.conn.execute(
+                    "UPDATE video_checks SET business_date=? WHERE check_id=?",
+                    (prior_business_date, prior_check[0]["check_id"]),
+                )
+                self.conn.execute(
+                    "UPDATE video_checks SET discovery_batch_index=1 WHERE check_id=?",
+                    (catchup_check[0]["check_id"],),
+                )
+                repaired.append({
+                    "video_id": video_id,
+                    "prior_check_id": str(prior_check[0]["check_id"]),
+                    "catchup_check_id": str(catchup_check[0]["check_id"]),
+                })
+            result = {
+                "prior_business_date": prior_business_date,
+                "catchup_business_date": catchup_business_date,
+                "prior_run_id": prior_run_id,
+                "catchup_run_id": catchup_run_id,
+                "repaired": repaired,
+                "actor": actor.strip(),
+                "reason": reason.strip(),
+            }
+            self._audit(None, "delayed_daily_batch_d_points_repaired", result)
+        return result
+
+    def repair_cross_midnight_daily_run_check_dates(
+        self,
+        *,
+        run_id: str,
+        business_date: str,
+        mistaken_date: str,
+        actor: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Move only one verified run's post-midnight check rows back to its business date."""
+
+        try:
+            expected_date = date.fromisoformat(business_date)
+            wrong_date = date.fromisoformat(mistaken_date)
+        except ValueError as exc:
+            raise StateTransitionError("cross-midnight repair requires valid business dates") from exc
+        if wrong_date - expected_date != timedelta(days=1):
+            raise StateTransitionError("cross-midnight repair only supports the following calendar date")
+        if f":{business_date}:" not in run_id:
+            raise StateTransitionError("cross-midnight repair run identity does not match its business date")
+        if not actor.strip() or not reason.strip():
+            raise StateTransitionError("cross-midnight repair requires actor and reason")
+        rows = self.conn.execute(
+            "SELECT check_id FROM video_checks WHERE run_id=? AND business_date=? ORDER BY check_id",
+            (run_id, mistaken_date),
+        ).fetchall()
+        if not rows:
+            raise StateTransitionError("cross-midnight repair found no matching rows")
+        unexpected = self.conn.execute(
+            "SELECT DISTINCT business_date FROM video_checks WHERE run_id=? "
+            "AND business_date NOT IN (?, ?)",
+            (run_id, business_date, mistaken_date),
+        ).fetchall()
+        if unexpected:
+            raise StateTransitionError("cross-midnight repair found unexpected dates in the target run")
+        check_ids = [str(row["check_id"]) for row in rows]
+        with self.conn:
+            cursor = self.conn.execute(
+                "UPDATE video_checks SET business_date=? WHERE run_id=? AND business_date=?",
+                (business_date, run_id, mistaken_date),
+            )
+            if cursor.rowcount != len(check_ids):
+                raise StateTransitionError("cross-midnight repair row count changed during the transaction")
+            result = {
+                "run_id": run_id,
+                "business_date": business_date,
+                "mistaken_date": mistaken_date,
+                "repaired_check_count": len(check_ids),
+                "actor": actor.strip(),
+                "reason": reason.strip(),
+            }
+            self._audit(None, "cross_midnight_daily_run_check_dates_repaired", result)
+        return result
+
+    def discard_superseded_daily_check_duplicates(
+        self,
+        *,
+        superseded_run_id: str,
+        authoritative_run_id: str,
+        business_date: str,
+        actor: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Remove one older run's exact duplicate D rows after retaining an audited copy."""
+
+        try:
+            date.fromisoformat(business_date)
+        except ValueError as exc:
+            raise StateTransitionError("duplicate daily-check cleanup requires a valid business date") from exc
+        if (
+            not actor.strip()
+            or not reason.strip()
+            or f":{business_date}:" not in superseded_run_id
+            or f":{business_date}:" not in authoritative_run_id
+            or superseded_run_id == authoritative_run_id
+        ):
+            raise StateTransitionError("duplicate daily-check cleanup scope is invalid")
+        rows = self.conn.execute(
+            "SELECT old.* FROM video_checks old WHERE old.run_id=? AND old.business_date=? "
+            "AND EXISTS (SELECT 1 FROM video_checks kept WHERE kept.run_id=? "
+            "AND kept.business_date=old.business_date AND kept.video_id=old.video_id "
+            "AND kept.discovery_batch_index IS old.discovery_batch_index "
+            "AND kept.day_since_publish IS old.day_since_publish) "
+            "ORDER BY old.check_id",
+            (superseded_run_id, business_date, authoritative_run_id),
+        ).fetchall()
+        if not rows:
+            raise StateTransitionError("duplicate daily-check cleanup found no exact duplicates")
+        archived_rows = [{key: row[key] for key in row.keys()} for row in rows]
+        check_ids = [str(row["check_id"]) for row in rows]
+        placeholders = ",".join("?" for _ in check_ids)
+        with self.conn:
+            self._audit(None, "superseded_daily_check_duplicates_archived", {
+                "superseded_run_id": superseded_run_id,
+                "authoritative_run_id": authoritative_run_id,
+                "business_date": business_date,
+                "actor": actor.strip(),
+                "reason": reason.strip(),
+                "rows": archived_rows,
+            })
+            cursor = self.conn.execute(
+                f"DELETE FROM video_checks WHERE check_id IN ({placeholders})",
+                check_ids,
+            )
+            if cursor.rowcount != len(check_ids):
+                raise StateTransitionError("duplicate daily-check cleanup row count changed during the transaction")
+            result = {
+                "superseded_run_id": superseded_run_id,
+                "authoritative_run_id": authoritative_run_id,
+                "business_date": business_date,
+                "removed_check_count": len(check_ids),
+                "archived_in_audit": True,
+                "actor": actor.strip(),
+                "reason": reason.strip(),
+            }
+            self._audit(None, "superseded_daily_check_duplicates_removed", result)
+        return result
+
+    @staticmethod
+    def _daily_run_business_date(run_id: Any) -> str | None:
+        match = re.match(
+            r"^daily_competitor:[^:]+:(\d{4}-\d{2}-\d{2}):",
+            str(run_id or ""),
+        )
+        return match.group(1) if match else None
+
+    def _daily_observation_reconciliation_state(
+        self, *, as_of_business_date: str
+    ) -> dict[str, Any]:
+        try:
+            as_of_date = date.fromisoformat(as_of_business_date)
+        except ValueError as exc:
+            raise StateTransitionError(
+                "daily observation reconciliation requires a valid business date"
+            ) from exc
+
+        videos = {
+            str(row["video_id"]): {key: row[key] for key in row.keys()}
+            for row in self.conn.execute("SELECT * FROM competitor_videos").fetchall()
+        }
+        checks = [
+            {key: row[key] for key in row.keys()}
+            for row in self.conn.execute("SELECT * FROM video_checks").fetchall()
+        ]
+        canonical_first_seen: dict[str, str] = {}
+        for video_id, video in videos.items():
+            if str(video.get("first_contact_category") or "") != "formal_new":
+                continue
+            first_seen = self._daily_run_business_date(video.get("registration_run_id"))
+            if not first_seen:
+                first_seen = str(video.get("first_seen_business_date") or "").strip()
+            try:
+                date.fromisoformat(first_seen)
+            except ValueError as exc:
+                raise StateTransitionError(
+                    f"formal daily video lacks a recoverable first business date: {video_id}"
+                ) from exc
+            canonical_first_seen[video_id] = first_seen
+
+        canonical_rows: list[dict[str, Any]] = []
+        for row in checks:
+            video_id = str(row["video_id"])
+            video = videos.get(video_id)
+            if video is None:
+                raise StateTransitionError("daily check references an unknown video")
+            business_date = self._daily_run_business_date(row.get("run_id")) or str(
+                row.get("business_date") or ""
+            ).strip()
+            try:
+                business_day = date.fromisoformat(business_date)
+            except ValueError as exc:
+                raise StateTransitionError(
+                    f"daily check lacks a recoverable business date: {row['check_id']}"
+                ) from exc
+            discovery_batch_index = row.get("discovery_batch_index")
+            day_since_publish = row.get("day_since_publish")
+            if video_id in canonical_first_seen:
+                discovery_batch_index = (
+                    business_day - date.fromisoformat(canonical_first_seen[video_id])
+                ).days
+                day_since_publish = None
+                if not 0 <= discovery_batch_index <= 7:
+                    raise StateTransitionError(
+                        f"formal daily check falls outside D0-D7: {row['check_id']}"
+                    )
+            canonical_rows.append({
+                "row": row,
+                "business_date": business_date,
+                "discovery_batch_index": discovery_batch_index,
+                "day_since_publish": day_since_publish,
+            })
+
+        rows_by_video_day: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for item in canonical_rows:
+            key = (str(item["row"]["video_id"]), str(item["business_date"]))
+            rows_by_video_day.setdefault(key, []).append(item)
+        kept_rows: list[dict[str, Any]] = []
+        duplicate_rows: list[dict[str, Any]] = []
+        for group in rows_by_video_day.values():
+            authoritative = max(
+                group,
+                key=lambda item: (
+                    str(item["row"].get("checked_at") or ""),
+                    str(item["row"].get("run_id") or ""),
+                    str(item["row"]["check_id"]),
+                ),
+            )
+            kept_rows.append(authoritative)
+            duplicate_rows.extend(
+                item for item in group if item["row"]["check_id"] != authoritative["row"]["check_id"]
+            )
+
+        source_runs: dict[tuple[str, str], list[dict[str, str]]] = {}
+        audit_rows = self.conn.execute(
+            "SELECT payload_json, created_at FROM stage0_audit_event "
+            "WHERE action='daily_competitor_snapshot_recorded' AND data_identity=?",
+            (self.data_identity,),
+        ).fetchall()
+        for audit_row in audit_rows:
+            try:
+                payload = json.loads(str(audit_row["payload_json"] or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            run_id = str(payload.get("collection_run_id") or "")
+            business_date = self._daily_run_business_date(run_id)
+            if not business_date:
+                continue
+            for source_ref in payload.get("source_refs") or []:
+                if not isinstance(source_ref, dict):
+                    continue
+                video_id = str(source_ref.get("video_id") or "").strip()
+                if not video_id:
+                    continue
+                source_runs.setdefault((business_date, video_id), []).append({
+                    "run_id": run_id,
+                    "created_at": str(audit_row["created_at"] or ""),
+                })
+
+        present = {
+            (
+                str(item["row"]["video_id"]),
+                str(item["business_date"]),
+                int(item["discovery_batch_index"]),
+            )
+            for item in kept_rows
+            if item["discovery_batch_index"] is not None
+        }
+        gaps: list[dict[str, Any]] = []
+        for video_id, first_seen in canonical_first_seen.items():
+            first_date = date.fromisoformat(first_seen)
+            maximum_d = min(7, (as_of_date - first_date).days)
+            if maximum_d < 0:
+                continue
+            for expected_d in range(maximum_d + 1):
+                business_date = (first_date + timedelta(days=expected_d)).isoformat()
+                if (video_id, business_date, expected_d) in present:
+                    continue
+                source_evidence = source_runs.get((business_date, video_id), [])
+                latest_source = (
+                    max(source_evidence, key=lambda item: (item["created_at"], item["run_id"]))
+                    if source_evidence
+                    else None
+                )
+                video = videos[video_id]
+                gaps.append({
+                    "video_id": video_id,
+                    "platform_item_id": str(video.get("platform_item_id") or ""),
+                    "url": str(video.get("url") or ""),
+                    "business_date": business_date,
+                    "expected_d": expected_d,
+                    "source_seen": latest_source is not None,
+                    "source_run_id": latest_source["run_id"] if latest_source else None,
+                    "metrics": {
+                        key: int(video.get(key) or 0)
+                        for key in ("like_count", "comment_count", "share_count", "collect_count")
+                    },
+                    "raw_archive_ref": str(video.get("raw_archive_ref") or ""),
+                    "raw_json": str(video.get("raw_json") or "{}"),
+                })
+        return {
+            "as_of_business_date": as_of_business_date,
+            "videos": videos,
+            "canonical_first_seen": canonical_first_seen,
+            "kept_rows": kept_rows,
+            "duplicate_rows": duplicate_rows,
+            "gaps": gaps,
+        }
+
+    def daily_observation_reconciliation_plan(
+        self, *, as_of_business_date: str
+    ) -> dict[str, Any]:
+        state = self._daily_observation_reconciliation_state(
+            as_of_business_date=as_of_business_date
+        )
+        changed_first_seen = [
+            video_id
+            for video_id, value in state["canonical_first_seen"].items()
+            if value != str(state["videos"][video_id].get("first_seen_business_date") or "")
+        ]
+        changed_business_dates = [
+            item for item in state["kept_rows"]
+            if item["business_date"] != str(item["row"].get("business_date") or "")
+        ]
+        changed_d_points = [
+            item for item in state["kept_rows"]
+            if item["discovery_batch_index"] != item["row"].get("discovery_batch_index")
+        ]
+        target_gaps = [
+            item for item in state["gaps"]
+            if item["business_date"] == as_of_business_date
+        ]
+        return {
+            "as_of_business_date": as_of_business_date,
+            "first_seen_dates_to_change": len(changed_first_seen),
+            "business_dates_to_change": len(changed_business_dates),
+            "d_points_to_change": len(changed_d_points),
+            "duplicate_rows_to_archive_remove": len(state["duplicate_rows"]),
+            "target_date_gaps": len(target_gaps),
+            "target_date_source_backed_gaps": sum(bool(item["source_seen"]) for item in target_gaps),
+            "target_date_live_detail_gaps": sum(not item["source_seen"] for item in target_gaps),
+            "historical_gaps_to_register": len(state["gaps"]),
+            "recovery_targets": target_gaps,
+        }
+
+    def reconcile_daily_observation_history(
+        self,
+        *,
+        as_of_business_date: str,
+        recovery_observations: tuple[dict[str, Any], ...],
+        repair_run_id: str,
+        actor: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        if not repair_run_id.strip() or not actor.strip() or not reason.strip():
+            raise StateTransitionError("daily observation reconciliation requires audited repair metadata")
+        state = self._daily_observation_reconciliation_state(
+            as_of_business_date=as_of_business_date
+        )
+        formal_baselines = int(self.conn.execute(
+            "SELECT COUNT(*) FROM baselines WHERE baseline_mode='formal_d_series'"
+        ).fetchone()[0])
+        formal_hits = int(self.conn.execute(
+            "SELECT COUNT(*) FROM hits WHERE baseline_id LIKE 'formal_d_baseline_%'"
+        ).fetchone()[0])
+        if formal_baselines or formal_hits:
+            raise StateTransitionError(
+                "daily observation reconciliation requires a separate formal-D baseline rebuild"
+            )
+
+        target_gaps = {
+            (str(item["video_id"]), str(item["business_date"]), int(item["expected_d"])): item
+            for item in state["gaps"]
+            if item["business_date"] == as_of_business_date
+        }
+        supplied = {
+            (
+                str(item.get("video_id") or ""),
+                str(item.get("business_date") or ""),
+                int(item.get("expected_d")),
+            ): item
+            for item in recovery_observations
+        }
+        if not set(supplied).issubset(set(target_gaps)):
+            raise StateTransitionError(
+                "daily observation reconciliation received a recovery observation outside the target gaps"
+            )
+        for key, observation in supplied.items():
+            video = state["videos"].get(key[0])
+            if video is None or str(observation.get("platform_item_id") or "") != str(
+                video.get("platform_item_id") or ""
+            ):
+                raise StateTransitionError("daily recovery observation does not match its formal video")
+            run_id = str(observation.get("run_id") or "")
+            if self._daily_run_business_date(run_id) != as_of_business_date:
+                raise StateTransitionError("daily recovery run identity does not match the target date")
+            metrics = observation.get("metrics")
+            if not isinstance(metrics, dict) or any(
+                key_name not in metrics
+                for key_name in ("like_count", "comment_count", "share_count", "collect_count")
+            ):
+                raise StateTransitionError("daily recovery observation lacks complete metrics")
+            if not str(observation.get("raw_archive_ref") or "").strip():
+                raise StateTransitionError("daily recovery observation lacks retained raw evidence")
+
+        changed_rows: list[dict[str, Any]] = []
+        for item in state["kept_rows"]:
+            row = item["row"]
+            if (
+                item["business_date"] != str(row.get("business_date") or "")
+                or item["discovery_batch_index"] != row.get("discovery_batch_index")
+                or item["day_since_publish"] != row.get("day_since_publish")
+            ):
+                changed_rows.append({
+                    "before": row,
+                    "after": {
+                        "business_date": item["business_date"],
+                        "discovery_batch_index": item["discovery_batch_index"],
+                        "day_since_publish": item["day_since_publish"],
+                    },
+                })
+        changed_first_seen = [
+            {
+                "video_id": video_id,
+                "before": str(state["videos"][video_id].get("first_seen_business_date") or ""),
+                "after": value,
+            }
+            for video_id, value in state["canonical_first_seen"].items()
+            if value != str(state["videos"][video_id].get("first_seen_business_date") or "")
+        ]
+        duplicate_rows = [item["row"] for item in state["duplicate_rows"]]
+
+        with self.conn:
+            self.conn.execute(
+                "CREATE TABLE IF NOT EXISTS daily_observation_gaps ("
+                "gap_id TEXT PRIMARY KEY, video_id TEXT NOT NULL REFERENCES competitor_videos(video_id) ON DELETE RESTRICT, "
+                "business_date TEXT NOT NULL, expected_d INTEGER NOT NULL CHECK(expected_d BETWEEN 0 AND 7), "
+                "reason TEXT NOT NULL, repair_run_id TEXT NOT NULL, data_identity TEXT NOT NULL, "
+                "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                "UNIQUE(video_id, business_date, expected_d, data_identity))"
+            )
+            self._audit(None, "daily_observation_reconciliation_archived", {
+                "repair_run_id": repair_run_id,
+                "as_of_business_date": as_of_business_date,
+                "actor": actor.strip(),
+                "reason": reason.strip(),
+                "changed_first_seen": changed_first_seen,
+                "changed_rows": changed_rows,
+                "removed_duplicate_rows": duplicate_rows,
+            })
+            for item in state["duplicate_rows"]:
+                self.conn.execute(
+                    "DELETE FROM video_checks WHERE check_id=?",
+                    (item["row"]["check_id"],),
+                )
+            for item in state["kept_rows"]:
+                self.conn.execute(
+                    "UPDATE video_checks SET business_date=?, discovery_batch_index=?, day_since_publish=? "
+                    "WHERE check_id=?",
+                    (
+                        item["business_date"],
+                        item["discovery_batch_index"],
+                        item["day_since_publish"],
+                        item["row"]["check_id"],
+                    ),
+                )
+            for video_id, first_seen in state["canonical_first_seen"].items():
+                self.conn.execute(
+                    "UPDATE competitor_videos SET first_seen_business_date=? WHERE video_id=?",
+                    (first_seen, video_id),
+                )
+            for (video_id, business_date, expected_d), observation in supplied.items():
+                metrics = {
+                    key: int(observation["metrics"].get(key) or 0)
+                    for key in ("like_count", "comment_count", "share_count", "collect_count")
+                }
+                check_id = "video_check_" + _hash({
+                    "video_id": video_id,
+                    "business_date": business_date,
+                    "d_index": expected_d,
+                    "repair_run_id": repair_run_id,
+                })[:20]
+                self.conn.execute(
+                    "INSERT INTO video_checks(check_id, video_id, discovery_batch_index, day_since_publish, "
+                    "like_count, comment_count, share_count, collect_count, run_id, business_date) "
+                    "VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)",
+                    (
+                        check_id,
+                        video_id,
+                        expected_d,
+                        metrics["like_count"],
+                        metrics["comment_count"],
+                        metrics["share_count"],
+                        metrics["collect_count"],
+                        observation["run_id"],
+                        business_date,
+                    ),
+                )
+                self.conn.execute(
+                    "UPDATE competitor_videos SET like_count=?, comment_count=?, share_count=?, collect_count=?, "
+                    "raw_archive_ref=?, raw_json=?, last_checked_at=CURRENT_TIMESTAMP WHERE video_id=?",
+                    (
+                        metrics["like_count"],
+                        metrics["comment_count"],
+                        metrics["share_count"],
+                        metrics["collect_count"],
+                        str(observation["raw_archive_ref"]),
+                        str(observation.get("raw_json") or "{}"),
+                        video_id,
+                    ),
+                )
+
+            self.conn.execute(
+                "DELETE FROM daily_observation_gaps WHERE data_identity=? AND business_date<=?",
+                (self.data_identity, as_of_business_date),
+            )
+            refreshed = self._daily_observation_reconciliation_state(
+                as_of_business_date=as_of_business_date
+            )
+            for gap in refreshed["gaps"]:
+                self.conn.execute(
+                    "INSERT INTO daily_observation_gaps(gap_id, video_id, business_date, expected_d, reason, "
+                    "repair_run_id, data_identity) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "daily_gap_" + _hash({
+                            "video_id": gap["video_id"],
+                            "business_date": gap["business_date"],
+                            "expected_d": gap["expected_d"],
+                        })[:20],
+                        gap["video_id"],
+                        gap["business_date"],
+                        gap["expected_d"],
+                        "no_retained_observation; excluded_from_complete_d_baseline",
+                        repair_run_id,
+                        self.data_identity,
+                    ),
+                )
+            self.conn.execute(
+                "UPDATE competitor_videos SET tracking_completed=0 "
+                "WHERE first_contact_category='formal_new'"
+            )
+            self.conn.execute(
+                "UPDATE competitor_videos SET tracking_completed=1 "
+                "WHERE first_contact_category='formal_new' AND video_id IN ("
+                "SELECT video_id FROM video_checks WHERE discovery_batch_index BETWEEN 0 AND 7 "
+                "GROUP BY video_id HAVING COUNT(*)=8 AND COUNT(DISTINCT discovery_batch_index)=8)"
+            )
+            target_remaining = [
+                gap for gap in refreshed["gaps"]
+                if gap["business_date"] == as_of_business_date
+            ]
+            result = {
+                "repair_run_id": repair_run_id,
+                "as_of_business_date": as_of_business_date,
+                "first_seen_dates_changed": len(changed_first_seen),
+                "check_rows_changed": len(changed_rows),
+                "duplicate_rows_removed": len(duplicate_rows),
+                "target_date_checks_recovered": len(supplied),
+                "target_date_gaps_remaining": len(target_remaining),
+                "historical_gaps_registered": len(refreshed["gaps"]),
+                "tracking_completed_videos": int(self.conn.execute(
+                    "SELECT COUNT(*) FROM competitor_videos "
+                    "WHERE first_contact_category='formal_new' AND tracking_completed=1"
+                ).fetchone()[0]),
+                "formal_d_baselines_affected": 0,
+                "actor": actor.strip(),
+                "reason": reason.strip(),
+            }
+            self._audit(None, "daily_observation_history_reconciled", result)
         return result
 
     def judge_daily_competitor_hits(
@@ -7738,6 +15265,7 @@ class Stage0ContentProductionCore:
         account_id: str,
         source_video_ids: tuple[str, ...],
         run_id: str,
+        evaluated_at: datetime | None = None,
     ) -> dict[str, Any]:
         """Apply the same small cold-start contract after every daily snapshot."""
         if not source_video_ids or not run_id.strip():
@@ -7749,13 +15277,18 @@ class Stage0ContentProductionCore:
         if account is None:
             raise StateTransitionError("daily hit judgement requires one active competitor account")
 
+        evaluation_time = evaluated_at or datetime.now(timezone.utc)
+        if evaluation_time.tzinfo is None:
+            raise StateTransitionError("daily hit evaluation time must include a timezone")
+        evaluation_time = evaluation_time.astimezone(timezone.utc)
+        mature_cutoff = evaluation_time - timedelta(days=HISTORICAL_MATURITY_DAYS)
         mature_rows = self.conn.execute(
             "SELECT * FROM competitor_videos WHERE account_id=? AND excluded_reason IS NULL "
-            "AND publish_time IS NOT NULL AND datetime(publish_time)<=datetime('now', ?) "
+            "AND publish_time IS NOT NULL AND datetime(publish_time)<=datetime(?) "
             "ORDER BY datetime(publish_time) DESC, video_id DESC",
-            (account_id, f"-{HISTORICAL_MATURITY_DAYS} days"),
+            (account_id, mature_cutoff.isoformat()),
         ).fetchall()
-        recent_cutoff = datetime.now(timezone.utc) - timedelta(days=MATURE_HISTORY_WINDOW_DAYS)
+        recent_cutoff = evaluation_time - timedelta(days=MATURE_HISTORY_WINDOW_DAYS)
         def normalized_publish_time(row: sqlite3.Row) -> datetime:
             value = datetime.fromisoformat(str(row["publish_time"]).replace("Z", "+00:00"))
             return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
@@ -7776,6 +15309,7 @@ class Stage0ContentProductionCore:
             }
             for row in baseline_rows
         ]
+        account_maturity = derive_account_maturity_state(len(baseline_rows))
         mature_reference = judge_against_mature_history(
             candidate_metrics={metric: 0 for metric in HISTORICAL_METRICS},
             baseline_metrics=baseline_metrics,
@@ -7988,6 +15522,8 @@ class Stage0ContentProductionCore:
             "account_id": account_id,
             "judged": judged,
             "mature_baseline_sample_count": len(baseline_rows),
+            "account_maturity_state": account_maturity["state"],
+            "mature_history_ready": account_maturity["mature_history_ready"],
             "new_hit_ids": new_hit_ids,
         }
         self._audit(None, "daily_competitor_hits_judged", result)
@@ -8002,18 +15538,23 @@ class Stage0ContentProductionCore:
         competitor_ready = {"competitor_accounts", "competitor_videos", "hits"}.issubset(tables)
         daily_sources = self.conn.execute(
             "SELECT COUNT(*) FROM competitor_videos video JOIN competitor_accounts account ON account.account_id=video.account_id "
+            "JOIN stage0_content_account formal_account ON formal_account.content_account_id=account.account_id "
+            "AND formal_account.data_identity=? AND formal_account.account_role='competitor' AND formal_account.status='active' "
             "WHERE account.domain_label=? AND account.registration_status='active' AND COALESCE(account.source_config_ref, '')<>'' "
             "AND video.publish_time>=? AND COALESCE(video.title, '')<>'' AND COALESCE(video.url, '')<>'' "
             "AND COALESCE(video.raw_archive_ref, '')<>'' AND video.excluded_reason IS NULL",
-            (domain_label, daily_since),
+            (self.data_identity, domain_label, daily_since),
         ).fetchone()[0] if competitor_ready else 0
         historical_sources = self.conn.execute(
             "SELECT COUNT(*) FROM hits hit JOIN competitor_videos video ON video.video_id=hit.video_id "
-            "JOIN competitor_accounts account ON account.account_id=hit.account_id WHERE account.domain_label=? "
+            "JOIN competitor_accounts account ON account.account_id=hit.account_id "
+            "JOIN stage0_content_account formal_account ON formal_account.content_account_id=account.account_id "
+            "AND formal_account.data_identity=? AND formal_account.account_role='competitor' AND formal_account.status='active' "
+            "WHERE account.domain_label=? "
             "AND account.registration_status='active' AND COALESCE(account.source_config_ref, '')<>'' "
             "AND hit.judgment_confidence IN ('rough', 'formal') AND COALESCE(hit.title, '')<>'' AND COALESCE(hit.url, '')<>'' "
             "AND COALESCE(video.raw_archive_ref, '')<>'' AND video.excluded_reason IS NULL",
-            (domain_label,),
+            (self.data_identity, domain_label),
         ).fetchone()[0] if competitor_ready else 0
         hotspot_scope = ""
         hotspot_params: list[Any] = [daily_since]
@@ -8039,8 +15580,13 @@ class Stage0ContentProductionCore:
             (domain_label,),
         ).fetchone()[0]
         question_expansion_sources = self.conn.execute(
-            "SELECT COUNT(*) FROM stage1_question_expansion_source WHERE domain_label=? "
-            "AND validation_outcome='supported' AND data_identity=?",
+            "SELECT COUNT(*) FROM stage1_question_expansion_source source "
+            "JOIN stage1_question_expansion_qualification qualification "
+            "ON qualification.expansion_id=source.expansion_id "
+            "AND qualification.data_identity=source.data_identity "
+            "AND qualification.status='qualified' "
+            "WHERE source.domain_label=? AND source.validation_outcome='supported' "
+            "AND source.data_identity=?",
             (domain_label, self.data_identity),
         ).fetchone()[0]
         saved_user_direction_sources = self.conn.execute(
@@ -8119,6 +15665,7 @@ class Stage0ContentProductionCore:
         daily_since: str,
         per_source_limit: int,
         hotspot_discovery_run_id: str | None = None,
+        resume_source_object_ids: tuple[str, ...] = (),
     ) -> list[dict[str, Any]]:
         """Read only qualified, already-recorded formal source facts; never collect or invent content."""
         if self.discovery_source_readiness(
@@ -8128,6 +15675,7 @@ class Stage0ContentProductionCore:
         )["status"] != "ready":
             return []
         result: list[dict[str, Any]] = []
+        resume_ids = tuple(dict.fromkeys(str(item).strip() for item in resume_source_object_ids if str(item).strip()))
         tables = {row["name"] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         competitor_ready = {"competitor_accounts", "competitor_videos", "hits"}.issubset(tables)
         hotspot_scope = ""
@@ -8152,34 +15700,57 @@ class Stage0ContentProductionCore:
         daily_rows = self.conn.execute(
             "SELECT video.video_id, video.title, video.url, video.publish_time, video.last_checked_at, video.raw_json, account.account_name "
             "FROM competitor_videos video JOIN competitor_accounts account ON account.account_id=video.account_id "
+            "JOIN stage0_content_account formal_account ON formal_account.content_account_id=account.account_id "
+            "AND formal_account.data_identity=? AND formal_account.account_role='competitor' AND formal_account.status='active' "
             "WHERE account.domain_label=? AND account.registration_status='active' AND COALESCE(account.source_config_ref, '')<>'' "
             "AND video.publish_time>=? AND COALESCE(video.title, '')<>'' AND COALESCE(video.url, '')<>'' "
             "AND COALESCE(video.raw_archive_ref, '')<>'' AND video.excluded_reason IS NULL "
             "ORDER BY video.publish_time DESC, video.video_id ASC LIMIT ?",
-            (domain_label, daily_since, per_source_limit),
+            (self.data_identity, domain_label, daily_since, per_source_limit),
         ).fetchall() if competitor_ready else []
         for row in daily_rows:
             raw_hash = _hash(json.loads(row["raw_json"]))
             result.append({"source_type": "daily_competitor_content", "source_object_id": row["video_id"], "source_object_version": row["last_checked_at"], "source_time": row["publish_time"], "payload": {"source_id": row["video_id"], "title": row["title"], "url": row["url"], "account_name": row["account_name"], "source_time": row["publish_time"], "formal_source": {"table": "competitor_videos", "object_id": row["video_id"], "object_version": row["last_checked_at"], "raw_metadata_hash": raw_hash}}})
+        historical_sql = (
+            "AND hit.hit_id IN (" + ",".join("?" for _ in resume_ids) + ") "
+            if resume_ids else
+            "AND NOT EXISTS (SELECT 1 FROM stage1b_source_version attempted "
+            "WHERE attempted.source_type='historical_high_signal' AND attempted.source_object_id=hit.hit_id "
+            "AND attempted.source_object_version=hit.promoted_at AND attempted.data_identity=?) "
+        )
+        historical_params = [self.data_identity, domain_label]
+        if resume_ids:
+            historical_params.extend(resume_ids)
+        else:
+            historical_params.append(self.data_identity)
+        historical_params.append(per_source_limit)
         historical_rows = self.conn.execute(
             "SELECT hit.hit_id, hit.title, hit.url, hit.publish_time, hit.promoted_at, hit.hit_channel, hit.judgment_confidence, "
-            "video.raw_json, account.account_name FROM hits hit JOIN competitor_videos video ON video.video_id=hit.video_id "
-            "JOIN competitor_accounts account ON account.account_id=hit.account_id WHERE account.domain_label=? "
+            "video.raw_json, video.first_contact_category, account.account_name FROM hits hit JOIN competitor_videos video ON video.video_id=hit.video_id "
+             "JOIN competitor_accounts account ON account.account_id=hit.account_id "
+             "JOIN stage0_content_account formal_account ON formal_account.content_account_id=account.account_id "
+             "AND formal_account.data_identity=? AND formal_account.account_role='competitor' AND formal_account.status='active' "
+             "WHERE account.domain_label=? "
             "AND account.registration_status='active' AND COALESCE(account.source_config_ref, '')<>'' "
             "AND hit.judgment_confidence IN ('rough', 'formal') AND COALESCE(hit.title, '')<>'' AND COALESCE(hit.url, '')<>'' "
             "AND COALESCE(video.raw_archive_ref, '')<>'' AND video.excluded_reason IS NULL "
+            + historical_sql +
             "ORDER BY hit.promoted_at DESC, hit.hit_id ASC LIMIT ?",
-            (domain_label, per_source_limit),
+            tuple(historical_params),
         ).fetchall() if competitor_ready else []
         for row in historical_rows:
             raw_hash = _hash(json.loads(row["raw_json"]))
-            result.append({"source_type": "historical_high_signal", "source_object_id": row["hit_id"], "source_object_version": row["promoted_at"], "source_time": row["publish_time"], "payload": {"source_id": row["hit_id"], "title": row["title"], "url": row["url"], "account_name": row["account_name"], "source_time": row["publish_time"], "signal_basis": row["hit_channel"], "signal_confidence": row["judgment_confidence"], "formal_source": {"table": "hits", "object_id": row["hit_id"], "object_version": row["promoted_at"], "raw_metadata_hash": raw_hash}}})
+            result.append({"source_type": "historical_high_signal", "source_object_id": row["hit_id"], "source_object_version": row["promoted_at"], "source_time": row["publish_time"], "payload": {"source_id": row["hit_id"], "title": row["title"], "url": row["url"], "account_name": row["account_name"], "source_time": row["publish_time"], "signal_basis": row["hit_channel"], "signal_confidence": row["judgment_confidence"], "hit_origin": "daily_new_hit" if row["first_contact_category"] == "formal_new" else "cold_start_historical", "formal_source": {"table": "hits", "object_id": row["hit_id"], "object_version": row["promoted_at"], "raw_metadata_hash": raw_hash}}})
         tag_rows = self.conn.execute(
             "SELECT video.*, tag.tag FROM discovered_external_videos video "
             "JOIN domain_search_tags tag ON tag.tag_id=video.tag_id WHERE video.domain_label=? "
-            "AND tag.status='active' AND COALESCE(video.title, '')<>'' AND COALESCE(video.url, '')<>'' "
+            "AND tag.status='active' AND video.is_tracked_account=0 "
+            "AND COALESCE(video.like_count, 0)>=? AND COALESCE(video.title, '')<>'' AND COALESCE(video.url, '')<>'' "
+            "AND NOT EXISTS (SELECT 1 FROM stage1b_source_version attempted "
+            "WHERE attempted.source_type='tag_discovery' AND attempted.source_object_id=video.discovered_video_id "
+            "AND attempted.source_object_version=video.discovered_at AND attempted.data_identity=?) "
             "ORDER BY video.discovered_at DESC, video.discovered_video_id ASC LIMIT ?",
-            (domain_label, per_source_limit),
+            (domain_label, TAG_CANDIDATE_LIKE_FLOOR, self.data_identity, per_source_limit),
         ).fetchall()
         for row in tag_rows:
             raw_hash = _hash(json.loads(row["raw_json"]))
@@ -8196,6 +15767,11 @@ class Stage0ContentProductionCore:
                     "platform_item_id": row["platform_item_id"],
                     "account_platform_id": row["account_platform_id"],
                     "account_name": row["account_handle"] or row["account_platform_id"],
+                    "is_tracked_account": bool(row["is_tracked_account"]),
+                    "like_count": row["like_count"],
+                    "comment_count": row["comment_count"],
+                    "share_count": row["share_count"],
+                    "collect_count": row["collect_count"],
                     "discovery_tag": row["tag"],
                     "source_time": row["discovered_at"],
                     "formal_source": {
@@ -8206,13 +15782,53 @@ class Stage0ContentProductionCore:
                     },
                 },
             })
+        expansion_sql = (
+            "AND source.expansion_id IN (" + ",".join("?" for _ in resume_ids) + ") "
+            if resume_ids else
+            "AND NOT EXISTS (SELECT 1 FROM stage1b_source_version attempted "
+            "WHERE attempted.source_type='question_expansion' AND attempted.source_object_id=source.expansion_id "
+            "AND attempted.source_object_version=source.integrity_hash AND attempted.data_identity=?) "
+        )
+        expansion_params = [domain_label, self.data_identity]
+        if resume_ids:
+            expansion_params.extend(resume_ids)
+        else:
+            expansion_params.append(self.data_identity)
+        expansion_params.append(per_source_limit)
         expansion_rows = self.conn.execute(
-            "SELECT * FROM stage1_question_expansion_source WHERE domain_label=? "
-            "AND validation_outcome='supported' AND data_identity=? ORDER BY validated_at DESC, expansion_id ASC LIMIT ?",
-            (domain_label, self.data_identity, per_source_limit),
+            "SELECT source.*, qualification.status AS qualification_status, "
+            "qualification.material_refs_json AS qualification_material_refs_json, "
+            "qualification.checks_json AS qualification_checks_json "
+            "FROM stage1_question_expansion_source source "
+            "JOIN stage1_question_expansion_qualification qualification "
+            "ON qualification.expansion_id=source.expansion_id "
+            "AND qualification.data_identity=source.data_identity "
+            "AND qualification.status='qualified' "
+            "WHERE source.domain_label=? AND source.validation_outcome='supported' "
+            "AND source.data_identity=? "
+            + expansion_sql +
+            "ORDER BY source.validated_at DESC, source.expansion_id ASC LIMIT ?",
+            tuple(expansion_params),
         ).fetchall()
         for row in expansion_rows:
             payload = json.loads(row["payload_json"])
+            derivation = payload.get("derivation") if isinstance(payload.get("derivation"), dict) else {}
+            projection = derivation.get("content_type_projection")
+            projection = projection if isinstance(projection, dict) else {}
+            canonical_id = str(
+                derivation.get("canonical_id") or projection.get("canonical_id") or ""
+            ).strip()
+            approved_projection = project_content_type(
+                domain_label,
+                lifecycle="classify",
+                canonical_id=canonical_id,
+            )
+            if approved_projection.get("status") != "matched":
+                # A legacy qualification row without a current frozen
+                # projection is incomplete input, not a production source.
+                continue
+            qualification_material_refs = json.loads(str(row["qualification_material_refs_json"] or "[]"))
+            qualification_checks = json.loads(str(row["qualification_checks_json"] or "{}"))
             result.append({
                 "source_type": "question_expansion",
                 "source_object_id": row["expansion_id"],
@@ -8220,6 +15836,9 @@ class Stage0ContentProductionCore:
                 "source_time": row["validated_at"],
                 "payload": {
                     **payload,
+                    "qualification_status": str(row["qualification_status"]),
+                    "qualification_material_refs": qualification_material_refs if isinstance(qualification_material_refs, list) else [],
+                    "qualification_checks": qualification_checks if isinstance(qualification_checks, dict) else {},
                     "source_id": row["expansion_id"],
                     "url": "",
                     "account_name": "已完成拓展验证",
@@ -8234,8 +15853,12 @@ class Stage0ContentProductionCore:
             })
         direction_rows = self.conn.execute(
             "SELECT * FROM stage1_saved_user_direction_source WHERE domain_label=? "
-            "AND status='active' AND data_identity=? ORDER BY saved_at DESC, direction_id ASC LIMIT ?",
-            (domain_label, self.data_identity, per_source_limit),
+            "AND status='active' AND data_identity=? "
+            "AND NOT EXISTS (SELECT 1 FROM stage1b_source_version attempted "
+            "WHERE attempted.source_type='saved_user_direction' AND attempted.source_object_id=stage1_saved_user_direction_source.direction_id "
+            "AND attempted.source_object_version=stage1_saved_user_direction_source.integrity_hash AND attempted.data_identity=?) "
+            "ORDER BY saved_at DESC, direction_id ASC LIMIT ?",
+            (domain_label, self.data_identity, self.data_identity, per_source_limit),
         ).fetchall()
         for row in direction_rows:
             payload = json.loads(row["payload_json"])
@@ -8393,3 +16016,8 @@ class Stage0ContentProductionCore:
 
     def _audit(self, task_id: str | None, action: str, payload: dict[str, Any]) -> None:
         self.conn.execute("INSERT INTO stage0_audit_event VALUES (?, ?, ?, ?, ?, ?)", (_id("audit"), task_id, action, _canonical(payload), self.data_identity, _now()))
+
+from scripts.core.production.domain_boundary_lifecycle import attach_core_methods as _attach_domain_boundary_methods
+_attach_domain_boundary_methods(Stage0ContentProductionCore)
+from scripts.core.production.cold_start_completion import attach_core_methods as _attach_cold_start_completion_methods
+_attach_cold_start_completion_methods(Stage0ContentProductionCore)

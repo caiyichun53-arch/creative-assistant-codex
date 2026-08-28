@@ -21,6 +21,16 @@ CREATE TABLE IF NOT EXISTS competitor_accounts (
 CREATE INDEX IF NOT EXISTS idx_competitor_accounts_domain
 ON competitor_accounts(domain_label, platform, registration_status);
 
+-- One immutable completion fact per account in one formal daily run.  This is
+-- deliberately not an account lifecycle: absence means the collection stage
+-- has not completed for this daily run.
+CREATE TABLE IF NOT EXISTS daily_collection_account_completion (
+    daily_run_id TEXT NOT NULL REFERENCES stage0_daily_run(daily_run_id) ON DELETE RESTRICT,
+    account_id TEXT NOT NULL REFERENCES competitor_accounts(account_id) ON DELETE RESTRICT,
+    completed_at TEXT NOT NULL,
+    PRIMARY KEY(daily_run_id, account_id)
+);
+
 CREATE TRIGGER IF NOT EXISTS competitor_accounts_updated_at
 AFTER UPDATE ON competitor_accounts
 BEGIN
@@ -29,6 +39,10 @@ BEGIN
      WHERE account_id=NEW.account_id;
 END;
 
+-- Account maturity is derived, not stored as a separate mutable account flag:
+-- new_account means fewer than 20 usable mature-history samples; mature_account
+-- means the existing 20-sample minimum is met. Account age, registration time,
+-- total video count, and formal D-series completion do not change this state.
 -- BR-HIT-001 section B (2026-07-07 master-doc realignment): every video is
 -- classified at first contact into exactly one of three categories, per the
 -- document's "历史回填与三类视频". This replaces the prior watching/archived/
@@ -36,6 +50,8 @@ END;
 -- lifecycle anymore. A video remains a formal hit only while it satisfies the
 -- current approved policy; a full policy re-evaluation hard-deletes invalid
 -- hit rows and their derived material instead of retaining a fallback copy.
+-- first_contact_category records the video's origin at first contact; it is
+-- not the account maturity state and is not changed to represent graduation.
 --   historical_mature: already published >=7 days when first seen. One
 --     cumulative snapshot now. Feeds mature_history baseline only.
 --   transition: published 1-7 days when first seen. One snapshot now, a
@@ -91,7 +107,10 @@ CREATE TABLE IF NOT EXISTS competitor_videos (
     registration_run_id TEXT,
     raw_archive_ref TEXT,
     raw_json TEXT NOT NULL,
+    -- Real wall-clock time when the item was first written.  A delayed
+    -- catch-up keeps this truthful and stores its D0 ownership separately.
     first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    first_seen_business_date TEXT,
     last_checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     check_count INTEGER NOT NULL DEFAULT 0,
     UNIQUE(account_id, platform_item_id)
@@ -115,6 +134,7 @@ CREATE TABLE IF NOT EXISTS video_checks (
     video_id TEXT NOT NULL REFERENCES competitor_videos(video_id) ON DELETE RESTRICT,
     discovery_batch_index INTEGER,
     day_since_publish INTEGER,
+    business_date TEXT,
     checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     like_count INTEGER,
     comment_count INTEGER,
@@ -125,6 +145,27 @@ CREATE TABLE IF NOT EXISTS video_checks (
 
 CREATE INDEX IF NOT EXISTS idx_video_checks_video
 ON video_checks(video_id, discovery_batch_index, checked_at);
+
+-- A business day owns at most one observation for one video.  Retries and
+-- delayed catch-up runs must update/reuse that identity instead of creating a
+-- second D-point for the same video and date.
+-- Missing historical observations are facts, not zero-valued or fabricated
+-- checks.  Keeping them explicit prevents incomplete D0-D7 sequences from
+-- being mistaken for complete baseline material.
+CREATE TABLE IF NOT EXISTS daily_observation_gaps (
+    gap_id TEXT PRIMARY KEY,
+    video_id TEXT NOT NULL REFERENCES competitor_videos(video_id) ON DELETE RESTRICT,
+    business_date TEXT NOT NULL,
+    expected_d INTEGER NOT NULL CHECK(expected_d BETWEEN 0 AND 7),
+    reason TEXT NOT NULL,
+    repair_run_id TEXT NOT NULL,
+    data_identity TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(video_id, business_date, expected_d, data_identity)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_observation_gaps_date
+ON daily_observation_gaps(business_date, expected_d, data_identity);
 
 -- BR-HIT-001 section C: four baseline types share this table, distinguished
 -- by baseline_mode. mature_history has observation_point=NULL (one
@@ -146,11 +187,10 @@ CREATE INDEX IF NOT EXISTS idx_baselines_account
 ON baselines(account_id, baseline_mode, metric, observation_point, computed_at);
 
 -- hit_channel is a comma-joined list of every channel that fired at
--- promotion time (like_anomaly/comment_anomaly/collect_anomaly/share_anomaly/
--- multi_indicator/comment_like_ratio/cold_start_d7_rough) -- not a fixed
--- small enum, since BR-HIT-001's 6-channel OR design allows many combinations
--- record. A row may be hard-deleted together with all derived data when a
--- complete approved-policy re-evaluation proves that the video is not a hit.
+-- promotion time (historical comment_like_ratio or single-metric anomaly,
+-- formal_d single-metric or formal_d_multi) -- not a fixed small enum. A row
+-- may be hard-deleted together with all derived data when a complete
+-- approved-policy re-evaluation proves that the video is not a hit.
 CREATE TABLE IF NOT EXISTS hits (
     hit_id TEXT PRIMARY KEY,
     video_id TEXT NOT NULL REFERENCES competitor_videos(video_id) ON DELETE RESTRICT,
@@ -256,7 +296,7 @@ CREATE TABLE IF NOT EXISTS hit_comments (
     -- Which collection pass this row belongs to (section 16 / BR-HIT-007).
     -- NOT NULL with no default -- every caller must say which pass this is,
     -- rather than silently defaulting to one and hiding the real trigger.
-    purpose TEXT NOT NULL CHECK(purpose IN ('early_topic', 'mature_analysis', 'mature_history', 'external_snapshot')),
+    purpose TEXT NOT NULL CHECK(purpose IN ('early_topic', 'mature_analysis', 'mature_history', 'external_snapshot', 'daily_hit')),
     -- D/P point this batch was collected at (e.g. 'D0'..'D7', 'P+7d'); NULL
     -- when the purpose has no meaningful observation point (e.g. a one-off
     -- external_snapshot on a tag-searched video with no D/P baseline at all).

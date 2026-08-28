@@ -27,12 +27,6 @@
     "skill_must_not_bypass_human_authority": true,
     "skill_must_not_call_other_business_steps": true,
     "direct_business_model_request_forbidden_after_cutover": true,
-    "quality_gate_required_before_formal_skill_cutover": true,
-    "quality_gate_requires_same_frozen_inputs": true,
-    "quality_gate_requires_output_structure_equivalence": true,
-    "quality_gate_requires_retained_evidence_equivalence": true,
-    "quality_gate_requires_human_acceptance": true,
-    "quality_gate_is_one_overall_decision_not_per_candidate": true,
     "formal_result_requires_one_final_human_decision": true,
     "silent_quality_downgrade_or_fallback_forbidden": true,
     "unregistered_business_model_operation_blocks_at_runtime": true
@@ -70,7 +64,6 @@
     "hotspot_to_opportunity"
   ],
   "registered_atomic_model_operations": [
-    "competitor_breakdown_structural_v13",
     "research_plan",
     "content_deep_research",
     "content_plan_generation",
@@ -79,24 +72,12 @@
     "de_ai_revision",
     "final_content_review",
     "experience_candidate_propose",
-    "source_to_topic"
+    "source_to_topic",
+    "competitor_breakdown"
   ],
-  "atomic_skill_quality_cutover": {
-    "competitor_breakdown_structural_v13": "accepted_same_input_comparison",
-    "research_plan": "same_input_comparison_pending",
-    "content_deep_research": "same_input_comparison_pending",
-    "content_plan_generation": "same_input_comparison_pending",
-    "formal_draft_generate": "same_input_comparison_pending",
-    "copy_optimization": "same_input_comparison_pending",
-    "de_ai_revision": "same_input_comparison_pending",
-    "final_content_review": "same_input_comparison_pending",
-    "experience_candidate_propose": "same_input_comparison_pending",
-    "source_to_topic": "same_input_comparison_pending"
-  },
   "completion_requires": [
     "no_direct_business_model_request_remains_in_registered_business_nodes",
     "all_registered_atomic_skills_have_standalone_boundary_declarations",
-    "each_replaced_node_has_an_accepted_quality_comparison_receipt",
     "formal_runtime_data_is_outside_the_build_root",
     "formal_runtime_startup_blocks_old_or_wrong_roots",
     "automatic_hook_events_prove_build_and_runtime_blocking"

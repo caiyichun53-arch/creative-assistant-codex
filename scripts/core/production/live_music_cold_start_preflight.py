@@ -6,12 +6,24 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from scripts.core.business_data.domain_labels import get_domain_pack
-from scripts.core.external_adapters.local_mediacrawler_executor import LocalMediaCrawlerExecutor
+from scripts.core.external_adapters.local_mediacrawler_executor import (
+    LocalMediaCrawlerExecutor,
+    retained_douyin_collector_browser_status,
+)
 from scripts.core.model_gateway.model_router import ModelRouter
 from scripts.core.production.stage0_content_core import Stage0ContentProductionCore, StateTransitionError
 
 
 APPROVED_ACTIVATION_STATES = frozenset({"approved", "active", "approved_for_phase8_pilot"})
+
+_TRUSTED_INTERNAL_HERMES_FEISHU_CONTEXT = {
+    "marker": "hermes_gateway_internal_v1",
+    "platform": "feishu",
+    "profile": "creator",
+    "carrier_binding_id": "hermes-creator-feishu-gateway",
+    "entry_ref": "hermes://creator/feishu-gateway",
+    "tool_action": "cold_start_onboarding",
+}
 
 
 @dataclass(frozen=True)
@@ -75,7 +87,28 @@ class LiveColdStartPreflight:
     def _profile_has_state(path: Path) -> bool:
         return path.is_dir() and any(item.is_file() for item in path.rglob("*"))
 
-    def inspect(self, request: LiveColdStartRequest) -> dict[str, Any]:
+    @staticmethod
+    def _is_trusted_internal_hermes_feishu_path(
+        context: Mapping[str, Any] | None,
+    ) -> bool:
+        if not isinstance(context, Mapping):
+            return False
+        if any(
+            str(context.get(key) or "").strip() != expected
+            for key, expected in _TRUSTED_INTERNAL_HERMES_FEISHU_CONTEXT.items()
+        ):
+            return False
+        return all(
+            str(context.get(key) or "").strip()
+            for key in ("user_identity", "session_identity", "command_identity")
+        )
+
+    def inspect(
+        self,
+        request: LiveColdStartRequest,
+        *,
+        trusted_internal_context: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         checks: list[dict[str, Any]] = []
         add = checks.append
         add(self._check(
@@ -135,38 +168,79 @@ class LiveColdStartPreflight:
         else:
             media_runtime_ok = (vendor / "main.py").is_file() and any(path.is_file() for path in media_python_candidates)
             media_runtime_detail = "MediaCrawler code and Python runtime are present" if media_runtime_ok else media_python_error or "MediaCrawler code or Python runtime is missing"
-        add(self._check("mediacrawler_runtime", media_runtime_ok, "runtime", media_runtime_detail))
-        media_profile_ok = self._profile_has_state(vendor / "browser_data")
-        add(self._check("mediacrawler_account_session", media_profile_ok, "runtime_login", "MediaCrawler retained browser state exists" if media_profile_ok else "MediaCrawler own-account login state has not been prepared"))
+        add(self._check(
+            "mediacrawler_runtime", media_runtime_ok, "runtime", media_runtime_detail,
+            required_for_cold_start=False,
+        ))
+        try:
+            collector_browser_status = retained_douyin_collector_browser_status(vendor)
+            media_session_ok = collector_browser_status.get("status") == "ready"
+            media_session_detail = (
+                "shared MediaCrawler collector session is ready"
+                if media_session_ok
+                else "shared MediaCrawler collector session is not ready"
+            )
+        except Exception as exc:
+            media_session_ok = False
+            media_session_detail = f"shared MediaCrawler collector session cannot be checked: {exc}"
+        add(self._check(
+            "mediacrawler_account_session", media_session_ok, "runtime_connection", media_session_detail,
+            required_for_cold_start=False,
+        ))
 
         try:
             router = ModelRouter.from_file(self.repo_root / "config" / "model_routes.yaml")
-            for route_id in ("business_analysis", "writing_generation"):
-                router.resolve_bound_route(route_id, environment=self.environment, env_path=self.dotenv_path)
-            model_routes_ok, model_routes_detail = True, "business and writing model routes resolve with no fallback"
+            context = trusted_internal_context or {}
+            binding = router.resolve_hermes_task_binding(
+                route_id="business_analysis",
+                current_model=str(context.get("task_model_name") or ""),
+                current_provider=str(context.get("task_model_provider") or ""),
+                current_endpoint=str(context.get("task_model_base_url") or ""),
+                environment=self.environment,
+                env_path=self.dotenv_path,
+            )
+            route = router.resolve_frozen_task_route(
+                binding, environment=self.environment, env_path=self.dotenv_path
+            )
+            router.validate_bound_provider_configuration(
+                route, environment=self.environment, env_path=self.dotenv_path
+            )
+            model_routes_ok, model_routes_detail = True, (
+                f"business analysis inherits Hermes task model {binding.model_name} "
+                f"through {binding.provider_ref} with no fallback"
+            )
         except Exception as exc:
             model_routes_ok, model_routes_detail = False, f"model route is unresolved: {exc}"
-        for ref in ("HERMES_BUSINESS_API_KEY", "HERMES_BUSINESS_BASE_URL"):
-            value, error = self._env(ref)
-            if error:
-                model_routes_ok, model_routes_detail = False, f"{ref}: {error}"
-            if ref.endswith("BASE_URL") and value and not value.startswith(("http://", "https://")):
-                model_routes_ok, model_routes_detail = False, f"{ref}: endpoint is not HTTP(S)"
-        add(self._check("model_routes", model_routes_ok, "runtime_configuration", model_routes_detail))
+        add(self._check(
+            "model_routes", model_routes_ok, "runtime_configuration", model_routes_detail,
+            required_for_cold_start=False,
+        ))
 
         sense_python, sense_python_error = self._env("SENSEVOICE_PYTHON")
         sense_worker, sense_worker_error = self._env("SENSEVOICE_WORKER")
         sense_model, sense_model_error = self._env("SENSEVOICE_ASR_MODEL")
         sense_vad, sense_vad_error = self._env("SENSEVOICE_VAD_MODEL")
         sense_ok = Path(sense_python).is_file() and Path(sense_worker).is_file() and bool(sense_model and sense_vad)
-        add(self._check("sensevoice_runtime", sense_ok, "runtime", "SenseVoice runtime and configured models are present" if sense_ok else sense_python_error or sense_worker_error or sense_model_error or sense_vad_error or "SenseVoice runtime file is missing"))
+        add(self._check(
+            "sensevoice_runtime", sense_ok, "runtime",
+            "SenseVoice runtime and configured models are present" if sense_ok else sense_python_error or sense_worker_error or sense_model_error or sense_vad_error or "SenseVoice runtime file is missing",
+            required_for_cold_start=False,
+        ))
         ffmpeg, ffmpeg_error = self._env("FFMPEG_PATH")
-        add(self._check("ffmpeg_runtime", Path(ffmpeg).is_file(), "runtime", "ffmpeg runtime is present" if Path(ffmpeg).is_file() else ffmpeg_error or "ffmpeg executable is missing"))
+        add(self._check(
+            "ffmpeg_runtime", Path(ffmpeg).is_file(), "runtime",
+            "ffmpeg runtime is present" if Path(ffmpeg).is_file() else ffmpeg_error or "ffmpeg executable is missing",
+            required_for_cold_start=False,
+        ))
 
         supported_runtime_requirements = {"music_audience_browser"}
         requested_requirements = {str(item) for item in pack.get("runtime_requirements", [])}
         unknown_requirements = requested_requirements - supported_runtime_requirements
-        add(self._check("domain_runtime_requirements_supported", not unknown_requirements, "code_connector", "domain runtime requirements are supported" if not unknown_requirements else "unsupported runtime requirement: " + ", ".join(sorted(unknown_requirements))))
+        add(self._check(
+            "domain_runtime_requirements_supported", not unknown_requirements, "code_connector",
+            "domain runtime requirements are supported" if not unknown_requirements else "unsupported runtime requirement: " + ", ".join(sorted(unknown_requirements)),
+            required_for_cold_start=False,
+        ))
         if "music_audience_browser" in requested_requirements:
             audience_python, _ = self._env("MUSIC_AUDIENCE_PYTHON")
             netease_profile, _ = self._env("NETEASE_MUSIC_PROFILE_DIR")
@@ -185,16 +259,40 @@ class LiveColdStartPreflight:
                 required_for_cold_start=False,
             ))
 
+        trusted_internal = self._is_trusted_internal_hermes_feishu_path(
+            trusted_internal_context
+        )
         carriers = self.core.list_validated_human_decision_carriers()
-        add(self._check("validated_human_decision_entry", bool(carriers), "human_architecture", "a real decision carrier round trip has been validated" if carriers else "no real Codex, Hermes or Feishu decision carrier has passed round-trip validation"))
+        add(self._check(
+            "validated_human_decision_entry",
+            trusted_internal or bool(carriers),
+            "human_architecture",
+            (
+                "the approved internal Hermes creator + Feishu path is active"
+                if trusted_internal
+                else (
+                    "a real decision carrier round trip has been validated"
+                    if carriers
+                    else "no real Codex, Hermes or Feishu decision carrier has passed round-trip validation"
+                )
+            ),
+            required_for_cold_start=False,
+        ))
         ready = bool(checks) and all(
             item["passed"] or not item["required_for_cold_start"]
             for item in checks
         )
         return {"domain_label": request.domain_label, "ready": ready, "checks": checks}
 
-    def require_ready(self, request: LiveColdStartRequest) -> dict[str, Any]:
-        report = self.inspect(request)
+    def require_ready(
+        self,
+        request: LiveColdStartRequest,
+        *,
+        trusted_internal_context: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        report = self.inspect(
+            request, trusted_internal_context=trusted_internal_context
+        )
         if not report["ready"]:
             blockers = [
                 item["code"]

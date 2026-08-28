@@ -1,4 +1,22 @@
 type: object
 required: [node, document, source_boundaries, unresolved]
-properties: {node: {type: string, enum: [deep_research]}, document: {type: object}, source_boundaries: {type: array}, unresolved: {type: array}}
+properties:
+  node: {type: string, enum: [deep_research]}
+  document:
+    type: object
+    required: [subject, timeline, career_stages, representative_works, turning_points, historical_context, public_memory, current_status, source_map]
+    properties:
+      subject: {type: string}
+      timeline: {type: array}
+      career_stages: {type: array}
+      representative_works: {type: array}
+      turning_points: {type: array}
+      historical_context: {type: array}
+      public_memory: {type: array}
+      current_status: {type: array}
+      source_map: {type: array}
+    additional_properties: false
+  source_boundaries: {type: array}
+  unresolved: {type: array}
+additional_properties: false
 additional_properties: false

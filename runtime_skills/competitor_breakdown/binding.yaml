@@ -1,0 +1,42 @@
+schema_version: formal_skill_binding.v1
+binding_name: competitor_breakdown_full_spoken_analysis_v2
+binding_version: 2.6.0
+input_map:
+  source_id: {source: input, key: source_id}
+  transcript: {source: input, key: transcript}
+  numbered_transcript: {source: preprocessed, key: numbered_transcript}
+  metrics: {source: input, key: metrics}
+  numbered_comments: {source: preprocessed, key: numbered_comments}
+  domain_label: {source: input, key: domain_label}
+  domain_context: {source: preprocessed, key: domain_context}
+output_map:
+  source_id: {source: input, key: source_id}
+  analysis_text: {source: model_output, key: analysis_text}
+  question_expansions: {source: model_output, key: question_expansions, required: false}
+  source_content_type: {source: model_output, key: source_content_type}
+  expansion_signals: {source: model_output, key: expansion_signals, required: false}
+  typed_expansion_leads: {source: model_output, key: typed_expansion_leads, required: false}
+  boundary_observation: {source: model_output, key: boundary_observation, required: false}
+  schema_version: {source: literal, value: competitor_breakdown.output.raw.v5}
+model_input_schema:
+  type: object
+  required: [source_id, transcript, numbered_transcript, metrics, numbered_comments, domain_label, domain_context]
+  properties:
+    source_id: {type: string}
+    transcript: {type: string}
+    numbered_transcript: {type: string}
+    metrics: {type: object}
+    numbered_comments: {type: string}
+    domain_label: {type: string}
+    domain_context: {type: string}
+  additional_properties: false
+model_output_schema:
+  type: object
+  required: [source_content_type]
+  properties:
+    source_content_type: {type: string}
+    question_expansions: {type: array}
+    expansion_signals: {type: array}
+    typed_expansion_leads: {type: array}
+    boundary_observation: {type: string}
+  additional_properties: false

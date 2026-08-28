@@ -1,0 +1,14 @@
+name: 泛科普-社会生活
+formal_domain_label: domain_1833831517eb
+activation_status: approved
+workflow_mode: manual_guard
+runtime_requirements: []
+discovery:
+  hotspot_match_terms: []
+  risk_block_terms: []
+  exclude_terms: []
+  topic_search:
+    active_tags: []
+    broad_domain_tags: []
+    generic_tags: []
+    activity_review_terms: []

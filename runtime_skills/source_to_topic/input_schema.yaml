@@ -175,14 +175,39 @@ properties:
       required:
         - experience_id
         - summary
+        - experience_layer
+        - use_positions
+        - trigger_signals
+        - applicable_when
+        - method
         - usage_boundary
+        - not_applicable_when
       properties:
         experience_id:
           type: string
         summary:
           type: string
-        usage_boundary:
+        experience_layer:
           type: string
+          enum: [structure, section_method, local_detail]
+        use_positions:
+          type: array
+          items: {type: string}
+        trigger_signals:
+          type: array
+          items: {type: string}
+        applicable_when:
+          type: array
+          items: {type: string}
+        method:
+          type: array
+          items: {type: string}
+        usage_boundary:
+          type: array
+          items: {type: string}
+        not_applicable_when:
+          type: array
+          items: {type: string}
       additional_properties: false
   user_direction:
     type: string

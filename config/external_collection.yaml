@@ -3,7 +3,7 @@
 
 hotspot_collection:
   provider: trendradar
-  live_enabled: true
+  live_enabled: false
   project_dir: "I:/Creation_assistant-codex"
   executable: "C:/Users/15891/anaconda3/python.exe"
   args:
@@ -24,5 +24,6 @@ domain_search:
   live_enabled: true
   daily_tag_count: 3
   page_count_per_tag: 1
+  candidate_like_floor: 10000
 
 schema_version: external_collection.v1

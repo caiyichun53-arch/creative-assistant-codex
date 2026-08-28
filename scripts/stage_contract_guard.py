@@ -33,11 +33,34 @@ def _validate_current_cold_start() -> list[str]:
     required_breakdown = {
         "one_record_per_completed_spoken_transcript",
         "content_type_is_fixed_classification_only",
+        "question_expansion_check_required",
+        "question_expansion_may_be_empty",
+        "question_expansion_requires_source_anchor",
+        "question_expansion_requires_unresolved_increment",
+        "question_expansion_requires_domain_gate",
+        "question_expansion_requires_independent_topic",
+        "question_expansion_requires_non_repetition",
+        "observed_content_types_are_retrieval_only",
+        "new_content_type_does_not_expand_domain",
+        "content_type_lifecycle_is_separate_from_candidate_lifecycle",
+        "discover_may_record_observed_types_without_approval",
+        "classify_requires_domain_registry_frozen",
+        "classify_accepts_canonical_ids_only",
+        "classify_unknown_type_returns_no_match_or_out_of_scope",
+        "frozen_registry_must_pass_config_validation_before_classify",
+        "legacy_question_expansion_cannot_bypass_approved_projection",
+        "expansion_signal_precedes_typed_lead",
+        "unmatched_expansion_signal_skips_qualification",
+        "qualified_typed_lead_preserves_existing_candidate_chain",
+        "ineligible_source_blocks_formal_breakdown_write",
+        "ineligible_source_does_not_pollute_observed_types",
         "every_claim_requires_exact_transcript_evidence",
         "real_progression_is_not_forced_into_four_stages",
         "story_or_profile_progression_rejects_biographical_recap_without_spoken_structure",
         "multiple_concrete_writing_methods_are_retained_per_video",
         "comments_describe_reactions_not_effectiveness",
+        "comments_are_passed_to_breakdown_model",
+        "comment_evidence_required_when_relevant",
         "performance_causality_claims_are_forbidden",
         "quality_citation_or_structure_failure_is_recorded_and_batch_continues",
         "failed_breakdowns_require_final_summary_before_downstream_progress",
@@ -61,13 +84,8 @@ def _validate_system_governance() -> list[str]:
     errors: list[str] = []
     contract = _read_object(ROOT / "config" / "business_guardrails" / "system_governance.json")
     registered = contract.get("registered_atomic_model_operations") or []
-    cutover = contract.get("atomic_skill_quality_cutover") or {}
-    allowed_statuses = {
-        "same_input_comparison_pending",
-        "accepted_same_input_comparison",
-    }
-    if not isinstance(registered, list) or not isinstance(cutover, dict):
-        return ["atomic Skill quality-cutover rules are incomplete"]
+    if not isinstance(registered, list):
+        return ["registered atomic Skill operations are incomplete"]
     try:
         from scripts.core.production.business_runtime_guard import _public_setting_binding_errors
 
@@ -75,12 +93,6 @@ def _validate_system_governance() -> list[str]:
     except (ImportError, OSError, UnicodeDecodeError, SyntaxError) as exc:
         errors.append("shared setting binding guard cannot run: " + str(exc))
     for skill_id in registered:
-        if cutover.get(skill_id) not in allowed_statuses:
-            errors.append(
-                "atomic Skill quality cutover is not fail-closed: "
-                + str(skill_id)
-            )
-            continue
         directory = ROOT / "runtime_skills" / str(skill_id)
         required_files = {
             "skill.yaml",

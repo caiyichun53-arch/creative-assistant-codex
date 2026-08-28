@@ -21,9 +21,21 @@ class LocalMusicAudienceBrowserExecutor:
     douban_profile_dir: Path
     timeout_seconds: int = 900
 
-    def collect_initial_person_scan(self, *, person_name: str, works: tuple[dict[str, Any], ...]) -> dict[str, Any]:
-        if not person_name.strip() or not 10 <= len(works) <= 12:
-            raise ExternalAdapterError("initial music person scan requires a person and 10 to 12 confirmed works")
+    def collect_initial_person_scan(
+        self,
+        *,
+        person_name: str,
+        works: tuple[dict[str, Any], ...],
+        representative_item_minimum: int,
+        representative_item_maximum: int,
+        total_viewed_limit: int,
+    ) -> dict[str, Any]:
+        if (
+            not person_name.strip()
+            or not representative_item_minimum <= len(works) <= representative_item_maximum
+            or total_viewed_limit <= 0
+        ):
+            raise ExternalAdapterError("music person scan does not meet its explicit domain limits")
         if not self.python_executable.is_file() or not self.worker_path.is_file():
             raise ExternalAdapterError("music audience browser runtime is not configured")
         request = {
@@ -35,7 +47,7 @@ class LocalMusicAudienceBrowserExecutor:
                 "netease_comments_per_song": 20,
                 "douban_long_reviews_per_subject": 5,
                 "douban_short_reviews_per_subject": 20,
-                "total_viewed": 600,
+                "total_viewed": total_viewed_limit,
             },
         }
         with tempfile.TemporaryDirectory() as folder:

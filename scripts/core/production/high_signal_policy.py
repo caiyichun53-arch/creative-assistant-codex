@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import statistics
 import time
 from pathlib import Path
@@ -29,6 +28,7 @@ def _load_formal_guardrail() -> tuple[dict[str, Any], str]:
 
 FORMAL_GUARDRAIL, FORMAL_GUARDRAIL_DIGEST = _load_formal_guardrail()
 COLLECTION_GUARDRAIL = FORMAL_GUARDRAIL["collection"]
+ACCOUNT_MATURITY_GUARDRAIL = FORMAL_GUARDRAIL["account_maturity"]
 SELECTION_GUARDRAIL = FORMAL_GUARDRAIL["historical_selection"]
 FORMAL_D_GUARDRAIL = FORMAL_GUARDRAIL["formal_d_selection"]
 
@@ -51,6 +51,7 @@ COLLECTION_GUARDRAIL_DIGEST = _policy_scope_digest({
         "historical_mature": FORMAL_GUARDRAIL["first_contact"]["historical_mature"],
         "transition": FORMAL_GUARDRAIL["first_contact"]["transition"],
     },
+    "account_maturity": ACCOUNT_MATURITY_GUARDRAIL,
 })
 HISTORICAL_SELECTION_GUARDRAIL_DIGEST = _policy_scope_digest({
     "collection_guardrail_digest": COLLECTION_GUARDRAIL_DIGEST,
@@ -71,20 +72,14 @@ MATURE_HISTORY_WINDOW_DAYS = int(COLLECTION_GUARDRAIL["recent_window_days"])
 HISTORICAL_MATURITY_DAYS = int(COLLECTION_GUARDRAIL["maturity_days"])
 MIN_RELIABLE_HISTORY_ITEMS = int(COLLECTION_GUARDRAIL["minimum_reliable_mature_items"])
 
+ACCOUNT_STATE_NEW = "new_account"
+ACCOUNT_STATE_MATURE = "mature_account"
+
 HISTORICAL_SINGLE_METRIC_MULTIPLIER = float(
     SELECTION_GUARDRAIL["single_metric_multiplier"]
 )
-HISTORICAL_MULTI_METRIC_MULTIPLIER = float(
-    SELECTION_GUARDRAIL["multi_metric_multiplier"]
-)
-HISTORICAL_MINIMUM_MULTI_METRICS = int(
-    SELECTION_GUARDRAIL["minimum_multi_metrics"]
-)
 MATURE_HISTORY_ABSOLUTE_LIKE_FLOOR = int(
     SELECTION_GUARDRAIL["normal_account_like_floor"]
-)
-SMALL_ACCOUNT_P90_PERCENTILE = float(
-    SELECTION_GUARDRAIL["small_account_p90_percentile"]
 )
 COMMENT_LIKE_RATIO_THRESHOLD = float(
     SELECTION_GUARDRAIL["comment_like_ratio_threshold"]
@@ -112,26 +107,28 @@ def _metric_value(item: dict[str, Any], metric: str) -> int:
     return max(0, int(metrics.get(metric) or 0))
 
 
-def _quantile(values: list[int], probability: float) -> float:
-    if not values:
-        return 0.0
-    ordered = sorted(values)
-    if len(ordered) == 1:
-        return float(ordered[0])
-    position = (len(ordered) - 1) * probability
-    lower = math.floor(position)
-    upper = math.ceil(position)
-    if lower == upper:
-        return float(ordered[lower])
-    fraction = position - lower
-    return float(ordered[lower]) * (1.0 - fraction) + float(ordered[upper]) * fraction
-
-
 def _published_at(item: dict[str, Any]) -> int:
     try:
         return max(0, int(item.get("published_at") or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def derive_account_maturity_state(mature_history_sample_count: int) -> dict[str, Any]:
+    """Derive account maturity from usable mature-history capacity only.
+
+    This is deliberately not based on account age, registration time, total
+    video count, or formal D-series progress. The state answers one business
+    question: can this account's mature-history baseline support multiplier
+    comparison yet?
+    """
+    sample_count = max(0, int(mature_history_sample_count))
+    ready = sample_count >= MIN_RELIABLE_HISTORY_ITEMS
+    return {
+        "state": ACCOUNT_STATE_MATURE if ready else ACCOUNT_STATE_NEW,
+        "mature_history_ready": ready,
+        "mature_history_sample_count": sample_count,
+    }
 
 
 def normalize_first_registration_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -189,12 +186,17 @@ def build_historical_collection_artifact(
     command_hash: str,
     output_hash: str,
     evaluated_at: int | None = None,
+    collection_status: str = "complete",
+    history_exhausted: bool = False,
+    collection_stop_reason: str = "legacy_one_shot",
+    page_request_count: int | None = None,
+    raw_archive_refs: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     evaluated_at = int(evaluated_at or time.time())
     normalized, used_older_history_backfill, recent_mature_count = (
         select_first_registration_items(items, evaluated_at=evaluated_at)
     )
-    return {
+    artifact = {
         "artifact_kind": "historical_material",
         "collection_policy_version": FIRST_REGISTRATION_COLLECTION_POLICY_VERSION,
         "formal_guardrail_digest": FORMAL_GUARDRAIL_DIGEST,
@@ -218,6 +220,16 @@ def build_historical_collection_artifact(
             "older_history_expansion_target": MIN_RELIABLE_HISTORY_ITEMS,
         },
     }
+    artifact["collection_status"] = str(collection_status or "complete")
+    artifact["history_exhausted"] = bool(history_exhausted)
+    artifact["collection_stop_reason"] = str(collection_stop_reason or "unknown")
+    if page_request_count is not None:
+        artifact["page_request_count"] = int(page_request_count)
+    if raw_archive_refs is not None:
+        artifact["raw_archive_refs"] = [
+            str(value).strip() for value in raw_archive_refs if str(value).strip()
+        ]
+    return artifact
 
 
 def validate_historical_collection_artifact(artifact: dict[str, Any]) -> None:
@@ -241,8 +253,14 @@ def validate_historical_collection_artifact(artifact: dict[str, Any]) -> None:
     evaluated_at = int(artifact.get("evaluated_at") or 0)
     if evaluated_at <= 0:
         raise ValueError("historical collection lacks its policy evaluation time")
+    collection_status = str(artifact.get("collection_status") or "complete")
+    if collection_status not in {"complete", "target_reached", "history_exhausted_insufficient"}:
+        raise ValueError("historical collection status is invalid")
+    history_exhausted_insufficient = collection_status == "history_exhausted_insufficient"
+    if history_exhausted_insufficient and artifact.get("history_exhausted") is not True:
+        raise ValueError("history-exhausted collection must record normal history exhaustion")
     items = artifact.get("items")
-    if not isinstance(items, list) or not items:
+    if not isinstance(items, list) or (not items and not history_exhausted_insufficient):
         raise ValueError("historical collection must contain retained items")
     if len(items) > FIRST_REGISTRATION_MAX_ITEMS:
         raise ValueError("first registration retained more than 50 historical items")
@@ -260,6 +278,9 @@ def validate_historical_collection_artifact(artifact: dict[str, Any]) -> None:
     recent_mature_count = sum(
         window_start <= _published_at(item) <= mature_cutoff for item in items
     )
+    total_mature_count = sum(0 < _published_at(item) <= mature_cutoff for item in items)
+    if history_exhausted_insufficient and total_mature_count >= MIN_RELIABLE_HISTORY_ITEMS:
+        raise ValueError("history-exhausted collection actually reached the mature-sample target")
     older_count = sum(0 < _published_at(item) < window_start for item in items)
     if recent_mature_count >= MIN_RELIABLE_HISTORY_ITEMS and older_count:
         raise ValueError("older history was retained even though recent mature history was sufficient")
@@ -267,6 +288,12 @@ def validate_historical_collection_artifact(artifact: dict[str, Any]) -> None:
         raise ValueError("older-history expansion exceeded the mature-sample target")
     if bool(artifact.get("used_older_history_backfill")) != bool(older_count):
         raise ValueError("historical collection older-history expansion marker is inconsistent")
+    if "page_request_count" in artifact and int(artifact.get("page_request_count") or 0) < 1:
+        raise ValueError("paged historical collection must record at least one page request")
+    if "raw_archive_refs" in artifact:
+        refs = artifact.get("raw_archive_refs")
+        if not isinstance(refs, list) or not refs or any(not str(value).strip() for value in refs):
+            raise ValueError("paged historical collection must retain its raw archive receipts")
     guard = artifact.get("runtime_guard")
     if (
         not isinstance(guard, dict)
@@ -308,7 +335,6 @@ def _historical_channels(
     item: dict[str, Any],
     *,
     medians: dict[str, float],
-    like_p90: float,
     baseline_reliable: bool,
 ) -> tuple[list[str], dict[str, float]]:
     ratios = {
@@ -322,20 +348,16 @@ def _historical_channels(
     channels: list[str] = []
     likes = _metric_value(item, "like_count")
     comments = _metric_value(item, "comment_count")
+    comment_like_ratio_qualified = (
+        likes > 0 and comments / likes >= COMMENT_LIKE_RATIO_THRESHOLD
+    )
 
-    if likes > 0 and comments / likes >= COMMENT_LIKE_RATIO_THRESHOLD:
+    # Comment-like ratio is a direct hit path. The multiplier paths require
+    # the common like floor: one 3x metric.
+    if comment_like_ratio_qualified:
         channels.append(f"comment_like_ratio:{comments / likes:.3f}")
 
-    if not baseline_reliable:
-        return channels, ratios
-
-    small_account = like_p90 < MATURE_HISTORY_ABSOLUTE_LIKE_FLOOR
-    if small_account:
-        if likes >= like_p90 and like_p90 > 0:
-            channels.append(f"p90_small_account:like={likes}>=p90:{like_p90:.2f}")
-        return channels, ratios
-
-    if likes < MATURE_HISTORY_ABSOLUTE_LIKE_FLOOR:
+    if not baseline_reliable or likes < MATURE_HISTORY_ABSOLUTE_LIKE_FLOOR:
         return channels, ratios
 
     single_metrics = [
@@ -343,18 +365,8 @@ def _historical_channels(
         for metric, ratio in ratios.items()
         if ratio >= HISTORICAL_SINGLE_METRIC_MULTIPLIER
     ]
-    multi_metrics = [
-        metric
-        for metric, ratio in ratios.items()
-        if ratio >= HISTORICAL_MULTI_METRIC_MULTIPLIER
-    ]
     for metric in single_metrics:
         channels.append(f"{metric}_anomaly:{ratios[metric]:.2f}x")
-    if len(multi_metrics) >= HISTORICAL_MINIMUM_MULTI_METRICS:
-        detail = ";".join(
-            f"{metric}={ratios[metric]:.2f}x" for metric in multi_metrics
-        )
-        channels.append(f"multi_indicator:{detail}")
     return channels, ratios
 
 
@@ -369,21 +381,18 @@ def judge_against_mature_history(
         ])) if baseline_metrics else 0.0
         for metric in HISTORICAL_METRICS
     }
-    like_p90 = _quantile(
-        [int(item.get("like_count") or 0) for item in baseline_metrics],
-        SMALL_ACCOUNT_P90_PERCENTILE,
-    )
     channels, ratios = _historical_channels(
         {"metrics": candidate_metrics},
         medians=medians,
-        like_p90=like_p90,
         baseline_reliable=len(baseline_metrics) >= MIN_RELIABLE_HISTORY_ITEMS,
     )
+    account_state = derive_account_maturity_state(len(baseline_metrics))
     return {
-        "baseline_active": len(baseline_metrics) >= MIN_RELIABLE_HISTORY_ITEMS,
+        "baseline_active": account_state["mature_history_ready"],
+        "account_maturity_state": account_state["state"],
+        "mature_history_ready": account_state["mature_history_ready"],
         "sample_count": len(baseline_metrics),
         "medians": medians,
-        "like_p90": like_p90,
         "channels": channels,
         "metric_ratios": ratios,
     }
@@ -407,17 +416,13 @@ def build_high_signal_artifact(
         )) if baseline_items else 0.0
         for metric in HISTORICAL_METRICS
     }
-    like_p90 = _quantile(
-        [_metric_value(item, "like_count") for item in baseline_items],
-        SMALL_ACCOUNT_P90_PERCENTILE,
-    )
-    reliable = len(baseline_items) >= MIN_RELIABLE_HISTORY_ITEMS
+    account_state = derive_account_maturity_state(len(baseline_items))
+    reliable = account_state["mature_history_ready"]
     selected: list[dict[str, Any]] = []
     for item in items:
         channels, ratios = _historical_channels(
             item,
             medians=medians,
-            like_p90=like_p90,
             baseline_reliable=reliable,
         )
         if not channels:
@@ -426,7 +431,7 @@ def build_high_signal_artifact(
             **item,
             "signal_channels": channels,
             "metric_ratios": ratios,
-            "selection_reason": "independent_or_channels",
+            "selection_reason": "ratio_direct_or_like_floor_and_any_multiplier_path",
             "first_contact_category": (
                 "historical_mature"
                 if _published_at(item) <= evaluated_at - HISTORICAL_MATURITY_DAYS * 86400
@@ -444,6 +449,8 @@ def build_high_signal_artifact(
             HISTORICAL_SELECTION_GUARDRAIL_DIGEST
         ),
         "evaluated_at": evaluated_at,
+        "account_maturity_state": account_state["state"],
+        "mature_history_ready": account_state["mature_history_ready"],
         "baseline_quality": "reliable" if reliable else "insufficient_history",
         "minimum_reliable_history_items": MIN_RELIABLE_HISTORY_ITEMS,
         "baseline_window_days": MATURE_HISTORY_WINDOW_DAYS,
@@ -452,8 +459,7 @@ def build_high_signal_artifact(
         "in_window_mature_item_count": in_window_count,
         "used_older_history_backfill": used_older_history_backfill,
         "baseline_medians": medians,
-        "baseline_like_p90": like_p90,
-        "historical_item_count": len(items),
+            "historical_item_count": len(items),
         "selected_count": len(selected),
         "selection_ratio": selection_ratio,
         "selected_items": selected,
@@ -461,6 +467,11 @@ def build_high_signal_artifact(
             "status": "passed",
             "selected_items_are_historical_subset": True,
             "comment_like_ratio_is_independent": True,
+            "common_gate_requires_like_floor": False,
+            "like_floor_required_for_multiplier_paths": True,
+            "two_entry_paths_are_or": True,
+            "account_state_is_derived_from_mature_history": True,
+            "formal_d_baseline_is_not_account_maturity": True,
             "maximum_selection_ratio": None,
             "iqr_selection_used": False,
             "first_registration_item_limit": FIRST_REGISTRATION_MAX_ITEMS,
@@ -491,6 +502,8 @@ def validate_high_signal_artifact(
     for key in (
         "selection_policy_version",
         "collection_policy_version",
+        "account_maturity_state",
+        "mature_history_ready",
         "baseline_quality",
         "minimum_reliable_history_items",
         "baseline_window_days",
@@ -500,7 +513,6 @@ def validate_high_signal_artifact(
         "in_window_mature_item_count",
         "used_older_history_backfill",
         "baseline_medians",
-        "baseline_like_p90",
         "selected_count",
         "selection_ratio",
     ):
@@ -527,6 +539,7 @@ def judge_against_formal_d_baseline(
     if len(qualifying) < FORMAL_D_ACTIVATION_COMPLETE_SEQUENCES:
         return {
             "baseline_active": False,
+            "formal_d_baseline_state": "building",
             "qualifying_sequence_count": len(qualifying),
             "channels": [],
             "medians": {},
@@ -563,6 +576,7 @@ def judge_against_formal_d_baseline(
         )
     return {
         "baseline_active": True,
+        "formal_d_baseline_state": "ready",
         "qualifying_sequence_count": len(qualifying),
         "channels": channels,
         "medians": medians,

@@ -3,8 +3,85 @@ formal_domain_label: music_entertainment
 description: 音乐作品、歌手、文化记忆、审美、情绪与流行传播；不做娱乐新闻、综艺八卦和未证实传闻。
 activation_status: approved
 workflow_mode: manual_guard
+content_type_registry:
+  status: FROZEN
+  version: '1'
+  types:
+  - canonical_id: music_collection_curation
+    name: 音乐主题盘点/合集
+    core_subject: 多个音乐作品、歌手或其他明确音乐对象
+    content_promise: 围绕一个明确主题，通过筛选、组织、比较或推荐，让多个音乐对象形成一条完整内容
+    required_delivery: 明确主题；明确筛选或组织逻辑；多个具有差异的条目；必要的说明和收束
+    scope_boundary: 不能因为同时列出多个技术点就算合集；不能以音乐技术、乐理或演唱技术分析为主要交付；不能只是没有选择逻辑的简单罗列
+  - canonical_id: person_music_story
+    name: 人物音乐故事
+    core_subject: 歌手、音乐人、组合等音乐人物
+    content_promise: 讲清人物一段具有独立价值的音乐经历、选择、转折、创作过程、合作关系或音乐发展路径
+    required_delivery: 人物音乐经历；关键事件或选择；与作品、合作、创作或音乐事业直接相关的材料；清晰的经历推进
+    scope_boundary: 泛生活传记不属于；私生活、婚恋、八卦不能因为主角是歌手就进入；单纯评价唱功或音乐技术不属于；人物只是作品或事件参与者时不能自动归入人物故事
+  - canonical_id: work_context_story
+    name: 作品背景故事
+    core_subject: 明确歌曲、专辑或音乐作品
+    content_promise: 通过创作、发行、合作、人物关系、时代或文化背景，让观众理解作品如何产生以及作品背后的故事
+    required_delivery: 明确作品；创作、发行、合作或历史背景；背景与作品之间的关系；有材料支撑的作品经历或背景叙事
+    scope_boundary: 不包括音乐赏析、听感分析、乐理分析、编曲技术分析、演唱技术分析、为什么难唱、单纯讨论作品好不好听或主要交付为主观审美评价；作品为什么产生、如何产生、谁参与和真实背景可以属于本类型
+  - canonical_id: music_event_context
+    name: 音乐事件/文化现象
+    core_subject: 具体音乐事件、音乐节目事件、音乐竞争事件，或有明确音乐内容承载的音乐文化现象
+    content_promise: 讲清具体音乐事件发生了什么、谁参与、如何发展，以及它在音乐语境中为什么值得理解
+    required_delivery: 明确事件或现象；参与者和关系；发展过程；与音乐直接相关的背景；有材料支撑的有限解释
+    scope_boundary: 不能借音乐事件转去主要讲泛商业机制、法律制度、普通行业制度、活动管理、平台算法、泛传播学或与音乐内容关系很弱的社会科普；音乐必须是主要内容承载而不是入口装饰
 runtime_requirements:
 - music_audience_browser
+question_expansion_policy:
+  primary_content_carrier_required: true
+  primary_content_carrier_rule: 音乐娱乐领域的问题拓展，最终内容必须主要通过音乐、作品或音乐人物的音乐经历来承载；不能只因为人物、作品或机构与音乐有关，就把主体改成另一个领域的制度、法律、技术、商业、职业制度、私生活或泛娱乐知识。
+  primary_carrier_signal_terms:
+  - 音乐
+  - 歌曲
+  - 歌手
+  - 音乐人
+  - 组合
+  - 演唱
+  - 创作
+  - 作曲
+  - 填词
+  - 作品
+  - 舞台
+  - 专辑
+  - 乐队
+  - 听歌
+  - 旋律
+  - 歌词
+  allowed_primary_carriers:
+  - 歌曲或作品故事
+  - 歌手、音乐人或组合的音乐经历
+  - 创作、演唱、合作和作品关系
+  - 围绕明确主题的歌曲或作品盘点
+  - 作品观点、听歌体验和音乐记忆
+  - 与作品紧密相关的音乐文化现象
+  excluded_when_music_is_only_an_association: true
+exploration:
+  person:
+    enabled: true
+    material_route: music_audience
+    representative_item_label: representative_work
+    representative_item_minimum: 10
+    representative_item_maximum: 12
+    audience_material_view_limit: 600
+    platform_sessions_are_separate_and_reused_per_scan: true
+    platform_failure_is_reported_without_substitution_or_automatic_retry: true
+  work:
+    enabled: true
+    material_route: agent
+    minimum_supported_minutes: 3
+    maximum_supported_minutes: 5
+  collection:
+    enabled: true
+    material_route: agent
+    minimum_items: 10
+    requires_shared_question_or_angle: true
+    default_final_ranking: false
 discovery:
   hotspot_match_terms:
   - 音乐
@@ -135,12 +212,64 @@ discovery:
     - 我怀念的
     - 仙剑奇侠传
     - 遇见
+research:
+  default_research_mode: complex
+  current_information_window_years: 2
+  required_source_classes:
+  - official_public_material
+  - reputable_media
+  - public_interview
+  - work_and_activity_record
 person_name_concept_allowlist:
-    - 华语乐坛
-    - 华语流行
-    - 金曲奖
-    - 乐评
-    - 乐评盘点
-    - 怀旧金曲
-    - 欧美音乐
-    - 经典老歌
+- 华语乐坛
+- 华语流行
+- 金曲奖
+- 乐评
+- 乐评盘点
+- 怀旧金曲
+- 欧美音乐
+- 经典老歌
+production_boundary_registry:
+  status: FROZEN
+  version: '1'
+  in_boundary_principles:
+  - boundary_id: music-core-content-in-1
+    principle: 围绕音乐作品、歌手或音乐人、音乐创作与演唱、音乐人物经历、歌曲故事、作品解读、音乐现象、音乐审美与观点、榜单盘点与比较、现场演出，以及其他与音乐本身具有实质关联的内容。
+    rationale: 这些内容的主要价值直接来自音乐、音乐作品或音乐人物本身。
+    origin: explicit_human_decision
+    evidence_refs: []
+    merged_from: []
+  - boundary_id: music-core-content-in-2
+    principle: 可以结合热点，但内容核心必须仍然是音乐、作品或音乐人物本身，并且能够进入后续正式研究。
+    rationale: 热点只能作为入口，不能改变音乐领域的正式内容边界。
+    origin: explicit_human_decision
+    evidence_refs: []
+    merged_from: []
+  out_boundary_principles:
+  - boundary_id: music-noncore-content-out-1
+    principle: 以明星私生活、娱乐八卦、综艺新闻、饭圈争议、未经证实的传闻或纯热点搬运为主体的内容，不进入正式生产。
+    rationale: 这些内容的主要价值来自泛娱乐事件，而不是音乐本身。
+    origin: explicit_human_decision
+    evidence_refs: []
+    merged_from: []
+  - boundary_id: music-noncore-content-out-2
+    principle: 与音乐仅有表面人物关联、实质内容属于泛娱乐新闻的内容，不进入正式生产。
+    rationale: 表面人物关联不能替代对音乐作品、创作、演唱或音乐现象的实质关联。
+    origin: explicit_human_decision
+    evidence_refs: []
+    merged_from: []
+  - boundary_id: music-noncore-content-out-3
+    principle: 缺乏可靠依据时，不得把传闻或推测作为事实展开。
+    rationale: 正式生产不能把未经证实的信息当作事实。
+    origin: explicit_human_decision
+    evidence_refs: []
+    merged_from: []
+  unknown_topic_rule:
+    rule: 如果一个选题同时具有音乐内容和泛娱乐属性，判断其主要内容价值是否来自音乐作品、创作、演唱、音乐人物或音乐现象本身；如果是，可以进入后续正式研究；如果主要价值来自八卦、新闻、私生活或泛娱乐事件，不进入正式生产。
+    uncertain_action: 无法确定是否越界时，不自动放行，由用户决定。
+    origin: explicit_human_decision
+  provenance:
+    source: explicit_human_decision
+    cold_start_id: cold_start_cold_start_configuration_f4dab194378b33a5915e9fe9
+    human_decision_id: codex_music_boundary_freeze_20260828
+    frozen_at: '2026-08-27T21:44:31.810184+00:00'

@@ -63,12 +63,8 @@
         ".codex/hooks/hook_common.py",
         ".codex/hooks/implementation_midcheck.py",
         ".codex/hooks/implementation_postcheck.py",
-        "scripts/agent_platform/cold_start_config_server.py",
-        "scripts/agent_platform/cold_start_config_ui.html",
-        "runtime_skills/competitor_breakdown_structural_v13/",
         "runtime_skills/experience_candidate_propose/",
-        "config/runtime_storage.json",
-        "runtime_skills/competitor_breakdown_structural_v13/skill.yaml"
+        "config/runtime_storage.json"
       ]
     },
     "cold_start": {
@@ -104,8 +100,6 @@
         "scripts/core/external_adapters/goal_phase4_external_adapters.py",
         "scripts/core/external_adapters/local_mediacrawler_executor.py",
         "scripts/core/production/stage1_daily_operations.py",
-        "scripts/agent_platform/cold_start_config_server.py",
-        "scripts/agent_platform/cold_start_config_ui.html",
         "execution/stages/cold_start.md"
       ]
     },
@@ -126,8 +120,6 @@
         "scripts/stage_contract_guard.py",
         "config/business_guardrails/daily_operations.json",
         "scripts/agent_platform/daily_operations_runtime.py",
-        "scripts/agent_platform/cold_start_config_server.py",
-        "scripts/agent_platform/cold_start_config_ui.html",
         "scripts/core/production/stage1_daily_operations.py",
         "scripts/core/production/stage1_account_observation.py",
         "scripts/core/production/stage1b_daily_discovery.py",
@@ -153,8 +145,6 @@
         "execution/current_implementation_stage.json",
         "scripts/stage_contract_guard.py",
         "config/business_guardrails/content_production.json",
-        "scripts/agent_platform/cold_start_config_server.py",
-        "scripts/agent_platform/cold_start_config_ui.html",
         "scripts/core/production/stage0_content_core.py",
         "scripts/core/production/stage1a_research_plan.py",
         "scripts/core/production/stage1c_content_pipeline.py",

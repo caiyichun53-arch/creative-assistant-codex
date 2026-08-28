@@ -6,6 +6,7 @@ from typing import Any
 
 from scripts.core.external_adapters.music_audience_browser import LocalMusicAudienceBrowserExecutor
 from scripts.core.external_adapters.runtime_config import external_runtime_value
+from scripts.core.business_data.domain_labels import get_exploration_policy
 from scripts.core.production.stage0_content_core import Stage0ContentProductionCore, StateTransitionError
 
 
@@ -25,16 +26,28 @@ class MusicAudienceMaterialCollector:
         packet = self.core.get_manual_exploration_packet(exploration_id=exploration_id)
         if packet["exploration_kind"] != "person_exploration":
             raise StateTransitionError("music audience collection is only available for person exploration")
-        if not 10 <= len(works) <= 12 or any(not str(item.get("title") or "").strip() for item in works):
-            raise StateTransitionError("initial person scan requires 10 to 12 confirmed representative works")
+        policy = get_exploration_policy(str(packet["domain_label"]))["person"]
+        if policy.get("material_route") != "music_audience":
+            raise StateTransitionError("this domain does not enable the music audience collector")
+        minimum = int(policy.get("representative_item_minimum") or 0)
+        maximum = int(policy.get("representative_item_maximum") or 0)
+        view_limit = int(policy.get("audience_material_view_limit") or 0)
+        if not minimum <= len(works) <= maximum or any(not str(item.get("title") or "").strip() for item in works):
+            raise StateTransitionError("initial person scan does not meet the domain representative material rule")
         if packet["status"] == "awaiting_material_collection":
             self.core.begin_manual_exploration_collection(
                 exploration_id=exploration_id, actor=actor, reason="confirmed representative works are ready for audience collection",
             )
         elif packet["status"] != "collecting":
             raise StateTransitionError("person exploration is not available for initial audience collection")
-        result = self.browser.collect_initial_person_scan(person_name=person_name, works=works)
-        if int(result.get("viewed_count") or 0) > 600:
+        result = self.browser.collect_initial_person_scan(
+            person_name=person_name,
+            works=works,
+            representative_item_minimum=minimum,
+            representative_item_maximum=maximum,
+            total_viewed_limit=view_limit,
+        )
+        if int(result.get("viewed_count") or 0) > view_limit:
             raise StateTransitionError("initial music audience collection exceeded the confirmed total viewed limit")
         collected_at = datetime.now(timezone.utc).isoformat()
         retained = self.core.record_music_audience_echo(

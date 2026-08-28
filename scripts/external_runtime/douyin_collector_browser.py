@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.core.external_adapters.goal_phase4_external_adapters import (
     ExternalAdapterError,
@@ -24,6 +29,11 @@ def main() -> int:
         action="store_true",
         help="start the dedicated collector browser if it is not already ready",
     )
+    parser.add_argument(
+        "--visible",
+        action="store_true",
+        help="start a visible browser for explicit login maintenance",
+    )
     args = parser.parse_args()
 
     mediacrawler_dir = local_repo_path("vendor", "MediaCrawler")
@@ -33,7 +43,10 @@ def main() -> int:
 
     try:
         if args.start:
-            start_retained_douyin_collector_browser(mediacrawler_dir)
+            start_retained_douyin_collector_browser(
+                mediacrawler_dir,
+                headless=not args.visible,
+            )
         status = retained_douyin_collector_browser_status(mediacrawler_dir)
     except (ExternalAdapterError, OSError) as exc:
         print(json.dumps({"status": "blocked", "reason": str(exc)}, ensure_ascii=False))

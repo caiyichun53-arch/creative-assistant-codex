@@ -1,0 +1,12 @@
+type: object
+required: [source_id, source_content_type, analysis_text, schema_version]
+properties:
+  source_id: {type: string}
+  source_content_type: {type: string}
+  analysis_text: {type: string}
+  question_expansions: {type: array}
+  expansion_signals: {type: array}
+  typed_expansion_leads: {type: array}
+  boundary_observation: {type: string}
+  schema_version: {type: string, enum: [competitor_breakdown.output.raw.v4, competitor_breakdown.output.raw.v5]}
+additional_properties: false

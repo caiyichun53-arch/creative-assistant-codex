@@ -1,7 +1,7 @@
 schema_version: formal_skill_manifest.v1
 formal_skill_id: content_deep_research
-skill_version: 1.0.0
-responsibility: Produce only a source-bounded research result from supplied retained materials.
+skill_version: 3.1.0
+responsibility: Publish a research result from GPT Researcher-style task-oriented materials supplied by the formal execution route.
 non_responsibilities: [collection, external_search, formal_data_write, business_state_transition, human_confirmation, other_skill_invocation]
 runner: FormalBusinessSkillAdapter
 route_name: stage0.deep_research

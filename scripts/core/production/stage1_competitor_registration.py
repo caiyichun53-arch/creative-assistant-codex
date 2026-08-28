@@ -12,6 +12,7 @@ import json
 import os
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -22,12 +23,16 @@ from scripts.core.external_adapters import (
     LocalSenseVoiceExecutor,
     MediaCrawlerCollectorAdapter,
 )
+from scripts.core.business_data.domain_labels import (
+    get_content_type_registry,
+    get_domain_pack,
+    require_frozen_content_type_registry,
+)
 from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelRunEnvelope
 from scripts.core.model_gateway.formal_skill_adapter import (
     FormalBusinessSkillAdapter,
     FormalSkillContract,
     FormalSkillValidationError,
-    validate_competitor_breakdown_structural_output_semantics,
 )
 from scripts.core.model_gateway.configured_provider import build_configured_model_provider
 from scripts.core.runtime.liveness import budget_for
@@ -43,6 +48,8 @@ from scripts.core.runtime.runtime_storage import require_runtime_path, runtime_p
 from scripts.core.production.high_signal_policy import (
     FIRST_REGISTRATION_MAX_ITEMS,
     HISTORICAL_METRICS,
+    HISTORICAL_MATURITY_DAYS,
+    MATURE_HISTORY_WINDOW_DAYS,
     MIN_RELIABLE_HISTORY_ITEMS,
     build_historical_collection_artifact,
     build_high_signal_artifact,
@@ -60,6 +67,7 @@ EXPRESSION_FORMS = frozenset({
 })
 METRIC_NAMES = HISTORICAL_METRICS
 _SOURCE_HASHTAG_PATTERN = re.compile(r"#([^#\s]+)")
+CONTENT_TYPE_LIFECYCLE_MODES = frozenset({"discover", "classify"})
 
 
 class CompetitorBreakdownFailed(StateTransitionError):
@@ -88,7 +96,12 @@ def _test_correction_eligible(exc: Exception) -> bool:
     if not isinstance(exc.raw_model_output, str) or not exc.raw_model_output.strip():
         return False
     receipt = exc.model_completion_receipt
-    return isinstance(receipt, dict) and str(receipt.get("finish_reason") or "") == "stop"
+    return isinstance(receipt, dict) and str(receipt.get("finish_reason") or "") in {
+        "stop",
+        # Hermes/Mimo can mark a complete JSON object with this provider-level
+        # reason even though the answer is not a streamed partial response.
+        "complete_visible_json",
+    }
 _TAG_EDGE_PUNCTUATION = "，,。.！!?？:：;；、|/\\()（）[]【】<>《》“”'\"`~·…"
 _COMMON_COLLECTOR_POLICY_PATH = Path(__file__).resolve().parents[3] / "config" / "business_guardrails" / "competitor_registration.json"
 
@@ -105,6 +118,79 @@ def _configured_comment_limit() -> int:
 
 
 COMMENT_TOP_N = _configured_comment_limit()
+
+
+def _breakdown_domain_context(
+    domain_label: str,
+    *,
+    observed_content_types: list[str] | None = None,
+    content_type_lifecycle: str = "discover",
+    content_type_registry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Pass domain rules plus the domain-owned type registry snapshot.
+
+    The default keeps the old cold-start/test caller in DISCOVER mode.  Real
+    daily production callers pass CLASSIFY explicitly and are fail-closed when
+    the registry is not frozen.
+    """
+    label = str(domain_label or "generic").strip() or "generic"
+    lifecycle = str(content_type_lifecycle or "discover").strip().casefold()
+    if lifecycle not in CONTENT_TYPE_LIFECYCLE_MODES:
+        raise StateTransitionError(
+            f"unsupported competitor breakdown content type lifecycle: {content_type_lifecycle}"
+        )
+    try:
+        domain_pack = get_domain_pack(label)
+    except ValueError:
+        domain_pack = {}
+    if content_type_registry is None:
+        try:
+            registry = (
+                require_frozen_content_type_registry(label)
+                if lifecycle == "classify"
+                else get_content_type_registry(label)
+            )
+        except ValueError:
+            if lifecycle == "classify":
+                raise StateTransitionError(
+                    f"content type classification is disabled until domain registry validation passes: {label}"
+                )
+            registry = {"status": "NOT_FROZEN", "version": "0", "types": []}
+    else:
+        registry = dict(content_type_registry)
+    if lifecycle == "classify" and str(registry.get("status") or "").strip().casefold() != "frozen":
+        raise StateTransitionError(
+            f"content type classification is disabled until domain registry is FROZEN: {label}"
+        )
+    discovery = domain_pack.get("discovery") if isinstance(domain_pack, dict) else {}
+    discovery = discovery if isinstance(discovery, dict) else {}
+    expansion_policy = (
+        domain_pack.get("question_expansion_policy")
+        if isinstance(domain_pack, dict)
+        else {}
+    )
+    expansion_policy = expansion_policy if isinstance(expansion_policy, dict) else {}
+    return {
+        "label": label,
+        "description": str(domain_pack.get("description") or "") if isinstance(domain_pack, dict) else "",
+        "allowed_scope": str(domain_pack.get("description") or "") if isinstance(domain_pack, dict) else "",
+        "excluded_terms": [
+            str(item).strip()
+            for item in discovery.get("exclude_terms", [])
+            if str(item).strip()
+        ],
+        "risk_block_terms": [
+            str(item).strip()
+            for item in discovery.get("risk_block_terms", [])
+            if str(item).strip()
+        ],
+        "observed_content_types": [
+            str(item).strip() for item in (observed_content_types or []) if str(item).strip()
+        ],
+        "content_type_lifecycle": lifecycle,
+        "content_type_registry": registry,
+        "question_expansion_policy": expansion_policy,
+    }
 
 
 class CompetitorRegistrationStepExecutor(Protocol):
@@ -157,9 +243,25 @@ def _sanitize_item(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _published_at_for_collection(item: dict[str, Any]) -> int:
+    try:
+        return max(0, int(item.get("published_at") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _filter_comments(values: Any) -> list[dict[str, Any]]:
     if not isinstance(values, list):
         return []
+
+    def has_parent_comment(value: Any) -> bool:
+        """Treat platform root markers as no parent, not as a reply."""
+        if value is None or value is False:
+            return False
+        if isinstance(value, (int, float)) and value == 0:
+            return False
+        return str(value).strip().casefold() not in {"", "0", "none", "null"}
+
     retained: list[dict[str, Any]] = []
     seen: set[str] = set()
     for rank, value in enumerate(values):
@@ -168,7 +270,7 @@ def _filter_comments(values: Any) -> list[dict[str, Any]]:
         text = str(value.get("text") or value.get("content") or "").strip()
         likes = int(value.get("like_count") or 0)
         parent = value.get("parent_comment_id") or value.get("reply_to_reply_id")
-        if likes < 1 or len(text) < 5 or parent:
+        if likes < 1 or len(text) < 5 or has_parent_comment(parent):
             continue
         comment_id = str(value.get("comment_id") or value.get("id") or "").strip() or hashlib.sha256(text.encode("utf-8")).hexdigest()
         if comment_id in seen:
@@ -199,50 +301,28 @@ def _comments_for_source(values: Any, source_id: str) -> list[dict[str, Any]]:
     return retained
 
 
-def _decode_model_json_object(output_text: str) -> dict[str, Any]:
-    text = str(output_text or "").strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].strip().startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    candidates = [text]
-    start, end = text.find("{"), text.rfind("}")
-    if start >= 0 and end > start:
-        candidates.append(text[start:end + 1])
-    last_error: Exception | None = None
-    for candidate in candidates:
-        if not candidate:
-            continue
-        try:
-            value = json.loads(candidate)
-        except json.JSONDecodeError as exc:
-            last_error = exc
-            continue
-        if isinstance(value, dict):
-            return value
-        last_error = StateTransitionError("competitor registration model output must be one JSON object")
-    raise StateTransitionError(f"model returned no usable JSON object: {last_error or 'empty output'}")
-
-
-def build_production_competitor_registration_gateway(core: Stage0ContentProductionCore) -> ModelGateway:
+def build_production_competitor_registration_gateway(
+    core: Stage0ContentProductionCore,
+    *,
+    stream_responses: bool = False,
+    task_model_binding: dict[str, Any],
+) -> ModelGateway:
     if core.data_identity != "production":
         raise StateTransitionError("production competitor registration requires production data identity")
     router = ModelRouter.from_file()
     definition = router.routes.get("business_analysis")
     if definition is None or definition.fallback != "none":
         raise ModelRouterError("competitor registration requires business_analysis with fallback none")
-    provider = router.providers.get(definition.provider_ref)
-    if provider is None:
-        raise ModelRouterError("competitor registration requires a configured model provider")
     limits = budget_for("model")
-    route = router.resolve_bound_route(
-        "business_analysis",
+    route = router.resolve_frozen_task_route(
+        task_model_binding,
         route_name=COMPETITOR_ANALYSIS_ROUTE,
-        parameters={"stream": False},
+        # A breakdown is a single structured JSON record.  Keep the response
+        # whole so a long evidence-bound result cannot end as half a JSON
+        # object merely because a streaming connection closed early.
+        parameters={"stream": stream_responses},
     )
+    provider = router.resolve_bound_provider(route)
     adapter = build_configured_model_provider(provider, route, model_limits=limits)
     return ModelGateway(
         routes={route.route_name: route}, providers={adapter.provider_name: adapter},
@@ -250,18 +330,27 @@ def build_production_competitor_registration_gateway(core: Stage0ContentProducti
     )
 
 
-def build_production_daily_hit_gateway(core: Stage0ContentProductionCore) -> ModelGateway:
+def build_production_daily_hit_gateway(
+    core: Stage0ContentProductionCore,
+    *,
+    task_model_binding: dict[str, Any] | None = None,
+) -> ModelGateway:
     if core.data_identity != "production":
         raise StateTransitionError("production daily-hit breakdown requires production data identity")
     router = ModelRouter.from_file()
     definition = router.routes.get("business_analysis")
     if definition is None or definition.fallback != "none":
         raise ModelRouterError("daily-hit breakdown requires business_analysis with fallback none")
-    provider = router.providers.get(definition.provider_ref)
-    if provider is None:
-        raise ModelRouterError("daily-hit breakdown requires a configured model provider")
     limits = budget_for("model")
-    route = router.resolve_bound_route("business_analysis", route_name=COMPETITOR_ANALYSIS_ROUTE, parameters={"stream": False})
+    execution_binding = task_model_binding or router.resolve_current_hermes_execution_binding(
+        route_id="business_analysis",
+    ).as_payload()
+    route = router.resolve_frozen_task_route(
+        execution_binding,
+        route_name=COMPETITOR_ANALYSIS_ROUTE,
+        parameters={"stream": False},
+    )
+    provider = router.resolve_bound_provider(route)
     adapter = build_configured_model_provider(provider, route, model_limits=limits)
     return ModelGateway(
         routes={route.route_name: route},
@@ -271,7 +360,10 @@ def build_production_daily_hit_gateway(core: Stage0ContentProductionCore) -> Mod
 
 
 def run_test_only_competitor_breakdown_batch(
-    *, test_id: str, materials: list[dict[str, Any]]
+    *,
+    test_id: str,
+    materials: list[dict[str, Any]],
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Run a fixed, non-writing comparison batch through the formal Skill.
 
@@ -307,19 +399,28 @@ def run_test_only_competitor_breakdown_batch(
             "transcript": transcript,
             "metrics": dict(metrics),
             "comments": list(comments),
+            "domain_label": str(material.get("domain_label") or "generic").strip() or "generic",
+            "domain_context": (
+                dict(material["domain_context"])
+                if isinstance(material.get("domain_context"), dict)
+                else _breakdown_domain_context(str(material.get("domain_label") or "generic"))
+            ),
         })
 
     router = ModelRouter.from_file()
     definition = router.routes.get("business_analysis")
     if definition is None or definition.fallback != "none":
         raise ModelRouterError("test-only competitor breakdown requires business_analysis with fallback none")
-    provider_definition = router.providers.get(definition.provider_ref)
-    if provider_definition is None:
-        raise ModelRouterError("test-only competitor breakdown requires a configured model provider")
     limits = budget_for("model")
     route = router.resolve_bound_route(
-        "business_analysis", route_name=COMPETITOR_ANALYSIS_ROUTE, parameters={"stream": False},
+        "business_analysis",
+        route_name=COMPETITOR_ANALYSIS_ROUTE,
+        # The breakdown uses one short metadata JSON prefix followed by a
+        # delimiter and ordinary analysis text.  Keep the test path on the
+        # same whole-response delivery as formal execution.
+        parameters={"stream": False},
     )
+    provider_definition = router.resolve_bound_provider(route)
     adapter = build_configured_model_provider(provider_definition, route, model_limits=limits)
     test_materializer = TestOnlyCompetitorBreakdownMaterializer()
     gateway = ModelGateway(
@@ -328,18 +429,53 @@ def run_test_only_competitor_breakdown_batch(
         materializer=test_materializer,
     )
     skill = FormalBusinessSkillAdapter(
-        contract=FormalSkillContract.from_runtime_skill("competitor_breakdown_structural_v13"), gateway=gateway,
+        contract=FormalSkillContract.from_runtime_skill("competitor_breakdown"), gateway=gateway,
     )
 
     outcomes: list[dict[str, Any]] = []
+    observed_types_by_domain: dict[str, list[str]] = {}
     for material in normalized_materials:
+        domain_label = str(material["domain_label"] or "generic")
+        supplied_context = material.get("domain_context")
+        supplied_types = (
+            supplied_context.get("observed_content_types")
+            if isinstance(supplied_context, dict)
+            else []
+        )
+        observed_types_by_domain.setdefault(domain_label, [])
+        for value in supplied_types if isinstance(supplied_types, list) else []:
+            content_type = str(value).strip()
+            if content_type and content_type not in observed_types_by_domain[domain_label]:
+                observed_types_by_domain[domain_label].append(content_type)
+    for material in normalized_materials:
+        if progress_callback is not None:
+            progress_callback({
+                "source_count": len(normalized_materials),
+                "current_position": material["position"],
+                "current_source_id": material["source_id"],
+                "completed": sum(item.get("status") == "completed" for item in outcomes),
+                "failed": sum(item.get("status") == "failed" for item in outcomes),
+                "activity": "request_started",
+            })
         payload = {
             "correlation_id": f"{test_id}:{material['position']}:{material['source_id']}",
             "source_id": material["source_id"],
             "transcript": material["transcript"],
             "metrics": material["metrics"],
             "comments": material["comments"],
-            "schema_version": "competitor_breakdown.input.v7",
+            "domain_label": material["domain_label"],
+            "domain_context": _breakdown_domain_context(
+                material["domain_label"],
+                observed_content_types=observed_types_by_domain.get(material["domain_label"], []),
+                content_type_lifecycle=str(
+                    (material.get("domain_context") or {}).get("content_type_lifecycle")
+                    or "discover"
+                ),
+                content_type_registry=(material.get("domain_context") or {}).get(
+                    "content_type_registry"
+                ),
+            ),
+            "schema_version": "competitor_breakdown.input.v1",
         }
         outcome = {
             "position": material["position"],
@@ -350,7 +486,6 @@ def run_test_only_competitor_breakdown_batch(
         try:
             result = skill.run(
                 payload,
-                quality_comparison=True,
                 request_metadata={
                     "test_only": True,
                     "test_name": test_id,
@@ -358,6 +493,9 @@ def run_test_only_competitor_breakdown_batch(
                     "automatic_retry": False,
                 },
             )
+            observed_type = str(result.output_payload.get("source_content_type") or "").strip()
+            if observed_type and observed_type not in observed_types_by_domain.setdefault(material["domain_label"], []):
+                observed_types_by_domain[material["domain_label"]].append(observed_type)
             outcome.update({
                 "status": "completed",
                 "output": result.output_payload,
@@ -393,6 +531,7 @@ def run_test_only_competitor_breakdown_batch(
                         "raw_model_output": getattr(correction_exc, "raw_model_output", None),
                         "model_run_envelope_version_id": getattr(correction_exc, "model_run_envelope_version_id", None),
                         "model_completion_receipt": getattr(correction_exc, "model_completion_receipt", None),
+                        "provider_diagnostics": getattr(correction_exc, "diagnostics", None),
                         "test_correction": {
                             "attempted": True,
                             "status": "failed",
@@ -419,17 +558,27 @@ def run_test_only_competitor_breakdown_batch(
                     "raw_model_output": getattr(exc, "raw_model_output", None),
                     "model_run_envelope_version_id": getattr(exc, "model_run_envelope_version_id", None),
                     "model_completion_receipt": getattr(exc, "model_completion_receipt", None),
+                    "provider_diagnostics": getattr(exc, "diagnostics", None),
                     "test_correction": {"attempted": False},
                 })
         outcomes.append(outcome)
+        if progress_callback is not None:
+            progress_callback({
+                "source_count": len(normalized_materials),
+                "current_position": material["position"],
+                "current_source_id": material["source_id"],
+                "completed": sum(item.get("status") == "completed" for item in outcomes),
+                "failed": sum(item.get("status") == "failed" for item in outcomes),
+                "activity": "request_finished",
+            })
 
     return {
-        "kind": "competitor_breakdown_structural_v13_quality_comparison",
+        "kind": "competitor_breakdown_test_batch",
         "test_id": test_id,
         "formal_business_data_written": False,
         "automatic_retry": False,
         "test_single_correction_enabled": True,
-        "model_delivery": "non_streaming_json_object",
+        "model_delivery": "non_stream_metadata_json_analysis_delimited",
         "route_timeout_ms": route.timeout_ms,
         "outcomes": outcomes,
         "model_envelopes": [envelope.as_payload() for envelope in test_materializer.envelopes],
@@ -449,6 +598,7 @@ class ConfiguredCompetitorRegistrationExecutor:
         gateway: ModelGateway,
         max_historical_items: int = FIRST_REGISTRATION_MAX_ITEMS,
         progress_callback: Callable[[str, str], None] | None = None,
+        on_material_change: Callable[[str], None] | None = None,
     ) -> None:
         if max_historical_items != FIRST_REGISTRATION_MAX_ITEMS:
             raise StateTransitionError(
@@ -461,10 +611,21 @@ class ConfiguredCompetitorRegistrationExecutor:
         self.gateway = gateway
         self.max_historical_items = max_historical_items
         self.progress_callback = progress_callback
+        self.on_material_change = on_material_change
 
     def _report_progress(self, phase: str, detail: str) -> None:
         if self.progress_callback is not None:
             self.progress_callback(phase, detail)
+
+    def _notify_material_change(self, reason: str, source_id: str) -> None:
+        if self.on_material_change is None:
+            return
+        try:
+            self.on_material_change(f"{reason}:{source_id}")
+        except Exception:
+            # Obsidian is a read mirror; a mirror problem must never turn a
+            # successfully prepared formal material into a failed material.
+            return
 
     def execute(
         self, *, step_name: str, registration: dict[str, Any], completed_artifacts: tuple[dict[str, Any], ...]
@@ -488,49 +649,335 @@ class ConfiguredCompetitorRegistrationExecutor:
         self._report_progress("historical_collection", "正在采集对标账号历史内容")
         platform, source_ref = _parse_account_source(str(registration["external_account_ref"]))
         evaluated_at = int(time.time())
-        result = self.collector.collect_video_snapshot(
-            platform=platform, source_url=source_ref, max_items=self.max_historical_items, with_comments=False
+        window_start = evaluated_at - MATURE_HISTORY_WINDOW_DAYS * 86400
+        mature_cutoff = evaluated_at - HISTORICAL_MATURITY_DAYS * 86400
+        cutoff = datetime.fromtimestamp(window_start, timezone.utc)
+        progress = self.core.get_competitor_historical_page_progress(
+            registration_id=str(registration["registration_id"])
         )
-        items = [_sanitize_item(item) for item in result.payload["items"]]
-        if not items:
-            raise StateTransitionError(
-                "competitor historical collection returned no retained items; registration cannot advance"
+        if progress is not None:
+            evaluated_at = int(progress.get("evaluated_at") or evaluated_at)
+            window_start = evaluated_at - MATURE_HISTORY_WINDOW_DAYS * 86400
+            mature_cutoff = evaluated_at - HISTORICAL_MATURITY_DAYS * 86400
+            cutoff = datetime.fromtimestamp(window_start, timezone.utc)
+
+        items_by_id: dict[str, dict[str, Any]] = {}
+        archive_refs: list[str] = []
+
+        def merge_items(raw_items: list[dict[str, Any]], *, phase: str) -> None:
+            for raw_item in raw_items:
+                if not isinstance(raw_item, dict):
+                    continue
+                item = _sanitize_item(raw_item)
+                source_id = str(item.get("source_id") or "").strip()
+                if not source_id:
+                    raise StateTransitionError("historical page returned an item without a source identity")
+                published_at = _published_at_for_collection(item)
+                if phase == "recent_window":
+                    if published_at < window_start:
+                        continue
+                elif phase == "older_backfill":
+                    if not (0 < published_at < window_start):
+                        continue
+                if source_id not in items_by_id and len(items_by_id) >= FIRST_REGISTRATION_MAX_ITEMS:
+                    continue
+                items_by_id[source_id] = item
+
+        def recent_count() -> int:
+            return sum(
+                _published_at_for_collection(item) >= window_start
+                for item in items_by_id.values()
             )
-        initial = build_historical_collection_artifact(
-            platform=platform,
-            account_source_ref=str(registration["external_account_ref"]),
-            items=items,
-            raw_archive_ref=result.raw_archive_ref,
-            command_hash=result.command_hash,
-            output_hash=result.output_hash,
-            evaluated_at=evaluated_at,
-        )
-        if int(initial["recent_mature_item_count"]) < MIN_RELIABLE_HISTORY_ITEMS:
+
+        def mature_count() -> int:
+            return sum(
+                0 < _published_at_for_collection(item) <= mature_cutoff
+                for item in items_by_id.values()
+            )
+
+        def record_progress(
+            *,
+            phase: str,
+            status: str,
+            next_cursor: str,
+            has_more: bool,
+            reached_time_boundary: bool,
+            stop_reason: str,
+        ) -> None:
+            self.core.record_competitor_historical_page_progress(
+                registration_id=str(registration["registration_id"]),
+                phase=phase,
+                status=status,
+                evaluated_at=evaluated_at,
+                next_cursor=next_cursor,
+                has_more=has_more,
+                reached_time_boundary=reached_time_boundary,
+                stop_reason=stop_reason,
+                page_request_count=len(archive_refs),
+                raw_archive_refs=archive_refs,
+                mature_item_count=mature_count(),
+                recent_item_count=recent_count(),
+            )
+
+        phase = "recent_window"
+        cursor = ""
+        has_more = True
+        reached_time_boundary = False
+        stop_reason = "starting"
+        last_command_hash = "paged-history"
+        last_output_hash = "paged-history"
+
+        if progress is not None:
+            stored_refs = progress.get("raw_archive_refs")
+            if not isinstance(stored_refs, list) or not stored_refs:
+                raise StateTransitionError("historical page progress lacks successful page archives for resume")
+            for raw_ref in stored_refs:
+                archive_ref = str(raw_ref or "").strip()
+                if archive_ref and archive_ref not in archive_refs:
+                    page_items = self.collector.read_video_snapshot_archive(
+                        raw_archive_ref=archive_ref,
+                        platform=platform,
+                    )
+                    merge_items(page_items, phase="recent_window")
+                    merge_items(page_items, phase="older_backfill")
+                    archive_refs.append(archive_ref)
+            phase = str(progress.get("phase") or "recent_window")
+            cursor = str(progress.get("next_cursor") or "").strip()
+            has_more = bool(progress.get("has_more"))
+            reached_time_boundary = bool(progress.get("reached_time_boundary"))
+            stop_reason = str(progress.get("stop_reason") or "resume")
+            stored_status = str(progress.get("status") or "running")
+            if stored_status in {"completed", "history_exhausted_insufficient"}:
+                insufficient = stored_status == "history_exhausted_insufficient"
+                return (
+                    self._build_paged_history_artifact(
+                        registration=registration,
+                        platform=platform,
+                        items=list(items_by_id.values()),
+                        archive_refs=archive_refs,
+                        evaluated_at=evaluated_at,
+                        collection_status=(
+                            "history_exhausted_insufficient" if insufficient else "target_reached"
+                        ),
+                        history_exhausted=insufficient,
+                        collection_stop_reason=stop_reason,
+                        page_request_count=len(archive_refs),
+                        command_hash=last_command_hash,
+                        output_hash=last_output_hash,
+                    ),
+                )
+
+        while True:
+            if not has_more:
+                insufficient = mature_count() < MIN_RELIABLE_HISTORY_ITEMS
+                return (
+                    self._build_paged_history_artifact(
+                        registration=registration,
+                        platform=platform,
+                        items=list(items_by_id.values()),
+                        archive_refs=archive_refs,
+                        evaluated_at=evaluated_at,
+                        collection_status=(
+                            "history_exhausted_insufficient" if insufficient else "target_reached"
+                        ),
+                        history_exhausted=insufficient,
+                        collection_stop_reason=(
+                            "history_exhausted" if insufficient else "mature_target_reached"
+                        ),
+                        page_request_count=len(archive_refs),
+                        command_hash=last_command_hash,
+                        output_hash=last_output_hash,
+                    ),
+                )
+            if not cursor and archive_refs and phase == "older_backfill":
+                raise StateTransitionError("historical paging cannot continue without a cursor")
+
             self._report_progress(
                 "historical_collection",
-                "最近90天成熟样本不足20条，正在继续读取更早历史并只补足成熟样本",
+                "正在按当前时间范围逐页读取历史内容"
+                if phase == "recent_window"
+                else "最近90天成熟样本不足20条，正在沿当前游标向前补足",
             )
-            expanded = self.collector.collect_video_snapshot(
+            result = self.collector.collect_video_snapshot_page(
                 platform=platform,
                 source_url=source_ref,
-                max_items=500,
-                with_comments=False,
+                continuation_cursor=cursor,
+                published_after=(cutoff if phase == "recent_window" else None),
             )
-            merged = {str(item["source_id"]): item for item in items}
-            for raw_item in expanded.payload["items"]:
-                sanitized = _sanitize_item(raw_item)
-                merged[str(sanitized["source_id"])] = sanitized
-            items = list(merged.values())
-            result = expanded
-        return (build_historical_collection_artifact(
+            payload = result.payload if isinstance(result.payload, dict) else {}
+            page_items = payload.get("items")
+            pagination = payload.get("pagination")
+            if not isinstance(page_items, list) or not isinstance(pagination, dict):
+                raise StateTransitionError("historical page result lacks items or pagination state")
+            archive_ref = str(result.raw_archive_ref or "").strip()
+            if not archive_ref:
+                raise StateTransitionError("historical page result lacks its raw archive receipt")
+            if archive_ref not in archive_refs:
+                archive_refs.append(archive_ref)
+            merge_items(page_items, phase=phase)
+            last_command_hash = str(result.command_hash or "paged-history")
+            last_output_hash = str(result.output_hash or "paged-history")
+
+            # Fifty is the collection cap, not merely a later retention cap.
+            # Once the existing collected-item set reaches it, finish this
+            # account without looking at another cursor or page boundary.
+            if len(items_by_id) >= FIRST_REGISTRATION_MAX_ITEMS:
+                return (
+                    self._build_paged_history_artifact(
+                        registration=registration,
+                        platform=platform,
+                        items=list(items_by_id.values()),
+                        archive_refs=archive_refs,
+                        evaluated_at=evaluated_at,
+                        collection_status="target_reached",
+                        history_exhausted=False,
+                        collection_stop_reason="maximum_item_count_reached",
+                        page_request_count=len(archive_refs),
+                        command_hash=last_command_hash,
+                        output_hash=last_output_hash,
+                    ),
+                )
+
+            next_cursor = str(pagination.get("next_cursor") or "").strip()
+            page_has_more = bool(pagination.get("has_more"))
+            page_reached_boundary = bool(pagination.get("reached_time_boundary"))
+            page_stop_reason = str(pagination.get("stop_reason") or "page_complete")
+            if page_has_more and next_cursor == cursor:
+                raise StateTransitionError("historical paging returned an unchanged cursor while more history remained")
+            cursor = next_cursor
+            has_more = page_has_more
+            reached_time_boundary = reached_time_boundary or page_reached_boundary
+            stop_reason = page_stop_reason
+
+            if phase == "recent_window":
+                recent_finished = (
+                    page_reached_boundary
+                    or not page_has_more
+                )
+                if recent_finished:
+                    if mature_count() >= MIN_RELIABLE_HISTORY_ITEMS:
+                        return (
+                            self._build_paged_history_artifact(
+                                registration=registration,
+                                platform=platform,
+                                items=list(items_by_id.values()),
+                                archive_refs=archive_refs,
+                                evaluated_at=evaluated_at,
+                                collection_status="target_reached",
+                                history_exhausted=False,
+                                collection_stop_reason=(
+                                    "mature_target_reached" if mature_count() >= MIN_RELIABLE_HISTORY_ITEMS
+                                    else "recent_window_complete"
+                                ),
+                                page_request_count=len(archive_refs),
+                                command_hash=last_command_hash,
+                                output_hash=last_output_hash,
+                            ),
+                        )
+                    if page_has_more and next_cursor:
+                        phase = "older_backfill"
+                        record_progress(
+                            phase=phase,
+                            status="running",
+                            next_cursor=cursor,
+                            has_more=has_more,
+                            reached_time_boundary=reached_time_boundary,
+                            stop_reason=stop_reason,
+                        )
+                        continue
+                    return (
+                        self._build_paged_history_artifact(
+                            registration=registration,
+                            platform=platform,
+                            items=list(items_by_id.values()),
+                            archive_refs=archive_refs,
+                            evaluated_at=evaluated_at,
+                            collection_status="history_exhausted_insufficient",
+                            history_exhausted=True,
+                            collection_stop_reason="history_exhausted",
+                            page_request_count=len(archive_refs),
+                            command_hash=last_command_hash,
+                            output_hash=last_output_hash,
+                        ),
+                    )
+            elif mature_count() >= MIN_RELIABLE_HISTORY_ITEMS:
+                return (
+                    self._build_paged_history_artifact(
+                        registration=registration,
+                        platform=platform,
+                        items=list(items_by_id.values()),
+                        archive_refs=archive_refs,
+                        evaluated_at=evaluated_at,
+                        collection_status="target_reached",
+                        history_exhausted=False,
+                        collection_stop_reason="mature_target_reached",
+                        page_request_count=len(archive_refs),
+                        command_hash=last_command_hash,
+                        output_hash=last_output_hash,
+                    ),
+                )
+
+            record_progress(
+                phase=phase,
+                status="running",
+                next_cursor=cursor,
+                has_more=has_more,
+                reached_time_boundary=reached_time_boundary,
+                stop_reason=stop_reason,
+            )
+
+    def _build_paged_history_artifact(
+        self,
+        *,
+        registration: dict[str, Any],
+        platform: str,
+        items: list[dict[str, Any]],
+        archive_refs: list[str],
+        evaluated_at: int,
+        collection_status: str,
+        history_exhausted: bool,
+        collection_stop_reason: str,
+        page_request_count: int,
+        command_hash: str,
+        output_hash: str,
+    ) -> dict[str, Any]:
+        artifact = build_historical_collection_artifact(
             platform=platform,
             account_source_ref=str(registration["external_account_ref"]),
             items=items,
-            raw_archive_ref=result.raw_archive_ref,
-            command_hash=result.command_hash,
-            output_hash=result.output_hash,
+            raw_archive_ref=archive_refs[-1] if archive_refs else "paged-history",
+            command_hash=command_hash,
+            output_hash=output_hash,
             evaluated_at=evaluated_at,
-        ),)
+            collection_status=collection_status,
+            history_exhausted=history_exhausted,
+            collection_stop_reason=collection_stop_reason,
+            page_request_count=page_request_count,
+            raw_archive_refs=archive_refs,
+        )
+        self.core.record_competitor_historical_page_progress(
+            registration_id=str(registration["registration_id"]),
+            phase="older_backfill" if collection_status == "history_exhausted_insufficient" else "recent_window",
+            status=collection_status if collection_status == "history_exhausted_insufficient" else "completed",
+            evaluated_at=evaluated_at,
+            next_cursor="",
+            has_more=False,
+            reached_time_boundary=False,
+            stop_reason=collection_stop_reason,
+            page_request_count=page_request_count,
+            raw_archive_refs=archive_refs,
+            mature_item_count=sum(
+                0 < _published_at_for_collection(item)
+                <= evaluated_at - HISTORICAL_MATURITY_DAYS * 86400
+                for item in items
+            ),
+            recent_item_count=sum(
+                _published_at_for_collection(item)
+                >= evaluated_at - MATURE_HISTORY_WINDOW_DAYS * 86400
+                for item in items
+            ),
+        )
+        return artifact
 
     def _high_signal_identification(
         self, registration: dict[str, Any], completed: tuple[dict[str, Any], ...]
@@ -588,7 +1035,6 @@ class ConfiguredCompetitorRegistrationExecutor:
         } if material_replenishment else {}
         failures: list[str] = []
         collection_problems: list[str] = []
-        delivery_retry_queue: list[dict[str, Any]] = []
         completed_count = len(existing)
         total_count = len(selected)
         for position, item in enumerate(selected, start=1):
@@ -653,23 +1099,8 @@ class ConfiguredCompetitorRegistrationExecutor:
                         registration_id=registration_id, step_name="transcripts_and_comments", item_ref=source_id,
                         status="completed", artifact=artifact, error=None,
                     )
+                self._notify_material_change("material_prepared", source_id)
                 completed_count += 1
-                try:
-                    self.process_prepared_breakdown(registration=registration, material=artifact)
-                except CompetitorBreakdownFailed as exc:
-                    if self._is_delivery_interruption(exc.failure_record):
-                        delivery_retry_queue.append(artifact)
-                        self._report_progress(
-                            "hit_breakdown",
-                            "本条服务端中断，先继续准备本次任务的其他材料；结束后自动原样补跑一次",
-                        )
-                    else:
-                        self._report_progress(
-                            "hit_breakdown",
-                            "本条拆解未通过核查，已留档；继续处理本次任务其余材料",
-                        )
-            except CompetitorBreakdownFailed:
-                raise
             except Exception as exc:
                 failures.append(source_id)
                 if material_replenishment:
@@ -682,6 +1113,7 @@ class ConfiguredCompetitorRegistrationExecutor:
                         registration_id=registration_id, step_name="transcripts_and_comments", item_ref=source_id,
                         status="failed", artifact=None, error={"reason": str(exc)},
                     )
+                self._notify_material_change("material_preparation_failed", source_id)
                 if "account blocked" in str(exc).lower():
                     raise StateTransitionError("account blocked during competitor material preparation") from exc
         if collection_problems:
@@ -690,10 +1122,6 @@ class ConfiguredCompetitorRegistrationExecutor:
             )
         if failures:
             raise StateTransitionError(f"competitor material preparation failed for {len(failures)} item(s); failures remain recorded and are not automatically retried")
-        self._retry_delivery_interruptions_after_task(
-            registration=registration,
-            materials=delivery_retry_queue,
-        )
         artifacts = [
             item["artifact"] for item in self.core.list_competitor_registration_items(
                 registration_id=registration_id, step_name="transcripts_and_comments"
@@ -771,7 +1199,6 @@ class ConfiguredCompetitorRegistrationExecutor:
         ]
         failures: list[str] = []
         missing_details: list[str] = []
-        delivery_retry_queue: list[dict[str, Any]] = []
         completed_count = len(existing)
         for position, item in enumerate(pending, start=1):
             source_id = str(item.get("source_id") or "")
@@ -797,29 +1224,15 @@ class ConfiguredCompetitorRegistrationExecutor:
                     registration_id=registration_id, item_ref=source_id,
                     status="completed", artifact=artifact, error=None,
                 )
+                self._notify_material_change("material_prepared", source_id)
                 completed_count += 1
-                try:
-                    self.process_prepared_breakdown(registration=registration, material=artifact)
-                except CompetitorBreakdownFailed as exc:
-                    if self._is_delivery_interruption(exc.failure_record):
-                        delivery_retry_queue.append(artifact)
-                        self._report_progress(
-                            "hit_breakdown",
-                            "本条服务端中断，先继续准备本次任务的其他材料；结束后自动原样补跑一次",
-                        )
-                    else:
-                        self._report_progress(
-                            "hit_breakdown",
-                            "本条拆解未通过核查，已留档；继续处理本次任务其余材料",
-                        )
-            except CompetitorBreakdownFailed:
-                raise
             except Exception as exc:
                 failures.append(source_id)
                 self.core.record_replenished_competitor_material_item(
                     registration_id=registration_id, item_ref=source_id,
                     status="failed", artifact=None, error={"reason": str(exc)},
                 )
+                self._notify_material_change("material_preparation_failed", source_id)
         if missing_details:
             raise StateTransitionError(
                 f"saved detail is still missing for {len(missing_details)} recovery item(s); they remain excluded"
@@ -828,10 +1241,6 @@ class ConfiguredCompetitorRegistrationExecutor:
             raise StateTransitionError(
                 f"collected-detail material preparation failed for {len(failures)} item(s); failures remain recorded and are not automatically retried"
             )
-        self._retry_delivery_interruptions_after_task(
-            registration=registration,
-            materials=delivery_retry_queue,
-        )
         return tuple(
             item["artifact"] for item in self.core.list_competitor_registration_items(
                 registration_id=registration_id, step_name="transcripts_and_comments"
@@ -850,16 +1259,27 @@ class ConfiguredCompetitorRegistrationExecutor:
             raise StateTransitionError(
                 "the competitor-registration model is reserved for individual hit breakdowns"
             )
+        content_type_lifecycle = (
+            "discover" if str(registration.get("status") or "").strip() == "processing" else "classify"
+        )
         payload = {
             "correlation_id": f"{registration['registration_id']}:{step_name}",
             "source_id": str(input_payload["source_id"]),
             "transcript": str(input_payload["transcript"]),
             "metrics": dict(input_payload["metrics"]),
             "comments": list(input_payload["comments"]),
-            "schema_version": "competitor_breakdown.input.v7",
+            "domain_label": str(registration.get("domain_label") or "generic"),
+            "domain_context": _breakdown_domain_context(
+                str(registration.get("domain_label") or "generic"),
+                observed_content_types=self.core.observed_breakdown_content_types(
+                    domain_label=str(registration.get("domain_label") or "generic")
+                ),
+                content_type_lifecycle=content_type_lifecycle,
+            ),
+            "schema_version": "competitor_breakdown.input.v1",
         }
         result = FormalBusinessSkillAdapter(
-            contract=FormalSkillContract.from_runtime_skill("competitor_breakdown_structural_v13"),
+            contract=FormalSkillContract.from_runtime_skill("competitor_breakdown"),
             gateway=self.gateway,
         ).run(
             payload,
@@ -954,6 +1374,106 @@ class ConfiguredCompetitorRegistrationExecutor:
                 status="failed", artifact=None, error=error,
             )
 
+    @staticmethod
+    def _validate_core_breakdown_artifact(*, artifact: dict[str, Any], source_id: str) -> None:
+        """Validate only the immutable core breakdown contract.
+
+        Optional expansion/question fields are deliberately excluded here.  A
+        complete source-bound analysis must have its identity, source content
+        type, analysis text and supported output schema; optional enhancement
+        generation is recorded separately after the core item is persisted.
+        """
+        if not isinstance(artifact, dict):
+            raise StateTransitionError("competitor breakdown core result must be an object")
+        if str(artifact.get("source_id") or "").strip() != source_id:
+            raise StateTransitionError("competitor breakdown core result has the wrong source identity")
+        if not str(artifact.get("source_content_type") or "").strip():
+            raise StateTransitionError("competitor breakdown core result lacks source content type")
+        if not str(artifact.get("analysis_text") or "").strip():
+            raise StateTransitionError("competitor breakdown core result lacks analysis text")
+        if str(artifact.get("schema_version") or "") not in {
+            "competitor_breakdown.output.raw.v4",
+            "competitor_breakdown.output.raw.v5",
+        }:
+            raise StateTransitionError("competitor breakdown core result has an unsupported schema version")
+
+    def _generate_prepared_breakdown_artifact(
+        self,
+        *,
+        registration: dict[str, Any],
+        material: dict[str, Any],
+        attempt_kind: str,
+    ) -> dict[str, Any]:
+        source_id = str(material.get("source_id") or "")
+        transcript_text = Path(str(material["transcript_ref"])).read_text(encoding="utf-8")
+        payload = {
+            "source_id": source_id,
+            "transcript": transcript_text,
+            "metrics": material["metrics"],
+            "comments": material["comments"],
+        }
+        value, model_run_id, raw_model_output = self._model_json(
+            registration=registration,
+            step_name="breakdown",
+            input_payload=payload,
+            attempt_kind=attempt_kind,
+        )
+        self._validate_core_breakdown_artifact(artifact=value, source_id=source_id)
+        return {
+            "artifact_kind": "deep_breakdown",
+            "source_id": source_id,
+            "model_run_id": model_run_id,
+            "raw_model_output": raw_model_output,
+            "deep_breakdown": value,
+        }
+
+    def prepare_breakdown_replacement_candidate(
+        self,
+        *,
+        registration: dict[str, Any],
+        material: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Generate and validate one replacement without touching its current breakdown."""
+        source_id = str(material.get("source_id") or "")
+        if not source_id:
+            raise StateTransitionError("prepared competitor material has no source identity")
+        self._report_progress(
+            "hit_breakdown",
+            f"正在生成第 {source_id} 条替换拆解；当前旧结果保持可用",
+        )
+        try:
+            return self._generate_prepared_breakdown_artifact(
+                registration=registration,
+                material=material,
+                attempt_kind="initial",
+            )
+        except Exception as exc:
+            error = self._breakdown_failure_record(exc)
+            # Replacement candidates do not pass through the normal item
+            # writer, so persist the source-bound attempt here before the
+            # backlog runner turns it into a compact task summary.  The old
+            # breakdown remains untouched; this record is only the diagnostic
+            # for the rejected candidate.
+            try:
+                self.core.record_competitor_breakdown_attempt(
+                    registration_id=str(registration["registration_id"]),
+                    source_id=source_id,
+                    attempt_kind="initial",
+                    outcome="failed",
+                    reason=str(error.get("reason") or exc),
+                    raw_model_output=error.get("raw_model_output"),
+                    raw_model_output_status=str(
+                        error.get("raw_model_output_status") or "not_available"
+                    ),
+                    model_run_id=error.get("model_run_envelope_version_id"),
+                )
+            except Exception as record_exc:
+                error["attempt_record_error"] = str(record_exc)
+            raise CompetitorBreakdownFailed(
+                f"replacement competitor breakdown failed for {source_id}",
+                failure_record=error,
+            ) from exc
+
     def process_prepared_breakdown(
         self,
         *,
@@ -971,26 +1491,13 @@ class ConfiguredCompetitorRegistrationExecutor:
             f"已提交第 {source_id} 条拆解，等待模型最终答复；当前接口不提供模型端实时进度",
         )
         try:
-            transcript_text = Path(str(material["transcript_ref"])).read_text(encoding="utf-8")
-            payload = {
-                "source_id": source_id,
-                "transcript": transcript_text,
-                "metrics": material["metrics"],
-                "comments": material["comments"],
-            }
-            value, model_run_id, raw_model_output = self._model_json(
-                registration=registration, step_name="breakdown", input_payload=payload, attempt_kind=attempt_kind,
+            artifact = self._generate_prepared_breakdown_artifact(
+                registration=registration,
+                material=material,
+                attempt_kind=attempt_kind,
             )
-            validate_competitor_breakdown_structural_output_semantics(
-                {"source_id": source_id, "transcript": transcript_text, "comments": material["comments"]}, value,
-            )
-            artifact = {
-                "artifact_kind": "deep_breakdown",
-                "source_id": source_id,
-                "model_run_id": model_run_id,
-                "raw_model_output": raw_model_output,
-                "deep_breakdown": value,
-            }
+            model_run_id = str(artifact["model_run_id"])
+            raw_model_output = str(artifact["raw_model_output"])
             self.core.record_competitor_breakdown_attempt(
                 registration_id=registration_id,
                 source_id=source_id,
@@ -1011,6 +1518,56 @@ class ConfiguredCompetitorRegistrationExecutor:
                     status="completed", artifact=artifact, error=None,
                     automatic_delivery_retry=attempt_kind == "post_batch_delivery_retry",
                 )
+            optional_attachment: dict[str, Any]
+            try:
+                expansion_result = self.core.register_breakdown_question_expansions(
+                    domain_label=str(registration.get("domain_label") or "generic"),
+                    breakdown=dict(artifact.get("deep_breakdown") or {}),
+                    parent_source_ref={
+                        "source_type": "competitor_breakdown",
+                        "source_object_id": source_id,
+                        "registration_id": registration_id,
+                        "source_object_version": str(artifact.get("model_run_id") or ""),
+                    },
+                    actor="competitor_breakdown",
+                    content_type_lifecycle=(
+                        "discover"
+                        if str(registration.get("status") or "").strip() == "processing"
+                        else "classify"
+                    ),
+                )
+                optional_attachment = {
+                    "status": "completed",
+                    "result": expansion_result,
+                }
+            except Exception as attachment_exc:
+                # An expansion/observation problem is an optional attachment
+                # failure.  The already persisted core breakdown remains valid.
+                optional_attachment = {
+                    "status": "failed",
+                    "error_type": type(attachment_exc).__name__,
+                    "reason": str(attachment_exc),
+                }
+            try:
+                self.core.record_competitor_breakdown_optional_result(
+                    registration_id=registration_id,
+                    item_ref=source_id,
+                    optional_result=optional_attachment,
+                )
+            except Exception as optional_record_exc:
+                # Never turn a persisted core success into a failed breakdown
+                # because the optional attachment receipt could not be updated.
+                try:
+                    self.core._audit(None, "competitor_breakdown_optional_result_persistence_failed", {
+                        "registration_id": registration_id,
+                        "item_ref": source_id,
+                        "error_type": type(optional_record_exc).__name__,
+                        "reason": str(optional_record_exc),
+                        "optional_result": optional_attachment,
+                    })
+                except Exception:
+                    pass
+            self._notify_material_change("breakdown_completed", source_id)
             return artifact
         except Exception as exc:
             error = self._breakdown_failure_record(exc)
@@ -1028,6 +1585,7 @@ class ConfiguredCompetitorRegistrationExecutor:
             self._record_atomic_breakdown_failure(
                 registration=registration, source_id=source_id, error=error,
             )
+            self._notify_material_change("breakdown_failed", source_id)
             raise CompetitorBreakdownFailed(
                 f"atomic competitor breakdown failed for {source_id}", failure_record=error,
             ) from exc
@@ -1037,7 +1595,6 @@ class ConfiguredCompetitorRegistrationExecutor:
     ) -> tuple[dict[str, Any], ...]:
         materials = _step_artifacts(completed, "transcripts_and_comments")
         materials = [item for item in materials if item.get("artifact_kind") == "transcript_and_comments"]
-        self._report_progress("hit_breakdown", f"正在逐条拆解 {len(materials)} 条已备料爆款")
         registration_id = str(registration["registration_id"])
         recorded = {
             item["item_ref"]: item for item in self.core.list_competitor_registration_items(
@@ -1045,55 +1602,48 @@ class ConfiguredCompetitorRegistrationExecutor:
             )
         }
         existing = {source_id: item for source_id, item in recorded.items() if item["status"] == "completed"}
+        excluded_ids = {
+            source_id for source_id, item in recorded.items() if item["status"] == "excluded"
+        }
         delivery_retry_queue: list[dict[str, Any]] = []
         completed_count = len(existing)
         total_count = len(materials)
+        pending_materials = [
+            material for material in materials
+            if str(material.get("source_id") or "") not in existing
+            and str(material.get("source_id") or "") not in excluded_ids
+        ]
+        pending_count = len(pending_materials)
+        initial_completed_count = completed_count
+        pending_source_ids = {
+            str(material.get("source_id") or "") for material in pending_materials
+        }
+        if pending_count:
+            self._report_progress(
+                "hit_breakdown",
+                f"总{total_count}条，已完成{completed_count}条，本次处理{pending_count}条",
+            )
         for position, material in enumerate(materials, start=1):
             source_id = str(material.get("source_id") or "")
             if source_id in existing:
                 continue
-            if source_id in recorded and recorded[source_id]["status"] in {"failed", "excluded"}:
-                self._report_progress(
-                    "hit_breakdown",
-                    f"第 {position} 条已有未完成留档，继续处理本次任务其余材料",
-                )
+            if source_id in recorded and recorded[source_id]["status"] == "excluded":
                 continue
-            self._report_progress(
-                "hit_breakdown",
-                f"爆款拆解已完成 {completed_count}/{total_count}，正在处理第 {position} 条",
-            )
             try:
                 self.process_prepared_breakdown(registration=registration, material=material)
                 completed_count += 1
             except CompetitorBreakdownFailed as exc:
                 if self._is_delivery_interruption(exc.failure_record):
                     delivery_retry_queue.append(material)
-                    self._report_progress(
-                        "hit_breakdown",
-                        f"第 {position} 条服务端中断，先继续本批；结束后会自动原样补跑一次",
-                    )
                     continue
-                self._report_progress(
-                    "hit_breakdown",
-                    f"第 {position} 条未通过核查，已留档；继续处理本次任务其余材料",
-                )
                 continue
             except Exception as exc:
                 error = self._breakdown_failure_record(exc)
                 self._record_atomic_breakdown_failure(
                     registration=registration, source_id=source_id, error=error,
                 )
-                self._report_progress(
-                    "hit_breakdown",
-                    f"第 {position} 条执行异常，已留档；继续处理本次任务其余材料",
-                )
                 continue
-        for retry_position, material in enumerate(delivery_retry_queue, start=1):
-            source_id = str(material.get("source_id") or "")
-            self._report_progress(
-                "hit_breakdown",
-                f"本批常规拆解结束，正在自动补跑第 {retry_position}/{len(delivery_retry_queue)} 条服务端中断材料",
-            )
+        for material in delivery_retry_queue:
             try:
                 self.process_prepared_breakdown(
                     registration=registration,
@@ -1101,22 +1651,33 @@ class ConfiguredCompetitorRegistrationExecutor:
                     attempt_kind="post_batch_delivery_retry",
                 )
                 completed_count += 1
-            except CompetitorBreakdownFailed as exc:
-                if self._is_delivery_interruption(exc.failure_record):
-                    self._report_progress(
-                        "hit_breakdown",
-                        f"第 {retry_position} 条补拆仍被服务端中断，已留档；继续处理其余补拆材料",
-                    )
-                else:
-                    self._report_progress(
-                        "hit_breakdown",
-                        f"第 {retry_position} 条补拆未通过核查，已留档；继续处理其余补拆材料",
-                    )
+            except CompetitorBreakdownFailed:
+                pass
         failed_records = [
             item for item in self.core.list_competitor_registration_items(
                 registration_id=registration_id, step_name="breakdown"
             ) if item["status"] == "failed"
         ]
+        if pending_count:
+            current_items = self.core.list_competitor_registration_items(
+                registration_id=registration_id, step_name="breakdown"
+            )
+            completed_now = sum(item["status"] == "completed" for item in current_items)
+            failed_now = sum(
+                item["status"] == "failed" and item["item_ref"] in pending_source_ids
+                for item in current_items
+            )
+            newly_completed = max(completed_now - initial_completed_count, 0)
+            if failed_now:
+                self._report_progress(
+                    "hit_breakdown",
+                    f"本次{pending_count}条，成功{newly_completed}条，失败{failed_now}条，累计完成{completed_now}/{total_count}",
+                )
+            else:
+                self._report_progress(
+                    "hit_breakdown",
+                    f"本次完成{newly_completed}条，累计{completed_now}/{total_count}",
+                )
         if failed_records:
             details = "; ".join(
                 f"{item['item_ref']}: {str((item.get('error') or {}).get('reason') or 'unknown failure')}"
@@ -1180,6 +1741,9 @@ def build_configured_competitor_registration_executor(
     core: Stage0ContentProductionCore,
     *,
     progress_callback: Callable[[str, str], None] | None = None,
+    task_model_binding: dict[str, Any],
+    stream_breakdowns: bool = False,
+    on_material_change: Callable[[str], None] | None = None,
 ) -> ConfiguredCompetitorRegistrationExecutor:
     """Bind the generic worker to the real local collector, media, ASR and configured model route."""
     archive_root = require_runtime_path(Path(
@@ -1208,9 +1772,14 @@ def build_configured_competitor_registration_executor(
             archive_root=archive_root / "media",
             ffmpeg_executable=Path(external_runtime_value("FFMPEG_PATH")),
         ),
-        gateway=build_production_competitor_registration_gateway(core),
+        gateway=build_production_competitor_registration_gateway(
+            core,
+            task_model_binding=task_model_binding,
+            stream_responses=stream_breakdowns,
+        ),
         max_historical_items=configured_first_registration_item_limit(),
         progress_callback=progress_callback,
+        on_material_change=on_material_change,
     )
 
 
@@ -1358,6 +1927,9 @@ class CompetitorRegistrationService:
                 pending.append(item)
             elif str(current["status"]) == "completed":
                 already_completed.append(str(item["source_id"]))
+            elif str(current["status"]) == "failed":
+                # A failed item is resumable work, not a terminal skip.
+                pending.append(item)
             else:
                 already_failed.append(str(item["source_id"]))
         completed: list[str] = []
@@ -1414,6 +1986,8 @@ class CompetitorRegistrationService:
         delivery_check = getattr(self.executor, "_is_delivery_interruption", None)
         if not callable(runner) or not callable(delivery_check):
             raise StateTransitionError("configured competitor executor cannot run a formal backlog task")
+        task_summary = task.get("summary") if isinstance(task.get("summary"), dict) else {}
+        replacement_mode = str(task_summary.get("mode") or "") == "replace_active_mixed"
 
         def report(*, phase: str, position: int, retry_position: int | None = None) -> None:
             current = self.core.competitor_breakdown_backlog_task_progress(backlog_task_id=backlog_task_id)
@@ -1435,6 +2009,143 @@ class CompetitorRegistrationService:
             status="running",
             summary=self.core.competitor_breakdown_backlog_task_progress(backlog_task_id=backlog_task_id)["summary"],
         )
+        if replacement_mode:
+            candidate_runner = getattr(self.executor, "prepare_breakdown_replacement_candidate", None)
+            if not callable(candidate_runner):
+                raise StateTransitionError("configured competitor executor cannot prepare safe replacements")
+            for position, item in enumerate(selected, start=1):
+                progress = self.core.competitor_breakdown_backlog_task_progress(
+                    backlog_task_id=backlog_task_id
+                )
+                source_id = str(item["source_id"])
+                summary = progress["summary"]
+                if source_id in set(summary.get("failed_source_ids") or []):
+                    report(phase="replacement", position=position)
+                    continue
+                if int(summary.get("completed") or 0) + int(summary.get("failed") or 0) >= position:
+                    report(phase="replacement", position=position)
+                    continue
+                registration = self.core.get_competitor_registration(
+                    registration_id=str(item["registration_id"])
+                )
+                candidate_artifact: dict[str, Any] | None = None
+                try:
+                    candidate_artifact = candidate_runner(
+                        registration=registration,
+                        material=dict(item["material"]),
+                    )
+                    self.core.replace_completed_mixed_competitor_breakdown(
+                        registration_id=str(item["registration_id"]),
+                        source_id=source_id,
+                        artifact=candidate_artifact,
+                    )
+                except (CompetitorBreakdownFailed, StateTransitionError) as exc:
+                    # A candidate can be valid but still fail at the atomic
+                    # swap boundary.  Preserve that outcome against the
+                    # source as well, so the model response is not orphaned
+                    # from the reason the formal replacement was rejected.
+                    if (
+                        not isinstance(exc, CompetitorBreakdownFailed)
+                        and isinstance(candidate_artifact, dict)
+                    ):
+                        try:
+                            self.core.record_competitor_breakdown_attempt(
+                                registration_id=str(registration["registration_id"]),
+                                source_id=source_id,
+                                attempt_kind="initial",
+                                outcome="failed",
+                                reason=str(exc),
+                                raw_model_output=candidate_artifact.get("raw_model_output"),
+                                raw_model_output_status=(
+                                    "available"
+                                    if candidate_artifact.get("raw_model_output") is not None
+                                    else "not_available"
+                                ),
+                                model_run_id=candidate_artifact.get("model_run_id"),
+                            )
+                        except Exception:
+                            # The task summary still records the swap failure;
+                            # do not replace the actionable failure with a
+                            # secondary diagnostic-write error.
+                            pass
+                    current = self.core.competitor_breakdown_backlog_task_progress(
+                        backlog_task_id=backlog_task_id
+                    )
+                    failed_source_ids = set(current["summary"].get("failed_source_ids") or [])
+                    failed_source_ids.add(source_id)
+                    failure_reasons = dict(current["summary"].get("failure_reasons") or {})
+                    failure_details = dict(current["summary"].get("failure_details") or {})
+                    failure_record = getattr(exc, "failure_record", {})
+                    if not isinstance(failure_record, dict):
+                        failure_record = {}
+                    if (
+                        not isinstance(exc, CompetitorBreakdownFailed)
+                        and isinstance(candidate_artifact, dict)
+                    ):
+                        failure_record = {
+                            **failure_record,
+                            "failure_stage": "replacement_commit",
+                            "failure_type": type(exc).__name__,
+                            "model_run_envelope_version_id": candidate_artifact.get("model_run_id"),
+                            "raw_model_output_status": (
+                                "available"
+                                if candidate_artifact.get("raw_model_output") is not None
+                                else "not_available"
+                            ),
+                        }
+                    reason = str(failure_record.get("reason") or exc)
+                    failure_reasons[source_id] = reason
+                    failure_details[source_id] = {
+                        "reason": reason,
+                        "failure_stage": str(
+                            failure_record.get("failure_stage") or "replacement"
+                        ),
+                        "failure_type": str(
+                            failure_record.get("failure_type") or type(exc).__name__
+                        ),
+                        "model_run_id": failure_record.get("model_run_envelope_version_id"),
+                        "raw_model_output_status": str(
+                            failure_record.get("raw_model_output_status") or "not_available"
+                        ),
+                        "automatic_retry": bool(failure_record.get("automatic_retry")),
+                    }
+                    if failure_record.get("attempt_record_error"):
+                        failure_details[source_id]["attempt_record_error"] = str(
+                            failure_record["attempt_record_error"]
+                        )
+                    failed_summary = {
+                        **current["summary"],
+                        "failed_source_ids": sorted(failed_source_ids),
+                        "failure_reasons": failure_reasons,
+                        "failure_details": failure_details,
+                        "failed": len(failed_source_ids),
+                        "pending": len(selected) - int(current["summary"].get("completed") or 0) - len(failed_source_ids),
+                    }
+                    self.core.update_competitor_breakdown_backlog_task(
+                        backlog_task_id=backlog_task_id,
+                        status="running",
+                        summary=failed_summary,
+                    )
+                report(phase="replacement", position=position)
+            final = self.core.competitor_breakdown_backlog_task_progress(
+                backlog_task_id=backlog_task_id
+            )
+            terminal_status = (
+                "completed" if int(final["summary"]["failed"]) == 0 else "completed_with_failures"
+            )
+            final = self.core.update_competitor_breakdown_backlog_task(
+                backlog_task_id=backlog_task_id,
+                status=terminal_status,
+                summary=final["summary"],
+            )
+            if progress_callback is not None:
+                progress_callback({
+                    "phase": terminal_status,
+                    "position": len(selected),
+                    "summary": final["summary"],
+                })
+            return final
+
         delivery_retry_queue: list[dict[str, Any]] = []
         for position, item in enumerate(selected, start=1):
             registration_id, source_id = str(item["registration_id"]), str(item["source_id"])
@@ -1447,14 +2158,19 @@ class CompetitorRegistrationService:
                 report(phase="initial", position=position)
                 continue
             if existing is not None and str(existing["status"]) == "failed":
-                latest_attempt = self.core.latest_competitor_breakdown_attempt(
+                approval = task.get("approval") if isinstance(task.get("approval"), dict) else {}
+                actor = str(approval.get("actor") or "").strip()
+                if not actor:
+                    raise StateTransitionError("formal breakdown backlog approval has no user identity")
+                self.core.discard_failed_breakdown_for_replacement(
+                    cold_start_id=str(task["cold_start_id"]),
                     registration_id=registration_id,
                     source_id=source_id,
+                    actor=actor,
+                    actor_kind="user",
+                    reason="用户已明确授权重做当前失败的冷启动拆解",
+                    idempotency_key=f"{backlog_task_id}:discard-failed:{registration_id}:{source_id}",
                 )
-                if latest_attempt == {"attempt_kind": "initial", "outcome": "delivery_interrupted"}:
-                    delivery_retry_queue.append(item)
-                report(phase="initial", position=position)
-                continue
             registration = self.core.get_competitor_registration(registration_id=registration_id)
             try:
                 runner(registration=registration, material=dict(item["material"]))
@@ -1487,13 +2203,22 @@ class CompetitorRegistrationService:
         return final
 
     def run_competitor_registration_step(
-        self, *, registration_id: str, actor: str, idempotency_key: str
+        self,
+        *,
+        registration_id: str,
+        actor: str,
+        idempotency_key: str,
     ) -> dict[str, Any]:
-        """Run exactly one unfinished step so external resources can be scheduled independently."""
+        """Run exactly one unfinished registration stage in the strict stage flow."""
         if not actor.strip() or not idempotency_key.strip():
             raise StateTransitionError("competitor registration execution requires an actor and idempotency key")
         registration = self.core.get_competitor_registration(registration_id=registration_id)
         if registration["status"] == "awaiting_human_review":
+            pending = self.core.get_competitor_registration_history_shortfall(
+                registration_id=registration_id
+            )
+            if pending is not None:
+                return pending
             return self.core.complete_competitor_registration(
                 registration_id=registration_id,
                 actor=actor,
@@ -1538,6 +2263,11 @@ class CompetitorRegistrationService:
         while True:
             registration = self.core.get_competitor_registration(registration_id=registration_id)
             if registration["status"] == "awaiting_human_review":
+                pending = self.core.get_competitor_registration_history_shortfall(
+                    registration_id=registration_id
+                )
+                if pending is not None:
+                    return pending
                 return self.core.complete_competitor_registration(
                     registration_id=registration_id,
                     actor=actor,
@@ -1565,3 +2295,124 @@ class CompetitorRegistrationService:
                 idempotency_key=f"{idempotency_key}:{step_name}:{artifact_set_digest}",
             )
             completed.append({"step_name": step_name, "artifact_refs": list(artifact_refs), "transition": transition})
+    def _run_registration_batch_by_stage(
+        self,
+        *,
+        registration_ids: tuple[str, ...],
+        actor: str,
+        idempotency_key: str,
+    ) -> list[dict[str, Any]]:
+        """Run a batch through the shared stage order, never account-by-account."""
+        step_index = {
+            step_name: index
+            for index, step_name in enumerate(COMPETITOR_REGISTRATION_STEPS)
+        }
+        result_by_id: dict[str, dict[str, Any]] = {}
+
+        for step_name in COMPETITOR_REGISTRATION_STEPS:
+            expected_index = step_index[step_name]
+            for registration_id in registration_ids:
+                registration = self.core.get_competitor_registration(
+                    registration_id=registration_id
+                )
+                if registration["status"] == "completed":
+                    result_by_id[registration_id] = {
+                        "registration_id": registration_id,
+                        "status": "completed",
+                    }
+                    continue
+                if registration["status"] == "failed":
+                    raise StateTransitionError(
+                        f"incremental registration {registration_id} is already failed"
+                    )
+                if registration["status"] == "awaiting_human_review":
+                    transition = self.run_competitor_registration_step(
+                        registration_id=registration_id,
+                        actor=actor,
+                        idempotency_key=f"{idempotency_key}:{registration_id}:complete:{step_name}",
+                    )
+                    result_by_id[registration_id] = transition
+                    continue
+                if registration["status"] != "processing":
+                    raise StateTransitionError(
+                        "incremental competitor registration is not ready for staged execution"
+                    )
+                current_step = str(registration["current_step"])
+                current_index = step_index.get(current_step)
+                if current_index is None:
+                    raise StateTransitionError(
+                        f"incremental registration {registration_id} has unsupported step {current_step}"
+                    )
+                if current_index > expected_index:
+                    continue
+                if current_index < expected_index:
+                    raise StateTransitionError(
+                        f"incremental registration {registration_id} has unfinished prior step {current_step}"
+                    )
+                result_by_id[registration_id] = self.run_competitor_registration_step(
+                    registration_id=registration_id,
+                    actor=actor,
+                    idempotency_key=f"{idempotency_key}:{registration_id}:{step_name}",
+                )
+
+        for registration_id in registration_ids:
+            registration = self.core.get_competitor_registration(
+                registration_id=registration_id
+            )
+            if registration["status"] == "awaiting_human_review":
+                result_by_id[registration_id] = self.run_competitor_registration_step(
+                    registration_id=registration_id,
+                    actor=actor,
+                    idempotency_key=f"{idempotency_key}:{registration_id}:complete:final",
+                )
+            elif registration["status"] == "failed":
+                raise StateTransitionError(
+                    f"incremental registration {registration_id} failed during staged execution"
+                )
+            result_by_id.setdefault(
+                registration_id,
+                {"registration_id": registration_id, "status": registration["status"]},
+            )
+        results: list[dict[str, Any]] = []
+        for registration_id in registration_ids:
+            registration = self.core.get_competitor_registration(
+                registration_id=registration_id
+            )
+            result = dict(result_by_id[registration_id])
+            result.update({
+                "registration_id": registration_id,
+                "status": registration["status"],
+                "current_step": registration["current_step"],
+            })
+            results.append(result)
+        return results
+
+    def run_incremental_competitor_registrations(
+        self,
+        *,
+        cold_start_id: str,
+        competitor_accounts: tuple[dict[str, Any], ...],
+        actor: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Register and process only the supplied accounts on a completed run."""
+        batch = self.core.create_incremental_competitor_registrations(
+            cold_start_id=cold_start_id,
+            competitor_accounts=competitor_accounts,
+            actor=actor,
+            idempotency_key=idempotency_key,
+        )
+        registration_ids = tuple(str(value) for value in batch["registration_ids"])
+        results = self._run_registration_batch_by_stage(
+            registration_ids=registration_ids,
+            actor=actor,
+            idempotency_key=idempotency_key,
+        )
+        result_status = (
+            "completed"
+            if all(str(item.get("status") or "") == "completed" for item in results)
+            else "awaiting_human_review"
+            if any(bool(item.get("history_insufficient")) for item in results)
+            else "completed_with_failures"
+        )
+        return {**batch, "status": result_status, "results": results}

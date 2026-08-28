@@ -18,6 +18,8 @@ required:
   - user_review_reasons
   - execution_review
   - experience_usage
+  - topic_shape
+  - delivery_contract
   - schema_version
 properties:
   topic_status:
@@ -185,7 +187,29 @@ properties:
       rationale:
         type: string
     additional_properties: false
+  topic_shape:
+    type: object
+    required:
+      - core_subject
+      - scope_boundary
+      - one_piece_line
+    properties:
+      core_subject:
+        type: string
+      scope_boundary:
+        type: string
+      one_piece_line:
+        type: string
+    additional_properties: false
+  delivery_contract:
+    type: object
+    required:
+      - user_gets
+    properties:
+      user_gets:
+        type: string
+    additional_properties: false
   schema_version:
     type: string
-    const: source_to_topic.output.v1
+    const: source_to_topic.output.v2
 additional_properties: false

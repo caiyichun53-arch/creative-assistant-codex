@@ -1,8 +1,8 @@
 {
-  "contract_version": "cold_start_guard_v13",
+  "contract_version": "cold_start_guard_v14",
   "platform": "douyin",
   "account_count": {
-    "minimum_for_new_cold_start": 10,
+    "minimum_for_new_cold_start": 20,
     "maximum_for_new_cold_start": 20,
     "grandfather_existing_cold_starts": true
   },
@@ -26,6 +26,24 @@
     "extra_expansion_gates_forbidden": true,
     "pinned_position_has_no_special_treatment": true
   },
+  "account_maturity": {
+    "meaning": "账号成熟度只表示成熟历史基准是否可用，不表示账号年龄、注册时间或账号总视频数量",
+    "new_account": {
+      "condition": "mature_history_sample_count < minimum_reliable_mature_items",
+      "historical_multiplier_channels": "disabled",
+      "comment_like_ratio_channel": "direct_hit_channel"
+    },
+    "mature_account": {
+      "condition": "mature_history_sample_count >= minimum_reliable_mature_items",
+      "historical_multiplier_channels": "available",
+      "comment_like_ratio_channel": "direct_hit_channel"
+    },
+    "transition": "only_when_mature_history_sample_count_reaches_minimum_reliable_mature_items",
+    "account_age_does_not_change_state": true,
+    "formal_d_baseline_is_independent": true,
+    "formal_d_completion_does_not_change_account_state": true,
+    "first_contact_category_is_video_origin_not_account_state": true
+  },
   "first_contact": {
     "historical_mature": {
       "age_days_minimum": 7,
@@ -47,7 +65,7 @@
       "last_observation": "D7"
     }
   },
-  "historical_selection_policy_version": "mature_history_median_channels_v3",
+  "historical_selection_policy_version": "mature_history_ratio_direct_like_floor_single_v13",
   "historical_selection": {
     "metrics": [
       "like_count",
@@ -57,14 +75,12 @@
     ],
     "baseline_statistic": "median",
     "single_metric_multiplier": 3.0,
-    "multi_metric_multiplier": 2.0,
-    "minimum_multi_metrics": 2,
-    "normal_account_like_floor": 2000,
-    "small_account_definition": "own_like_p90_below_normal_floor",
-    "small_account_fallback": "own_like_p90",
-    "small_account_p90_percentile": 0.9,
+    "normal_account_like_floor": 20000,
     "comment_like_ratio_threshold": 0.2,
+    "like_floor_is_common_gate": false,
+    "like_floor_required_for_multiplier_paths": true,
     "comment_like_ratio_is_independent_channel": true,
+    "two_entry_paths_are_or": true,
     "maximum_selection_ratio": null,
     "iqr_selection_forbidden": true
   },
@@ -118,11 +134,38 @@
   "deep_breakdown": {
     "one_record_per_completed_spoken_transcript": true,
     "content_type_is_fixed_classification_only": true,
+    "question_expansion_check_required": true,
+    "question_expansion_may_be_empty": true,
+    "question_expansion_requires_source_anchor": true,
+    "question_expansion_requires_unresolved_increment": true,
+    "question_expansion_requires_domain_gate": true,
+    "question_expansion_requires_independent_topic": true,
+    "question_expansion_requires_non_repetition": true,
+    "question_expansion_is_a_mother_bound_lead_not_a_candidate": true,
+    "question_expansion_requires_lightweight_qualification_before_candidate": true,
+    "unqualified_question_expansion_is_hidden_from_user": true,
+    "question_expansion_rejection_reason_is_retained_internally": true,
+    "observed_content_types_are_retrieval_only": true,
+    "new_content_type_does_not_expand_domain": true,
+    "content_type_lifecycle_is_separate_from_candidate_lifecycle": true,
+    "discover_may_record_observed_types_without_approval": true,
+    "classify_requires_domain_registry_frozen": true,
+    "classify_accepts_canonical_ids_only": true,
+    "classify_unknown_type_returns_no_match_or_out_of_scope": true,
+    "frozen_registry_must_pass_config_validation_before_classify": true,
+    "legacy_question_expansion_cannot_bypass_approved_projection": true,
+    "expansion_signal_precedes_typed_lead": true,
+    "unmatched_expansion_signal_skips_qualification": true,
+    "qualified_typed_lead_preserves_existing_candidate_chain": true,
+    "ineligible_source_blocks_formal_breakdown_write": true,
+    "ineligible_source_does_not_pollute_observed_types": true,
     "every_claim_requires_exact_transcript_evidence": true,
     "real_progression_is_not_forced_into_four_stages": true,
     "story_or_profile_progression_rejects_biographical_recap_without_spoken_structure": true,
     "multiple_concrete_writing_methods_are_retained_per_video": true,
     "comments_describe_reactions_not_effectiveness": true,
+    "comments_are_passed_to_breakdown_model": true,
+    "comment_evidence_required_when_relevant": true,
     "performance_causality_claims_are_forbidden": true,
     "quality_citation_or_structure_failure_is_recorded_and_batch_continues": true,
     "failed_breakdowns_require_final_summary_before_downstream_progress": true,

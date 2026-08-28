@@ -226,10 +226,15 @@ class ModelGateway:
                 metadata={"provider_diagnostics": provider_diagnostics} if provider_diagnostics else None,
             )
             envelope_version_id = self.materializer.persist_envelope(envelope)
-            raise ModelGatewayError(
+            gateway_error = ModelGatewayError(
                 f"model provider failed: {exc}",
                 model_run_envelope_version_id=envelope_version_id,
-            ) from exc
+            )
+            # Preserve provider-side finish reason and length diagnostics on the
+            # test-visible gateway error.  The formal boundary still fails
+            # closed; this only makes the cause inspectable.
+            gateway_error.diagnostics = provider_diagnostics
+            raise gateway_error from exc
 
         duration_ms = max(0, self.monotonic_ms() - start_ms)
         if route.timeout_ms is not None and duration_ms > route.timeout_ms:

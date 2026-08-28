@@ -1,7 +1,7 @@
 schema_version: formal_skill_manifest.v1
 formal_skill_id: experience_candidate_propose
-skill_version: 1.0.0
-responsibility: Produce at most one source-frozen reusable spoken-content experience candidate for one content plan.
+skill_version: 1.4.0
+responsibility: Produce at most one source-frozen reusable spoken-content experience candidate with an explicit layer, trigger, placement, method and boundary for a pre-topic review or one content plan.
 non_responsibilities:
   - automatic_experience_publication
   - effectiveness_claim

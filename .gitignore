@@ -38,6 +38,12 @@ cookies/
 external_responses/
 raw_external/
 
+# Local validation workspaces and agent state
+.workbuddy/
+validation/
+topic-structure-check-*/
+kb-install-check-*/
+
 # Databases and transient state
 .stage_runtime/
 .codex/state/

@@ -1,6 +1,6 @@
 ﻿schema_version: formal_skill_manifest.v1
 formal_skill_id: source_to_topic
-skill_version: 1.1.0
+skill_version: 1.2.0
 source_contract: SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml
 responsibility: Discover good topic angles from supplied, pre-frozen source material and return one auditable candidate or a no-conversion reason.
 non_responsibilities:

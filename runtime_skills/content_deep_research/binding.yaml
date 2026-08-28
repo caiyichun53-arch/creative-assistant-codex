@@ -1,6 +1,6 @@
 schema_version: formal_skill_binding.v1
-binding_name: content_deep_research_frozen_materials_v1
-binding_version: 1.0.0
+binding_name: content_deep_research_gpt_researcher_publisher_v1
+binding_version: 3.1.0
 model_response_format: {type: json_object}
 input_map: {input_assembly: {source: input, key: input_assembly}}
 output_map:

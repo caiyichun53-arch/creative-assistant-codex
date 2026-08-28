@@ -83,6 +83,8 @@ class CodexAppServerProviderConfig:
         cwd: Path,
         environment: dict[str, str] | None = None,
         env_path: Path | None = None,
+        network_access: bool = False,
+        sandbox: str = "read-only",
     ) -> "CodexAppServerProviderConfig":
         values = environment if environment is not None else os.environ
         dotenv = _load_dotenv(env_path)
@@ -109,13 +111,17 @@ class CodexAppServerProviderConfig:
             raise CodexAppServerProviderError(
                 "CODEX_WORKBENCH_TIMEOUT_SECONDS 必须在 0 到 900 秒之间"
             )
+        if sandbox not in {"read-only", "workspace-write", "danger-full-access"}:
+            raise CodexAppServerProviderError(
+                "Codex workspace sandbox must be read-only, workspace-write, or danger-full-access"
+            )
         return cls(
             executable=executable,
             model=model,
             cwd=cwd.resolve(),
             timeout_seconds=timeout_seconds,
-            network_access=False,
-            sandbox="read-only",
+            network_access=bool(network_access),
+            sandbox=sandbox,
         )
 
 
@@ -578,6 +584,11 @@ def _nested_dict(value: dict[str, Any], *keys: str) -> dict[str, Any]:
 
 
 def _command_parts(executable: str) -> list[str]:
+    # A configured Windows executable path may contain spaces. If the whole
+    # value already resolves to a file, keep it as one command part instead of
+    # letting shlex split the path into unrelated pieces.
+    if Path(executable).is_file():
+        return [executable]
     parts = shlex.split(executable, posix=False)
     if not parts:
         raise CodexAppServerProviderError("订阅路线的客户端命令为空")

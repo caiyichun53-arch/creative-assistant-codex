@@ -15,23 +15,22 @@
     "mismatch_blocks_formal_operation": true
   },
   "schedule": {
-    "daily_local_time": "08:00",
     "automatic_start_is_required": true,
     "automatic_start_business_purpose": "collect_new_publications_from_confirmed_competitor_accounts",
     "all_domains_share_one_schedule": true,
     "newly_completed_competitor_joins_shared_task": true,
     "automatic_start_must_not_be_disabled_for_lack_of_user_presence": true,
     "automatic_start_does_not_bypass_formal_runtime_guard": true,
-    "cold_start_completion_triggers_first_run": true,
-    "restart_recovers_only_a_missing_never_scheduled_first_run": false,
-    "restart_restores_status_without_dispatching_tracking": true,
-    "first_run_domain_scope_is_recorded_before_external_work": true,
-    "started_failed_or_interrupted_first_run_counts_as_already_dispatched": true,
-    "nonproduction_or_validation_runs_do_not_satisfy_first_run": true,
-    "interrupted_or_failed_first_run_requires_user_retry": true,
     "daily_collection_and_candidate_discovery_are_distinct_steps": true,
     "failed_run_is_recorded": true,
-    "automatic_failure_retry": false
+    "daily_run_identity": "domain+business_date",
+    "one_daily_run_per_domain_date": true,
+    "daily_runs_share_one_execution_slot": true,
+    "failed_or_stopped_daily_run_requires_user_resume": true,
+    "resume_reuses_daily_run_id": true,
+    "daily_run_completed_only_when_domain_work_completes": true,
+    "global_daily_lifecycle_forbidden": true,
+    "notification_state_does_not_determine_daily_lifecycle": true
   },
   "competitor_tracking": {
     "all_active_confirmed_accounts": true,
@@ -43,18 +42,30 @@
     "runtime_hit_policy_must_match_cold_start_contract": true,
     "new_hits_continue_to_material_preparation_and_breakdown": true,
     "material_preparation_and_breakdown_are_independent_states": true,
-    "same_day_user_retry_only_reprocesses_unfinished_hits": true,
-    "prepared_material_is_reused_for_breakdown_retry": true,
-    "next_day_automatic_retry_of_prior_failures": false
+    "prepared_material_is_reused_for_breakdown_retry": true
   },
   "discovery": {
     "source_types": [
-      "daily_competitor_content",
       "historical_high_signal",
       "tag_discovery",
       "question_expansion",
       "saved_user_direction"
     ],
+    "daily_competitor_content_is_tracking_only": true,
+    "historical_high_signal_origins": [
+      "cold_start_historical",
+      "daily_new_hit"
+    ],
+    "tag_candidate_like_floor": 10000,
+    "question_expansion_requires_formal_parent": true,
+    "question_expansion_cannot_parent_question_expansion": true,
+    "question_expansion_generation_stage": "competitor_breakdown",
+    "question_expansion_primary_material": "breakdown_transcript",
+    "question_expansion_comments_role": "supporting_audience_signal_only",
+    "question_expansion_comments_are_rendered_to_model": true,
+    "question_expansion_comment_evidence_required_when_relevant": true,
+    "standalone_comment_question_expansion_forbidden": true,
+    "question_expansion_max_per_breakdown": 3,
     "all_confirmed_sources_run_in_production": true,
     "runtime_source_freeze_forbidden": true,
     "tag_rotation_count": 3,
@@ -102,15 +113,10 @@
     "confirmed_exploration_direction_immediately_generates_research_plan": true
   },
   "special_exploration": {
-    "person_initial_representative_works_minimum": 10,
-    "person_initial_representative_works_maximum": 12,
-    "person_initial_audience_material_view_limit": 600,
-    "person_platform_sessions_are_separate_and_reused_per_scan": true,
-    "platform_failure_is_reported_without_substitution_or_automatic_retry": true,
-    "single_work_requires_material_supported_3_to_5_minute_direction": true,
-    "playlist_minimum_works": 10,
-    "playlist_requires_shared_question_or_angle": true,
-    "playlist_does_not_default_to_final_ranking": true
+    "policy_source": "domain_pack.exploration",
+    "global_fixed_item_count_is_forbidden": true,
+    "global_platform_collector_is_forbidden": true,
+    "global_collection_minimum_is_forbidden": true
   },
   "tag_library": {
     "extraction_and_maintenance_use_llm": false,

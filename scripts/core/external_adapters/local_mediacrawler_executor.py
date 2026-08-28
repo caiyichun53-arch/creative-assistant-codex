@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import ctypes
+from ctypes import wintypes
 from dataclasses import dataclass
 import json
 import os
@@ -102,8 +104,9 @@ def _shared_browser_process_kwargs() -> dict[str, Any]:
         return {}
     startupinfo = subprocess.STARTUPINFO()
     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    # Keep a real rendered browser without activating it over the user's work.
-    startupinfo.wShowWindow = getattr(subprocess, "SW_SHOWMINNOACTIVE", 7)
+    # Keep a real rendered browser completely hidden. Chrome can ignore the
+    # no-activate/minimized startup hint and still foreground its first window.
+    startupinfo.wShowWindow = subprocess.SW_HIDE
     return {
         # The dedicated browser is intentionally independent from the short
         # collection launcher.  Without breakaway, Windows can end it when the
@@ -117,20 +120,49 @@ def _shared_browser_process_kwargs() -> dict[str, Any]:
     }
 
 
+def _hide_windows_for_process(process_id: int) -> None:
+    """Hide every top-level window owned by the dedicated collector process."""
+
+    if os.name != "nt":
+        return
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+    enum_windows = user32.EnumWindows
+    enum_windows.argtypes = (callback_type, wintypes.LPARAM)
+    enum_windows.restype = wintypes.BOOL
+    get_window_process_id = user32.GetWindowThreadProcessId
+    get_window_process_id.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
+    get_window_process_id.restype = wintypes.DWORD
+    show_window = user32.ShowWindow
+    show_window.argtypes = (wintypes.HWND, ctypes.c_int)
+    show_window.restype = wintypes.BOOL
+
+    @callback_type
+    def callback(hwnd: wintypes.HWND, _lparam: wintypes.LPARAM) -> bool:
+        window_process_id = wintypes.DWORD()
+        get_window_process_id(hwnd, ctypes.byref(window_process_id))
+        if int(window_process_id.value) == int(process_id):
+            show_window(hwnd, 0)
+        return True
+
+    enum_windows(callback, 0)
+
+
 def _ensure_shared_douyin_browser(mediacrawler_dir: Path) -> None:
     """Require a separately maintained, reusable collector browser.
 
-    A collection task must never start, close, or replace this browser. That
-    would repeatedly reset the platform session and can steal focus from the
-    user's work. The browser is started only through the explicit maintenance
-    entrypoint below, then all collection tasks attach to it.
+    Collection does not own, close, or replace this browser session. The
+    one-shot daily wrapper may call the explicit maintenance entrypoint below
+    to restore it before collection; the collection operation itself only
+    attaches to the retained session. The hidden launch path prevents it from
+    repeatedly resetting the platform session or stealing focus from the user.
     """
     del mediacrawler_dir
     with _MEDIACRAWLER_BROWSER_LOCK:
         if _cdp_port_ready():
             return
         raise ExternalAdapterError(
-            "the reusable collector browser is not ready; start or restore its dedicated logged-in session before collecting"
+            "the shared collector browser session is not ready; restore the shared collector session before collecting"
         )
 
 
@@ -144,11 +176,13 @@ def retained_douyin_collector_browser_status(mediacrawler_dir: Path) -> dict[str
         "profile_name": profile_name,
         "profile_dir": str(profile_dir),
         "profile_exists": profile_dir.is_dir(),
-        "login_status": "not_verified",
+        "account_login_assessment": "not_performed",
     }
 
 
-def start_retained_douyin_collector_browser(mediacrawler_dir: Path) -> None:
+def start_retained_douyin_collector_browser(
+    mediacrawler_dir: Path, *, headless: bool = True
+) -> None:
     """Explicit maintenance action: start the one reusable collector browser.
 
     This is deliberately separate from collection execution. It is called only
@@ -175,10 +209,11 @@ def start_retained_douyin_collector_browser(mediacrawler_dir: Path) -> None:
             "--disable-dev-shm-usage",
             "--no-sandbox",
             "--disable-blink-features=AutomationControlled",
-            "--start-minimized",
             f"--user-data-dir={profile_dir}",
             "https://www.douyin.com/",
         ]
+        if headless:
+            args.insert(1, "--headless=new")
         browser = subprocess.Popen(
             args,
             cwd=mediacrawler_dir,
@@ -188,6 +223,7 @@ def start_retained_douyin_collector_browser(mediacrawler_dir: Path) -> None:
         )
         deadline = time.monotonic() + 30.0
         while time.monotonic() < deadline:
+            _hide_windows_for_process(browser.pid)
             if _cdp_port_ready():
                 return
             if browser.poll() is not None:
@@ -259,8 +295,6 @@ class LocalMediaCrawlerExecutor:
     archive_root: Path | None = None
     python_executable: Path | None = None
     timeout_seconds: int | None = None
-    creator_min_interval_seconds: float = 45.0
-    creator_jitter_seconds: float = 30.0
     detail_min_interval_seconds: float = 15.0
     detail_jitter_seconds: float = 15.0
     progress_callback: Callable[[str], None] | None = None
@@ -283,8 +317,6 @@ class LocalMediaCrawlerExecutor:
         if any(
             value < 0
             for value in (
-                self.creator_min_interval_seconds,
-                self.creator_jitter_seconds,
                 self.detail_min_interval_seconds,
                 self.detail_jitter_seconds,
             )
@@ -292,20 +324,12 @@ class LocalMediaCrawlerExecutor:
             raise ExternalAdapterError("MediaCrawler pacing values cannot be negative")
         # The retained browser profile and the archive attempt are one indivisible
         # session. Creator-history requests get the next free slot before another
-        # detail call. Creator runs also pause between accounts with a small random
-        # offset so a cold start cannot hit Douyin in one fixed rapid pattern.
+        # detail call, but Creation Assistant does not add an artificial pause
+        # between creator-history pages/accounts. MediaCrawler keeps its own pace.
         with _mediacrawler_session(
             creator_priority=source_kind == "creator",
-            min_interval_seconds=(
-                self.creator_min_interval_seconds
-                if source_kind == "creator"
-                else self.detail_min_interval_seconds
-            ),
-            jitter_seconds=(
-                self.creator_jitter_seconds
-                if source_kind == "creator"
-                else self.detail_jitter_seconds
-            ),
+            min_interval_seconds=(0.0 if source_kind == "creator" else self.detail_min_interval_seconds),
+            jitter_seconds=(0.0 if source_kind == "creator" else self.detail_jitter_seconds),
         ):
             if platform == "dy":
                 _ensure_shared_douyin_browser(mediacrawler_dir)
@@ -361,7 +385,38 @@ class LocalMediaCrawlerExecutor:
                 )
 
             payload = self._read_payload(command, raw_dir)
+            pagination_state_path = run_dir / "creator_pagination.json"
+            if pagination_state_path.is_file():
+                try:
+                    pagination = json.loads(pagination_state_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    self._discard_incomplete_run(run_dir)
+                    raise ExternalAdapterError(
+                        "creator pagination receipt is unreadable"
+                    ) from exc
+                if not isinstance(pagination, dict):
+                    self._discard_incomplete_run(run_dir)
+                    raise ExternalAdapterError("creator pagination receipt must be an object")
+                payload["pagination"] = pagination
             if command.capability == "platform.video_snapshot" and not payload.get("items"):
+                # A daily creator snapshot is allowed to be empty: reaching the
+                # observation cutoff without finding a new video is a normal
+                # successful run, not a collector failure.  Cold-start/detail
+                # snapshots still require at least one item as before.
+                if (
+                    int(command.input_payload.get("creator_page_limit") or 0) > 0
+                    and isinstance(payload.get("pagination"), dict)
+                ) or (
+                    command.max_items is None
+                    and command.input_payload.get("published_after_timestamp")
+                ):
+                    self._write_attempt_state(run_dir, status="succeeded", item_count=0)
+                    return ExternalCommandResult(
+                        status="succeeded",
+                        payload=payload,
+                        raw_archive_ref=str(run_dir),
+                        external_side_effect=True,
+                    )
                 stderr_tail = "\n".join((completed.stderr or completed.stdout or "").splitlines()[-12:]).strip()
                 error = "MediaCrawler returned no historical items"
                 if stderr_tail:
@@ -475,7 +530,7 @@ class LocalMediaCrawlerExecutor:
             "--save_data_path",
             str(raw_dir),
             "--crawler_max_notes_count",
-            str(command.max_items),
+            str(command.max_items if command.max_items is not None else 0),
             "--max_concurrency_num",
             "1",
             "--headless",
@@ -503,15 +558,29 @@ class LocalMediaCrawlerExecutor:
                 raise ExternalAdapterError("MediaCrawler source_url is required")
             if source_kind == "creator":
                 args.extend(["--creator_id", source_url])
+                start_cursor = str(command.input_payload.get("creator_start_cursor") or "").strip()
+                page_limit = int(command.input_payload.get("creator_page_limit") or 0)
+                if page_limit < 0:
+                    raise ExternalAdapterError("creator_page_limit cannot be negative")
+                if start_cursor:
+                    args.extend(["--creator_start_cursor", start_cursor])
+                if page_limit:
+                    args.extend([
+                        "--creator_page_limit", str(page_limit),
+                        "--creator_pagination_state_path", str(raw_dir.parent / "creator_pagination.json"),
+                    ])
             else:
                 args.extend(["--specified_id", source_url])
+            stop_before_timestamp = int(command.input_payload.get("published_after_timestamp") or 0)
+            if source_kind == "creator" and stop_before_timestamp:
+                args.extend(["--creator_stop_before_timestamp", str(stop_before_timestamp)])
         if bool(command.input_payload.get("with_comments")):
             args.extend([
                 "--max_comments_count_singlenotes",
                 str(int(command.input_payload.get("max_comments_per_item") or 60)),
             ])
         if command.capability == "platform.comment_collection":
-            args.extend(["--max_comments_count_singlenotes", str(command.max_items)])
+            args.extend(["--max_comments_count_singlenotes", str(command.max_items or 1)])
         return args
 
     def _python(self) -> Path:
@@ -574,18 +643,45 @@ class LocalMediaCrawlerExecutor:
             )
         return payload
 
+    def read_video_snapshot_archive(
+        self,
+        *,
+        raw_archive_ref: str,
+        platform: str,
+    ) -> list[dict[str, Any]]:
+        """Read a successful creator-page archive without contacting the platform."""
+        root = self._archive_root().resolve()
+        candidate = Path(str(raw_archive_ref or "")).resolve()
+        if candidate.parent != root or not candidate.is_dir():
+            raise ExternalAdapterError("refusing to read a MediaCrawler archive outside the configured archive root")
+        state_path = candidate / "attempt_state.json"
+        if not state_path.is_file():
+            raise ExternalAdapterError("MediaCrawler page archive has no completion receipt")
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ExternalAdapterError("MediaCrawler page archive completion receipt is unreadable") from exc
+        if not isinstance(state, dict) or state.get("status") != "succeeded":
+            raise ExternalAdapterError("MediaCrawler page archive is not a successful page")
+        platform_key = _PLATFORM_MAP.get(str(platform or "").lower())
+        if not platform_key:
+            raise ExternalAdapterError("MediaCrawler archive platform is missing or unsupported")
+        archive_platform_dir = "douyin" if platform_key == "dy" else platform_key
+        jsonl_dir = candidate / "raw" / archive_platform_dir / "jsonl"
+        return _read_jsonl_files(jsonl_dir.glob("*_contents_*.jsonl"), None)
+
 
 def _payload_platform_dir(command: ExternalAdapterCommand) -> str:
     platform = str(command.input_payload.get("platform") or "").lower()
     return "douyin" if platform in {"douyin", "dy"} else platform
 
 
-def _read_jsonl_files(files: Any, limit: int) -> list[dict[str, Any]]:
+def _read_jsonl_files(files: Any, limit: int | None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for path in sorted(files):
         with Path(path).open("r", encoding="utf-8") as handle:
             for line in handle:
-                if len(rows) >= limit:
+                if limit is not None and len(rows) >= limit:
                     return rows
                 stripped = line.strip()
                 if not stripped:

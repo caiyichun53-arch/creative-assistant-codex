@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -45,11 +46,11 @@ class ExternalAdapterCommand:
     args: tuple[str, ...]
     input_payload: dict[str, Any]
     env_keys: tuple[str, ...] = ()
-    max_items: int = 1
+    max_items: int | None = 1
     timeout_seconds: int = 60
 
     def sanitized_manifest(self) -> dict[str, Any]:
-        return {
+        manifest = {
             "adapter_id": self.adapter_id,
             "capability": self.capability,
             "executable": self.executable,
@@ -59,6 +60,12 @@ class ExternalAdapterCommand:
             "max_items": self.max_items,
             "timeout_seconds": self.timeout_seconds,
         }
+        if "published_after_timestamp" in self.input_payload:
+            manifest["published_after_timestamp"] = self.input_payload["published_after_timestamp"]
+        for key in ("creator_start_cursor", "creator_page_limit"):
+            if key in self.input_payload:
+                manifest[key] = self.input_payload[key]
+        return manifest
 
 
 @dataclass(frozen=True)
@@ -140,15 +147,31 @@ class MediaCrawlerCollectorAdapter(_ExternalAdapterBase):
         *,
         platform: str,
         source_url: str,
-        max_items: int = 1,
+        max_items: int | None = 1,
         with_comments: bool = False,
+        published_after: datetime | None = None,
     ) -> ExternalAdapterRunResult:
         platform_name = _require_text(platform, "platform").lower()
         if platform_name not in self.supported_platforms:
             raise ExternalAdapterError(f"unsupported MediaCrawler platform: {platform}")
-        cap = _require_positive_int(max_items, "max_items", maximum=500)
         url = _require_text(source_url, "source_url")
+        if published_after is not None:
+            if published_after.tzinfo is None:
+                published_after = published_after.replace(tzinfo=timezone.utc)
+            published_after_timestamp = int(published_after.timestamp())
+            if published_after_timestamp <= 0:
+                raise ExternalAdapterError("published_after must be a valid positive timestamp")
+        else:
+            published_after_timestamp = 0
         source_kind = "creator" if "/user/" in url or (platform_name == "douyin" and url.startswith("MS4wLjABAAAA")) else "detail"
+        if max_items is None:
+            if source_kind != "creator" or not published_after_timestamp:
+                raise ExternalAdapterError(
+                    "an unbounded video snapshot requires creator mode and a publication cutoff"
+                )
+            cap = None
+        else:
+            cap = _require_positive_int(max_items, "max_items", maximum=500)
         command = ExternalAdapterCommand(
             adapter_id=self.adapter_id,
             capability=self.capability,
@@ -159,6 +182,7 @@ class MediaCrawlerCollectorAdapter(_ExternalAdapterBase):
                 "source_url": url,
                 "source_kind": source_kind,
                 "with_comments": with_comments,
+                "published_after_timestamp": published_after_timestamp,
             },
             env_keys=("COLLECTOR_TEST_PROFILE_DIR",),
             max_items=cap,
@@ -177,7 +201,7 @@ class MediaCrawlerCollectorAdapter(_ExternalAdapterBase):
                 continue
             seen_source_ids.add(source_id)
             normalized.append(item)
-            if len(normalized) >= cap:
+            if cap is not None and len(normalized) >= cap:
                 break
         comments = result.payload.get("comments", [])
         if with_comments and not isinstance(comments, list):
@@ -189,6 +213,114 @@ class MediaCrawlerCollectorAdapter(_ExternalAdapterBase):
             "comments": comments if isinstance(comments, list) else [],
         }
         return self._run_result(command, result, payload, len(normalized))
+
+    def collect_video_snapshot_page(
+        self,
+        *,
+        platform: str,
+        source_url: str,
+        continuation_cursor: str = "",
+        published_after: datetime | None = None,
+    ) -> ExternalAdapterRunResult:
+        """Fetch one creator page through the existing MediaCrawler boundary.
+
+        This is an opt-in execution form.  The legacy one-shot method above
+        keeps its cumulative max-items behavior for other callers; cold-start
+        history uses this page form so its business layer can decide whether
+        to request another page.
+        """
+        platform_name = _require_text(platform, "platform").lower()
+        if platform_name not in self.supported_platforms:
+            raise ExternalAdapterError(f"unsupported MediaCrawler platform: {platform}")
+        url = _require_text(source_url, "source_url")
+        if published_after is not None:
+            if published_after.tzinfo is None:
+                published_after = published_after.replace(tzinfo=timezone.utc)
+            published_after_timestamp = int(published_after.timestamp())
+            if published_after_timestamp <= 0:
+                raise ExternalAdapterError("published_after must be a valid positive timestamp")
+        else:
+            published_after_timestamp = 0
+        source_kind = "creator" if "/user/" in url or (platform_name == "douyin" and url.startswith("MS4wLjABAAAA")) else "detail"
+        if source_kind != "creator":
+            raise ExternalAdapterError("paged history collection requires a creator source")
+        command = ExternalAdapterCommand(
+            adapter_id=self.adapter_id,
+            capability=self.capability,
+            executable="vendor/MediaCrawler/main.py",
+            args=(platform_name, source_kind, "--creator_page_limit", "1"),
+            input_payload={
+                "platform": platform_name,
+                "source_url": url,
+                "source_kind": source_kind,
+                "with_comments": False,
+                "published_after_timestamp": published_after_timestamp,
+                "creator_start_cursor": str(continuation_cursor or "").strip(),
+                "creator_page_limit": 1,
+            },
+            env_keys=("COLLECTOR_TEST_PROFILE_DIR",),
+            max_items=50,
+            timeout_seconds=120,
+        )
+        result = self._execute(command, expected_capability=self.capability)
+        items = result.payload.get("items")
+        if not isinstance(items, list):
+            raise ExternalAdapterError("MediaCrawler paged result must contain items")
+        normalized: list[dict[str, Any]] = []
+        seen_source_ids: set[str] = set()
+        for raw_item in items:
+            item = self._normalize_video_item(raw_item, platform_name)
+            source_id = item["source_id"]
+            if source_id in seen_source_ids:
+                continue
+            seen_source_ids.add(source_id)
+            normalized.append(item)
+        pagination = result.payload.get("pagination")
+        if not isinstance(pagination, dict):
+            raise ExternalAdapterError("MediaCrawler paged result lacks pagination state")
+        return self._run_result(
+            command,
+            result,
+            {
+                "items": normalized,
+                "source_platform": platform_name,
+                "comments_requested": False,
+                "comments": [],
+                "pagination": pagination,
+            },
+            len(normalized),
+        )
+
+    def read_video_snapshot_archive(
+        self,
+        *,
+        raw_archive_ref: str,
+        platform: str,
+    ) -> list[dict[str, Any]]:
+        """Read one successful page from the existing collector archive.
+
+        This is only used to resume a cold-start history walk.  It does not
+        make a network request and it does not expose the cursor as business
+        data; the archive remains the source of the already completed page.
+        """
+        reader = getattr(self.executor, "read_video_snapshot_archive", None)
+        if not callable(reader):
+            raise ExternalAdapterError("MediaCrawler archive reader is unavailable for page resume")
+        raw_items = reader(raw_archive_ref=raw_archive_ref, platform=platform)
+        if not isinstance(raw_items, list):
+            raise ExternalAdapterError("MediaCrawler archive page must contain an item list")
+        platform_name = _require_text(platform, "platform").lower()
+        normalized: list[dict[str, Any]] = []
+        seen_source_ids: set[str] = set()
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict):
+                continue
+            item = self._normalize_video_item(raw_item, platform_name)
+            if item["source_id"] in seen_source_ids:
+                continue
+            seen_source_ids.add(item["source_id"])
+            normalized.append(item)
+        return normalized
 
     def collect_video_snapshots(
         self,

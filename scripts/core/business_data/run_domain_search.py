@@ -25,25 +25,24 @@ from scripts.core.business_data.domain_labels import (  # noqa: E402
     formal_domain_labels,
     get_discovery_policy,
 )
-from scripts.core.execution_contract import require_baseline_citations  # noqa: E402
 from scripts.core.external_adapters import ExternalAdapterCommand, ExternalCommandExecutor  # noqa: E402
 
 SCHEMA_PATH = Path(__file__).with_name("domain_search_schema.sqlite.sql")
 
 DAILY_TAG_SEARCH_COUNT = 3
 SEARCH_PAGE_COUNT = 1
+TAG_CANDIDATE_LIKE_FLOOR = 10000
 # MediaCrawler 的抖音搜索每页为 10 条；max_items=10 只触发第一页。
 DOUYIN_FIRST_PAGE_MAX_ITEMS = 10
 CONSECUTIVE_CYCLES_BEFORE_REVIEW = 3
 _HASHTAG_PATTERN = re.compile(r"#([^#\s]+)")
 
 
-def validate_domain_search_execution_contract(domain_search_cfg: dict[str, Any]) -> dict[str, Any]:
+def validate_domain_search_execution_contract(domain_search_cfg: dict[str, Any]) -> None:
     """BR-TOPIC-005: real live search must be an explicit opt-in
     (domain_search.live_enabled: true in config/external_collection.yaml), same
     discipline as BR-RESEARCH-003 -- default is dry-run/blocked, not
     silently allowed."""
-    contract = require_baseline_citations(["3", "17"])
     if not bool(domain_search_cfg.get("live_enabled", False)):
         raise ValueError(
             "domain_search.live_enabled is false (or unset) in config/external_collection.yaml -- "
@@ -53,7 +52,8 @@ def validate_domain_search_execution_contract(domain_search_cfg: dict[str, Any])
         raise ValueError("domain_search.daily_tag_count must remain 3 under the effective baseline")
     if int(domain_search_cfg.get("page_count_per_tag", SEARCH_PAGE_COUNT)) != SEARCH_PAGE_COUNT:
         raise ValueError("domain_search.page_count_per_tag must remain 1 under the effective baseline")
-    return contract
+    if int(domain_search_cfg.get("candidate_like_floor", TAG_CANDIDATE_LIKE_FLOOR)) != TAG_CANDIDATE_LIKE_FLOOR:
+        raise ValueError("domain_search.candidate_like_floor must remain 10000 under the effective baseline")
 
 
 def install_schema(conn: sqlite3.Connection) -> None:
@@ -152,6 +152,13 @@ def extract_hashtags(text: str) -> list[str]:
     return [tag for tag in _HASHTAG_PATTERN.findall(text) if tag.strip()]
 
 
+def _like_count(item: dict[str, Any]) -> int:
+    try:
+        return max(0, int(item.get("liked_count") or item.get("like_count") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def suggest_tags_from_hit_library(
     conn: sqlite3.Connection,
     *,
@@ -170,9 +177,14 @@ def suggest_tags_from_hit_library(
     rows = conn.execute(
         """
         SELECT competitor_videos.video_id, competitor_videos.raw_json
-          FROM hits
-          JOIN competitor_videos ON competitor_videos.video_id = hits.video_id
-          JOIN competitor_accounts ON competitor_accounts.account_id = competitor_videos.account_id
+           FROM hits
+           JOIN competitor_videos ON competitor_videos.video_id = hits.video_id
+           JOIN competitor_accounts ON competitor_accounts.account_id = competitor_videos.account_id
+           JOIN stage0_content_account formal_account
+             ON formal_account.content_account_id = competitor_accounts.account_id
+            AND formal_account.data_identity = 'production'
+            AND formal_account.account_role = 'competitor'
+            AND formal_account.status = 'active'
          WHERE competitor_accounts.domain_label = ?
         """,
         (domain_label,),
@@ -253,6 +265,8 @@ def deterministic_filter(items: list[dict[str, Any]], *, tag: str, already_disco
             continue
         text = str(item.get("desc") or item.get("title") or "")
         if tag not in text:
+            continue
+        if _like_count(item) < TAG_CANDIDATE_LIKE_FLOOR:
             continue
         seen_in_batch.add(platform_item_id)
         kept.append(item)
@@ -406,7 +420,13 @@ def search_one_tag(
 
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     tracked_accounts = (
-        {row["sec_uid"] for row in conn.execute("SELECT sec_uid FROM competitor_accounts").fetchall()}
+        {row["sec_uid"] for row in conn.execute(
+            "SELECT account.sec_uid FROM competitor_accounts account "
+            "JOIN stage0_content_account formal_account "
+            "ON formal_account.content_account_id=account.account_id "
+            "AND formal_account.data_identity='production' "
+            "AND formal_account.account_role='competitor' AND formal_account.status='active'"
+        ).fetchall()}
         if "competitor_accounts" in tables else set()
     )
     eligible_ids = {
@@ -429,6 +449,8 @@ def search_one_tag(
             outcome, reason = "excluded", "tracked_competitor_account"
         elif tag_row["tag"] not in text:
             outcome, reason = "excluded", "tag_mismatch"
+        elif _like_count(item) < TAG_CANDIDATE_LIKE_FLOOR:
+            outcome, reason = "excluded", "below_tag_candidate_like_floor"
         else:
             outcome, reason = "eligible", "eligible"
         seen_in_page.add(platform_item_id)
@@ -490,6 +512,22 @@ def run_daily_tag_searches(
     deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
     """Run at most three one-page tag searches sequentially, without retries or padding."""
+    # Accepted tags from the cold-start library are written to
+    # domain_search_tags, while the search cursor is created only for tags
+    # coming from the static domain configuration.  Repair the missing cursor
+    # rows at the actual production search boundary so the approved library
+    # participates in daily rotation as intended.  INSERT OR IGNORE keeps this
+    # idempotent and preserves existing last_searched_at values.
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO domain_search_cursor(tag_id)
+        SELECT tag_id
+          FROM domain_search_tags
+         WHERE domain_label=? AND status='active'
+        """,
+        (domain_label,),
+    )
+    conn.commit()
     selected = select_tags_due_for_search(conn, domain_label=domain_label, limit=DAILY_TAG_SEARCH_COUNT, now=now)
     results: list[dict[str, Any]] = []
     for tag_row in selected:

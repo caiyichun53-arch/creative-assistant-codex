@@ -12,10 +12,21 @@ schema_version: model_routes.v1
 # repository. They are not a runtime model position and must never be
 # configured here or bound to a business/writing route -- writing code with
 # Claude Code does not make "creation"/"business analysis" run on Claude.
+model_selection:
+  # This selection remains available for explicit maintenance, tests, and
+  # non-Hermes callers. A formal task created by Hermes does not use it as a
+  # model default: Hermes passes its current model/provider binding, and a
+  # persistent task freezes that binding for resume. There is no automatic
+  # fallback or provider priority.
+  active_provider_ref: MODEL_ACTIVE_PROVIDER_REF
+  allowed_provider_refs:
+    - mimo_main
+    - relay_main
+
 model_positions:
-  dialogue_model: daily_chat          # 对话模型:日常对话/系统状态说明,当前 = Mimo
-  business_model: business_analysis   # 业务模型:选题判断/研究综合/关系判定等分析类节点,当前 = Mimo
-  writing_model: writing_generation   # 文案模型:钩子/大纲/成稿/润色/AI味判定等创作生成类节点,当前 = Mimo
+  dialogue_model: daily_chat          # 对话模型:日常对话/系统状态说明
+  business_model: business_analysis   # 业务模型:选题判断/研究综合/关系判定等分析类节点
+  writing_model: writing_generation   # 文案模型:钩子/大纲/成稿/润色/AI味判定等创作生成类节点
 
 model_providers:
   mimo_main:
@@ -23,10 +34,22 @@ model_providers:
     enabled: true
     provider_name: hermes
     live_model_port: HermesModelProviderAdapter
-    auth_ref: HERMES_BUSINESS_API_KEY
-    endpoint_ref: HERMES_BUSINESS_BASE_URL
+    auth_ref: HERMES_BUSINESS_MODEL_TOKEN
+    endpoint_ref: HERMES_BUSINESS_MODEL_BASE_URL
     model_ref: HERMES_BUSINESS_MODEL_NAME
     model_class_ref: HERMES_BUSINESS_MODEL_CLASS
+    billing_mode: subscription
+
+  relay_main:
+    type: openai_compatible
+    enabled: true
+    provider_name: hermes
+    live_model_port: HermesModelProviderAdapter
+    auth_file_ref: GPT_RELAY_API_KEY_FILE
+    endpoint_ref: GPT_RELAY_BASE_URL
+    model_ref: GPT_RELAY_MODEL
+    default_parameters:
+      reasoning_effort: high
     billing_mode: subscription
   codex_subscription:
     # 已具备统一适配器；当前只绑定工作台验证入口，正式业务切换仍需单独验证。
@@ -39,10 +62,9 @@ model_providers:
     model_class_ref: CODEX_WORKBENCH_MODEL_CLASS
     timeout_ref: CODEX_WORKBENCH_TIMEOUT_SECONDS
     billing_mode: chatgpt_subscription
-
 model_routes:
   daily_chat:   # dialogue_model
-    provider_ref: mimo_main
+    provider_ref: active_provider
     fallback: none
     allowed_task_types:
       - daily_conversation
@@ -58,7 +80,7 @@ model_routes:
       - user_instruction_intake
 
   business_analysis:   # business_model
-    provider_ref: mimo_main
+    provider_ref: active_provider
     fallback: none
     allowed_task_types:
       - business_planning
@@ -73,8 +95,22 @@ model_routes:
       - risk_initial_review
       - workflow_execution_summary
 
+  research_execution:
+    # Formal research is handled by the active Hermes service route.
+    provider_ref: active_provider
+    fallback: none
+    allowed_task_types:
+      - external_research_execution
+
+  research_planning:
+    # Planning and deep research must stay on the same Hermes service route.
+    provider_ref: active_provider
+    fallback: none
+    allowed_task_types:
+      - external_research_planning
+
   writing_generation:   # writing_model
-    provider_ref: mimo_main
+    provider_ref: active_provider
     fallback: none
     allowed_task_types:
       - title_generation
@@ -99,7 +135,7 @@ model_routes:
 # Removed 2026-07-09: an `engineering_execution` route (code_editing,
 # command_execution, test_running, config_modification, bug_fixing,
 # migration_script_generation, repo_inspection) used to sit here, bound to
-# mimo_main like every other route. Nothing in scripts/core or runtime_skills
+# the old model provider. Nothing in scripts/core or runtime_skills
 # ever read that route_id -- it was dead config, and its very existence
 # violated the rule above: "engineering execution" describes what Claude
 # Code/Codex do to WRITE this repo, which is not a runtime model position and

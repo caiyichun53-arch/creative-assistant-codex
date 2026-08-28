@@ -2,7 +2,7 @@ schema_version: source_to_topic.business_contract.v1
 governance_basis: docs/EFFECTIVE_DESIGN_BASELINE.md
 status: active_formal_business_contract
 skill_id: source_to_topic
-skill_version: 1.1.0
+skill_version: 1.2.0
 source_documents:
   - docs/EFFECTIVE_DESIGN_BASELINE.md
   - runtime_skills/source_to_topic/skill.yaml
@@ -80,6 +80,9 @@ topic_generation_policy:
   source_evidence_items_min: 1
   source_evidence_items_max: 63
   output_supporting_evidence_must_reference_input: true
+  # Every returned evidence item is an exact copy of one supplied item.
+  # Prefixes, labels, paraphrases, and generated source identifiers are not
+  # valid evidence references.
   rationale_or_angle_must_not_add_unseen_facts: true
 material_packet_requirements:
   required_before_skill: true
@@ -279,12 +282,17 @@ model_binding:
   # topic_angle grounded in real evidence including real comments); this
   # pass only tightens format compliance.
   prompt_template: >-
-    Return only JSON. Transform already supplied and frozen source material
+    Return exactly one JSON object as plain text. Do not wrap it in a Markdown
+    code fence (```json or ```), and do not prepend or append explanation text.
+    Transform already supplied and frozen source material
     into at most one good topic candidate for a Chinese short-video (鎶栭煶)
     content team. Do not search, fetch URLs, research facts, classify the
     domain, judge source relation, query databases, read or write files, call
     other Skills, invent facts, or add evidence outside the input.
-    supporting_evidence must contain only items from source_evidence_refs.
+    source_evidence_refs is the complete allowed evidence vocabulary for this
+    call. Every supporting_evidence item must be copied character-for-character
+    from one item in source_evidence_refs. Do not add labels, prefixes, suffixes,
+    punctuation, paraphrases, translations, or generated source identifiers.
     Use only supplied experience_cards; do not claim experience that was not
     supplied. Do not output score, rank, weight, numeric ratings, or automatic
     final selection. source_content={source_content};
@@ -311,14 +319,32 @@ model_binding:
     core_question, audience_relation, content_increment, supporting_evidence,
     source_constraints, no_result_reason, confidence, angle_discovery,
     candidate_selection, risks, material_gaps, user_review_required,
-    user_review_reasons, execution_review, experience_usage, schema_version.
+    user_review_reasons, execution_review, experience_usage, topic_shape,
+    delivery_contract, schema_version.
+
+    The output must also contain exactly two factual evidence containers:
+    topic_shape with core_subject, scope_boundary, one_piece_line, and
+    delivery_contract with user_gets. These fields are not scores, ranks,
+    weights, confidence ratings, recommendations, or model evaluations. Use
+    only supplied material. If a fact cannot be determined stably, return an
+    empty string and keep the uncertainty in the existing constraint, gap,
+    risk, or review fields. Do not guess, research, search, or repeat the
+    title as a substitute for the facts. Keep the fields content-type neutral.
+    core_subject identifies the central person, work, event, relationship,
+    phenomenon, comparison set, or other object. scope_boundary states what
+    one piece covers and what it will not expand into. one_piece_line states
+    the main story, event chain, comparison, relationship, dispute, fact
+    chain, or explanation line completed by one piece and must not default to
+    a why/mechanism framing. user_gets states the concrete content the user
+    will see, know, follow, or obtain. Abstract value phrases alone cannot
+    satisfy user_gets.
 
     Write all human-readable values in Simplified Chinese. topic_status is
     exactly one of "generated", "generated_good_candidate", "valid_but_weak",
     "needs_review", or "no_result". confidence is exactly "high", "medium",
     "low", or "none", never a number. no_result_reason is exactly "none",
     "empty_source", "insufficient_source_evidence", or "unsupported_source".
-    Use schema_version source_to_topic.output.v1.
+    Use schema_version source_to_topic.output.v2.
 
     The following keys must always be JSON arrays, even when there is only one
     item or no item: supporting_evidence, source_constraints, risks,
@@ -365,6 +391,8 @@ model_binding:
       - user_review_reasons
       - execution_review
       - experience_usage
+      - topic_shape
+      - delivery_contract
       - schema_version
     properties:
       topic_status:
@@ -436,9 +464,27 @@ model_binding:
         type: object
       experience_usage:
         type: object
+      topic_shape:
+        type: object
+        required: [core_subject, scope_boundary, one_piece_line]
+        properties:
+          core_subject:
+            type: string
+          scope_boundary:
+            type: string
+          one_piece_line:
+            type: string
+        additional_properties: false
+      delivery_contract:
+        type: object
+        required: [user_gets]
+        properties:
+          user_gets:
+            type: string
+        additional_properties: false
       schema_version:
         type: string
-        const: source_to_topic.output.v1
+        const: source_to_topic.output.v2
     additional_properties: false
   output_map:
     topic_status:
@@ -495,6 +541,12 @@ model_binding:
     experience_usage:
       source: model_output
       key: experience_usage
+    topic_shape:
+      source: model_output
+      key: topic_shape
+    delivery_contract:
+      source: model_output
+      key: delivery_contract
     schema_version:
       source: model_output
       key: schema_version
@@ -684,6 +736,8 @@ output_schema:
     - user_review_reasons
     - execution_review
     - experience_usage
+    - topic_shape
+    - delivery_contract
     - schema_version
   properties:
     topic_status:
@@ -755,7 +809,25 @@ output_schema:
       type: object
     experience_usage:
       type: object
+    topic_shape:
+      type: object
+      required: [core_subject, scope_boundary, one_piece_line]
+      properties:
+        core_subject:
+          type: string
+        scope_boundary:
+          type: string
+        one_piece_line:
+          type: string
+      additional_properties: false
+    delivery_contract:
+      type: object
+      required: [user_gets]
+      properties:
+        user_gets:
+          type: string
+      additional_properties: false
     schema_version:
       type: string
-      const: source_to_topic.output.v1
+      const: source_to_topic.output.v2
   additional_properties: false

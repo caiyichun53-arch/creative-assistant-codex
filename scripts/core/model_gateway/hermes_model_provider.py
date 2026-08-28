@@ -35,6 +35,7 @@ class HermesModelProviderConfig:
     activity_callback: Callable[[dict[str, Any]], None] | None = None
     activity_heartbeat_seconds: float = 15.0
     max_retries: int = 0
+    default_parameters: dict[str, Any] | None = None
 
 
 class HermesModelProviderAdapter:
@@ -73,15 +74,22 @@ class HermesModelProviderAdapter:
 
     def complete(self, request: ModelRequest, route: ModelRoute) -> ModelProviderResult:
         if route.provider_name != self.provider_name:
-            raise HermesModelProviderError("route provider must be hermes")
+            raise HermesModelProviderError(
+                f"route provider must be {self.provider_name}"
+            )
         self._validate_isolated_route(route)
+        self._validate_default_parameters()
         model_name = route.model_name or self.config.model
         if not model_name:
             raise HermesModelProviderError("model is required")
 
-        stream_requested = bool((route.parameters or {}).get("stream"))
+        default_parameters = dict(self.config.default_parameters or {})
+        stream_requested = bool(
+            (route.parameters or {}).get("stream", default_parameters.get("stream"))
+        )
         client = self._make_client(streaming=stream_requested)
         create_kwargs = {
+            **default_parameters,
             "model": model_name,
             "messages": [{"role": "user", "content": request.prompt}],
         }
@@ -138,6 +146,32 @@ class HermesModelProviderAdapter:
                     "total_tokens": usage.total_tokens,
                 },
             )
+        if finish_reason in {"abort", "length", "content_filter"}:
+            # Some Hermes-compatible providers mark a non-streaming JSON answer
+            # as aborted even after the visible JSON object is complete.  Trust
+            # the actual boundary only when the whole visible payload parses as
+            # one JSON object; a partial prefix still fails closed below.
+            complete_visible_json = False
+            try:
+                parsed_output = json.loads(output_text)
+                complete_visible_json = isinstance(parsed_output, dict)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                complete_visible_json = False
+            if not complete_visible_json:
+                raise HermesModelProviderError(
+                    "provider ended the visible response before completion",
+                    diagnostics={
+                        "provider_response_kind": "incomplete_visible_content",
+                        "finish_reason": finish_reason,
+                        "output_length": len(output_text),
+                        "choice_count": len(getattr(response, "choices", None) or []),
+                        "usage_status": usage_status,
+                        "prompt_tokens": usage.prompt_tokens,
+                        "completion_tokens": usage.completion_tokens,
+                        "total_tokens": usage.total_tokens,
+                    },
+                )
+            metadata["visible_output_status"] = "complete_json_despite_provider_finish_reason"
         return ModelProviderResult(
             output_text=output_text,
             usage=usage,
@@ -305,6 +339,24 @@ class HermesModelProviderAdapter:
                     "total_tokens": usage.total_tokens,
                 },
             )
+        if not _is_complete_json_object(output_text):
+            # A stream may end without a provider finish reason.  The visible
+            # content is still incomplete in that case, so fail at the provider
+            # boundary instead of letting the Skill report a generic JSON error.
+            raise HermesModelProviderError(
+                "provider stream ended before a complete JSON object was received",
+                diagnostics={
+                    "provider_response_kind": "stream_incomplete_visible_content",
+                    "finish_reason": finish_reason or "not_available",
+                    "output_length": len(output_text),
+                    "chunk_count": chunk_count,
+                    "reasoning_chunk_count": reasoning_chunk_count,
+                    "usage_status": usage_status,
+                    "prompt_tokens": usage.prompt_tokens,
+                    "completion_tokens": usage.completion_tokens,
+                    "total_tokens": usage.total_tokens,
+                },
+            )
         return ModelProviderResult(
             output_text=output_text,
             usage=usage,
@@ -314,7 +366,12 @@ class HermesModelProviderAdapter:
         )
 
     def _validate_isolated_route(self, route: ModelRoute) -> None:
-        parameters = route.parameters or {}
+        self._validate_parameter_keys(route.parameters or {})
+
+    def _validate_default_parameters(self) -> None:
+        self._validate_parameter_keys(self.config.default_parameters or {})
+
+    def _validate_parameter_keys(self, parameters: dict[str, Any]) -> None:
         disallowed = sorted(set(parameters) & self.disallowed_route_parameter_keys)
         if disallowed:
             raise HermesModelProviderError(f"Hermes inference route enables forbidden parameters: {disallowed}")
@@ -335,11 +392,11 @@ class HermesModelProviderAdapter:
                 min(float(self.config.timeout_seconds or 0), 120.0),
             )
         else:
-            # A non-streaming atomic skill has no provider progress signal.
-            # Do not turn silence into a synthetic failure deadline; its state
-            # remains awaiting the final provider response until a real terminal
-            # event (response, error, worker exit, or explicit cancellation).
-            transport_timeout = None
+            # Structured atomic skills do not expose chunk progress, but they
+            # still need the configured provider deadline.  Otherwise one
+            # unfinished non-stream request can hold a registered job forever.
+            configured_timeout = float(self.config.timeout_seconds or 0)
+            transport_timeout = configured_timeout if configured_timeout > 0 else None
         try:
             return factory(
                 api_key=self.config.api_key,

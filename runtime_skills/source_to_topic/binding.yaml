@@ -1,6 +1,6 @@
 schema_version: formal_skill_binding.v1
 binding_name: source_to_topic_public_input_to_topic_generation
-binding_version: 1.0.0
+binding_version: 1.1.0
 route_name: business.source_to_topic
 route_id: business_analysis
 model_response_format:
@@ -64,6 +64,8 @@ model_output_schema:
     - user_review_reasons
     - execution_review
     - experience_usage
+    - topic_shape
+    - delivery_contract
     - schema_version
   properties:
     topic_status:
@@ -122,9 +124,27 @@ model_output_schema:
       type: object
     experience_usage:
       type: object
+    topic_shape:
+      type: object
+      required: [core_subject, scope_boundary, one_piece_line]
+      properties:
+        core_subject:
+          type: string
+        scope_boundary:
+          type: string
+        one_piece_line:
+          type: string
+      additional_properties: false
+    delivery_contract:
+      type: object
+      required: [user_gets]
+      properties:
+        user_gets:
+          type: string
+      additional_properties: false
     schema_version:
       type: string
-      const: source_to_topic.output.v1
+      const: source_to_topic.output.v2
   additional_properties: false
 input_map:
   fixture_id:
@@ -221,6 +241,12 @@ output_map:
   experience_usage:
     source: model_output
     key: experience_usage
+  topic_shape:
+    source: model_output
+    key: topic_shape
+  delivery_contract:
+    source: model_output
+    key: delivery_contract
   schema_version:
     source: model_output
     key: schema_version

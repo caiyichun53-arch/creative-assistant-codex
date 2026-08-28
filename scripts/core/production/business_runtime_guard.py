@@ -21,13 +21,13 @@ from scripts.core.production.high_signal_policy import (
     FORMAL_GUARDRAIL_DIGEST,
     HIGH_SIGNAL_POLICY_VERSION,
     HISTORICAL_MATURITY_DAYS,
-    HISTORICAL_MULTI_METRIC_MULTIPLIER,
     HISTORICAL_SINGLE_METRIC_MULTIPLIER,
     MATURE_HISTORY_ABSOLUTE_LIKE_FLOOR,
     MATURE_HISTORY_WINDOW_DAYS,
     MIN_RELIABLE_HISTORY_ITEMS,
-    SMALL_ACCOUNT_P90_PERCENTILE,
 )
+from scripts.core.business_data.domain_labels import get_exploration_policy
+from scripts.core.business_data.run_domain_search import TAG_CANDIDATE_LIKE_FLOOR
 from scripts.core.runtime.runtime_storage import (
     RuntimeStorageError,
     assert_formal_runtime_storage,
@@ -47,6 +47,10 @@ SYSTEM_GOVERNANCE_CONTRACT_PATH = (
     ROOT / "config" / "business_guardrails" / "system_governance.json"
 )
 _RECORDED_PASS_KEYS: set[tuple[str, str, str, str]] = set()
+
+
+class AtomicSkillRuntimeError(RuntimeError):
+    """A formal model step was blocked by the atomic-Skill runtime guard."""
 
 
 def _public_setting_binding_errors() -> list[str]:
@@ -160,7 +164,9 @@ def enforce_atomic_skill_runtime_guard(*, entrypoint: str, operation: str) -> di
             outcome="blocked",
             details={"entrypoint": entrypoint, "operation": operation, "errors": errors},
         )
-        raise RuntimeError("atomic Skill runtime guard rejected execution: " + "; ".join(errors))
+        raise AtomicSkillRuntimeError(
+            "atomic Skill runtime guard rejected execution: " + "; ".join(errors)
+        )
     record_runtime_guard_event(
         event="atomic_skill_runtime",
         outcome="passed",
@@ -173,13 +179,21 @@ def enforce_runtime_startup_guard(
     *,
     entrypoint: str,
     event_log_path: Path | None = None,
+    scope: str = "full",
 ) -> dict[str, object]:
     """Validate the formal contract before startup.
 
     A test-only service may validate the same formal contract, but its guard
     evidence must stay in the test runtime area instead of writing the formal
     runtime log.  The formal database and contract are still checked read-only.
+
+    The full scope remains the cross-stage startup guard used by cold-start
+    paths. Formal daily operations use the daily scope so cold-start-only
+    settings cannot block an otherwise valid daily run. Daily's own contract
+    is checked separately by enforce_daily_operations_runtime_guard.
     """
+    if scope not in {"full", "daily"}:
+        raise ValueError("runtime startup guard scope must be 'full' or 'daily'")
     guard_event_log_path = event_log_path or EVENT_LOG_PATH
     try:
         from scripts.core.production.stage0_content_core import FORMAL_DB_PATH
@@ -192,6 +206,22 @@ def enforce_runtime_startup_guard(
             event_log_path=guard_event_log_path,
         )
         raise RuntimeError(f"runtime storage guard rejected service startup: {exc}") from exc
+    if scope == "daily":
+        record_runtime_guard_event(
+            event="service_startup",
+            outcome="passed",
+            details={
+                "entrypoint": entrypoint,
+                "runtime_scope": "daily",
+                "formal_runtime_storage": "validated",
+            },
+            event_log_path=guard_event_log_path,
+        )
+        return {
+            "valid": True,
+            "runtime_scope": "daily",
+            "formal_runtime_storage": storage_receipt,
+        }
     collection = FORMAL_GUARDRAIL.get("collection", {})
     selection = FORMAL_GUARDRAIL.get("historical_selection", {})
     formal_d = FORMAL_GUARDRAIL.get("formal_d_selection", {})
@@ -210,9 +240,7 @@ def enforce_runtime_startup_guard(
         "maturity_days": HISTORICAL_MATURITY_DAYS,
         "minimum_reliable_mature_items": MIN_RELIABLE_HISTORY_ITEMS,
         "historical_single_metric_multiplier": HISTORICAL_SINGLE_METRIC_MULTIPLIER,
-        "historical_multi_metric_multiplier": HISTORICAL_MULTI_METRIC_MULTIPLIER,
         "normal_account_like_floor": MATURE_HISTORY_ABSOLUTE_LIKE_FLOOR,
-        "small_account_p90_percentile": SMALL_ACCOUNT_P90_PERCENTILE,
         "comment_like_ratio_threshold": COMMENT_LIKE_RATIO_THRESHOLD,
         "formal_d_activation": FORMAL_D_ACTIVATION_COMPLETE_SEQUENCES,
         "formal_d_window": FORMAL_D_ROLLING_WINDOW,
@@ -220,18 +248,16 @@ def enforce_runtime_startup_guard(
         "formal_d_multi_metric_multiplier": FORMAL_D_MULTI_METRIC_MULTIPLIER,
     }
     required = {
-        "contract_version": "cold_start_guard_v13",
+        "contract_version": "cold_start_guard_v14",
         "collection_policy_version": "first_registration_recent_90d_max50_v3",
-        "historical_selection_policy_version": "mature_history_median_channels_v3",
+        "historical_selection_policy_version": "mature_history_ratio_direct_like_floor_single_v13",
         "initial_request_limit": 50,
         "maximum_retained_items": 50,
         "recent_window_days": 90,
         "maturity_days": 7,
         "minimum_reliable_mature_items": 20,
         "historical_single_metric_multiplier": 3.0,
-        "historical_multi_metric_multiplier": 2.0,
-        "normal_account_like_floor": 2000,
-        "small_account_p90_percentile": 0.9,
+        "normal_account_like_floor": 20000,
         "comment_like_ratio_threshold": 0.2,
         "formal_d_activation": 20,
         "formal_d_window": 50,
@@ -260,6 +286,16 @@ def enforce_runtime_startup_guard(
     expected_breakdown_policy = {
         "one_record_per_completed_spoken_transcript": True,
         "content_type_is_fixed_classification_only": True,
+        "content_type_lifecycle_is_separate_from_candidate_lifecycle": True,
+        "discover_may_record_observed_types_without_approval": True,
+        "classify_requires_domain_registry_frozen": True,
+        "classify_accepts_canonical_ids_only": True,
+        "classify_unknown_type_returns_no_match_or_out_of_scope": True,
+        "frozen_registry_must_pass_config_validation_before_classify": True,
+        "legacy_question_expansion_cannot_bypass_approved_projection": True,
+        "expansion_signal_precedes_typed_lead": True,
+        "unmatched_expansion_signal_skips_qualification": True,
+        "qualified_typed_lead_preserves_existing_candidate_chain": True,
         "every_claim_requires_exact_transcript_evidence": True,
         "real_progression_is_not_forced_into_four_stages": True,
         "multiple_concrete_writing_methods_are_retained_per_video": True,
@@ -282,10 +318,14 @@ def enforce_runtime_startup_guard(
         errors.append("older history expansion is not limited to insufficient recent mature history")
     if collection.get("extra_expansion_gates_forbidden") is not True:
         errors.append("unapproved older-history expansion gates are not forbidden")
+    if selection.get("like_floor_is_common_gate") is not False:
+        errors.append("like floor must not gate the direct comment-like-ratio path")
+    if selection.get("like_floor_required_for_multiplier_paths") is not True:
+        errors.append("like floor must gate the multiplier paths")
     if selection.get("comment_like_ratio_is_independent_channel") is not True:
-        errors.append("comment-like ratio is not an independent channel")
-    if selection.get("small_account_definition") != "own_like_p90_below_normal_floor":
-        errors.append("small-account classification differs from the formal P90 rule")
+        errors.append("comment-like ratio must be one independent qualifying path")
+    if selection.get("two_entry_paths_are_or") is not True:
+        errors.append("historical hit entries must use OR logic")
     if selection.get("maximum_selection_ratio") is not None:
         errors.append("an unapproved maximum selection ratio is configured")
     if selection.get("iqr_selection_forbidden") is not True:
@@ -371,8 +411,6 @@ def enforce_daily_operations_runtime_guard(
     entrypoint: str,
     source_types: tuple[str, ...],
     daily_report_limit: int,
-    run_hour: int | None = None,
-    run_minute: int | None = None,
 ) -> dict[str, object]:
     """Block a real daily run when its executable values drift from the small daily contract."""
     raw = DAILY_OPERATIONS_CONTRACT_PATH.read_bytes()
@@ -400,32 +438,47 @@ def enforce_daily_operations_runtime_guard(
         errors.append("daily formal operations are not fully covered by the runtime guard")
     if set(source_types) != set(discovery.get("source_types") or []):
         errors.append("daily discovery source types differ from the formal contract")
+    if discovery.get("daily_competitor_content_is_tracking_only") is not True:
+        errors.append("daily competitor content is allowed to bypass the formal hit library")
+    if int(discovery.get("tag_candidate_like_floor") or 0) != TAG_CANDIDATE_LIKE_FLOOR:
+        errors.append("tag candidate like floor differs from the formal contract")
+    if (
+        discovery.get("question_expansion_requires_formal_parent") is not True
+        or discovery.get("question_expansion_cannot_parent_question_expansion") is not True
+        or discovery.get("question_expansion_generation_stage") != "competitor_breakdown"
+        or discovery.get("question_expansion_primary_material") != "breakdown_transcript"
+        or discovery.get("question_expansion_comments_role") != "supporting_audience_signal_only"
+        or discovery.get("question_expansion_comments_are_rendered_to_model") is not True
+        or discovery.get("question_expansion_comment_evidence_required_when_relevant") is not True
+        or discovery.get("standalone_comment_question_expansion_forbidden") is not True
+        or int(discovery.get("question_expansion_max_per_breakdown") or 0) != 3
+    ):
+        errors.append("question expansion must be generated from the breakdown and transcript")
     if (
         discovery.get("all_confirmed_sources_run_in_production") is not True
         or discovery.get("runtime_source_freeze_forbidden") is not True
     ):
         errors.append("a confirmed daily discovery source may be frozen at runtime")
     if (
-        schedule.get("restart_recovers_only_a_missing_never_scheduled_first_run") is not False
-        or schedule.get("restart_restores_status_without_dispatching_tracking") is not True
-        or schedule.get("first_run_domain_scope_is_recorded_before_external_work") is not True
-        or schedule.get("started_failed_or_interrupted_first_run_counts_as_already_dispatched") is not True
-        or schedule.get("nonproduction_or_validation_runs_do_not_satisfy_first_run") is not True
-        or schedule.get("interrupted_or_failed_first_run_requires_user_retry") is not True
-    ):
-        errors.append("daily first-run recovery differs from the formal contract")
-    if (
         schedule.get("all_domains_share_one_schedule") is not True
         or schedule.get("newly_completed_competitor_joins_shared_task") is not True
     ):
-        errors.append("daily competitor tracking is no longer one shared all-domain task")
+        errors.append("daily automatic triggering differs from the formal contract")
+    if (
+        schedule.get("daily_run_identity") != "domain+business_date"
+        or schedule.get("one_daily_run_per_domain_date") is not True
+        or schedule.get("daily_runs_share_one_execution_slot") is not True
+        or schedule.get("failed_or_stopped_daily_run_requires_user_resume") is not True
+        or schedule.get("resume_reuses_daily_run_id") is not True
+        or schedule.get("daily_run_completed_only_when_domain_work_completes") is not True
+        or schedule.get("global_daily_lifecycle_forbidden") is not True
+        or schedule.get("notification_state_does_not_determine_daily_lifecycle") is not True
+    ):
+        errors.append("daily run identity or lifecycle differs from the formal contract")
     if any(
         tracking.get(key) is not expected
         for key, expected in (
             ("material_preparation_and_breakdown_are_independent_states", True),
-            ("same_day_user_retry_only_reprocesses_unfinished_hits", True),
-            ("prepared_material_is_reused_for_breakdown_retry", True),
-            ("next_day_automatic_retry_of_prior_failures", False),
         )
     ):
         errors.append("daily hit retry behavior differs from the formal contract")
@@ -451,9 +504,6 @@ def enforce_daily_operations_runtime_guard(
         errors.append("tag extraction or maintenance is configured to call a model")
     if tag_library.get("no_automatic_pause_or_delete") is not True:
         errors.append("automatic tag pause or delete is not forbidden")
-    if run_hour is not None or run_minute is not None:
-        if (run_hour, run_minute) != (8, 0):
-            errors.append("automatic daily schedule differs from 08:00 local time")
     digest = hashlib.sha256(raw).hexdigest()
     if errors:
         record_runtime_guard_event(
@@ -484,6 +534,7 @@ def enforce_daily_operations_runtime_guard(
 def enforce_manual_exploration_runtime_guard(
     *,
     entrypoint: str,
+    domain_label: str,
     exploration_kind: str,
     action: str,
     work_count: int | None = None,
@@ -492,13 +543,34 @@ def enforce_manual_exploration_runtime_guard(
     raw = DAILY_OPERATIONS_CONTRACT_PATH.read_bytes()
     contract = json.loads(raw.decode("utf-8"))
     human = contract.get("human_boundaries") or {}
-    exploration = contract.get("special_exploration") or {}
+    global_exploration = contract.get("special_exploration") or {}
     errors: list[str] = []
+    if global_exploration.get("policy_source") != "domain_pack.exploration":
+        errors.append("exploration policy source is not the domain pack")
+    for key in (
+        "global_fixed_item_count_is_forbidden",
+        "global_platform_collector_is_forbidden",
+        "global_collection_minimum_is_forbidden",
+    ):
+        if global_exploration.get(key) is not True:
+            errors.append(f"global exploration boundary is inactive: {key}")
     kind_flags = {
         "person_exploration": "person_name_routes_to_person_exploration",
         "work_exploration": "single_work_routes_to_work_exploration",
         "playlist_exploration": "work_list_routes_to_inventory_exploration",
     }
+    policy_key = {
+        "person_exploration": "person",
+        "work_exploration": "work",
+        "playlist_exploration": "collection",
+    }.get(exploration_kind)
+    policy = {}
+    if policy_key is not None:
+        policy = get_exploration_policy(domain_label).get(policy_key) or {}
+        if policy.get("enabled") is not True:
+            errors.append(f"{domain_label} does not enable {policy_key} exploration")
+        if not str(policy.get("material_route") or "").strip():
+            errors.append(f"{domain_label} has no material route for {policy_key} exploration")
     if exploration_kind not in kind_flags:
         errors.append("unsupported special exploration kind")
     elif human.get(kind_flags[exploration_kind]) is not True:
@@ -520,18 +592,27 @@ def enforce_manual_exploration_runtime_guard(
     }:
         errors.append("unsupported special exploration action")
     if exploration_kind == "person_exploration" and action == "collect_person_materials":
-        minimum = int(
-            exploration.get("person_initial_representative_works_minimum") or 0
-        )
-        maximum = int(
-            exploration.get("person_initial_representative_works_maximum") or 0
-        )
-        if work_count is None or not minimum <= int(work_count) <= maximum:
-            errors.append("person exploration work count differs from 10-12")
+        if policy.get("material_route") != "music_audience":
+            errors.append(
+                "this person exploration has no dedicated platform collector; use the generic retained-material route"
+            )
+        else:
+            minimum = int(policy.get("representative_item_minimum") or 0)
+            maximum = int(policy.get("representative_item_maximum") or 0)
+            if work_count is None or not minimum <= int(work_count) <= maximum:
+                errors.append(
+                    "person exploration representative item count differs from the domain rule"
+                )
+            if int(policy.get("audience_material_view_limit") or 0) <= 0:
+                errors.append("dedicated audience collector has no positive view limit")
+            if policy.get("platform_sessions_are_separate_and_reused_per_scan") is not True:
+                errors.append("dedicated audience collector session boundary is inactive")
+            if policy.get("platform_failure_is_reported_without_substitution_or_automatic_retry") is not True:
+                errors.append("dedicated audience collector failure boundary is inactive")
     if exploration_kind == "playlist_exploration" and action == "route":
-        minimum = int(exploration.get("playlist_minimum_works") or 0)
-        if work_count is None or int(work_count) < minimum:
-            errors.append("playlist exploration contains fewer than ten works")
+        minimum = int(policy.get("minimum_items") or 0)
+        if minimum and (work_count is None or int(work_count) < minimum):
+            errors.append("collection exploration does not meet the domain item minimum")
     digest = hashlib.sha256(raw).hexdigest()
     if errors:
         record_runtime_guard_event(
@@ -539,6 +620,7 @@ def enforce_manual_exploration_runtime_guard(
             outcome="blocked",
             details={
                 "entrypoint": entrypoint,
+                "domain_label": domain_label,
                 "exploration_kind": exploration_kind,
                 "action": action,
                 "errors": errors,
@@ -554,7 +636,97 @@ def enforce_manual_exploration_runtime_guard(
         outcome="passed",
         details={
             "entrypoint": entrypoint,
+            "domain_label": domain_label,
             "exploration_kind": exploration_kind,
+            "action": action,
+            "contract_version": contract["contract_version"],
+            "contract_digest": digest,
+        },
+    )
+    return {
+        "valid": True,
+        "contract_version": contract["contract_version"],
+        "contract_digest": digest,
+    }
+
+
+def enforce_topic_intake_runtime_guard(
+    *,
+    entrypoint: str,
+    domain_label: str,
+    route: str,
+    action: str,
+) -> dict[str, object]:
+    """Keep every topic input on the one declared intake boundary."""
+    raw = CONTENT_PRODUCTION_CONTRACT_PATH.read_bytes()
+    contract = json.loads(raw.decode("utf-8"))
+    intake = contract.get("topic_intake") or {}
+    routes = intake.get("routes") or {}
+    errors: list[str] = []
+    route_policy = routes.get(route)
+    if not isinstance(route_policy, dict):
+        errors.append(f"unsupported topic intake route: {route}")
+        route_policy = {}
+    allowed_actions = {
+        "system_candidate_selected": {"select_candidate"},
+        "direct_formal_topic": {"create_direct_formal_topic"},
+        "user_unclear_input": {"record_unclear_input"},
+        "person_exploration": {
+            "record_exploration_source",
+            "record_exploration_material",
+            "complete_exploration_material",
+            "confirm_exploration_direction",
+        },
+        "single_object_exploration": {
+            "record_exploration_source",
+            "record_exploration_material",
+            "complete_exploration_material",
+            "confirm_exploration_direction",
+        },
+        "object_collection_exploration": {
+            "record_exploration_source",
+            "record_exploration_material",
+            "complete_exploration_material",
+            "confirm_exploration_direction",
+        },
+    }
+    if action not in allowed_actions.get(route, set()):
+        errors.append(f"action {action} is not allowed for topic intake route {route}")
+    if action in {"select_candidate", "create_direct_formal_topic"}:
+        if route_policy.get("formal_topic_created") is not True:
+            errors.append("this topic intake route cannot create a formal topic")
+    if action == "confirm_exploration_direction":
+        if route_policy.get("human_confirmation") != "final_direction_only":
+            errors.append("exploration must stop at its final direction confirmation")
+        if route_policy.get("research_plan") != "after_final_direction":
+            errors.append("exploration direction must lead to its declared research-plan boundary")
+    if action == "record_unclear_input" and route_policy.get("formal_topic_created") is not False:
+        errors.append("unclear input cannot become a formal topic at intake")
+    digest = hashlib.sha256(raw).hexdigest()
+    if errors:
+        record_runtime_guard_event(
+            event="topic_intake_runtime",
+            outcome="blocked",
+            details={
+                "entrypoint": entrypoint,
+                "domain_label": domain_label,
+                "route": route,
+                "action": action,
+                "errors": errors,
+                "contract_digest": digest,
+            },
+        )
+        raise RuntimeError(
+            "topic intake runtime guard rejected execution: "
+            + json.dumps(errors, ensure_ascii=False)
+        )
+    record_runtime_guard_event(
+        event="topic_intake_runtime",
+        outcome="passed",
+        details={
+            "entrypoint": entrypoint,
+            "domain_label": domain_label,
+            "route": route,
             "action": action,
             "contract_version": contract["contract_version"],
             "contract_digest": digest,

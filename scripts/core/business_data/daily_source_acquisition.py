@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 from scripts.core.business_data.run_domain_search import run_daily_tag_searches
-from scripts.core.execution_contract import require_baseline_citations
 from scripts.core.external_adapters import ExternalAdapterCommand, ExternalCommandExecutor
 from scripts.integrations.trendradar_runtime import read_original_article
 
@@ -27,13 +26,11 @@ def _stable_id(value: Any) -> str:
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()[:20]
 
 
-def validate_hotspot_collection_contract(config: dict[str, Any]) -> dict[str, Any]:
-    contract = require_baseline_citations(["3", "16"])
+def validate_hotspot_collection_contract(config: dict[str, Any]) -> None:
     if str(config.get("provider") or "").strip().lower() != "trendradar":
         raise ValueError("daily hotspot collection provider must be TrendRadar")
     if not bool(config.get("live_enabled", False)):
         raise ValueError("hotspot_collection.live_enabled is false; real TrendRadar collection is blocked")
-    return contract
 
 
 def collect_trendradar_hotspots(

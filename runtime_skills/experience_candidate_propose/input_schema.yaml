@@ -4,6 +4,6 @@ properties:
   correlation_id: {type: string}
   domain_label: {type: string}
   content_plan_context: {type: object}
-  frozen_breakdowns: {type: array, minItems: 2, maxItems: 6}
+  frozen_breakdowns: {type: array, minItems: 3, maxItems: 8}
   schema_version: {type: string, enum: [experience_candidate_propose.input.v1]}
 additional_properties: false

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -29,23 +30,16 @@ from scripts.core.production.stage0_content_core import (
 )
 
 
-RESEARCH_PLAN_PROMPT_VERSION = "stage1a.research_plan.prompt.v1"
-RESEARCH_PLAN_SKILL_VERSION = "stage1a.research_plan.skill.v1"
+RESEARCH_PLAN_PROMPT_VERSION = "stage1a.research_plan.prompt.v9"
+RESEARCH_PLAN_SKILL_VERSION = "stage1a.research_plan.skill.v1.9"
 RESEARCH_PLAN_MODEL_CONFIG_VERSION = "model_routes.v1"
 RESEARCH_PLAN_REQUIRED_FIELDS = (
-    "core_question",
-    "provisional_viewpoint",
+    "research_objective",
     "research_scope",
+    "research_sequence",
     "research_questions",
-    "candidate_claims",
-    "evidence_requirements",
-    "blocking_claims",
-    "required_materials",
-    "prohibited_materials",
-    "candidate_content_routes",
-    "stop_conditions",
-    "budget_boundary",
-    "risks_uncertainties",
+    "source_plan",
+    "required_outputs",
 )
 
 
@@ -66,6 +60,36 @@ def _required_text(payload: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ResearchPlanValidationError(f"{key} must be a non-empty string")
     return value.strip()
+
+
+def _normalize_string_array(value: Any, *, key: str) -> list[str]:
+    """Keep the persisted artifact flat when a model uses labeled sub-objects."""
+    if not isinstance(value, list) or not value:
+        raise ResearchPlanValidationError(f"research plan {key} must be a non-empty list")
+    normalized: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item.strip():
+            normalized.append(item.strip())
+            continue
+        if isinstance(item, dict) and item:
+            parts: list[str] = []
+            for label, detail in item.items():
+                if isinstance(detail, list):
+                    detail_text = "、".join(str(entry).strip() for entry in detail if str(entry).strip())
+                elif isinstance(detail, dict):
+                    detail_text = "；".join(
+                        f"{nested_label}：{nested_detail}"
+                        for nested_label, nested_detail in detail.items()
+                    )
+                else:
+                    detail_text = str(detail).strip()
+                if detail_text:
+                    parts.append(f"{label}：{detail_text}")
+            if parts:
+                normalized.append("；".join(parts))
+                continue
+        raise ResearchPlanValidationError(f"research plan {key} must contain non-empty strings")
+    return normalized
 
 
 def validate_formal_topic_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -89,37 +113,17 @@ def validate_research_plan_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if missing:
         raise ResearchPlanValidationError(f"research plan missing required fields: {missing}")
     normalized = dict(payload)
-    for key in ("core_question", "provisional_viewpoint"):
-        normalized[key] = _required_text(payload, key)
+    normalized["research_objective"] = _required_text(payload, "research_objective")
     for key in (
+        "research_sequence",
         "research_questions",
-        "candidate_claims",
-        "evidence_requirements",
-        "blocking_claims",
-        "required_materials",
-        "prohibited_materials",
-        "candidate_content_routes",
-        "stop_conditions",
-        "risks_uncertainties",
+        "source_plan",
+        "required_outputs",
     ):
-        value = payload[key]
-        if not isinstance(value, list) or not value:
-            raise ResearchPlanValidationError(f"research plan {key} must be a non-empty list")
-        if key == "candidate_claims":
-            if not all(isinstance(item, (str, dict)) for item in value):
-                raise ResearchPlanValidationError("candidate_claims must contain strings or structured claim objects")
-        elif not all(isinstance(item, str) and item.strip() for item in value):
-            raise ResearchPlanValidationError(f"research plan {key} must contain non-empty strings")
+        normalized[key] = _normalize_string_array(payload[key], key=key)
     scope = payload["research_scope"]
     if not isinstance(scope, dict) or not isinstance(scope.get("included"), list) or not isinstance(scope.get("excluded"), list):
         raise ResearchPlanValidationError("research_scope must contain included and excluded lists")
-    budget = payload["budget_boundary"]
-    if not isinstance(budget, dict):
-        raise ResearchPlanValidationError("budget_boundary must be an object")
-    for key in ("max_sources", "max_time_minutes"):
-        value = budget.get(key)
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise ResearchPlanValidationError(f"budget_boundary.{key} must be a positive integer")
     return normalized
 
 
@@ -148,14 +152,12 @@ def build_research_plan_gateway(core: Stage0ContentProductionCore) -> ModelGatew
     if core.data_identity != "production":
         raise StateTransitionError("production research-plan gateway requires production data identity")
     router = ModelRouter.from_file()
-    definition = router.routes.get("business_analysis")
+    definition = router.routes.get("research_planning")
     if definition is None or definition.fallback != "none":
         raise ModelRouterError("research-plan route must be explicitly bound with fallback none")
-    provider = router.providers.get(definition.provider_ref)
-    if provider is None:
-        raise ModelRouterError("research-plan route must use a configured model provider")
     limits = budget_for("model")
-    route = router.resolve_bound_route("business_analysis", route_name="stage0.research_plan", parameters={"stream": False})
+    route = router.resolve_bound_route("research_planning", route_name="stage0.research_plan", parameters={"stream": False})
+    provider = router.resolve_bound_provider(route)
     adapter = build_configured_model_provider(provider, route, model_limits=limits)
     return ModelGateway(
         routes={route.route_name: route},
@@ -264,8 +266,8 @@ class Stage1AResearchPlanService:
         input_assembly = self.core.get_input_assembly_payload(
             request_version["input_assembly_id"]
         )
-        contract = FormalSkillContract.from_runtime_skill("research_plan")
         try:
+            contract = FormalSkillContract.from_runtime_skill("research_plan")
             skill_result = FormalBusinessSkillAdapter(
                 contract=contract, gateway=self.gateway
             ).run(
@@ -403,6 +405,7 @@ class Stage1AResearchPlanService:
                 "title": topic_payload["title"],
                 "core_question": topic_payload["core_question"],
                 "domain": topic_payload["domain"],
+                "current_date": datetime.now(timezone.utc).date().isoformat(),
             }
         ]
         for reference in topic_payload.get("source_refs", []):
