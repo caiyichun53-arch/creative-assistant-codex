@@ -143,7 +143,9 @@ def record_runtime_guard_event(
         handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
 
 
-def enforce_atomic_skill_runtime_guard(*, entrypoint: str, operation: str) -> dict[str, object]:
+def enforce_atomic_skill_runtime_guard(
+    *, entrypoint: str, operation: str, event_log_path: Path | None = None
+) -> dict[str, object]:
     """Fail closed while a business-model operation has not yet been converted to an atomic Skill."""
     contract = json.loads(SYSTEM_GOVERNANCE_CONTRACT_PATH.read_text(encoding="utf-8"))
     boundary = contract.get("skill_boundary") or {}
@@ -163,6 +165,7 @@ def enforce_atomic_skill_runtime_guard(*, entrypoint: str, operation: str) -> di
             event="atomic_skill_runtime",
             outcome="blocked",
             details={"entrypoint": entrypoint, "operation": operation, "errors": errors},
+            event_log_path=event_log_path,
         )
         raise AtomicSkillRuntimeError(
             "atomic Skill runtime guard rejected execution: " + "; ".join(errors)
@@ -171,6 +174,7 @@ def enforce_atomic_skill_runtime_guard(*, entrypoint: str, operation: str) -> di
         event="atomic_skill_runtime",
         outcome="passed",
         details={"entrypoint": entrypoint, "operation": operation, "contract_version": contract["contract_version"]},
+        event_log_path=event_log_path,
     )
     return {"valid": True, "contract_version": contract["contract_version"], "operation": operation}
 

@@ -1459,18 +1459,24 @@ class Stage1BDailyDiscoveryService:
             })
         return result
 
-    def _run_source_to_topic_skill(
+    def _prepare_source_to_topic_task(
         self,
         *,
         run_id: str,
         source_version_id: str,
         assembly_id: str,
         input_payload: dict[str, Any],
-    ):
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         contract = self.source_to_topic_contract
         enforce_atomic_skill_runtime_guard(
             entrypoint="stage1b_daily_discovery.source_to_topic",
             operation=contract.formal_skill_id,
+            event_log_path=(
+                Path(self.core.db_path).parent / "business_runtime_guard_events.jsonl"
+                if getattr(self.core, "data_identity", "production") != "production"
+                and getattr(self.core, "db_path", None) is not None
+                else None
+            ),
         )
         contract.validate_contract(require_model_route=False)
         validate_payload(input_payload, contract.input_schema)
@@ -1515,9 +1521,41 @@ class Stage1BDailyDiscoveryService:
                 "response_format": contract.model_response_format,
             },
         )
-        if self.external_executor is None:
-            raise ExternalIntelligenceRequired(task)
-        submission = self.external_executor(task)
+        return task, preprocessed
+
+    def prepare_source_to_topic_external_task(
+        self,
+        *,
+        run_id: str,
+        source_version_id: str,
+        assembly_id: str,
+    ) -> dict[str, Any]:
+        """Return the canonical Core task for an existing external assembly."""
+        input_payload = self.core.load_discovery_external_assembly_payload(
+            run_id=run_id,
+            source_version_id=source_version_id,
+            assembly_id=assembly_id,
+        )
+        task, _ = Stage1BDailyDiscoveryService._prepare_source_to_topic_task(
+            self,
+            run_id=run_id,
+            source_version_id=source_version_id,
+            assembly_id=assembly_id,
+            input_payload=input_payload,
+        )
+        return task
+
+    def _accept_source_to_topic_external_result(
+        self,
+        *,
+        run_id: str,
+        source_version_id: str,
+        assembly_id: str,
+        input_payload: dict[str, Any],
+        preprocessed: dict[str, Any],
+        submission: Mapping[str, Any],
+    ):
+        contract = self.source_to_topic_contract
         if not isinstance(submission, Mapping):
             raise FormalSkillValidationError("external intelligent result must be a structured submission")
         external_output = submission.get("output")
@@ -1559,6 +1597,75 @@ class Stage1BDailyDiscoveryService:
                 model_run_envelope_version_id=model_run_id,
             ) from exc
         return ExternalIntelligenceReceipt(model_run_id), output_payload
+
+    def submit_source_to_topic_external_result(
+        self,
+        *,
+        run_id: str,
+        source_version_id: str,
+        assembly_id: str,
+        execution_id: str,
+        executor_id: str,
+        model_ref: str | None,
+        submitted_at: str | None,
+        output: dict[str, Any],
+    ):
+        """Submit one structured result through the existing Core validation path."""
+        input_payload = self.core.load_discovery_external_assembly_payload(
+            run_id=run_id,
+            source_version_id=source_version_id,
+            assembly_id=assembly_id,
+        )
+        _, preprocessed = Stage1BDailyDiscoveryService._prepare_source_to_topic_task(
+            self,
+            run_id=run_id,
+            source_version_id=source_version_id,
+            assembly_id=assembly_id,
+            input_payload=input_payload,
+        )
+        return Stage1BDailyDiscoveryService._accept_source_to_topic_external_result(
+            self,
+            run_id=run_id,
+            source_version_id=source_version_id,
+            assembly_id=assembly_id,
+            input_payload=input_payload,
+            preprocessed=preprocessed,
+            submission={
+                "execution_id": execution_id,
+                "executor_id": executor_id,
+                "model_ref": model_ref,
+                "submitted_at": submitted_at,
+                "output": output,
+            },
+        )
+
+    def _run_source_to_topic_skill(
+        self,
+        *,
+        run_id: str,
+        source_version_id: str,
+        assembly_id: str,
+        input_payload: dict[str, Any],
+    ):
+        task, preprocessed = Stage1BDailyDiscoveryService._prepare_source_to_topic_task(
+            self,
+            run_id=run_id,
+            source_version_id=source_version_id,
+            assembly_id=assembly_id,
+            input_payload=input_payload,
+        )
+        if self.external_executor is None:
+            raise ExternalIntelligenceRequired(task)
+        submission = self.external_executor(task)
+        return Stage1BDailyDiscoveryService._accept_source_to_topic_external_result(
+            self,
+            run_id=run_id,
+            source_version_id=source_version_id,
+            assembly_id=assembly_id,
+            input_payload=input_payload,
+            preprocessed=preprocessed,
+            submission=submission,
+        )
 
     def _run_hotspot_to_opportunity_skill(
         self,

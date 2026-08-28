@@ -13407,6 +13407,88 @@ class Stage0ContentProductionCore:
             },
         }
 
+    def load_discovery_external_assembly_payload(
+        self,
+        *,
+        run_id: str,
+        source_version_id: str,
+        assembly_id: str,
+    ) -> dict[str, Any]:
+        """Load one Core-owned external assembly for a transport adapter.
+
+        The transport receives only the stable Core identifiers.  It cannot
+        supply or replace the material that the Core assembled for the task.
+        This is a read of the existing input assembly, not a second task
+        record or a second lifecycle.
+        """
+        run, source, assembly = (
+            self._discovery_run(run_id),
+            self._discovery_source(source_version_id),
+            self._discovery_assembly(assembly_id),
+        )
+        if (
+            run["status"] != "processing"
+            or source["run_id"] != run_id
+            or assembly["run_id"] != run_id
+            or assembly["source_version_id"] != source_version_id
+        ):
+            raise StateTransitionError("external assembly is stale or mismatched")
+        payload = json.loads(str(assembly["payload_json"]))
+        if not isinstance(payload, dict) or payload.get("execution_boundary") != "external_intelligence":
+            raise StateTransitionError("external assembly is not an external intelligence input")
+        payload.pop("execution_boundary", None)
+        return payload
+
+    def get_discovery_external_execution_result(
+        self,
+        *,
+        run_id: str,
+        source_version_id: str,
+        assembly_id: str,
+    ) -> dict[str, Any]:
+        """Read the Core result for one external execution without changing it."""
+        run, source, assembly = (
+            self._discovery_run(run_id),
+            self._discovery_source(source_version_id),
+            self._discovery_assembly(assembly_id),
+        )
+        if (
+            source["run_id"] != run_id
+            or assembly["run_id"] != run_id
+            or assembly["source_version_id"] != source_version_id
+        ):
+            raise StateTransitionError("external execution identifiers do not belong together")
+        row = self.conn.execute(
+            "SELECT model_run_id, status, request_id, provider_ref, model_name, "
+            "validation_status, error_json, via_model_gateway, created_at "
+            "FROM stage1b_model_run WHERE run_id=? AND source_version_id=? "
+            "AND input_assembly_id=?",
+            (run_id, source_version_id, assembly_id),
+        ).fetchone()
+        candidates = self.conn.execute(
+            "SELECT COUNT(*) AS count FROM stage1b_candidate_version "
+            "WHERE run_id=? AND source_version_id=?",
+            (run_id, source_version_id),
+        ).fetchone()
+        return {
+            "run_id": run_id,
+            "source_version_id": source_version_id,
+            "assembly_id": assembly_id,
+            "discovery_run_status": str(run["status"]),
+            "result": None if row is None else {
+                "model_run_id": str(row["model_run_id"]),
+                "status": str(row["status"]),
+                "execution_id": str(row["request_id"]),
+                "executor_id": str(row["provider_ref"]),
+                "model_ref": str(row["model_name"]),
+                "validation_status": str(row["validation_status"]),
+                "error": json.loads(row["error_json"]) if row["error_json"] else None,
+                "via_model_gateway": bool(row["via_model_gateway"]),
+                "created_at": str(row["created_at"]),
+            },
+            "candidate_count": int(candidates["count"]),
+        }
+
     def record_discovery_external_execution(
         self,
         *,
