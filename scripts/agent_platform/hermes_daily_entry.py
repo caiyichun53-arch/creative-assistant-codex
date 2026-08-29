@@ -1,15 +1,21 @@
-"""Legacy one-shot carrier for the production daily operation.
+"""Retired Hermes-named formal daily entry.
 
-This remains a process-and-exit compatibility carrier.  It does not own the
-business schedule: the Creation Assistant schedule registry and Core do.
-During migration protection the automatic trigger is rejected before formal
-storage is opened.  No listener, HTTP server, or resident scheduler starts.
+The old Hermes process-and-exit route is retained as historical material, but
+it no longer forwards into the formal daily operation. Formal daily work can
+only be started through the Creation Assistant Core scheduler.
 """
 
 from __future__ import annotations
 
-from scripts.agent_platform.run_daily_collection_once import main as run_daily_once
+RETIREMENT_MESSAGE = (
+    "the legacy Hermes formal daily route is retired; "
+    "use the Creation Assistant Core scheduler"
+)
+
+
+def main() -> int:
+    raise SystemExit(RETIREMENT_MESSAGE)
 
 
 if __name__ == "__main__":
-    raise SystemExit(run_daily_once(["--data-identity", "production"]))
+    raise SystemExit(main())

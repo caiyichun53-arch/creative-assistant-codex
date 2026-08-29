@@ -273,6 +273,11 @@ def main() -> int:
     parser.add_argument("--show-samples", action="store_true")
     parser.add_argument("--show-schema", action="store_true")
     args = parser.parse_args()
+    if args.action == "apply":
+        raise SystemExit(
+            "the legacy Hermes knowledge convergence apply route is retired; "
+            "use the Creation Assistant Core formal entry"
+        )
     core = (
         Stage0ContentProductionCore.open_read_only(FORMAL_DB_PATH, data_identity="production")
         if args.action in {"audit", "verify"}

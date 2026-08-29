@@ -31,6 +31,12 @@ from scripts.core.production.stage0_content_core import (
 from scripts.core.runtime.runtime_storage import runtime_path
 
 
+RETIREMENT_MESSAGE = (
+    "the legacy Hermes formal daily repair apply route is retired; "
+    "use the Creation Assistant Core formal entry"
+)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Audit or apply one formal daily-observation reconciliation"
@@ -175,6 +181,8 @@ def _collect_missing_details(
 
 
 def _apply(as_of_business_date: str) -> dict:
+    raise RuntimeError(RETIREMENT_MESSAGE)
+
     validation_core = Stage0ContentProductionCore.open_read_only(
         FORMAL_DB_PATH, data_identity="production"
     )
@@ -266,7 +274,7 @@ def main() -> int:
     if args.action == "plan":
         payload = {"status": "planned", "plan": _visible_plan(_plan(args.as_of))}
     else:
-        payload = _apply(args.as_of)
+        raise SystemExit(RETIREMENT_MESSAGE)
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 

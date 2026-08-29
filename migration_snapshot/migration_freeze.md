@@ -146,3 +146,43 @@ formal database SHA256 before and after validation was:
 B8D5A61E656798C485DC51DF64623F3985617C9B9A1BB1ECB2D3C38FDBA174F8
 
 Stage 7 is formally closed. Stage 8 is not opened by this record.
+
+## Stage 8 closure record
+
+Recorded: 2026-08-30 +08:00
+
+Stage 8 formally retires the old Hermes direct formal-business routes. The
+audited routes included the old Hermes-named daily entry and WSL shell, the
+direct one-shot daily entry, the old cold-start management CLI, the old formal
+research CLI, and the old daily-repair and knowledge-convergence apply CLIs.
+Before this closure, these routes still had a callable path toward formal
+business control when migration protection was eventually removed, even
+though the current protection rejected their production writes.
+
+The old daily, cold-start management, and formal-research routes now refuse
+before opening formal business storage. The old repair and knowledge
+convergence apply actions now refuse before any formal write path. Their
+read-only planning or audit material remains historical/read-only where it is
+still useful. No compatibility chain, alternate scheduler, retry, fallback,
+or new business rule was added.
+
+The Hermes external executor remains configured and usable through the
+Creation Assistant external-task boundary. Its active MCP connection now
+points to the current project with the existing TEST identity and four Core
+tools; the old workspace is no longer its code source. Hermes does not create
+Business Runs, choose formal runs, change lifecycle, choose a provider/model,
+or own a business schedule. Creation Assistant remains the only business
+schedule authority; its daily schedule remains disabled. The old Windows and
+WSL residuals, the old Hermes Creation daily job (now paused), paused Codex
+automation, and old workspace remain historical or non-current and were not
+deleted.
+
+TEST boundary validation retained the Core/Web action path, external-task
+submission path, current/history isolation, FORMAL/TEST isolation, and
+disabled-schedule protections. No real model was called. The formal database
+was not changed.
+
+Formal database SHA256:
+B8D5A61E656798C485DC51DF64623F3985617C9B9A1BB1ECB2D3C38FDBA174F8
+
+Stage 8 is formally closed. This does not authorize formal production start.

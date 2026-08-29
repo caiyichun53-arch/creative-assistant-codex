@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /mnt/i/Creation-Assistant
-exec /mnt/c/Users/15891/anaconda3/python.exe -m scripts.agent_platform.hermes_daily_entry
+echo "the legacy Hermes formal daily route is retired; use the Creation Assistant Core scheduler" >&2
+exit 1

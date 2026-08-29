@@ -12,6 +12,12 @@ from scripts.core.formal_business_entrypoints import CreationAssistantFormalBusi
 from scripts.core.production.stage0_content_core import FORMAL_DB_PATH, Stage0ContentProductionCore
 
 
+RETIREMENT_MESSAGE = (
+    "the legacy Hermes formal research route is retired; "
+    "use the Creation Assistant Core formal entry"
+)
+
+
 def _request(value: str | None, encoded_value: str | None = None) -> dict[str, Any]:
     if encoded_value is not None:
         try:
@@ -30,6 +36,8 @@ def _request(value: str | None, encoded_value: str | None = None) -> dict[str, A
 
 
 def run(action: str, payload: dict[str, Any]) -> dict[str, Any]:
+    raise RuntimeError(RETIREMENT_MESSAGE)
+
     core = Stage0ContentProductionCore.open(FORMAL_DB_PATH, data_identity="production")
     try:
         return CreationAssistantFormalBusinessCore(core=core).execute_formal_research(
@@ -42,6 +50,8 @@ def run(action: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raise SystemExit(RETIREMENT_MESSAGE)
+
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "action",

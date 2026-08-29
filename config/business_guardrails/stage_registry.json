@@ -68,10 +68,18 @@
         ".codex/hooks/implementation_midcheck.py",
         ".codex/hooks/implementation_postcheck.py",
         "scripts/web/",
+        "scripts/agent_platform/hermes_cold_start_management_entry.py",
+        "scripts/agent_platform/hermes_daily_entry.py",
+        "scripts/agent_platform/hermes_daily_entry.sh",
+        "scripts/agent_platform/hermes_daily_repair_entry.py",
+        "scripts/agent_platform/hermes_formal_research_entry.py",
+        "scripts/agent_platform/hermes_knowledge_convergence_entry.py",
+        "scripts/agent_platform/run_daily_collection_once.py",
         "scripts/core/formal_business_entrypoints.py",
         "tests/test_formal_business_entrypoints.py",
         "tests/test_stage6_read_only_web.py",
         "tests/test_stage7_web_actions.py",
+        "tests/test_stage8_hermes_retirement.py",
         "runtime_skills/experience_candidate_propose/",
         "config/runtime_storage.json"
       ]

@@ -25,6 +25,10 @@ from scripts.core.scheduler.schedule_registry import (
 
 
 CHINA_TIME = timezone(timedelta(hours=8))
+RETIREMENT_MESSAGE = (
+    "the legacy direct formal daily entry is retired; "
+    "use the Creation Assistant Core scheduler"
+)
 
 
 def _append_log(path: Path, payload: dict) -> None:
@@ -85,6 +89,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raise SystemExit(RETIREMENT_MESSAGE)
+
     args = build_parser().parse_args(argv)
     started_at = datetime.now(CHINA_TIME)
     effective_at: datetime | None = None

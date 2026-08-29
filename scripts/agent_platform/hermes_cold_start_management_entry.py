@@ -30,7 +30,15 @@ from scripts.core.production.stage0_content_core import (
 )
 
 
+RETIREMENT_MESSAGE = (
+    "the legacy Hermes cold-start management route is retired; "
+    "use the Creation Assistant Core formal entry"
+)
+
+
 def main() -> int:
+    raise SystemExit(RETIREMENT_MESSAGE)
+
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser()
