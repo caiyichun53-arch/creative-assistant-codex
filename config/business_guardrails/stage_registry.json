@@ -68,7 +68,10 @@
         ".codex/hooks/implementation_midcheck.py",
         ".codex/hooks/implementation_postcheck.py",
         "scripts/web/",
+        "scripts/core/formal_business_entrypoints.py",
+        "tests/test_formal_business_entrypoints.py",
         "tests/test_stage6_read_only_web.py",
+        "tests/test_stage7_web_actions.py",
         "runtime_skills/experience_candidate_propose/",
         "config/runtime_storage.json"
       ]

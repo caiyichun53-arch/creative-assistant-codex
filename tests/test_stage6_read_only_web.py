@@ -134,11 +134,11 @@ class Stage6ReadOnlyWebTests(unittest.TestCase):
         self.assertEqual(payload["source"], "Creation Assistant Core")
         self.assertIn("\u72b6\u6001\u8bfb\u53d6\u5931\u8d25", payload["error"])
 
-    def test_page_has_no_business_operations_and_write_methods_are_rejected(self) -> None:
+    def test_status_server_rejects_writes_while_action_server_owns_operations(self) -> None:
         with urlopen(self.base_url + "/") as response:
             html = response.read().decode("utf-8")
-        self.assertNotIn("<button", html)
-        self.assertNotIn("<form", html)
+        self.assertIn('id="action-panel"', html)
+        self.assertIn("/api/action", (read_only_server.STATIC_ROOT / "app.js").read_text(encoding="utf-8"))
         for method in ("POST", "PUT", "PATCH", "DELETE"):
             request = Request(self.base_url + "/api/status", method=method)
             try:

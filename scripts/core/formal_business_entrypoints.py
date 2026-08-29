@@ -25,6 +25,27 @@ from scripts.core.production.stage0_content_core import (
     Stage0ContentProductionCore,
     StateTransitionError,
 )
+from scripts.core.scheduler.schedule_registry import ScheduleRegistry
+
+
+def assert_business_action_allowed(*, data_identity: str) -> None:
+    """Reject formal writes while the existing migration protection is active.
+
+    This is the Core-side guard for transports that need to open a writable
+    Core.  Test identities stay isolated and usable; production remains closed
+    by the existing project migration declaration.
+    """
+
+    identity = str(data_identity or "").strip().lower()
+    if identity == "test":
+        return
+    if identity != "production":
+        raise StateTransitionError("business actions require an explicit data identity")
+    registry = ScheduleRegistry.load()
+    if registry.migration_protection:
+        raise StateTransitionError(
+            "formal business actions are blocked while migration protection is active"
+        )
 
 
 @dataclass
@@ -38,6 +59,12 @@ class CreationAssistantFormalBusinessCore:
     """
 
     core: Stage0ContentProductionCore
+
+    @staticmethod
+    def assert_action_allowed(*, data_identity: str) -> None:
+        """Apply the Core-owned migration boundary before a mutable open."""
+
+        assert_business_action_allowed(data_identity=data_identity)
 
     def list_daily_domains(self) -> list[str]:
         """Return the domains that Core allows the daily flow to address."""
@@ -1166,7 +1193,7 @@ class CreationAssistantFormalBusinessCore:
             "review_content_types": ("content_types", "awaiting_human_decision"),
             "review_domain_boundary": (
                 "production_boundary",
-                "awaiting_human_review",
+                "awaiting_human_decision",
             ),
         }
         run_id = str(cold_start_id or "").strip()

@@ -224,6 +224,13 @@ class FormalBusinessEntrypointTests(unittest.TestCase):
         self.assertNotIn("scripts.mcp", text)
         self.assertNotIn("scripts.web", text)
 
+    def test_core_action_boundary_keeps_formal_migration_protection(self) -> None:
+        with self.assertRaisesRegex(StateTransitionError, "migration protection"):
+            CreationAssistantFormalBusinessCore.assert_action_allowed(
+                data_identity="production"
+            )
+        CreationAssistantFormalBusinessCore.assert_action_allowed(data_identity="test")
+
 
 if __name__ == "__main__":
     unittest.main()

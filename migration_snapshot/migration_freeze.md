@@ -114,3 +114,35 @@ missing trusted_context fixture errors without adding exclusions.
 
 Formal database SHA256:
 B8D5A61E656798C485DC51DF64623F3985617C9B9A1BB1ECB2D3C38FDBA174F8
+
+## Stage 7 closure record
+
+Recorded: 2026-08-30 +08:00
+
+Stage 7 Web formal actions are complete. Web submits cold-start preview and
+confirmation, stop, resume, the three human review actions, and daily start
+and resume through the existing Core formal entrypoints. Web does not read or
+write SQLite directly, does not create a parallel Business Run, and does not
+re-activate historical or non-current runs as current. Core remains the owner
+of formal state, validation, audit, and lifecycle changes.
+
+The daily date boundary remains unchanged. When the Web date is empty, the
+request omits the business_date parameter; Core applies its existing
+unspecified-date rule. When a date is supplied, the original value is passed
+to Core, and invalid dates continue to be rejected by Core. Web does not
+calculate today's date.
+
+FORMAL migration protection remains active. TEST action runs remain isolated
+from FORMAL. The daily schedule remains disabled. No new business rule,
+state machine, retry, fallback, or automatic repair was introduced. The
+formal database was not changed.
+
+Validation record: 9 focused Web action tests passed; the daily/Core
+regression record remains 53 passed with 1 pre-existing fixture omission; the
+full project rerun passed 358 tests. The existing trusted_context fixture
+gap remains unchanged and no new test exclusion or failure was added. The
+formal database SHA256 before and after validation was:
+
+B8D5A61E656798C485DC51DF64623F3985617C9B9A1BB1ECB2D3C38FDBA174F8
+
+Stage 7 is formally closed. Stage 8 is not opened by this record.

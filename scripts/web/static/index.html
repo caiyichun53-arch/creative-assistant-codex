@@ -43,6 +43,39 @@
         <div id="domains" class="domain-list"></div>
       </section>
 
+      <section class="card section-card" id="action-panel">
+        <h2>&#24037;&#20316;&#25805;&#20316;</h2>
+        <p class="action-boundary">&#25805;&#20316;&#21482;&#20250;&#25552;&#20132;&#32473; Core&#65307;&#26381;&#21153;&#22120;&#19981;&#20250;&#30452;&#25509;&#20889;&#25968;&#25454;&#24211;&#65292;&#20063;&#19981;&#20250;&#33258;&#34892;&#25512;&#26029;&#29366;&#24577;&#12290;</p>
+        <div id="action-controls" class="action-controls"></div>
+        <details class="action-form">
+          <summary>&#21551;&#21160;&#26032;&#30340; cold-start&#65306;&#20808;&#39044;&#35272;&#65292;&#20877;&#26126;&#30830;&#30830;&#35748;</summary>
+          <label>&#39046;&#22495;&#21517;&#31216;<input id="cold-domain-name" type="text"></label>
+          <label>&#33258;&#33829;&#36134;&#21495;&#26631;&#35782;<input id="cold-owned-ref" type="text"></label>
+          <label>&#23545;&#26631;&#36134;&#21495;&#26631;&#35782;&#65288;&#27599;&#34892;&#19968;&#20010;&#65292;&#33267;&#23569;20&#20010;&#65289;<textarea id="cold-competitor-refs"></textarea></label>
+          <button id="cold-preview" type="button">&#39044;&#35272;</button>
+          <button id="cold-confirm" type="button">&#30830;&#35748;&#21551;&#21160;</button>
+        </details>
+        <details class="action-form">
+          <summary>&#25552;&#20132;&#24403;&#21069;&#31561;&#24453;&#30340;&#20154;&#24037;&#30830;&#35748;</summary>
+          <label>&#39046;&#22495;<select id="review-domain"></select></label>
+          <label>&#30830;&#35748;&#31867;&#22411;<select id="review-kind">
+            <option value="review_tags">&#26631;&#31614;&#30830;&#35748;</option>
+            <option value="review_content_types">&#20869;&#23481;&#31867;&#22411;&#30830;&#35748;</option>
+            <option value="review_domain_boundary">&#29983;&#20135;&#36793;&#30028;&#30830;&#35748;</option>
+          </select></label>
+          <label>&#20915;&#23450;&#21015;&#34920;&#65288;JSON&#65289;<textarea id="review-decisions">[]</textarea></label>
+          <label>&#35828;&#26126;<input id="review-reason" type="text"></label>
+          <button id="review-submit" type="button">&#25552;&#20132;&#24403;&#21069;&#30830;&#35748;</button>
+        </details>
+        <details class="action-form">
+          <summary>&#24320;&#22987;&#24403;&#22825; daily</summary>
+          <label>&#39046;&#22495;<input id="daily-domain" type="text"></label>
+          <label>&#19994;&#21153;&#26085;&#26399;<input id="daily-date" type="date"></label>
+          <button id="daily-start" type="button">&#25552;&#20132; daily &#24320;&#22987;</button>
+        </details>
+        <pre id="action-result" class="summary" hidden></pre>
+      </section>
+
       <section class="card section-card">
         <h2>Core&#25688;&#35201;</h2>
         <pre id="human-summary" class="summary"></pre>

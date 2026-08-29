@@ -22,10 +22,23 @@
     panel.hidden = false;
   }
 
+  function domainActionControls(domain) {
+    const label = escapeHtml(domain.domain_identity);
+    const current = domain.current_cold_start || {};
+    const buttons = [];
+    if (current.status === "running") {
+      buttons.push('<button data-web-action="stop" data-domain="' + label + '">停止当前 cold-start</button>');
+    }
+    if (current.status === "stopped" || current.status === "failed") {
+      buttons.push('<button data-web-action="resume" data-domain="' + label + '">恢复当前 cold-start</button>');
+    }
+    return buttons.join("");
+  }
+
   function renderDomain(domain) {
     const waiting = domain.waiting_human
       ? (domain.waiting_for || []).map(function (item) {
-          return escapeHtml(item.kind + "\uFF1A" + item.id);
+          return escapeHtml(item.kind);
         }).join("\u3001") || "\u7B49\u5F85\u4EBA\u5DE5\u786E\u8BA4"
       : "\u5426";
     const daily = domain.current_daily && domain.current_daily.exists
@@ -47,6 +60,7 @@
       '<p><span>\u5F53\u524D\u8FDB\u884C\u4E2D</span>' + escapeHtml(currentRuns) + "</p>",
       '<p><span>\u5141\u8BB8\u65B0 cold-start</span>' + yesNo(domain.can_start_new_cold_start) + "</p>",
       "</div>",
+      '<div class="action-controls">' + domainActionControls(domain) + "</div>",
       '<div class="historical">\u5386\u53F2\u672A\u5B8C\u6210：' + escapeHtml(historical) + ' \u6761；historical/non-current，\u4E0D\u5C5E\u4E8E\u5F53\u524D Business Run。</div>',
       "</article>",
     ].join("");
@@ -69,6 +83,7 @@
       : "\u672A\u5B8C\u6574\u914D\u7F6E";
     document.querySelector("#domains").innerHTML = status.domains.map(renderDomain).join("");
     document.querySelector("#human-summary").textContent = status.human_summary;
+    renderActionChoices(status);
     document.querySelector("#loading-panel").hidden = true;
     document.querySelector("#error-panel").hidden = true;
     document.querySelector("#status-panel").hidden = false;
@@ -88,5 +103,105 @@
     }
   }
 
-  document.addEventListener("DOMContentLoaded", loadStatus);
+  function renderActionChoices(status) {
+    const select = document.querySelector("#review-domain");
+    const waiting = (status.domains || []).filter(function (domain) {
+      return domain.waiting_human;
+    });
+    select.innerHTML = waiting.map(function (domain) {
+      return '<option value="' + escapeHtml(domain.domain_identity) + '">' +
+        escapeHtml(domain.name || domain.domain_identity) + "</option>";
+    }).join("");
+    if (!waiting.length) {
+      select.innerHTML = '<option value="">当前没有等待人工确认的领域</option>';
+    }
+  }
+
+  function showActionResult(payload) {
+    const result = document.querySelector("#action-result");
+    result.textContent = JSON.stringify({
+      outcome: payload.outcome,
+      core_result: payload.core_result,
+      error: payload.error,
+    }, null, 2);
+    result.hidden = false;
+  }
+
+  async function postAction(action, values) {
+    try {
+      const response = await fetch("/api/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(Object.assign({ action: action }, values || {})),
+      });
+      const payload = await response.json();
+      showActionResult(payload);
+      if (payload.status) renderStatus(payload.status);
+    } catch (error) {
+      showActionResult({ outcome: "failed", error: "Core动作调用失败" });
+    }
+  }
+
+  function coldStartConfiguration() {
+    const refs = document.querySelector("#cold-competitor-refs").value
+      .split(/\r?\n/)
+      .map(function (value) { return value.trim(); })
+      .filter(Boolean);
+    return {
+      domain_name: document.querySelector("#cold-domain-name").value.trim(),
+      owned_account: {
+        display_name: "本地Web自营账号",
+        external_account_ref: document.querySelector("#cold-owned-ref").value.trim(),
+      },
+      competitor_accounts: refs.map(function (value, index) {
+        return { display_name: "本地Web对标" + (index + 1), external_account_ref: value };
+      }),
+    };
+  }
+
+  document.addEventListener("click", function (event) {
+    const button = event.target.closest("button[data-web-action]");
+    if (!button) return;
+    const domain = button.dataset.domain;
+    if (button.dataset.webAction === "stop") {
+      const reason = window.prompt("请说明停止原因");
+      if (reason) postAction("cold_start_stop", { domain_label: domain, reason: reason });
+    } else if (button.dataset.webAction === "resume") {
+      postAction("cold_start_resume", { domain_label: domain });
+    }
+  });
+
+  document.addEventListener("DOMContentLoaded", function () {
+    document.querySelector("#cold-preview").addEventListener("click", function () {
+      postAction("cold_start_preview", { configuration: coldStartConfiguration() });
+    });
+    document.querySelector("#cold-confirm").addEventListener("click", function () {
+      postAction("cold_start_confirm");
+    });
+    document.querySelector("#review-submit").addEventListener("click", function () {
+      let decisions;
+      try {
+        decisions = JSON.parse(document.querySelector("#review-decisions").value || "[]");
+      } catch (error) {
+        showActionResult({ outcome: "rejected", error: "决定列表不是有效JSON" });
+        return;
+      }
+      postAction(document.querySelector("#review-kind").value, {
+        domain_label: document.querySelector("#review-domain").value,
+        decisions: decisions,
+        reason: document.querySelector("#review-reason").value.trim(),
+      });
+    });
+    document.querySelector("#daily-start").addEventListener("click", function () {
+      const values = {
+        domain_label: document.querySelector("#daily-domain").value.trim(),
+      };
+      const businessDate = document.querySelector("#daily-date").value.trim();
+      if (businessDate) {
+        values.business_date = businessDate;
+      }
+      postAction("daily_start", values);
+    });
+    loadStatus();
+  });
 }());
