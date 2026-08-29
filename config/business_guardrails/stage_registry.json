@@ -67,6 +67,8 @@
         ".codex/hooks/hook_common.py",
         ".codex/hooks/implementation_midcheck.py",
         ".codex/hooks/implementation_postcheck.py",
+        "scripts/web/",
+        "tests/test_stage6_read_only_web.py",
         "runtime_skills/experience_candidate_propose/",
         "config/runtime_storage.json"
       ]

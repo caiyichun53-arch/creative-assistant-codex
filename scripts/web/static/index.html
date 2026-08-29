@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Creation Assistant &#29366;&#24577;</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="page">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Creation Assistant</p>
+        <h1>&#24403;&#21069;&#29366;&#24577;</h1>
+      </div>
+      <p class="read-only-note">&#21482;&#35835;&#21462; &#29366;&#24577;&#26469;&#33258; Core</p>
+    </header>
+
+    <section id="error-panel" class="notice error" hidden></section>
+    <section id="loading-panel" class="notice">&#27491;&#22312;&#35835;&#21462; Core &#29366;&#24577;...</section>
+
+    <section id="status-panel" hidden>
+      <section class="summary-grid" aria-label="系统状态">
+        <article class="card emphasis"><span>&#36816;&#34892;&#36523;&#20221;</span><strong id="identity">—</strong></article>
+        <article class="card"><span>&#36801;&#31227;&#20445;&#25252;</span><strong id="migration-protection">—</strong></article>
+        <article class="card"><span>&#25968;&#25454;&#24211;</span><strong id="database-readable">—</strong></article>
+        <article class="card"><span>&#24403;&#21069;&#36827;&#34892;&#20013;</span><strong id="current-in-progress">—</strong></article>
+        <article class="card"><span>&#21382;&#21490;&#26410;&#23436;&#25104;</span><strong id="historical-unfinished">—</strong><small>historical/non-current</small></article>
+      </section>
+
+      <section class="card section-card">
+        <h2>&#31995;&#32479;&#37197;&#32622;</h2>
+        <dl class="detail-grid">
+          <div><dt>&#39033;&#30446;&#29615;&#22659;</dt><dd id="project-environment">—</dd></div>
+          <div><dt>daily</dt><dd id="daily-schedule">—</dd></div>
+          <div><dt>&#40664;&#35748;&#25191;&#34892;&#22120;</dt><dd id="default-executor">—</dd></div>
+          <div><dt>&#25191;&#34892;&#22120;&#37197;&#32622;</dt><dd id="executor-config">—</dd></div>
+        </dl>
+      </section>
+
+      <section class="section-card">
+        <h2>&#39046;&#22495;&#29366;&#24577;</h2>
+        <div id="domains" class="domain-list"></div>
+      </section>
+
+      <section class="card section-card">
+        <h2>Core&#25688;&#35201;</h2>
+        <pre id="human-summary" class="summary"></pre>
+      </section>
+    </section>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

@@ -91,3 +91,26 @@ fixture errors without adding exclusions.
 
 Formal database SHA256:
 B8D5A61E656798C485DC51DF64623F3985617C9B9A1BB1ECB2D3C38FDBA174F8
+
+## Stage 6 closure record
+
+Recorded: 2026-08-30 +08:00
+
+Stage 6 local read-only Web skeleton is complete. The local page serves
+Core's unified status result through a fixed FORMAL or TEST identity. The Web
+layer has no direct SQLite access and exposes no business operation. Core read
+failures are shown as failures without database fallback, cache substitution,
+or guessed status. TEST cannot read FORMAL data.
+
+The formal current state remains two domains with no current activation, no
+cold-start, no current daily, no waiting-human state, and zero current
+in-progress Business Runs. The nine unfinished records remain explicitly
+historical/non-current. No Core status field was added and the formal database
+was not changed. Stage 7 is not opened by this record.
+
+Validation record: 8 Web read-only tests passed; the page script syntax check
+passed; the full test run passed 348 tests and retained the 9 pre-existing
+missing trusted_context fixture errors without adding exclusions.
+
+Formal database SHA256:
+B8D5A61E656798C485DC51DF64623F3985617C9B9A1BB1ECB2D3C38FDBA174F8
