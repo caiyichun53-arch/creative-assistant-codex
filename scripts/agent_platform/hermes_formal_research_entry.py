@@ -10,7 +10,6 @@ from typing import Any
 
 from scripts.core.formal_business_entrypoints import CreationAssistantFormalBusinessCore
 from scripts.core.production.stage0_content_core import FORMAL_DB_PATH, Stage0ContentProductionCore
-from scripts.core.production.stage1a_research_plan import build_research_plan_gateway
 
 
 def _request(value: str | None, encoded_value: str | None = None) -> dict[str, Any]:
@@ -33,13 +32,10 @@ def _request(value: str | None, encoded_value: str | None = None) -> dict[str, A
 def run(action: str, payload: dict[str, Any]) -> dict[str, Any]:
     core = Stage0ContentProductionCore.open(FORMAL_DB_PATH, data_identity="production")
     try:
-        gateway = None
-        if action in {"create_plan", "retry_plan", "revise_plan"}:
-            gateway = build_research_plan_gateway(core)
         return CreationAssistantFormalBusinessCore(core=core).execute_formal_research(
             action=action,
             payload=payload,
-            research_gateway=gateway,
+            research_gateway=None,
         )
     finally:
         core.close()

@@ -310,6 +310,83 @@ class FormalSkillContract:
         return PortableSkillSpec(self.formal_skill_id, self.version, self.route_name, self.prompt_template, tuple(self.model_input_schema["required"]), self.model_output_schema)
 
 
+def prepare_external_skill_task(
+    contract: FormalSkillContract,
+    input_payload: dict[str, Any],
+    *,
+    constraints: dict[str, Any],
+    business_context: dict[str, Any] | None = None,
+    task_type: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Prepare one model-independent handoff for an outside executor.
+
+    The returned input is the already-bound Skill input.  The outside executor
+    receives the formal Skill and its current rendered instructions, but no
+    route, provider, fallback, or model choice.
+    """
+    contract.validate_contract(require_model_route=False)
+    validate_payload(input_payload, contract.input_schema)
+    prepared = preprocess_formal_skill_input(contract.formal_skill_id, input_payload)
+    model_input = apply_binding(contract.input_map, input_payload, {}, prepared)
+    validate_payload(model_input, contract.model_input_schema)
+    rendered_prompt = contract.portable_skill().render_prompt(model_input)
+    if contract.formal_skill_id in COMPETITOR_BREAKDOWN_SKILL_IDS:
+        rendered_prompt = _bind_competitor_breakdown_source(rendered_prompt, model_input)
+    task: dict[str, Any] = {
+        "task_type": task_type or contract.formal_skill_id,
+        "skill": {
+            "formal_skill_id": contract.formal_skill_id,
+            "version": contract.version,
+            "source_reference": f"runtime_skills/{contract.formal_skill_id}",
+            "content": contract.prompt_template,
+            "rendered_instructions": rendered_prompt,
+            "input_schema": contract.model_input_schema,
+            "output_schema": contract.output_schema,
+            "skill_hash": contract.skill_hash,
+            "binding": {
+                "name": contract.binding_name,
+                "version": contract.binding_version,
+                "hash": contract.binding_hash,
+            },
+        },
+        "input": model_input,
+        "constraints": dict(constraints),
+        "output_requirements": {
+            "submission": "structured_fields",
+            "schema": contract.output_schema,
+            "formal_output_schema": contract.output_schema,
+            "response_format": "structured_fields",
+        },
+    }
+    if business_context:
+        task["business_context"] = dict(business_context)
+    return task, prepared
+
+
+def validate_external_skill_output(
+    contract: FormalSkillContract,
+    input_payload: dict[str, Any],
+    output_payload: dict[str, Any],
+    *,
+    prepared: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate fields submitted by an outside executor without parsing text."""
+    contract.validate_contract(require_model_route=False)
+    if not isinstance(output_payload, dict):
+        raise FormalSkillValidationError("external intelligent result must be structured fields")
+    validate_payload(input_payload, contract.input_schema)
+    prepared = prepared if prepared is not None else preprocess_formal_skill_input(contract.formal_skill_id, input_payload)
+    validate_payload(output_payload, contract.output_schema)
+    if contract.formal_skill_id in COMPETITOR_BREAKDOWN_SKILL_IDS:
+        validate_competitor_breakdown_question_expansion_output(
+            input_payload, output_payload, validate_optional=False
+        )
+    if contract.formal_skill_id == "source_to_topic":
+        validate_source_to_topic_output_semantics(input_payload, output_payload)
+    del prepared
+    return dict(output_payload)
+
+
 class FormalBusinessSkillAdapter:
     def __init__(self, *, contract: FormalSkillContract, gateway: ModelGateway):
         contract.validate_contract()

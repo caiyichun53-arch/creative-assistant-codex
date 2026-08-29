@@ -954,11 +954,11 @@ Core 内部的 `HumanDecisionCommandService` 是正式业务服务，不是另�
 | 当前正式智能任务类别 | 2A状态 | Core 当前边界 | 后续处理 |
 | --- | --- | --- | --- |
 | source_to_topic / daily candidate discovery（含 historical_high_signal 等来源输入） | 已迁移 | Core准备最小任务、接收结构化结果、正式校验并继续候选流程 | 2B通过 MCP 暴露同一边界 |
-| competitor_breakdown（竞品注册与 daily hit） | 待迁移 | 当前仍由既有模型承载路径完成，正式结果仍须回到 Core 校验 | 沿用 2A边界继续拆分 |
-| research_plan / formal research | 待迁移 | 当前仍保留既有模型承载路径；研究的正式判断和写入仍归 Core | 沿用 2A边界继续拆分 |
+| competitor_breakdown（竞品注册与 daily hit） | 2B-2 第一轮已迁移 | Core 生成最小外部任务，外部执行者提交结构化结果，正式结果仍须回到 Core 校验 | 已完成第一轮，内容生产三类留给第二轮 |
+| research_plan / formal research | 2B-2 第一轮已迁移 | 研究计划和 deep research 均等待外部智能结果；研究的正式判断和写入仍归 Core | 已完成第一轮，内容生产三类留给第二轮 |
 | content plan、内容生成、审核 | 待迁移 | 当前仍保留既有模型承载路径；内容正式状态仍归 Core | 沿用 2A边界继续拆分 |
-| experience candidate proposal | 待迁移 | 当前仍保留既有模型承载路径；经验正式采纳仍归 Core | 沿用 2A边界继续拆分 |
-| cold-start domain boundary / preflight 智能判断 | 待迁移 | 当前仍保留既有模型承载路径；cold-start 生命周期仍归 Core | 沿用 2A边界继续拆分 |
+| experience candidate proposal | 2B-2 第一轮已迁移 | Core 生成外部任务，合法提案仍停留在等待人工决定，不能自动成为正式规则 | 已完成第一轮，内容生产三类留给第二轮 |
+| cold-start domain boundary / preflight 智能判断 | 2B-2 第一轮已迁移 | 仅迁移其中的竞品拆解智能判断；cold-start 生命周期、resume、人工确认和完成条件仍归 Core | 已完成第一轮，内容生产三类留给第二轮 |
 
 本轮退出 Core 的职责只包括代表链范围内的模型选择、provider 选择和模型 API 调用；代表链仍保留现有的结果结构校验、来源语义校验、正式写入和审计记录。原有模型承载结构没有整体删除，也没有复制出第二份 Skill 或第二套智能任务生命周期。
 
@@ -1025,6 +1025,48 @@ MCP 没有自己的数据库、业务状态、任务队列或生命周期。取�
 阶段 2B-1 正式完成：Creation Assistant 已建立独立于 Hermes 和 Codex 的标准 MCP 边界，并已通过 Hermes 真实完整端到端证明外部执行者可以使用同一个 Core。Codex 的客户端工具注入问题作为后续兼容性复验事项记录，不重新打开阶段 2B-1，除非以后发现 Creation Assistant 自身存在协议或业务问题。
 
 Codex 后续只需重新验证：状态工具、`get_external_task`、当前 Codex 模型执行、结构化 `submit` 和 Core 接受；不得为当前客户端问题新增专用兼容逻辑。阶段 2B-2 仍待迁移的七类是：`competitor_breakdown`、`research`、内容规划、内容生成、审核、经验候选提案、cold-start 智能判断。
+
+#### 阶段 2B-2 第一轮实际进展：分析与判断型智能路径（2026-08-29）
+
+本轮只迁移四类正式智能路径：`competitor_breakdown`、`research`、经验候选提案和 cold-start 智能判断。四类均复用阶段 2A 已成立的同一条边界：Core 准备当前正式 Skill、最小充分材料和约束，外部执行者返回结构化字段，Core 负责正式校验、审计和业务状态推进。
+
+- `competitor_breakdown`：竞品注册和每日竞品拆解不再由正式路径主动选择或调用模型；外部任务保留来源身份、原始材料、领域限制和严格证据约束，结果仍由 Core 校验后写入对应拆解事实。
+- `research`：研究计划和已有研究材料上的 deep research 智能步骤不再由正式路径主动调用模型；没有外部执行者时明确等待，不会偷偷调用旧 ModelGateway。
+- 经验候选提案：外部执行者只能生成候选提案；Core 仍把合法结果置于等待人工决定，不能自动变成正式经验或修改正式 Skill。
+- cold-start 智能判断：本轮只迁移 cold-start 注册过程中的竞品拆解判断，cold-start 的 lifecycle、resume、人工确认和完成条件没有改变。
+
+四类任务包均不包含模型、provider、fallback 或 retry 选择；executor 和实际模型只作为执行审计事实。历史模型记录不会决定下一次执行者。结果只能通过 Core 的结构化校验入口进入正式业务事实；没有外部执行者时，当前步骤保持等待外部智能执行，不建立第二套任务生命周期。
+
+本轮未迁移内容规划、内容生成和审核，三类留待阶段 2B-2 第二轮。未新增 MCP、任务队列、模型路由、兼容路线或第二套业务状态，也未运行正式业务和真实模型。
+
+#### 阶段 2B-2 第二轮实际进展：内容生产链智能执行权迁移（2026-08-29）
+
+本轮完成内容规划、内容生成和审核三类正式智能步骤的外部执行迁移。内容服务继续由 Core 按原有顺序准备选题、研究结果、规划版本、正文版本和审核版本；每一步只把当前 Skill、必要材料、来源身份、业务限制和结构化输出要求交给外部执行者。
+
+- 内容规划使用 `content_plan_generation`，外部结果保留规划文本和必要结构，Core 校验当前内容任务、选题对应关系、必填内容和业务限制。
+- 内容生成覆盖正式成稿、文案优化和去模板化，分别使用现有正式 Skill；正文以结构化结果中的明确文本字段提交，Core 校验当前计划、内容任务和版本关系。
+- 审核使用 `final_content_review`，外部执行者只提交审核结果和问题；Core 校验审核对象和必要字段，审核结果不会直接覆盖正文，也不会自动形成最终稿。
+- 三类均支持无外部执行者时停在“等待外部智能执行”，不会调用旧 ModelGateway、自动跳过、自动重试或新增审核循环。
+
+本轮没有改变内容生产顺序、人工确认、版本关系或正式生命周期，没有新增 MCP、任务队列或第二套状态。隔离组合链已验证“规划—生成—审核”始终回到同一 Core 业务主线；未运行正式业务，未调用真实模型，正式数据库摘要保持不变。
+
+### 阶段 2：完成
+
+阶段 2 完成后的正式架构事实：
+
+- Core 负责当前业务步骤、是否需要智能工作、Business Run、lifecycle、resume、正式结果是否接受、人工决定和正式状态推进。
+- 正式业务不再由 Core 选择 LLM、选择 provider、主动调用 LLM 或自动 fallback 到其它模型。
+- 正式智能工作统一采用“Core 产生 external task—外部 Agent 使用自己的当前模型执行—结构化结果提交—Core 校验—Core 继续业务流程”。
+- 当前已迁移的正式智能路径包括 source_to_topic、competitor_breakdown、research、experience proposal、cold-start 智能判断、content planning、content generation 和 review。
+- 正式 Skill 只有 Creation Assistant 内部一份当前来源。
+- Hermes 不是 Creation Assistant 正式业务成立的必要依赖。
+- ModelGateway 已退出正式可达业务中的模型选择、provider 选择和模型调用；历史及测试辅助代码暂时保留，不代表仍属于正式业务。
+
+阶段 2B-2 第二轮完成。阶段 2 已正式关闭；后续 Git 可信提交作为本次收口节点建立。
+
+阶段 2 收口前的迁移保护事件记录：2026-08-29 00:00:01—00:11:26 UTC，旧 `daily_collection_once / daily-once` 自动路径仍以 production 身份启动正式 daily，产生两条 daily run、正式采集和 discovery 记录。该事件证明旧自动调度尚未完全退出，但不推翻阶段 2 的模型执行权迁移结论；本事件产生的正式数据不在本轮删除或恢复。
+
+文件摘要记录：`5262A76E...` 是阶段 0 迁移起点，`33E2B8D7...` 是第一次旧 daily 触碰后的文件摘要，`09B245CD...` 是本次自动 daily 写入后的当前文件摘要。当前正式数据库与阶段 0 备份相比已经存在正式业务记录差异，因此 `09B245CD...` 只作为当前观察事实记录，不作为干净迁移监测基准。
 
 ### 阶段 3：正式数据和测试数据物理隔离，并清理状态控制权
 

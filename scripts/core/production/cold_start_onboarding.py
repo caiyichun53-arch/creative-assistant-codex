@@ -649,6 +649,7 @@ class ColdStartOnboardingService:
             CompetitorRegistrationService,
             build_configured_competitor_registration_executor,
         )
+        from scripts.core.production.stage1b_daily_discovery import ExternalIntelligenceRequired
 
         try:
             registration_service = self.execution_registration_service
@@ -683,6 +684,14 @@ class ColdStartOnboardingService:
                 actor=_clean(actor),
                 idempotency_key=f"cold-start-orchestrator:{result['cold_start_id']}",
             )
+        except ExternalIntelligenceRequired as exc:
+            execution = {
+                "status": "requires_external_intelligence",
+                "started": False,
+                "resumable": True,
+                "task": exc.task,
+                "preflight": execution_report,
+            }
         except Exception as exc:
             # Close the execution ledger on process/runtime failure while
             # preserving every completed artifact for an explicit same-run

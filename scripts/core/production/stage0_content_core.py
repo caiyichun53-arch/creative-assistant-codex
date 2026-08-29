@@ -919,7 +919,7 @@ class Stage0ContentProductionCore:
                 duration_ms INTEGER NOT NULL,
                 data_identity TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                via_model_gateway INTEGER NOT NULL CHECK(via_model_gateway = 1)
+                via_model_gateway INTEGER NOT NULL CHECK(via_model_gateway IN (0, 1))
             );
             CREATE TABLE IF NOT EXISTS stage0_command_receipt (
                 command_scope TEXT NOT NULL,
@@ -2427,19 +2427,64 @@ class Stage0ContentProductionCore:
         idempotency_key: str,
         artifact_payload: dict[str, Any] | None = None,
     ) -> dict[str, str]:
+        return self._complete_node_from_execution(
+            task_id=task_id, node_version_id=node_version_id, model_run_id=model_run_id,
+            output_ref=output_ref, validation_status=validation_status, actor=actor,
+            expected_task_revision=expected_task_revision, idempotency_key=idempotency_key,
+            artifact_payload=artifact_payload, expected_via_model_gateway=1,
+            command_name="complete_node_from_model",
+        )
+
+    def complete_node_from_external_result(
+        self,
+        *,
+        task_id: str,
+        node_version_id: str,
+        model_run_id: str,
+        output_ref: str,
+        validation_status: str,
+        actor: str,
+        expected_task_revision: int,
+        idempotency_key: str,
+        artifact_payload: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        """Accept one structured result supplied by an outside executor."""
+        return self._complete_node_from_execution(
+            task_id=task_id, node_version_id=node_version_id, model_run_id=model_run_id,
+            output_ref=output_ref, validation_status=validation_status, actor=actor,
+            expected_task_revision=expected_task_revision, idempotency_key=idempotency_key,
+            artifact_payload=artifact_payload, expected_via_model_gateway=0,
+            command_name="complete_node_from_external_result",
+        )
+
+    def _complete_node_from_execution(
+        self,
+        *,
+        task_id: str,
+        node_version_id: str,
+        model_run_id: str,
+        output_ref: str,
+        validation_status: str,
+        actor: str,
+        expected_task_revision: int,
+        idempotency_key: str,
+        artifact_payload: dict[str, Any] | None,
+        expected_via_model_gateway: int,
+        command_name: str,
+    ) -> dict[str, str]:
         if validation_status != "passed":
-            raise StateTransitionError("only schema-validated model output may await human review")
+            raise StateTransitionError("only schema-validated output may await human review")
         task, request_version = self._task(task_id), self._version(node_version_id)
         if int(task["task_revision"]) != expected_task_revision:
-            raise StaleResultError("model result is stale because the task revision changed")
+            raise StaleResultError("execution result is stale because the task revision changed")
         run = self._model_run(model_run_id)
         self._assert_current_node(task, request_version["node"], "processing", node_version_id)
         if run["task_id"] != task_id or run["node_version_id"] != node_version_id or run["status"] != "succeeded":
-            raise ModelGatewayRequiredError("model result is not the successful current Gateway run")
-        if run["via_model_gateway"] != 1 or run["data_identity"] != self.data_identity:
-            raise ModelGatewayRequiredError("formal output requires a matching ModelGateway record")
+            raise ModelGatewayRequiredError("execution result is not the successful current run")
+        if int(run["via_model_gateway"]) != expected_via_model_gateway or run["data_identity"] != self.data_identity:
+            raise ModelGatewayRequiredError("execution result does not match the expected execution boundary")
         request = {"task_id": task_id, "node_version_id": node_version_id, "model_run_id": model_run_id, "output_ref": output_ref}
-        replay = self._replay("complete_node_from_model", idempotency_key, request)
+        replay = self._replay(command_name, idempotency_key, request)
         if replay:
             return replay
         output_version_id, revision = _id("version"), int(task["task_revision"]) + 1
@@ -2455,9 +2500,57 @@ class Stage0ContentProductionCore:
             self.conn.execute("UPDATE stage0_model_run SET output_version_id=? WHERE model_run_id=?", (output_version_id, model_run_id))
             self._set_task(task_id, node=request_version["node"], version_id=output_version_id, status="awaiting_human_review", revision=revision)
             result = {"node_version_id": output_version_id, "task_revision": str(revision)}
-            self._receipt("complete_node_from_model", idempotency_key, request, result)
-            self._audit(task_id, "model_output_awaiting_human_review", {**result, "model_run_id": model_run_id})
+            self._receipt(command_name, idempotency_key, request, result)
+            self._audit(task_id, "external_output_awaiting_human_review" if expected_via_model_gateway == 0 else "model_output_awaiting_human_review", {**result, "model_run_id": model_run_id})
         return result
+
+    def record_external_node_execution(
+        self,
+        *,
+        task_id: str,
+        node_version_id: str,
+        execution_id: str,
+        executor_id: str,
+        model_ref: str | None,
+        submitted_at: str | None,
+        output_payload: dict[str, Any],
+    ) -> str:
+        """Record an outside execution as an audit fact, without a model call."""
+        task, version = self._task(task_id), self._version(node_version_id)
+        execution_id, executor_id = str(execution_id or "").strip(), str(executor_id or "").strip()
+        if not execution_id or not executor_id or not isinstance(output_payload, dict):
+            raise StateTransitionError("external result requires execution identity and structured fields")
+        self._assert_current_node(task, version["node"], "processing", node_version_id)
+        if version["task_id"] != task_id:
+            raise StateTransitionError("external result does not belong to the current task")
+        existing = self.conn.execute(
+            "SELECT model_run_id FROM stage0_model_run WHERE task_id=? AND node_version_id=? AND input_assembly_id=?",
+            (task_id, node_version_id, version["input_assembly_id"]),
+        ).fetchone()
+        if existing is not None:
+            raise StateTransitionError("this intelligent input already has an execution result")
+        assembly = self._assembly(str(version["input_assembly_id"]))
+        assembly_payload = json.loads(str(assembly["payload_json"]))
+        model_run_id = _id("external_model_run")
+        model_ref = str(model_ref or "not_reported").strip() or "not_reported"
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage0_model_run VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    model_run_id, task_id, version["node"], node_version_id, version["input_assembly_id"],
+                    "succeeded", execution_id, str(assembly_payload.get("prompt_version") or version["node"]),
+                    str(assembly_payload.get("skill_version") or FORMAL_SKILL_BY_NODE.get(version["node"], version["node"])),
+                    f"external.{version['node']}", EXTERNAL_INTELLIGENCE_EXECUTION_VERSION,
+                    executor_id, "external_executor", model_ref, str(assembly["integrity_hash"]), _hash(output_payload),
+                    None, "not_validated", _canonical({}), "not_retried", _canonical({}), _canonical({}), 0,
+                    self.data_identity, _now(), 0,
+                ),
+            )
+            self._audit(task_id, "external_intelligence_result_recorded", {
+                "model_run_id": model_run_id, "execution_id": execution_id,
+                "executor_id": executor_id, "model_ref": model_ref, "submitted_at": submitted_at,
+            })
+        return model_run_id
 
     def approve_current_node(self, *, task_id: str, version_id: str, actor: str, actor_kind: str, reason: str, idempotency_key: str) -> dict[str, str]:
         task, version = self._task(task_id), self._version(version_id)
@@ -2578,6 +2671,127 @@ class Stage0ContentProductionCore:
             self._receipt("cancel_current_task", idempotency_key, request, result)
             self._audit(task_id, "task_cancelled", result)
         return result
+
+    def record_external_experience_candidate_execution(
+        self,
+        *,
+        experience_candidate_id: str,
+        execution_id: str,
+        executor_id: str,
+        model_ref: str | None,
+        submitted_at: str | None,
+        input_payload: dict[str, Any],
+        output_payload: dict[str, Any],
+    ) -> str:
+        candidate = self._experience_candidate(experience_candidate_id)
+        if str(candidate["status"]) != "preparing":
+            raise StateTransitionError("experience candidate is not ready for an external result")
+        execution_id, executor_id = str(execution_id or "").strip(), str(executor_id or "").strip()
+        if not execution_id or not executor_id or not isinstance(input_payload, dict) or not isinstance(output_payload, dict):
+            raise StateTransitionError("external experience result needs identity and structured fields")
+        model_run_id = _id("experience_external_execution")
+        model_ref = str(model_ref or "not_reported").strip() or "not_reported"
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage0_experience_candidate_model_run VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    model_run_id, experience_candidate_id, "succeeded",
+                    "external.experience_candidate_propose", executor_id, model_ref,
+                    _hash(input_payload), _hash(output_payload),
+                    _canonical({"execution_id": execution_id, "executor_id": executor_id, "model_ref": model_ref, "submitted_at": submitted_at}),
+                    self.data_identity, _now(),
+                ),
+            )
+            self._audit(candidate["task_id"], "external_experience_candidate_result_recorded", {
+                "experience_candidate_id": experience_candidate_id,
+                "experience_candidate_model_run_id": model_run_id,
+                "execution_id": execution_id,
+                "executor_id": executor_id,
+                "model_ref": model_ref,
+            })
+        return model_run_id
+
+    def record_external_competitor_execution(
+        self,
+        *,
+        registration_id: str,
+        source_id: str,
+        execution_id: str,
+        executor_id: str,
+        model_ref: str | None,
+        submitted_at: str | None,
+        input_payload: dict[str, Any],
+        output_payload: dict[str, Any],
+    ) -> str:
+        registration = self.get_competitor_registration(registration_id=registration_id)
+        if not str(source_id or "").strip() or not str(execution_id or "").strip() or not str(executor_id or "").strip():
+            raise StateTransitionError("external competitor result needs registration, source and execution identity")
+        material = self.conn.execute(
+            "SELECT 1 FROM stage0_competitor_registration_item WHERE registration_id=? "
+            "AND step_name='transcripts_and_comments' AND item_ref=? AND status='completed' AND data_identity=?",
+            (registration_id, source_id, self.data_identity),
+        ).fetchone()
+        if material is None:
+            raise StateTransitionError("external competitor result requires retained spoken material")
+        if not isinstance(input_payload, dict) or not isinstance(output_payload, dict):
+            raise StateTransitionError("external competitor result must be structured fields")
+        model_run_id = _id("competitor_external_execution")
+        model_ref = str(model_ref or "not_reported").strip() or "not_reported"
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage0_competitor_registration_model_run VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    model_run_id, registration_id, "breakdown", "succeeded",
+                    "external.competitor_breakdown", executor_id, model_ref,
+                    _hash(input_payload), _hash(output_payload), _canonical({}), _canonical({}), _canonical({}), 0,
+                    self.data_identity, _now(),
+                ),
+            )
+            self._audit(None, "external_competitor_breakdown_result_recorded", {
+                "registration_id": registration_id, "source_id": source_id,
+                "registration_status": registration["status"], "model_run_id": model_run_id,
+                "execution_id": execution_id, "executor_id": executor_id,
+                "model_ref": model_ref, "submitted_at": submitted_at,
+            })
+        return model_run_id
+
+    def record_external_daily_hit_execution(
+        self,
+        *,
+        hit_id: str,
+        execution_id: str,
+        executor_id: str,
+        model_ref: str | None,
+        submitted_at: str | None,
+        input_payload: dict[str, Any],
+        output_payload: dict[str, Any],
+    ) -> str:
+        hit = self.conn.execute(
+            "SELECT preparation_status FROM hits WHERE hit_id=? AND data_identity=?",
+            (hit_id, self.data_identity),
+        ).fetchone()
+        if hit is None or hit["preparation_status"] != "completed":
+            raise StateTransitionError("external daily result requires completed hit material")
+        if not str(execution_id or "").strip() or not str(executor_id or "").strip() or not isinstance(input_payload, dict) or not isinstance(output_payload, dict):
+            raise StateTransitionError("external daily result needs identity and structured fields")
+        model_run_id = _id("daily_hit_external_execution")
+        model_ref = str(model_ref or "not_reported").strip() or "not_reported"
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage0_daily_hit_model_run VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    model_run_id, hit_id, "succeeded", "external.competitor_breakdown",
+                    executor_id, model_ref, _hash(input_payload), _hash(output_payload),
+                    _canonical({"execution_id": str(execution_id), "submitted_at": submitted_at}),
+                    _canonical({}), _canonical({}), 0, self.data_identity, _now(),
+                ),
+            )
+            self._audit(None, "external_daily_hit_breakdown_result_recorded", {
+                "hit_id": hit_id, "model_run_id": model_run_id,
+                "execution_id": str(execution_id), "executor_id": str(executor_id),
+                "model_ref": model_ref,
+            })
+        return model_run_id
 
     def _persist_experience_candidate_gateway_envelope(self, envelope: ModelRunEnvelope, binding: dict[str, Any]) -> str:
         if binding.get("data_identity") != self.data_identity:

@@ -697,6 +697,10 @@ class CreationAssistantFormalBusinessCore:
         research_gateway: Any | None = None,
     ) -> dict[str, Any]:
         """Apply one named research operation using the existing Core services."""
+        # The formal route no longer chooses or calls a model.  The parameter
+        # remains accepted for transport compatibility, but an external
+        # executor must submit its structured result through Core.
+        del research_gateway
 
         from scripts.core.production.stage1a_research_plan import (
             Stage1AResearchPlanService,
@@ -745,7 +749,7 @@ class CreationAssistantFormalBusinessCore:
                 )
             service = Stage1AResearchPlanService(
                 core=self.core,
-                gateway=research_gateway,
+                gateway=None,
             )
             return service.create_direct_formal_topic_and_generate_plan(
                 domain_label=str(domain_label),
@@ -818,7 +822,7 @@ class CreationAssistantFormalBusinessCore:
                     "retry_plan requires a failed or manually requeued research_plan task"
                 )
             plan = Stage1AResearchPlanService(
-                core=self.core, gateway=research_gateway
+                core=self.core, gateway=None
             ).generate_research_plan(
                 task_id=str(task_id),
                 user_requirements=user_requirements,
@@ -828,7 +832,8 @@ class CreationAssistantFormalBusinessCore:
             return {
                 **retry,
                 "research_plan_version_id": plan["node_version_id"],
-                "research_plan_status": "awaiting_human_review",
+                "research_plan_status": str(plan.get("status") or "awaiting_human_review"),
+                **({"external_task": plan["task"]} if isinstance(plan.get("task"), dict) else {}),
             }
 
         if action == "revise_plan":
@@ -840,7 +845,7 @@ class CreationAssistantFormalBusinessCore:
                 "idempotency_key",
             )
             service = Stage1AResearchPlanService(
-                core=self.core, gateway=research_gateway
+                core=self.core, gateway=None
             )
             returned = service.return_research_plan(
                 task_id=str(task_id),
@@ -858,7 +863,8 @@ class CreationAssistantFormalBusinessCore:
             return {
                 **returned,
                 "research_plan_version_id": plan["node_version_id"],
-                "research_plan_status": "awaiting_human_review",
+                "research_plan_status": str(plan.get("status") or "awaiting_human_review"),
+                **({"external_task": plan["task"]} if isinstance(plan.get("task"), dict) else {}),
             }
 
         if action == "run_research":

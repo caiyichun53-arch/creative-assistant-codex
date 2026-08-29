@@ -33,6 +33,8 @@ from scripts.core.model_gateway.formal_skill_adapter import (
     FormalBusinessSkillAdapter,
     FormalSkillContract,
     FormalSkillValidationError,
+    prepare_external_skill_task,
+    validate_external_skill_output,
 )
 from scripts.core.model_gateway.configured_provider import build_configured_model_provider
 from scripts.core.runtime.liveness import budget_for
@@ -44,6 +46,7 @@ from scripts.core.production.stage0_content_core import (
     Stage0ContentProductionCore,
     StateTransitionError,
 )
+from scripts.core.production.stage1b_daily_discovery import ExternalIntelligenceRequired
 from scripts.core.runtime.runtime_storage import require_runtime_path, runtime_path
 from scripts.core.production.high_signal_policy import (
     FIRST_REGISTRATION_MAX_ITEMS,
@@ -595,7 +598,8 @@ class ConfiguredCompetitorRegistrationExecutor:
         collector: MediaCrawlerCollectorAdapter,
         transcriber: AsrAdapter,
         media_materializer: LocalCompetitorMediaMaterializer,
-        gateway: ModelGateway,
+        gateway: ModelGateway | None = None,
+        external_executor: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         max_historical_items: int = FIRST_REGISTRATION_MAX_ITEMS,
         progress_callback: Callable[[str, str], None] | None = None,
         on_material_change: Callable[[str], None] | None = None,
@@ -609,6 +613,7 @@ class ConfiguredCompetitorRegistrationExecutor:
         self.transcriber = transcriber
         self.media_materializer = media_materializer
         self.gateway = gateway
+        self.external_executor = external_executor
         self.max_historical_items = max_historical_items
         self.progress_callback = progress_callback
         self.on_material_change = on_material_change
@@ -1412,6 +1417,81 @@ class ConfiguredCompetitorRegistrationExecutor:
             "metrics": material["metrics"],
             "comments": material["comments"],
         }
+        # A historical isolated test constructs this worker with ``__new__``
+        # and patches the legacy model helper.  Keep that test-only shape
+        # working while every normal constructed worker uses the external
+        # boundary when its gateway is explicitly absent.
+        if hasattr(self, "gateway") and self.gateway is None:
+            content_type_lifecycle = (
+                "discover" if str(registration.get("status") or "").strip() == "processing" else "classify"
+            )
+            input_payload = {
+                "correlation_id": f"{registration['registration_id']}:breakdown:{source_id}",
+                "source_id": source_id,
+                "transcript": transcript_text,
+                "metrics": dict(material["metrics"]),
+                "comments": list(material["comments"]),
+                "domain_label": str(registration.get("domain_label") or "generic"),
+                "domain_context": _breakdown_domain_context(
+                    str(registration.get("domain_label") or "generic"),
+                    observed_content_types=self.core.observed_breakdown_content_types(
+                        domain_label=str(registration.get("domain_label") or "generic")
+                    ),
+                    content_type_lifecycle=content_type_lifecycle,
+                ),
+                "schema_version": "competitor_breakdown.input.v1",
+            }
+            task, _ = prepare_external_skill_task(
+                FormalSkillContract.from_runtime_skill("competitor_breakdown"),
+                input_payload,
+                constraints={
+                    "use_only_supplied_material": True,
+                    "preserve_source_identity": True,
+                    "cannot_change_business_state": True,
+                    "do_not_search": True,
+                    "no_fuzzy_evidence_matching": True,
+                },
+                business_context={
+                    "registration_id": str(registration["registration_id"]),
+                    "source_id": source_id,
+                    "origin": "cold_start_intelligent_judgment" if registration.get("cold_start_id") else "competitor_breakdown",
+                    "data_identity": self.core.data_identity,
+                },
+            )
+            if self.external_executor is None:
+                raise ExternalIntelligenceRequired(task)
+            submission = self.external_executor(task)
+            external_output = submission.get("output") if isinstance(submission, dict) else None
+            model_run_id = self.core.record_external_competitor_execution(
+                registration_id=str(registration["registration_id"]),
+                source_id=source_id,
+                execution_id=str(submission.get("execution_id") or "") if isinstance(submission, dict) else "",
+                executor_id=str(submission.get("executor_id") or "") if isinstance(submission, dict) else "",
+                model_ref=str(submission.get("model_ref") or "") if isinstance(submission, dict) else None,
+                submitted_at=str(submission.get("submitted_at") or "") if isinstance(submission, dict) else None,
+                input_payload=input_payload,
+                output_payload=external_output,
+            )
+            try:
+                artifact = validate_external_skill_output(
+                    FormalSkillContract.from_runtime_skill("competitor_breakdown"),
+                    input_payload,
+                    external_output,
+                )
+                self._validate_core_breakdown_artifact(artifact=artifact, source_id=source_id)
+            except Exception as exc:
+                self.core.conn.execute(
+                    "UPDATE stage0_competitor_registration_model_run SET error_json=? WHERE registration_model_run_id=?",
+                    (json.dumps({"validation_error": str(exc)}, ensure_ascii=False), model_run_id),
+                )
+                raise
+            return {
+                "artifact_kind": "deep_breakdown",
+                "source_id": source_id,
+                "model_run_id": model_run_id,
+                "raw_model_output": json.dumps(artifact, ensure_ascii=False, sort_keys=True),
+                "deep_breakdown": artifact,
+            }
         value, model_run_id, raw_model_output = self._model_json(
             registration=registration,
             step_name="breakdown",
@@ -1447,6 +1527,8 @@ class ConfiguredCompetitorRegistrationExecutor:
                 material=material,
                 attempt_kind="initial",
             )
+        except ExternalIntelligenceRequired:
+            raise
         except Exception as exc:
             error = self._breakdown_failure_record(exc)
             # Replacement candidates do not pass through the normal item
@@ -1637,6 +1719,8 @@ class ConfiguredCompetitorRegistrationExecutor:
                     delivery_retry_queue.append(material)
                     continue
                 continue
+            except ExternalIntelligenceRequired:
+                raise
             except Exception as exc:
                 error = self._breakdown_failure_record(exc)
                 self._record_atomic_breakdown_failure(
@@ -1741,11 +1825,13 @@ def build_configured_competitor_registration_executor(
     core: Stage0ContentProductionCore,
     *,
     progress_callback: Callable[[str, str], None] | None = None,
-    task_model_binding: dict[str, Any],
+    task_model_binding: dict[str, Any] | None = None,
     stream_breakdowns: bool = False,
+    external_executor: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     on_material_change: Callable[[str], None] | None = None,
 ) -> ConfiguredCompetitorRegistrationExecutor:
-    """Bind the generic worker to the real local collector, media, ASR and configured model route."""
+    """Bind collection/material preparation to the external intelligence boundary."""
+    del task_model_binding, stream_breakdowns
     archive_root = require_runtime_path(Path(
         os.environ.get("COMPETITOR_REGISTRATION_ARCHIVE_ROOT")
         or runtime_path("formal", "competitor_registration_runtime")
@@ -1772,11 +1858,8 @@ def build_configured_competitor_registration_executor(
             archive_root=archive_root / "media",
             ffmpeg_executable=Path(external_runtime_value("FFMPEG_PATH")),
         ),
-        gateway=build_production_competitor_registration_gateway(
-            core,
-            task_model_binding=task_model_binding,
-            stream_responses=stream_breakdowns,
-        ),
+        gateway=None,
+        external_executor=external_executor,
         max_historical_items=configured_first_registration_item_limit(),
         progress_callback=progress_callback,
         on_material_change=on_material_change,

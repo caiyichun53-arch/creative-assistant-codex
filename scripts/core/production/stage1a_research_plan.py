@@ -11,6 +11,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelGatewayError
@@ -18,6 +19,8 @@ from scripts.core.model_gateway.formal_skill_adapter import (
     FormalBusinessSkillAdapter,
     FormalSkillContract,
     FormalSkillValidationError,
+    prepare_external_skill_task,
+    validate_external_skill_output,
 )
 from scripts.core.model_gateway.configured_provider import build_configured_model_provider
 from scripts.core.runtime.liveness import budget_for
@@ -27,6 +30,10 @@ from scripts.core.production.stage0_content_core import (
     InputAssembly,
     Stage0ContentProductionCore,
     StateTransitionError,
+)
+from scripts.core.production.stage1b_daily_discovery import (
+    ExternalIntelligenceReceipt,
+    ExternalIntelligenceRequired,
 )
 
 
@@ -169,13 +176,20 @@ def build_research_plan_gateway(core: Stage0ContentProductionCore) -> ModelGatew
 class Stage1AResearchPlanService:
     """Only the controlled formal-topic -> research-plan-awaiting-review path."""
 
-    def __init__(self, *, core: Stage0ContentProductionCore, gateway: ModelGateway):
+    def __init__(
+        self,
+        *,
+        core: Stage0ContentProductionCore,
+        gateway: ModelGateway | None = None,
+        external_executor: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
+    ):
         self.core = core
         self.gateway = gateway
+        self.external_executor = external_executor
 
     def submit_formal_topic(
         self, *, topic_payload: dict[str, Any], actor: str, reason: str, idempotency_key: str
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         return self.core.submit_formal_topic(
             topic_payload=validate_formal_topic_payload(topic_payload),
             actor=actor,
@@ -227,7 +241,12 @@ class Stage1AResearchPlanService:
             actor=actor,
             idempotency_key=f"{idempotency_key}:research-plan",
         )
-        return {**direct, "research_plan_version_id": plan["node_version_id"], "research_plan_status": "awaiting_human_review"}
+        return {
+            **direct,
+            "research_plan_version_id": plan["node_version_id"],
+            "research_plan_status": str(plan.get("status") or "awaiting_human_review"),
+            **({"external_task": plan["task"]} if isinstance(plan.get("task"), dict) else {}),
+        }
 
     def view_artifact(self, *, version_id: str) -> dict[str, Any]:
         return self.core.get_artifact_payload(version_id)
@@ -266,67 +285,132 @@ class Stage1AResearchPlanService:
         input_assembly = self.core.get_input_assembly_payload(
             request_version["input_assembly_id"]
         )
-        try:
-            contract = FormalSkillContract.from_runtime_skill("research_plan")
-            skill_result = FormalBusinessSkillAdapter(
-                contract=contract, gateway=self.gateway
-            ).run(
-                {
-                    "correlation_id": task_id,
-                    "input_assembly": input_assembly,
-                    "schema_version": "research_plan.input.v1",
-                },
-                request_metadata=self.core.prepare_atomic_skill_binding(
-                    task_id=task_id, node_version_id=request_version_id
-                ),
+        if self.gateway is None:
+            external_task = self.prepare_research_plan_external_task(
+                task_id=task_id, node_version_id=request_version_id
             )
-        except FormalSkillValidationError as exc:
-            self.core.fail_current_node_from_model(
-                task_id=task_id, node_version_id=request_version_id,
-                model_run_id=exc.model_run_envelope_version_id,
-                failure_stage=("model_output_validation" if exc.model_run_envelope_version_id else "model_execution"),
-                reason=str(exc), raw_model_output=exc.raw_model_output,
-            )
-            raise
-        except ModelGatewayError as exc:
-            self.core.fail_current_node_from_model(
-                task_id=task_id, node_version_id=request_version_id,
-                model_run_id=exc.model_run_envelope_version_id,
-                failure_stage="model_execution", reason=str(exc), raw_model_output=None,
-            )
-            raise
-        try:
-            plan = validate_research_plan_payload(skill_result.output_payload)
-        except ResearchPlanValidationError as exc:
-            message = str(exc)
-            self.core.record_model_validation_failure(
+            if self.external_executor is None:
+                return {
+                    "task_id": task_id,
+                    "node_version_id": request_version_id,
+                    "status": "requires_external_intelligence",
+                    "task": external_task,
+                }
+            submission = self.external_executor(external_task)
+            return self.submit_research_plan_external_result(
                 task_id=task_id,
                 node_version_id=request_version_id,
-                model_run_id=skill_result.model_run_envelope_version_id,
-                reason=message,
-                raw_model_output=skill_result.raw_model_output,
+                execution_id=str(submission.get("execution_id") or ""),
+                executor_id=str(submission.get("executor_id") or ""),
+                model_ref=str(submission.get("model_ref") or "") or None,
+                submitted_at=str(submission.get("submitted_at") or "") or None,
+                output=submission.get("output"),
+                actor=actor,
+                idempotency_key=f"{idempotency_key}:external-complete",
             )
-            raise ResearchPlanValidationError(message) from exc
-        result = self.core.complete_node_from_model(
+        raise StateTransitionError(
+            "research-plan model execution must be submitted by an external executor"
+        )
+
+    def prepare_research_plan_external_task(
+        self, *, task_id: str, node_version_id: str | None = None
+    ) -> dict[str, Any]:
+        task = self.core.get_task(task_id)
+        version_id = node_version_id or str(task.get("current_version_id") or "")
+        version = self.core.get_node_version(version_id)
+        if (
+            task["current_node"] != "research_plan"
+            or task["current_status"] != "processing"
+            or version["task_id"] != task_id
+            or version["node"] != "research_plan"
+            or task["current_version_id"] != version_id
+        ):
+            raise StateTransitionError("research plan external task requires the current processing version")
+        input_assembly = self.core.get_input_assembly_payload(str(version["input_assembly_id"]))
+        task_payload, _ = prepare_external_skill_task(
+            FormalSkillContract.from_runtime_skill("research_plan"),
+            {
+                "correlation_id": task_id,
+                "input_assembly": input_assembly,
+                "schema_version": "research_plan.input.v1",
+            },
+            constraints={
+                "use_only_supplied_material": True,
+                "do_not_search": True,
+                "cannot_change_business_state": True,
+                "do_not_approve_or_skip_human_review": True,
+            },
+            business_context={
+                "task_id": task_id,
+                "node": "research_plan",
+                "node_version_id": version_id,
+                "input_assembly_id": str(version["input_assembly_id"]),
+                "data_identity": self.core.data_identity,
+            },
+        )
+        return task_payload
+
+    def submit_research_plan_external_result(
+        self,
+        *,
+        task_id: str,
+        node_version_id: str,
+        execution_id: str,
+        executor_id: str,
+        model_ref: str | None,
+        submitted_at: str | None,
+        output: dict[str, Any],
+        actor: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        task = self.core.get_task(task_id)
+        version = self.core.get_node_version(node_version_id)
+        input_assembly = self.core.get_input_assembly_payload(str(version["input_assembly_id"]))
+        contract = FormalSkillContract.from_runtime_skill("research_plan")
+        _, prepared = prepare_external_skill_task(
+            contract,
+            {"correlation_id": task_id, "input_assembly": input_assembly, "schema_version": "research_plan.input.v1"},
+            constraints={},
+        )
+        model_run_id = self.core.record_external_node_execution(
             task_id=task_id,
-            node_version_id=request_version_id,
-            model_run_id=skill_result.model_run_envelope_version_id,
+            node_version_id=node_version_id,
+            execution_id=execution_id,
+            executor_id=executor_id,
+            model_ref=model_ref,
+            submitted_at=submitted_at,
+            output_payload=output,
+        )
+        try:
+            validated = validate_external_skill_output(
+                contract,
+                {"correlation_id": task_id, "input_assembly": input_assembly, "schema_version": "research_plan.input.v1"},
+                output,
+                prepared=prepared,
+            )
+            plan = validate_research_plan_payload(validated)
+        except (FormalSkillValidationError, ResearchPlanValidationError) as exc:
+            self.core.record_model_validation_failure(
+                task_id=task_id,
+                node_version_id=node_version_id,
+                model_run_id=model_run_id,
+                reason=str(exc),
+                raw_model_output=None,
+            )
+            raise FormalSkillValidationError(
+                str(exc), model_run_envelope_version_id=model_run_id
+            ) from exc
+        return self.core.complete_node_from_external_result(
+            task_id=task_id,
+            node_version_id=node_version_id,
+            model_run_id=model_run_id,
             output_ref=_payload_hash(plan),
             validation_status="passed",
             actor=actor,
-            expected_task_revision=int(request_version["task_revision"]),
-            idempotency_key=f"{idempotency_key}:complete",
+            expected_task_revision=int(task["task_revision"]),
+            idempotency_key=idempotency_key,
             artifact_payload=plan,
         )
-        self.core.record_completed_command(
-            command="stage1a_generate_research_plan",
-            idempotency_key=idempotency_key,
-            request=service_request,
-            task_id=task_id,
-            event="stage1a_research_plan_generated",
-            result=result,
-        )
-        return result
 
     def return_research_plan(
         self,

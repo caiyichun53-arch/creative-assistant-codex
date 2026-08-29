@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelGatewayError
 from scripts.core.model_gateway.goal07_skill_runner import SkillContractError
-from scripts.core.model_gateway.formal_skill_adapter import FormalBusinessSkillAdapter, FormalSkillContract, FormalSkillValidationError
+from scripts.core.model_gateway.formal_skill_adapter import (
+    FormalBusinessSkillAdapter,
+    FormalSkillContract,
+    FormalSkillValidationError,
+    prepare_external_skill_task,
+    validate_external_skill_output,
+)
 from scripts.core.model_gateway.configured_provider import build_configured_model_provider
 from scripts.core.model_gateway.model_router import ModelRouter, ModelRouterError
 from scripts.core.production.stage0_content_core import CoreExperienceCandidateModelRunMaterializer, Stage0ContentProductionCore, StateTransitionError
 from scripts.core.production.stage1a_research_plan import _configured_environment_value
+from scripts.core.production.stage1b_daily_discovery import ExternalIntelligenceRequired
 from scripts.core.runtime.liveness import budget_for
 
 
@@ -226,9 +235,130 @@ def _validate_output(
 
 
 class ExperienceCandidateProposalService:
-    def __init__(self, *, core: Stage0ContentProductionCore, gateway: ModelGateway):
+    def __init__(
+        self,
+        *,
+        core: Stage0ContentProductionCore,
+        gateway: ModelGateway | None = None,
+        external_executor: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
+    ):
         self.core = core
-        self.gateway = gateway
+        # Keep the old constructor argument as transport compatibility only.
+        # Experience proposals are always completed by an external executor;
+        # this service must never retain a model gateway for that path.
+        del gateway
+        self.gateway = None
+        self.external_executor = external_executor
+
+    def _external_candidate_task(
+        self,
+        *,
+        candidate_id: str,
+        input_payload: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        task, _ = prepare_external_skill_task(
+            FormalSkillContract.from_runtime_skill("experience_candidate_propose"),
+            input_payload,
+            constraints={
+                "use_only_supplied_material": True,
+                "preserve_source_identity": True,
+                "cannot_change_business_state": True,
+                "proposal_is_not_a_formal_rule": True,
+                "do_not_apply_without_user_decision": True,
+            },
+            business_context={
+                "experience_candidate_id": candidate_id,
+                "data_identity": self.core.data_identity,
+                **context,
+            },
+        )
+        return task
+
+    def _submit_external_candidate(
+        self,
+        *,
+        candidate_id: str,
+        selected: dict[str, Any],
+        input_payload: dict[str, Any],
+        submission: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        output = submission.get("output")
+        model_run_id = self.core.record_external_experience_candidate_execution(
+            experience_candidate_id=candidate_id,
+            execution_id=str(submission.get("execution_id") or ""),
+            executor_id=str(submission.get("executor_id") or ""),
+            model_ref=str(submission.get("model_ref") or "") or None,
+            submitted_at=str(submission.get("submitted_at") or "") or None,
+            input_payload=input_payload,
+            output_payload=output,
+        )
+        try:
+            validated = validate_external_skill_output(
+                FormalSkillContract.from_runtime_skill("experience_candidate_propose"),
+                input_payload,
+                output,
+            )
+            proposal = _validate_output(
+                validated,
+                allowed_source_ids={item["source_id"] for item in selected["sources"]},
+                source_account_refs=_source_account_refs(selected["sources"]),
+                source_breakdowns=selected["sources"],
+            )
+        except (FormalSkillValidationError, ExperienceCandidateValidationError) as exc:
+            self.core.conn.execute(
+                "UPDATE stage0_experience_candidate_model_run SET envelope_json=? WHERE experience_candidate_model_run_id=?",
+                (json.dumps({"validation_error": str(exc), "execution_id": str(submission.get("execution_id") or "")}, ensure_ascii=False, sort_keys=True), model_run_id),
+            )
+            raise FormalSkillValidationError(str(exc), model_run_envelope_version_id=model_run_id) from exc
+        return self.core.complete_experience_candidate(
+            experience_candidate_id=candidate_id,
+            proposal=proposal,
+            model_run_id=model_run_id,
+        )
+
+    def submit_experience_candidate_external_result(
+        self,
+        *,
+        task: Mapping[str, Any],
+        execution_id: str,
+        executor_id: str,
+        model_ref: str | None,
+        submitted_at: str | None,
+        output: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Submit a task-package result through the Core candidate boundary."""
+        context = task.get("business_context") if isinstance(task.get("business_context"), Mapping) else {}
+        candidate_id = str(context.get("experience_candidate_id") or "")
+        task_input = task.get("input") if isinstance(task.get("input"), Mapping) else {}
+        sources = task_input.get("frozen_breakdowns")
+        if not candidate_id or not isinstance(sources, list):
+            raise StateTransitionError("external experience task is missing its Core identity")
+        input_payload = {
+            "correlation_id": candidate_id,
+            "domain_label": task_input.get("domain_label"),
+            "content_plan_context": task_input.get("content_plan_context"),
+            "frozen_breakdowns": sources,
+            "schema_version": "experience_candidate_propose.input.v1",
+        }
+        candidate = self.core._experience_candidate(candidate_id)
+        completed = self._submit_external_candidate(
+            candidate_id=candidate_id,
+            selected={
+                "domain_label": str(candidate["domain_label"]),
+                "sources": list(sources),
+                "content_type": "external",
+            },
+            input_payload=input_payload,
+            submission={
+                "execution_id": execution_id,
+                "executor_id": executor_id,
+                "model_ref": model_ref,
+                "submitted_at": submitted_at,
+                "output": output,
+            },
+        )
+        return completed
 
     def prepare_for_content_plan(self, *, task_id: str, actor: str) -> dict[str, Any] | None:
         existing = self.core.list_task_experience_candidates(task_id=task_id)
@@ -248,53 +378,43 @@ class ExperienceCandidateProposalService:
             task_id=task_id, domain_label=selected["domain_label"], frozen_sources=selected["sources"], actor=actor,
         )
         candidate_id = opened["experience_candidate_id"]
-        model_run_id: str | None = None
-        raw_model_output: str | None = None
-        try:
-            task = self.core.get_task(task_id)
-            upstream = self.core.get_artifact_payload(str(task["current_version_id"]))
-            result = FormalBusinessSkillAdapter(
-                contract=FormalSkillContract.from_runtime_skill("experience_candidate_propose"), gateway=self.gateway,
-            ).run(
-                {
-                    "correlation_id": candidate_id,
-                    "domain_label": selected["domain_label"],
-                    "content_plan_context": {
-                        "topic": self.core.get_artifact_payload(str(task["topic_version_id"]))["payload"],
-                        "approved_research": upstream["payload"],
-                        "existing_experience_summaries": _existing_experience_summaries(
-                            self.core, domain_label=selected["domain_label"]
-                        ),
-                    },
-                    "frozen_breakdowns": selected["sources"],
-                    "schema_version": "experience_candidate_propose.input.v1",
-                },
-                request_metadata={"experience_candidate_core": {"experience_candidate_id": candidate_id, "data_identity": self.core.data_identity}},
-            )
-            model_run_id = result.model_run_envelope_version_id
-            raw_model_output = result.raw_model_output
-            output = _validate_output(
-                result.output_payload,
-                allowed_source_ids={item["source_id"] for item in selected["sources"]},
-                source_account_refs=_source_account_refs(selected["sources"]),
-                source_breakdowns=selected["sources"],
-            )
-        except (ModelGatewayError, FormalSkillValidationError, ExperienceCandidateValidationError, SkillContractError) as exc:
-            if isinstance(exc, FormalSkillValidationError):
-                model_run_id = exc.model_run_envelope_version_id or model_run_id
-                raw_model_output = exc.raw_model_output or raw_model_output
-            self.core.fail_experience_candidate(
-                experience_candidate_id=candidate_id, reason=str(exc), model_run_id=model_run_id,
-                raw_model_output=raw_model_output,
-            )
-            # A new experience is optional for this plan.  Its failed atomic
-            # run remains visible and is never retried automatically, while
-            # the independently supported content plan may proceed.
-            return None
-        completed = self.core.complete_experience_candidate(
-            experience_candidate_id=candidate_id, proposal=output, model_run_id=result.model_run_envelope_version_id,
+        task = self.core.get_task(task_id)
+        upstream = self.core.get_artifact_payload(str(task["current_version_id"]))
+        input_payload = {
+            "correlation_id": candidate_id,
+            "domain_label": selected["domain_label"],
+            "content_plan_context": {
+                "topic": self.core.get_artifact_payload(str(task["topic_version_id"]))["payload"],
+                "approved_research": upstream["payload"],
+                "existing_experience_summaries": _existing_experience_summaries(
+                    self.core, domain_label=selected["domain_label"]
+                ),
+            },
+            "frozen_breakdowns": selected["sources"],
+            "schema_version": "experience_candidate_propose.input.v1",
+        }
+        external_task = self._external_candidate_task(
+            candidate_id=candidate_id,
+            input_payload=input_payload,
+            context={"task_id": task_id, "origin": "content_plan_experience_proposal"},
         )
-        return self.core.list_task_experience_candidates(task_id=task_id)[-1] if completed["status"] == "awaiting_human_decision" else None
+        if self.external_executor is None:
+            return {
+                "experience_candidate_id": candidate_id,
+                "status": "requires_external_intelligence",
+                "source_ids": [item["source_id"] for item in selected["sources"]],
+                "source_count": len(selected["sources"]),
+                "content_type": selected["content_type"],
+                "task": external_task,
+            }
+        submission = self.external_executor(external_task)
+        completed = self._submit_external_candidate(
+            candidate_id=candidate_id,
+            selected=selected,
+            input_payload=input_payload,
+            submission=submission,
+        )
+        return self.core.list_task_experience_candidates(task_id=task_id)[-1] if completed["status"] == "awaiting_human_decision" else completed
 
     def prepare_before_topic(
         self,
@@ -333,6 +453,8 @@ class ExperienceCandidateProposalService:
             actor=actor,
             experience_candidate_run_id=experience_candidate_run_id,
         )
+        if result["status"] == "requires_external_intelligence":
+            return result
         if result["status"] != "awaiting_human_decision":
             return None
         return next(
@@ -364,69 +486,45 @@ class ExperienceCandidateProposalService:
             ),
         )
         candidate_id = opened["experience_candidate_id"]
-        model_run_id: str | None = None
-        raw_model_output: str | None = None
-        try:
-            result = FormalBusinessSkillAdapter(
-                contract=FormalSkillContract.from_runtime_skill("experience_candidate_propose"), gateway=self.gateway,
-            ).run(
-                {
-                    "correlation_id": candidate_id,
-                    "domain_label": selected["domain_label"],
-                    "content_plan_context": {
-                        "stage": "pre_topic_experience_review",
-                        "domain_label": selected["domain_label"],
-                        "purpose": "从已冻结拆解中提出一条待用户确认的可复用观察；当前尚未建立正式选题。",
-                        "existing_experience_summaries": _existing_experience_summaries(
-                            self.core,
-                            domain_label=selected["domain_label"],
-                            experience_candidate_run_id=(
-                                experience_candidate_run_id
-                                or selected.get("experience_candidate_run_id")
-                            ),
-                        ),
-                    },
-                    "frozen_breakdowns": selected["sources"],
-                    "schema_version": "experience_candidate_propose.input.v1",
-                },
-                request_metadata={
-                    "experience_candidate_core": {
-                        "experience_candidate_id": candidate_id,
-                        "data_identity": self.core.data_identity,
-                    }
-                },
-            )
-            model_run_id = result.model_run_envelope_version_id
-            raw_model_output = result.raw_model_output
-            output = _validate_output(
-                result.output_payload,
-                allowed_source_ids={item["source_id"] for item in selected["sources"]},
-                source_account_refs=_source_account_refs(selected["sources"]),
-                source_breakdowns=selected["sources"],
-            )
-        except (ModelGatewayError, FormalSkillValidationError, ExperienceCandidateValidationError, SkillContractError) as exc:
-            if isinstance(exc, FormalSkillValidationError):
-                model_run_id = exc.model_run_envelope_version_id or model_run_id
-                raw_model_output = exc.raw_model_output or raw_model_output
-            self.core.fail_experience_candidate(
-                experience_candidate_id=candidate_id,
-                reason=str(exc),
-                model_run_id=model_run_id,
-                raw_model_output=raw_model_output,
-            )
+        input_payload = {
+            "correlation_id": candidate_id,
+            "domain_label": selected["domain_label"],
+            "content_plan_context": {
+                "stage": "pre_topic_experience_review",
+                "domain_label": selected["domain_label"],
+                "purpose": "浠庡凡鍐荤粨鎷嗚В涓彁鍑轰竴鏉″緟鐢ㄦ埛纭鐨勫彲澶嶇敤瑙傚療锛涘綋鍓嶅皻鏈缓绔嬫寮忛€夐銆?",
+                "existing_experience_summaries": _existing_experience_summaries(
+                    self.core,
+                    domain_label=selected["domain_label"],
+                    experience_candidate_run_id=(experience_candidate_run_id or selected.get("experience_candidate_run_id")),
+                ),
+            },
+            "frozen_breakdowns": selected["sources"],
+            "schema_version": "experience_candidate_propose.input.v1",
+        }
+        external_task = self._external_candidate_task(
+            candidate_id=candidate_id,
+            input_payload=input_payload,
+            context={
+                "origin": "pre_topic_experience_proposal",
+                "experience_candidate_run_id": experience_candidate_run_id,
+            },
+        )
+        if self.external_executor is None:
             return {
                 "experience_candidate_id": candidate_id,
-                "status": "failed",
+                "status": "requires_external_intelligence",
                 "source_ids": [item["source_id"] for item in selected["sources"]],
                 "source_count": len(selected["sources"]),
                 "content_type": selected["content_type"],
-                "failure_kind": type(exc).__name__,
-                "reason": str(exc),
+                "task": external_task,
             }
-        completed = self.core.complete_experience_candidate(
-            experience_candidate_id=candidate_id,
-            proposal=output,
-            model_run_id=result.model_run_envelope_version_id,
+        submission = self.external_executor(external_task)
+        completed = self._submit_external_candidate(
+            candidate_id=candidate_id,
+            selected=selected,
+            input_payload=input_payload,
+            submission=submission,
         )
         return {
             "experience_candidate_id": candidate_id,
@@ -477,6 +575,16 @@ class ExperienceCandidateProposalService:
                 experience_candidate_run_id=experience_candidate_run_id,
             )
             batch_results.append(result)
+            if result["status"] == "requires_external_intelligence":
+                return {
+                    "status": "requires_external_intelligence",
+                    "domain_label": domain_label,
+                    "experience_candidate_run_id": experience_candidate_run_id,
+                    "experience_candidate_id": result["experience_candidate_id"],
+                    "external_task": result.get("task"),
+                    "source_count": result["source_count"],
+                    "resumable_chunk": True,
+                }
             if result["status"] == "failed":
                 failed_source_ids.update(str(item) for item in result["source_ids"])
                 consecutive_failures += 1

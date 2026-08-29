@@ -12,16 +12,16 @@ import json
 from typing import Any
 from urllib.parse import urlsplit
 
-from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelGatewayError
+from scripts.core.model_gateway.goal07_model_gateway import ModelGateway
 from scripts.core.model_gateway.formal_skill_adapter import (
-    FormalBusinessSkillAdapter,
     FormalSkillContract,
     FormalSkillValidationError,
+    prepare_external_skill_task,
+    validate_external_skill_output,
 )
 from scripts.core.model_gateway.configured_provider import build_configured_model_provider
 from scripts.core.runtime.liveness import budget_for
 from scripts.core.model_gateway.model_router import ModelRouter, ModelRouterError
-from scripts.core.production.business_runtime_guard import AtomicSkillRuntimeError
 from scripts.core.external_adapters.anysearch_executor import (
     AnySearchExecutionError,
     AnySearchExecutor,
@@ -36,10 +36,10 @@ from scripts.core.production.stage0_content_core import (
 )
 from scripts.core.business_data.domain_labels import get_content_workflow_mode
 from scripts.core.production.stage1a_research_plan import _configured_environment_value
+from scripts.core.production.stage1b_daily_discovery import ExternalIntelligenceRequired
 from scripts.core.production.stage1d_audio_production import AudioProductionExecutor
 from scripts.core.production.experience_candidate_proposal import (
     ExperienceCandidateProposalService,
-    build_production_experience_candidate_gateway,
 )
 
 
@@ -355,9 +355,19 @@ def build_production_content_pipeline_gateway(core: Stage0ContentProductionCore)
 class Stage1CContentPipelineService:
     """Research dossier -> plan -> draft -> review, with Core-enforced human gates."""
 
-    def __init__(self, *, core: Stage0ContentProductionCore, gateway: ModelGateway):
+    def __init__(
+        self,
+        *,
+        core: Stage0ContentProductionCore,
+        gateway: ModelGateway | None = None,
+        external_executor: Any | None = None,
+    ):
         self.core = core
-        self.gateway = gateway
+        # Keep the old constructor argument as compatibility only.  All
+        # post-plan intelligent work now crosses the external-task boundary.
+        del gateway
+        self.gateway = None
+        self.external_executor = external_executor
 
     def generate(
         self,
@@ -368,7 +378,7 @@ class Stage1CContentPipelineService:
         research_refs: tuple[dict[str, Any], ...] = (),
         considered_experience: tuple[dict[str, Any], ...] = (),
         idempotency_key: str,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         task = self.core.get_task(task_id)
         node = str(task["current_node"])
         if node not in POST_PLAN_NODES or task["current_status"] != "not_started":
@@ -457,6 +467,228 @@ class Stage1CContentPipelineService:
             actor=actor,
             idempotency_key=idempotency_key,
         )
+    def _deep_research_external_input(
+        self, *, task_id: str, node_version_id: str
+    ) -> dict[str, Any]:
+        task = self.core.get_task(task_id)
+        version = self.core.get_node_version(node_version_id)
+        if task["current_node"] != "deep_research" or task["current_status"] != "processing" or task["current_version_id"] != node_version_id:
+            raise StateTransitionError("deep research external task requires the current processing version")
+        assembly_payload = self.core.get_input_assembly_payload(str(version["input_assembly_id"]))
+        topic_payload = self.core.get_artifact_payload(str(task["topic_version_id"]))["payload"]
+        explicit_subject = str(topic_payload.get("subject") or topic_payload.get("research_subject") or "").strip()
+        research_subject = _derive_research_subject(topic_payload)
+        if not research_subject:
+            raise StateTransitionError("deep research requires a formal research subject")
+        retained_materials = _screen_research_materials(self.core.list_research_materials(task_id=task_id))
+        if not retained_materials:
+            raise StateTransitionError("deep research requires retained AnySearch materials; a model may not invent or fetch facts")
+        assembly_payload.update({
+            "research_topic_title": str(topic_payload.get("title") or "").strip(),
+            "research_subject": research_subject,
+            "expected_research_subject": explicit_subject,
+            "research_refs": retained_materials,
+            "research_execution": _research_execution_trace(
+                retained_materials,
+                approved_plan=self.core.get_artifact_payload(str(version["upstream_version_id"]))["payload"],
+            ),
+        })
+        return {
+            "correlation_id": task_id,
+            "input_assembly": assembly_payload,
+            "schema_version": "content_deep_research.input.v1",
+        }
+
+    def prepare_deep_research_external_task(self, *, task_id: str, node_version_id: str) -> dict[str, Any]:
+        input_payload = self._deep_research_external_input(task_id=task_id, node_version_id=node_version_id)
+        task_payload, _ = prepare_external_skill_task(
+            FormalSkillContract.from_runtime_skill("content_deep_research"),
+            input_payload,
+            constraints={
+                "use_only_core_retained_materials": True,
+                "do_not_search": True,
+                "cannot_change_business_state": True,
+                "do_not_approve_or_skip_human_review": True,
+                "preserve_source_boundaries": True,
+            },
+            business_context={
+                "task_id": task_id,
+                "node": "deep_research",
+                "node_version_id": node_version_id,
+                "data_identity": self.core.data_identity,
+            },
+        )
+        return task_payload
+
+    def submit_deep_research_external_result(
+        self,
+        *,
+        task_id: str,
+        node_version_id: str,
+        execution_id: str,
+        executor_id: str,
+        model_ref: str | None,
+        submitted_at: str | None,
+        output: dict[str, Any],
+        actor: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        task = self.core.get_task(task_id)
+        input_payload = self._deep_research_external_input(task_id=task_id, node_version_id=node_version_id)
+        model_run_id = self.core.record_external_node_execution(
+            task_id=task_id, node_version_id=node_version_id,
+            execution_id=execution_id, executor_id=executor_id, model_ref=model_ref,
+            submitted_at=submitted_at, output_payload=output,
+        )
+        try:
+            validated = validate_external_skill_output(
+                FormalSkillContract.from_runtime_skill("content_deep_research"),
+                input_payload,
+                output,
+            )
+            retained_materials = list(input_payload["input_assembly"].get("research_refs") or [])
+            result = _validate_document(
+                "deep_research", validated,
+                allowed_materials=retained_materials,
+                expected_subject=str(input_payload["input_assembly"].get("expected_research_subject") or "").strip() or None,
+            )
+            result = dict(result)
+            result["research_execution"] = input_payload["input_assembly"].get("research_execution") or _research_execution_trace(retained_materials)
+        except (FormalSkillValidationError, ContentPipelineValidationError) as exc:
+            self.core.record_model_validation_failure(
+                task_id=task_id, node_version_id=node_version_id,
+                model_run_id=model_run_id, reason=str(exc), raw_model_output=None,
+            )
+            raise FormalSkillValidationError(str(exc), model_run_envelope_version_id=model_run_id) from exc
+        return self.core.complete_node_from_external_result(
+            task_id=task_id, node_version_id=node_version_id, model_run_id=model_run_id,
+            output_ref=_canonical(result), validation_status="passed", actor=actor,
+            expected_task_revision=int(task["task_revision"]),
+            idempotency_key=idempotency_key, artifact_payload=result,
+        )
+
+    def _content_external_input(
+        self, *, task_id: str, node_version_id: str
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        task = self.core.get_task(task_id)
+        version = self.core.get_node_version(node_version_id)
+        node = str(version["node"])
+        if (
+            node not in {"content_plan", "formal_draft", "copy_optimization", "de_ai_revision", "review"}
+            or task["current_node"] != node
+            or task["current_status"] != "processing"
+            or task["current_version_id"] != node_version_id
+            or version["task_id"] != task_id
+        ):
+            raise StateTransitionError("content external task requires the current processing version")
+        assembly_payload = self.core.get_input_assembly_payload(str(version["input_assembly_id"]))
+        input_payload = {
+            "correlation_id": task_id,
+            "input_assembly": assembly_payload,
+            "schema_version": f"{CONTENT_SKILL_BY_NODE[node]}.input.v1",
+        }
+        return task, version, input_payload
+
+    def prepare_content_external_task(
+        self, *, task_id: str, node_version_id: str
+    ) -> dict[str, Any]:
+        task, version, input_payload = self._content_external_input(
+            task_id=task_id, node_version_id=node_version_id
+        )
+        node = str(version["node"])
+        if node == "content_plan":
+            constraints = {
+                "use_only_core_approved_materials": True,
+                "match_current_topic": True,
+                "cannot_change_business_state": True,
+                "do_not_approve_or_skip_human_review": True,
+            }
+        elif node == "review":
+            constraints = {
+                "review_only_current_content_version": True,
+                "do_not_modify_or_replace_content": True,
+                "do_not_approve_or_publish": True,
+                "cannot_change_business_state": True,
+            }
+        else:
+            constraints = {
+                "use_only_current_approved_planning_input": True,
+                "content_text_is_a_result_field": True,
+                "cannot_change_business_state": True,
+                "do_not_skip_review": True,
+            }
+        task_payload, _ = prepare_external_skill_task(
+            FormalSkillContract.from_runtime_skill(CONTENT_SKILL_BY_NODE[node]),
+            input_payload,
+            constraints=constraints,
+            business_context={
+                "task_id": task_id,
+                "node": node,
+                "node_version_id": node_version_id,
+                "upstream_version_id": str(version["upstream_version_id"]),
+                "input_assembly_id": str(version["input_assembly_id"]),
+                "content_identity": str(task["topic_version_id"]),
+                "data_identity": self.core.data_identity,
+            },
+        )
+        return task_payload
+
+    def submit_content_external_result(
+        self,
+        *,
+        task_id: str,
+        node_version_id: str,
+        execution_id: str,
+        executor_id: str,
+        model_ref: str | None,
+        submitted_at: str | None,
+        output: dict[str, Any],
+        actor: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        task, version, input_payload = self._content_external_input(
+            task_id=task_id, node_version_id=node_version_id
+        )
+        node = str(version["node"])
+        model_run_id = self.core.record_external_node_execution(
+            task_id=task_id,
+            node_version_id=node_version_id,
+            execution_id=execution_id,
+            executor_id=executor_id,
+            model_ref=model_ref,
+            submitted_at=submitted_at,
+            output_payload=output,
+        )
+        try:
+            validated = validate_external_skill_output(
+                FormalSkillContract.from_runtime_skill(CONTENT_SKILL_BY_NODE[node]),
+                input_payload,
+                output,
+            )
+            document = _validate_document(node, validated)
+        except (FormalSkillValidationError, ContentPipelineValidationError) as exc:
+            self.core.record_model_validation_failure(
+                task_id=task_id,
+                node_version_id=node_version_id,
+                model_run_id=model_run_id,
+                reason=str(exc),
+                raw_model_output=None,
+            )
+            raise FormalSkillValidationError(
+                str(exc), model_run_envelope_version_id=model_run_id
+            ) from exc
+        return self.core.complete_node_from_external_result(
+            task_id=task_id,
+            node_version_id=node_version_id,
+            model_run_id=model_run_id,
+            output_ref=_canonical(document),
+            validation_status="passed",
+            actor=actor,
+            expected_task_revision=int(task["task_revision"]),
+            idempotency_key=idempotency_key,
+            artifact_payload=document,
+        )
+
     def _complete_processing_version(
         self,
         *,
@@ -509,81 +741,44 @@ class Stage1CContentPipelineService:
                 retained_materials,
                 approved_plan=approved_plan,
             )
-        skill_id = CONTENT_SKILL_BY_NODE[node]
-        try:
-            # Resolve the active formal routes at execution time.  A long-lived
-            # Hermes worker must not keep using a gateway built before the
-            # active provider binding changed.
-            current_gateway = build_production_content_pipeline_gateway(self.core)
-            skill_result = FormalBusinessSkillAdapter(
-                contract=FormalSkillContract.from_runtime_skill(skill_id),
-                gateway=current_gateway,
-            ).run(
-                {
-                    "correlation_id": task_id,
-                    "input_assembly": assembly_payload,
-                    "schema_version": f"{skill_id}.input.v1",
-                },
-                request_metadata=self.core.prepare_atomic_skill_binding(
-                    task_id=task_id, node_version_id=node_version_id
-                ),
+            external_task = self.prepare_deep_research_external_task(
+                task_id=task_id, node_version_id=node_version_id
             )
-        except AtomicSkillRuntimeError as exc:
-            self.core.fail_current_node_from_model(
+            if self.external_executor is None:
+                raise ExternalIntelligenceRequired(external_task)
+            submission = self.external_executor(external_task)
+            return self.submit_deep_research_external_result(
                 task_id=task_id,
                 node_version_id=node_version_id,
-                model_run_id=None,
-                failure_stage="runtime_guard",
-                reason=str(exc),
-                raw_model_output=None,
+                execution_id=str(submission.get("execution_id") or ""),
+                executor_id=str(submission.get("executor_id") or ""),
+                model_ref=str(submission.get("model_ref") or "") or None,
+                submitted_at=str(submission.get("submitted_at") or "") or None,
+                output=submission.get("output"),
+                actor=actor,
+                idempotency_key=f"{idempotency_key}:external-complete",
             )
-            raise
-        except FormalSkillValidationError as exc:
-            self.core.fail_current_node_from_model(
-                task_id=task_id, node_version_id=node_version_id,
-                model_run_id=exc.model_run_envelope_version_id,
-                failure_stage=("model_output_validation" if exc.model_run_envelope_version_id else "model_execution"),
-                reason=str(exc), raw_model_output=exc.raw_model_output,
-            )
-            raise
-        except ModelRouterError as exc:
-            self.core.fail_current_node_from_model(
-                task_id=task_id,
-                node_version_id=node_version_id,
-                model_run_id=None,
-                failure_stage="model_binding",
-                reason=str(exc),
-                raw_model_output=None,
-            )
-            raise
-        except ModelGatewayError as exc:
-            self.core.fail_current_node_from_model(
-                task_id=task_id, node_version_id=node_version_id,
-                model_run_id=exc.model_run_envelope_version_id,
-                failure_stage="model_execution", reason=str(exc), raw_model_output=None,
-            )
-            raise
-        try:
-            output = _validate_document(
-                node,
-                skill_result.output_payload,
-                allowed_materials=(retained_materials if node == "deep_research" else None),
-                expected_subject=(str(assembly_payload.get("expected_research_subject") or "").strip() or None),
-            )
-        except ContentPipelineValidationError as exc:
-            self.core.record_model_validation_failure(
-                task_id=task_id, node_version_id=node_version_id,
-                model_run_id=skill_result.model_run_envelope_version_id, reason=str(exc), raw_model_output=skill_result.raw_model_output,
-            )
-            raise ContentPipelineValidationError(str(exc)) from exc
-        if node == "deep_research":
-            output = dict(output)
-            output["research_execution"] = assembly_payload.get("research_execution") or _research_execution_trace(retained_materials)
-        return self.core.complete_node_from_model(
-            task_id=task_id, node_version_id=node_version_id,
-            model_run_id=skill_result.model_run_envelope_version_id, output_ref=_canonical(output), validation_status="passed",
-            actor=actor, expected_task_revision=int(task["task_revision"]),
-            idempotency_key=f"{idempotency_key}:complete", artifact_payload=output,
+        external_task = self.prepare_content_external_task(
+            task_id=task_id, node_version_id=node_version_id
+        )
+        if self.external_executor is None:
+            return {
+                "task_id": task_id,
+                "node_version_id": node_version_id,
+                "status": "requires_external_intelligence",
+                "task": external_task,
+            }
+        submission = self.external_executor(external_task)
+        return self.submit_content_external_result(
+            task_id=task_id,
+            node_version_id=node_version_id,
+            execution_id=str(submission.get("execution_id") or ""),
+            executor_id=str(submission.get("executor_id") or ""),
+            model_ref=str(submission.get("model_ref") or "") or None,
+            submitted_at=str(submission.get("submitted_at") or "") or None,
+            output=submission.get("output"),
+            actor=actor,
+            idempotency_key=f"{idempotency_key}:external-complete",
         )
 
     def advance_to_next_human_gate(
@@ -620,9 +815,18 @@ class Stage1CContentPipelineService:
             if node == "content_plan":
                 candidate = ExperienceCandidateProposalService(
                     core=self.core,
-                    gateway=build_production_experience_candidate_gateway(self.core),
+                    gateway=None,
+                    external_executor=self.external_executor,
                 ).prepare_for_content_plan(task_id=task_id, actor=actor)
                 if candidate is not None:
+                    if candidate.get("status") == "requires_external_intelligence":
+                        return {
+                            "task_id": task_id,
+                            "status": "requires_external_intelligence",
+                            "external_task": candidate.get("task"),
+                            "experience_candidate": candidate,
+                            "generated": generated,
+                        }
                     return {
                         "task_id": task_id,
                         "status": "awaiting_experience_confirmation",
@@ -636,6 +840,13 @@ class Stage1CContentPipelineService:
                 idempotency_key=f"{idempotency_key}:{node}",
             )
             generated.append(output)
+            if output.get("status") == "requires_external_intelligence":
+                return {
+                    "task_id": task_id,
+                    "status": "requires_external_intelligence",
+                    "external_task": output.get("task"),
+                    "generated": generated,
+                }
             topic_payload = self.core.get_artifact_payload(str(task["topic_version_id"]))["payload"]
             domain_label = str(topic_payload.get("domain_label") or topic_payload.get("domain") or "").strip()
             if node in HUMAN_REVIEW_NODES or (

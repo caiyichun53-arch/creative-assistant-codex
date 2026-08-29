@@ -43,9 +43,14 @@ from scripts.core.production.stage1_competitor_registration import (
 )
 from scripts.core.business_data.domain_labels import require_frozen_content_type_registry
 from scripts.core.model_gateway.formal_skill_adapter import FormalBusinessSkillAdapter, FormalSkillContract
+from scripts.core.model_gateway.formal_skill_adapter import (
+    prepare_external_skill_task,
+    validate_external_skill_output,
+)
 from scripts.core.model_gateway.model_router import ModelRouter
 from scripts.core.production.stage1b_daily_discovery import (
     DAILY_REPORT_SOURCE_TYPES,
+    ExternalIntelligenceRequired,
     Stage1BDailyDiscoveryService,
     build_production_source_acquirer,
 )
@@ -302,15 +307,6 @@ class ProductionDailyOperationsService:
                             "automatic_retry": False,
                         })
                         return results
-                if runner is None:
-                    gateway = build_production_daily_hit_gateway(
-                        self.core,
-                        task_model_binding=self._execution_model_binding(),
-                    )
-                    runner = FormalBusinessSkillAdapter(
-                        contract=FormalSkillContract.from_runtime_skill("competitor_breakdown"),
-                        gateway=gateway,
-                    )
                 input_payload = {
                     "correlation_id": f"{run_id}:{hit_id}",
                     "source_id": str(hit["platform_item_id"]),
@@ -332,29 +328,60 @@ class ProductionDailyOperationsService:
                     ),
                     "schema_version": "competitor_breakdown.input.v1",
                 }
-                result = runner.run(
+                external_task, _ = prepare_external_skill_task(
+                    FormalSkillContract.from_runtime_skill("competitor_breakdown"),
                     input_payload,
-                    request_metadata={
-                        "daily_hit_core": {
-                            "hit_id": hit_id,
-                            "data_identity": self.core.data_identity,
-                        },
-                        "automatic_retry": False,
-                        "breakdown_attempt_kind": "initial",
+                    constraints={
+                        "use_only_supplied_material": True,
+                        "preserve_source_identity": True,
+                        "cannot_change_business_state": True,
+                        "do_not_search": True,
+                        "no_fuzzy_evidence_matching": True,
+                    },
+                    business_context={
+                        "hit_id": hit_id,
+                        "run_id": run_id,
+                        "data_identity": self.core.data_identity,
+                        "origin": "daily_competitor_breakdown",
                     },
                 )
+                if self.external_executor is None:
+                    raise ExternalIntelligenceRequired(external_task)
+                submission = self.external_executor(external_task)
+                external_output = submission.get("output") if isinstance(submission, dict) else None
+                model_run_id = self.core.record_external_daily_hit_execution(
+                    hit_id=hit_id,
+                    execution_id=str(submission.get("execution_id") or "") if isinstance(submission, dict) else "",
+                    executor_id=str(submission.get("executor_id") or "") if isinstance(submission, dict) else "",
+                    model_ref=str(submission.get("model_ref") or "") if isinstance(submission, dict) else None,
+                    submitted_at=str(submission.get("submitted_at") or "") if isinstance(submission, dict) else None,
+                    input_payload=input_payload,
+                    output_payload=external_output,
+                )
+                try:
+                    output = validate_external_skill_output(
+                        FormalSkillContract.from_runtime_skill("competitor_breakdown"),
+                        input_payload,
+                        external_output,
+                    )
+                except Exception as exc:
+                    self.core.conn.execute(
+                        "UPDATE stage0_daily_hit_model_run SET error_json=? WHERE daily_hit_model_run_id=?",
+                        (json.dumps({"validation_error": str(exc)}, ensure_ascii=False), model_run_id),
+                    )
+                    raise
                 breakdown = self.core.record_daily_hit_breakdown(
                     hit_id=hit_id,
-                    artifact=result.output_payload,
-                    model_run_id=result.model_run_envelope_version_id,
+                    artifact=output,
+                    model_run_id=model_run_id,
                 )
                 question_expansions = self.core.register_breakdown_question_expansions(
                     domain_label=str(hit["domain_label"] or "generic"),
-                    breakdown=result.output_payload,
+                    breakdown=output,
                     parent_source_ref={
                         "source_type": "hit_breakdown",
                         "source_object_id": hit_id,
-                        "source_object_version": result.model_run_envelope_version_id,
+                        "source_object_version": model_run_id,
                     },
                     actor="daily_hit_breakdown",
                     content_type_lifecycle="classify",
@@ -367,6 +394,15 @@ class ProductionDailyOperationsService:
                     "question_expansions": question_expansions,
                     "automatic_retry": False,
                 })
+            except ExternalIntelligenceRequired as exc:
+                results.append({
+                    "hit_id": hit_id,
+                    "status": "requires_external_intelligence",
+                    "task": exc.task,
+                    "material": "completed",
+                    "automatic_retry": False,
+                })
+                continue
             except Exception as exc:
                 try:
                     self.core.record_daily_hit_processing_failure(
