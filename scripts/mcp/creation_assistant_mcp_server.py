@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from scripts.core.core_entry import build_status
 from scripts.core.production.stage0_content_core import Stage0ContentProductionCore
 from scripts.core.production.stage1b_daily_discovery import (
     Stage1BDailyDiscoveryService,
@@ -56,21 +57,23 @@ class CreationAssistantMcpApplication:
         self.core.close()
 
     def status(self) -> dict[str, Any]:
-        """Return stable facts about this Core connection and boundary."""
-        return {
-            "project": "Creation Assistant",
-            "data_identity": self.core.data_identity,
-            "business_state_owner": "Creation Assistant Core",
-            "database_path": str(self.core.db_path),
+        """Return the unified read-only Core status plus static MCP metadata."""
+        status = build_status(
+            data_identity=self.core.data_identity,
+            database_path=self.core.db_path,
+        )
+        status.update({
             "mcp_state": "none",
             "mcp_database": None,
+            "database_path": str(self.core.db_path),
             "external_task_boundary": {
                 "task_types": ["source_to_topic"],
                 "model_selection": "external_client",
                 "provider_selection": "external_client",
                 "formal_skill_source": "Creation Assistant runtime skill",
             },
-        }
+        })
+        return status
 
     def get_external_task(self, arguments: dict[str, Any]) -> dict[str, Any]:
         task = self.discovery.prepare_source_to_topic_external_task(

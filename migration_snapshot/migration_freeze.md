@@ -69,3 +69,25 @@
 项目 PreToolUse 和 Stop Hook 只负责开发期的提前阻断、状态核对和审计记录。它们能够触发时用于尽早发现跑偏，但不是正式业务安全边界，也不是业务正确性的必要条件。
 
 即使 Codex 没有触发项目 Hook，正式业务仍必须由 Core、runtime 以及 FORMAL/TEST 隔离独立拒绝直接正式写入、身份错误和正式/测试串库。Hook 不触发不代表操作已获准；它只代表少了一层提前提醒或开发期门禁。
+
+## Stage 5 closure record
+
+Recorded: 2026-08-30 +08:00
+
+Stage 5 Core observability is complete. The Core now provides one read-only
+current/history status result for CLI, MCP and later consumers. MCP reuses
+that result and does not infer a second status model. FORMAL and TEST remain
+explicitly isolated.
+
+Current-state authority remains the current domain activation. When a domain
+has no current activation, its current cold-start and current daily are empty.
+Historical failed, stopped, completed, processing and running rows remain
+historical records and do not receive current business control. The formal
+database was not changed. Stage 6 is not opened by this record.
+
+Validation record: 33 focused status and isolation tests passed; the full test
+run passed 340 tests and retained the 9 pre-existing missing trusted_context
+fixture errors without adding exclusions.
+
+Formal database SHA256:
+B8D5A61E656798C485DC51DF64623F3985617C9B9A1BB1ECB2D3C38FDBA174F8
