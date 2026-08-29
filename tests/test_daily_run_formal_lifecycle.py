@@ -10,6 +10,45 @@ from scripts.agent_platform.daily_operations_runtime import DailyOperationsCoord
 from scripts.core.production.stage0_content_core import Stage0ContentProductionCore
 
 
+def _seed_current_activation(path: Path, domain_label: str) -> None:
+    core = Stage0ContentProductionCore.open(path, data_identity="test")
+    now = "2026-08-27T00:00:00+00:00"
+    owned_id = f"fixture-owned-{domain_label}"
+    cold_start_id = f"fixture-cold-start-{domain_label}"
+    configuration_id = f"fixture-configuration-{domain_label}"
+    try:
+        core.conn.execute(
+            """INSERT INTO stage0_content_account(
+                content_account_id, account_role, display_name, domain_label,
+                external_account_ref, status, data_identity, created_by, created_at
+            ) VALUES (?, 'owned', ?, ?, ?, 'active', 'test', 'fixture', ?)""",
+            (owned_id, "fixture owned", domain_label, f"douyin:{owned_id}", now),
+        )
+        core.conn.execute(
+            """INSERT INTO stage0_cold_start(
+                cold_start_id, owned_account_id, domain_label, status,
+                data_identity, created_by, created_at, completed_at
+            ) VALUES (?, ?, ?, 'running', 'test', 'fixture', ?, NULL)""",
+            (cold_start_id, owned_id, domain_label, now),
+        )
+        core.conn.execute(
+            """INSERT INTO stage0_cold_start_configuration(
+                configuration_id, domain_mode, domain_label, domain_name,
+                domain_boundary, platform, owned_account_id, competitor_account_ids_json,
+                status, data_identity, confirmed_by, confirmed_at, cold_start_id
+            ) VALUES (?, 'reuse', ?, ?, '', 'douyin', ?, '[]', 'started', 'test', 'fixture', ?, ?)""",
+            (configuration_id, domain_label, domain_label, owned_id, now, cold_start_id),
+        )
+        core._ensure_current_domain_activation(
+            domain_label=domain_label,
+            cold_start_id=cold_start_id,
+            configuration_id=configuration_id,
+        )
+        core.conn.commit()
+    finally:
+        core.close()
+
+
 class DailyRunFormalLifecycleTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = TemporaryDirectory()
@@ -19,11 +58,13 @@ class DailyRunFormalLifecycleTests(unittest.TestCase):
         self.tempdir.cleanup()
 
     def _core(self) -> Stage0ContentProductionCore:
+        _seed_current_activation(self.db_path, "music_entertainment")
         return Stage0ContentProductionCore.open(self.db_path, data_identity="test")
 
     def test_domain_and_business_date_have_one_formal_run(self) -> None:
         core = self._core()
         try:
+            _seed_current_activation(self.db_path, "another_domain")
             first = core.get_or_create_daily_run(
                 domain_label="music_entertainment",
                 business_date="2026-08-27",
@@ -51,6 +92,7 @@ class DailyRunFormalLifecycleTests(unittest.TestCase):
 
     def test_automatic_failure_waits_for_explicit_resume_of_same_run(self) -> None:
         now = lambda: datetime(2026, 8, 27, 9, 0, tzinfo=timezone.utc)
+        _seed_current_activation(self.db_path, "music_entertainment")
         first_calls: list[dict] = []
 
         def fail_runner(**kwargs):
@@ -146,6 +188,8 @@ class DailyRunFormalLifecycleTests(unittest.TestCase):
 
     def test_failed_domain_does_not_stop_the_next_domain(self) -> None:
         calls: list[str] = []
+        _seed_current_activation(self.db_path, "alpha")
+        _seed_current_activation(self.db_path, "beta")
 
         def runner(**kwargs):
             calls.append(kwargs["domain_label"])

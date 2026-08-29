@@ -26,6 +26,58 @@ from scripts.core.model_gateway.model_router import ModelRouterError
 from scripts.core.production.stage0_content_core import Stage0ContentProductionCore
 
 
+def _seed_current_activation(
+    path: Path,
+    domain_label: str = "music_entertainment",
+    *,
+    data_identity: str = "test",
+) -> None:
+    if data_identity == "test":
+        core = Stage0ContentProductionCore.open(path, data_identity="test")
+    else:
+        core = Stage0ContentProductionCore(
+            sqlite3.connect(str(path)),
+            db_path=path,
+            data_identity=data_identity,
+        )
+        core.install_schema()
+    now = "2026-08-28T00:00:00+00:00"
+    owned_id = f"fixture-owned-{domain_label}"
+    cold_start_id = f"fixture-cold-start-{domain_label}"
+    configuration_id = f"fixture-configuration-{domain_label}"
+    try:
+        core.conn.execute(
+            """INSERT INTO stage0_content_account(
+                content_account_id, account_role, display_name, domain_label,
+                external_account_ref, status, data_identity, created_by, created_at
+            ) VALUES (?, 'owned', ?, ?, ?, 'active', ?, 'fixture', ?)""",
+            (owned_id, "fixture owned", domain_label, f"douyin:{owned_id}", data_identity, now),
+        )
+        core.conn.execute(
+            """INSERT INTO stage0_cold_start(
+                cold_start_id, owned_account_id, domain_label, status,
+                data_identity, created_by, created_at, completed_at
+            ) VALUES (?, ?, ?, 'running', ?, 'fixture', ?, NULL)""",
+            (cold_start_id, owned_id, domain_label, data_identity, now),
+        )
+        core.conn.execute(
+            """INSERT INTO stage0_cold_start_configuration(
+                configuration_id, domain_mode, domain_label, domain_name,
+                domain_boundary, platform, owned_account_id, competitor_account_ids_json,
+                status, data_identity, confirmed_by, confirmed_at, cold_start_id
+            ) VALUES (?, 'reuse', ?, ?, '', 'douyin', ?, '[]', 'started', ?, 'fixture', ?, ?)""",
+            (configuration_id, domain_label, domain_label, owned_id, data_identity, now, cold_start_id),
+        )
+        core._ensure_current_domain_activation(
+            domain_label=domain_label,
+            cold_start_id=cold_start_id,
+            configuration_id=configuration_id,
+        )
+        core.conn.commit()
+    finally:
+        core.close()
+
+
 class _Cursor:
     def __init__(self, rows: list[dict]) -> None:
         self.rows = rows
@@ -73,6 +125,13 @@ class _DailyCore:
         self.conn = _DailyConnection(hit=hit, cold_start_ready=cold_start_ready)
         self.snapshot_calls = 0
         self.hit_judgement_calls = 0
+
+    def get_current_domain_activation(self, *, domain_label: str) -> dict[str, str]:
+        return {
+            "domain_label": domain_label,
+            "cold_start_id": "daily-cold-start",
+            "configuration_id": "daily-configuration",
+        }
 
     def record_daily_competitor_snapshot(self, **_kwargs: object) -> dict:
         self.snapshot_calls += 1
@@ -512,6 +571,7 @@ class DailyStoppedBoundaryTests(unittest.TestCase):
 class DailyResumeDiscoveryReconciliationTests(unittest.TestCase):
     @staticmethod
     def _core(path: Path) -> Stage0ContentProductionCore:
+        _seed_current_activation(path, data_identity="production")
         core = Stage0ContentProductionCore(
             sqlite3.connect(str(path)), db_path=path, data_identity="production"
         )
@@ -664,6 +724,7 @@ class DailyResumeDiscoveryReconciliationTests(unittest.TestCase):
                     side_effect=AssertionError("normal daily must not reconcile prior discovery"),
                 ) as reconcile,
             ):
+                _seed_current_activation(Path(tempdir) / "daily.sqlite3")
                 result = DailyOperationsCoordinator(
                     db_path=Path(tempdir) / "daily.sqlite3",
                     data_identity="test",
@@ -782,6 +843,7 @@ class DailyRunStoppedLifecycleTests(unittest.TestCase):
     def test_stopped_run_requires_resume_and_reuses_same_daily_run(self) -> None:
         with TemporaryDirectory() as tempdir:
             db_path = Path(tempdir) / "daily.sqlite3"
+            _seed_current_activation(db_path)
             calls: list[dict] = []
 
             def stopped_runner(**kwargs: object) -> dict:
@@ -839,6 +901,7 @@ class DailyRunStoppedLifecycleTests(unittest.TestCase):
 
     def test_provider_404_remains_failed(self) -> None:
         with TemporaryDirectory() as tempdir:
+            _seed_current_activation(Path(tempdir) / "daily.sqlite3")
             coordinator = DailyOperationsCoordinator(
                 db_path=Path(tempdir) / "daily.sqlite3",
                 data_identity="test",

@@ -44,6 +44,13 @@ class _ResumeCore:
         self.audit_account_ids = set(audit_account_ids or ())
         self.snapshot_calls: list[str] = []
 
+    def get_current_domain_activation(self, *, domain_label: str) -> dict[str, str]:
+        return {
+            "domain_label": domain_label,
+            "cold_start_id": "resume-cold-start",
+            "configuration_id": "resume-configuration",
+        }
+
     def daily_collection_account_ids(self, *, daily_run_id: str) -> set[str]:
         self.seen_daily_run_ids = getattr(self, "seen_daily_run_ids", [])
         self.seen_daily_run_ids.append(daily_run_id)
@@ -81,7 +88,37 @@ class DailyCollectionCompletionFactTests(unittest.TestCase):
         self.tempdir.cleanup()
 
     def _core(self) -> Stage0ContentProductionCore:
-        return Stage0ContentProductionCore.open(self.db_path, data_identity="test")
+        core = Stage0ContentProductionCore.open(self.db_path, data_identity="test")
+        now = "2026-08-28T00:00:00+00:00"
+        core.conn.execute(
+            """INSERT INTO stage0_content_account(
+                content_account_id, account_role, display_name, domain_label,
+                external_account_ref, status, data_identity, created_by, created_at
+            ) VALUES (?, 'owned', ?, ?, ?, 'active', 'test', 'fixture', ?)""",
+            ("daily-fixture-owned", "daily fixture", "music_entertainment", "douyin:daily-fixture-owned", now),
+        )
+        core.conn.execute(
+            """INSERT INTO stage0_cold_start(
+                cold_start_id, owned_account_id, domain_label, status,
+                data_identity, created_by, created_at, completed_at
+            ) VALUES (?, ?, ?, 'running', 'test', 'fixture', ?, NULL)""",
+            ("daily-fixture-cold-start", "daily-fixture-owned", "music_entertainment", now),
+        )
+        core.conn.execute(
+            """INSERT INTO stage0_cold_start_configuration(
+                configuration_id, domain_mode, domain_label, domain_name,
+                domain_boundary, platform, owned_account_id, competitor_account_ids_json,
+                status, data_identity, confirmed_by, confirmed_at, cold_start_id
+            ) VALUES (?, 'reuse', ?, ?, '', 'douyin', ?, '[]', 'started', 'test', 'fixture', ?, ?)""",
+            ("daily-fixture-configuration", "music_entertainment", "music", "daily-fixture-owned", now, "daily-fixture-cold-start"),
+        )
+        core._ensure_current_domain_activation(
+            domain_label="music_entertainment",
+            cold_start_id="daily-fixture-cold-start",
+            configuration_id="daily-fixture-configuration",
+        )
+        core.conn.commit()
+        return core
 
     def _account(self, core: Stage0ContentProductionCore, account_id: str) -> None:
         core.conn.execute(

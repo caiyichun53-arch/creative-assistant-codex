@@ -74,6 +74,11 @@ class ColdStartRunLifecycleTest(unittest.TestCase):
                 "cold-lifecycle",
             ),
         )
+        self.core._ensure_current_domain_activation(
+            domain_label="domain-lifecycle",
+            cold_start_id="cold-lifecycle",
+            configuration_id="config-lifecycle",
+        )
         self.connection.execute(
             "INSERT INTO stage0_cold_start_run_contract("
             "cold_start_id, domain_label, owned_account_id, competitor_account_ids_json, "

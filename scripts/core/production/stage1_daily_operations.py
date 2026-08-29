@@ -446,14 +446,12 @@ class ProductionDailyOperationsService:
         self, domain_label: str, *, validation_only: bool = False, account_id: str | None = None
     ) -> list[dict[str, Any]]:
         activation_reader = getattr(self.core, "get_current_domain_activation", None)
-        history_reader = getattr(self.core, "domain_has_activation_history", None)
-        if not callable(activation_reader) or not callable(history_reader):
-            activation = None
-            has_activation_history = False
-        else:
-            activation = activation_reader(domain_label=domain_label)
-            has_activation_history = history_reader(domain_label=domain_label)
-        if activation is None and has_activation_history:
+        if not callable(activation_reader):
+            raise StateTransitionError(
+                "daily operations require an activation-aware Core"
+            )
+        activation = activation_reader(domain_label=domain_label)
+        if activation is None:
             raise StateTransitionError(
                 "daily operations require a current cold-start activation"
             )
@@ -492,14 +490,10 @@ class ProductionDailyOperationsService:
 
     def _is_ready_for_candidate_discovery(self, domain_label: str) -> bool:
         activation_reader = getattr(self.core, "get_current_domain_activation", None)
-        history_reader = getattr(self.core, "domain_has_activation_history", None)
-        if not callable(activation_reader) or not callable(history_reader):
-            activation = None
-            has_activation_history = False
-        else:
-            activation = activation_reader(domain_label=domain_label)
-            has_activation_history = history_reader(domain_label=domain_label)
-        if activation is None and has_activation_history:
+        if not callable(activation_reader):
+            return False
+        activation = activation_reader(domain_label=domain_label)
+        if activation is None:
             return False
         if activation is not None:
             row = self.core.conn.execute(
@@ -511,12 +505,6 @@ class ProductionDailyOperationsService:
                     activation["cold_start_id"],
                     self.core.data_identity,
                 ),
-            ).fetchone()
-        else:
-            row = self.core.conn.execute(
-                "SELECT 1 FROM stage0_cold_start_configuration "
-                "WHERE domain_label=? AND status='completed' AND data_identity=? LIMIT 1",
-                (domain_label, self.core.data_identity),
             ).fetchone()
         return row is not None
 

@@ -71,6 +71,27 @@ class DomainActivationResetTests(unittest.TestCase):
         self.assertTrue(result["automatic_start"])
         return result
 
+    def test_missing_activation_schema_requires_migration(self) -> None:
+        legacy_connection = sqlite3.connect(":memory:")
+        legacy_core = Stage0ContentProductionCore(
+            legacy_connection,
+            db_path=Path(":memory:"),
+            data_identity="test",
+        )
+        try:
+            with self.assertRaisesRegex(
+                StateTransitionError,
+                "activation schema not initialized; migration required",
+            ):
+                legacy_core.reset_domain(domain_label="legacy-domain", actor="test-user")
+            with self.assertRaisesRegex(
+                StateTransitionError,
+                "activation schema not initialized; migration required",
+            ):
+                legacy_core.domain_business_state(domain_label="legacy-domain")
+        finally:
+            legacy_core.close()
+
     def _seed_knowledge_assets(self, *, domain_label: str, cold_start_id: str) -> tuple[str, str]:
         config = self.core.get_current_domain_configuration(domain_label=domain_label)
         assert config is not None

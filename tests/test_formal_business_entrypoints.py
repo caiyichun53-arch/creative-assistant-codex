@@ -22,6 +22,39 @@ class FormalBusinessEntrypointTests(unittest.TestCase):
             self.db_path,
             data_identity="test",
         )
+        now = "2026-08-27T00:00:00+00:00"
+        self.core.conn.execute(
+            """INSERT INTO stage0_content_account(
+                content_account_id, account_role, display_name, domain_label,
+                external_account_ref, status, data_identity, created_by, created_at
+            ) VALUES ('entrypoint-owned', 'owned', 'fixture owned', 'music_entertainment',
+                      'douyin:entrypoint-owned', 'active', 'test', 'fixture', ?)""",
+            (now,),
+        )
+        self.core.conn.execute(
+            """INSERT INTO stage0_cold_start(
+                cold_start_id, owned_account_id, domain_label, status,
+                data_identity, created_by, created_at, completed_at
+            ) VALUES ('entrypoint-cold-start', 'entrypoint-owned', 'music_entertainment',
+                      'running', 'test', 'fixture', ?, NULL)""",
+            (now,),
+        )
+        self.core.conn.execute(
+            """INSERT INTO stage0_cold_start_configuration(
+                configuration_id, domain_mode, domain_label, domain_name,
+                domain_boundary, platform, owned_account_id, competitor_account_ids_json,
+                status, data_identity, confirmed_by, confirmed_at, cold_start_id
+            ) VALUES ('entrypoint-configuration', 'reuse', 'music_entertainment', 'music',
+                      '', 'douyin', 'entrypoint-owned', '[]', 'started', 'test', 'fixture', ?,
+                      'entrypoint-cold-start')""",
+            (now,),
+        )
+        self.core._ensure_current_domain_activation(
+            domain_label="music_entertainment",
+            cold_start_id="entrypoint-cold-start",
+            configuration_id="entrypoint-configuration",
+        )
+        self.core.conn.commit()
         self.business = CreationAssistantFormalBusinessCore(core=self.core)
 
     def tearDown(self) -> None:

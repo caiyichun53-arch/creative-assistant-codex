@@ -96,6 +96,41 @@ class Stage2AExternalIntelligenceBoundaryTests(unittest.TestCase):
         self.guard_patcher.stop()
         self.tempdir.cleanup()
 
+    def _seed_current_activation(self) -> None:
+        now = "2026-08-28T00:00:00+00:00"
+        self.core.conn.execute(
+            """INSERT INTO stage0_content_account(
+                content_account_id, account_role, display_name, domain_label,
+                external_account_ref, status, data_identity, created_by, created_at
+            ) VALUES ('stage2a-owned', 'owned', 'fixture owned', 'music_entertainment',
+                      'douyin:stage2a-owned', 'active', 'test', 'fixture', ?)""",
+            (now,),
+        )
+        self.core.conn.execute(
+            """INSERT INTO stage0_cold_start(
+                cold_start_id, owned_account_id, domain_label, status,
+                data_identity, created_by, created_at, completed_at
+            ) VALUES ('stage2a-cold-start', 'stage2a-owned', 'music_entertainment',
+                      'running', 'test', 'fixture', ?, NULL)""",
+            (now,),
+        )
+        self.core.conn.execute(
+            """INSERT INTO stage0_cold_start_configuration(
+                configuration_id, domain_mode, domain_label, domain_name,
+                domain_boundary, platform, owned_account_id, competitor_account_ids_json,
+                status, data_identity, confirmed_by, confirmed_at, cold_start_id
+            ) VALUES ('stage2a-configuration', 'reuse', 'music_entertainment', 'music',
+                      '', 'douyin', 'stage2a-owned', '[]', 'started', 'test', 'fixture', ?,
+                      'stage2a-cold-start')""",
+            (now,),
+        )
+        self.core._ensure_current_domain_activation(
+            domain_label="music_entertainment",
+            cold_start_id="stage2a-cold-start",
+            configuration_id="stage2a-configuration",
+        )
+        self.core.conn.commit()
+
     def _prepared_input(self, suffix: str, daily_run_id: str | None = None) -> tuple[dict, dict, dict]:
         run = self.core.create_discovery_run(
             discovery_date="2026-08-28",
@@ -313,6 +348,7 @@ class Stage2AExternalIntelligenceBoundaryTests(unittest.TestCase):
         )
 
     def test_changing_executor_does_not_create_a_second_business_run(self) -> None:
+        self._seed_current_activation()
         business = CreationAssistantFormalBusinessCore(core=self.core)
         started = business.request_daily(
             domain_label="music_entertainment",

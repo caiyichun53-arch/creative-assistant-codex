@@ -42,6 +42,7 @@ class CreationAssistantFormalBusinessCore:
     def list_daily_domains(self) -> list[str]:
         """Return the domains that Core allows the daily flow to address."""
 
+        self.core.require_domain_activation_schema()
         query = (
             "SELECT DISTINCT account.domain_label FROM competitor_accounts account "
             "JOIN stage0_content_account formal_account "
@@ -61,19 +62,13 @@ class CreationAssistantFormalBusinessCore:
             self.core.data_identity,
             self.core.data_identity,
         )
-        if self.core.domain_activation_schema_available():
-            query += (
-                "AND ("
-                "EXISTS (SELECT 1 FROM stage0_domain_activation current_activation "
-                "WHERE current_activation.domain_label=account.domain_label "
-                "AND current_activation.cold_start_id=registration.cold_start_id "
-                "AND current_activation.data_identity=? AND current_activation.is_current=1) "
-                "OR NOT EXISTS (SELECT 1 FROM stage0_domain_activation activation_history "
-                "WHERE activation_history.domain_label=account.domain_label "
-                "AND activation_history.data_identity=? )"
-                ") "
-            )
-            params += (self.core.data_identity, self.core.data_identity)
+        query += (
+            "AND EXISTS (SELECT 1 FROM stage0_domain_activation current_activation "
+            "WHERE current_activation.domain_label=account.domain_label "
+            "AND current_activation.cold_start_id=registration.cold_start_id "
+            "AND current_activation.data_identity=? AND current_activation.is_current=1) "
+        )
+        params += (self.core.data_identity,)
         query += "ORDER BY account.domain_label"
         rows = self.core.conn.execute(query, params).fetchall()
         return [str(row["domain_label"]) for row in rows]

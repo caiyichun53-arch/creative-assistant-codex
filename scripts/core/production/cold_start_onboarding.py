@@ -142,17 +142,14 @@ class ColdStartOnboardingService:
             self.core.data_identity,
             run_id,
         )
-        if self.core.domain_activation_schema_available():
-            base_query += (
-                "AND (EXISTS (SELECT 1 FROM stage0_domain_activation current_activation "
-                "WHERE current_activation.domain_label=run.domain_label "
-                "AND current_activation.cold_start_id=run.cold_start_id "
-                "AND current_activation.data_identity=? AND current_activation.is_current=1) "
-                "OR NOT EXISTS (SELECT 1 FROM stage0_domain_activation activation_history "
-                "WHERE activation_history.domain_label=run.domain_label "
-                "AND activation_history.data_identity=?)) "
-            )
-            params += (self.core.data_identity, self.core.data_identity)
+        self.core.require_domain_activation_schema()
+        base_query += (
+            "AND EXISTS (SELECT 1 FROM stage0_domain_activation current_activation "
+            "WHERE current_activation.domain_label=run.domain_label "
+            "AND current_activation.cold_start_id=run.cold_start_id "
+            "AND current_activation.data_identity=? AND current_activation.is_current=1) "
+        )
+        params += (self.core.data_identity,)
         row = self.core.conn.execute(base_query, params).fetchone()
         if row is None:
             raise StateTransitionError(
