@@ -112,6 +112,7 @@ class DailyRuntimeGuardScopeTests(unittest.TestCase):
                 result = enforce_runtime_startup_guard(
                     entrypoint="test_daily_scope",
                     scope="daily",
+                    data_identity="production",
                     event_log_path=Path(tempdir) / "guard-events.jsonl",
                 )
         self.assertTrue(result["valid"])

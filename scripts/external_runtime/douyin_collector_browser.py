@@ -46,8 +46,11 @@ def main() -> int:
             start_retained_douyin_collector_browser(
                 mediacrawler_dir,
                 headless=not args.visible,
+                data_identity="production",
             )
-        status = retained_douyin_collector_browser_status(mediacrawler_dir)
+        status = retained_douyin_collector_browser_status(
+            mediacrawler_dir, data_identity="production"
+        )
     except (ExternalAdapterError, OSError) as exc:
         print(json.dumps({"status": "blocked", "reason": str(exc)}, ensure_ascii=False))
         return 1

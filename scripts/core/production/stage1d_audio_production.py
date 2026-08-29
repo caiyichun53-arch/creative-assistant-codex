@@ -193,7 +193,9 @@ def build_production_audio_service(core: Stage0ContentProductionCore) -> AudioPr
         raise StateTransitionError("real audio connector may only bind to the production Core")
     output_root = Path(
         os.environ.get("VOXCPM2_OUTPUT_DIR")
-        or runtime_path("formal", "audio_production_runtime")
+            or runtime_path(
+                "formal", "audio_production_runtime", data_identity="production"
+            )
     )
     executor = LocalVoxCPM2AudioExecutor(
         python_executable=Path(external_runtime_value("VOXCPM2_PYTHON")),

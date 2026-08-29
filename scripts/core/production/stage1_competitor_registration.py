@@ -432,7 +432,9 @@ def run_test_only_competitor_breakdown_batch(
         materializer=test_materializer,
     )
     skill = FormalBusinessSkillAdapter(
-        contract=FormalSkillContract.from_runtime_skill("competitor_breakdown"), gateway=gateway,
+        contract=FormalSkillContract.from_runtime_skill("competitor_breakdown"),
+        gateway=gateway,
+        data_identity="test",
     )
 
     outcomes: list[dict[str, Any]] = []
@@ -1286,6 +1288,7 @@ class ConfiguredCompetitorRegistrationExecutor:
         result = FormalBusinessSkillAdapter(
             contract=FormalSkillContract.from_runtime_skill("competitor_breakdown"),
             gateway=self.gateway,
+            data_identity=self.core.data_identity,
         ).run(
             payload,
             request_metadata={
@@ -1834,14 +1837,18 @@ def build_configured_competitor_registration_executor(
     del task_model_binding, stream_breakdowns
     archive_root = require_runtime_path(Path(
         os.environ.get("COMPETITOR_REGISTRATION_ARCHIVE_ROOT")
-        or runtime_path("formal", "competitor_registration_runtime")
-    ), purpose="competitor registration archive")
+        or runtime_path(
+            "competitor_registration_runtime", data_identity=core.data_identity
+        )
+    ), purpose="competitor registration archive", data_identity=core.data_identity)
     def runtime_progress(detail: str) -> None:
         if progress_callback is not None:
             progress_callback("external_runtime", detail or "外部任务仍在运行")
 
     crawler_executor = LocalMediaCrawlerExecutor(
-        archive_root=archive_root / "mediacrawler", progress_callback=runtime_progress
+        archive_root=archive_root / "mediacrawler",
+        progress_callback=runtime_progress,
+        data_identity=core.data_identity,
     )
     collector = MediaCrawlerCollectorAdapter(crawler_executor)
     asr_executor = LocalSenseVoiceExecutor(

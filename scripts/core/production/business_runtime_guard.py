@@ -32,11 +32,15 @@ from scripts.core.runtime.runtime_storage import (
     RuntimeStorageError,
     assert_formal_runtime_storage,
     runtime_path,
+    runtime_root_for_identity,
 )
 
 
 ROOT = Path(__file__).resolve().parents[3]
-EVENT_LOG_PATH = runtime_path("agent_platform", "business_runtime_guard_events.jsonl")
+EVENT_LOG_PATH = runtime_path(
+    "agent_platform", "business_runtime_guard_events.jsonl", data_identity="production"
+)
+_DEFAULT_FORMAL_EVENT_LOG_PATH = EVENT_LOG_PATH
 DAILY_OPERATIONS_CONTRACT_PATH = (
     ROOT / "config" / "business_guardrails" / "daily_operations.json"
 )
@@ -119,6 +123,7 @@ def record_runtime_guard_event(
     outcome: str,
     details: dict[str, Any] | None = None,
     event_log_path: Path | None = None,
+    data_identity: str | None = None,
 ) -> None:
     event_details = details or {}
     if outcome == "passed":
@@ -131,7 +136,44 @@ def record_runtime_guard_event(
         if pass_key in _RECORDED_PASS_KEYS:
             return
         _RECORDED_PASS_KEYS.add(pass_key)
-    target_path = event_log_path or EVENT_LOG_PATH
+    if event_log_path is not None:
+        target_path = Path(event_log_path).resolve()
+        if data_identity is not None:
+            selected_root = runtime_root_for_identity(data_identity).resolve()
+            other_identity = "test" if data_identity == "production" else "production"
+            other_root = runtime_root_for_identity(other_identity).resolve()
+            try:
+                target_path.relative_to(other_root)
+            except ValueError:
+                pass
+            else:
+                raise RuntimeStorageError(
+                    f"{data_identity} runtime guard evidence cannot be written under the {other_identity} runtime root"
+                )
+            del selected_root
+    else:
+        if data_identity is None:
+            raise RuntimeStorageError(
+                "runtime guard evidence requires an explicit data identity or an explicit log path"
+            )
+        # Keep the existing test seam: unit tests may replace EVENT_LOG_PATH
+        # with a temporary file.  A real TEST run otherwise resolves its own
+        # log under the TEST runtime root.
+        if EVENT_LOG_PATH != _DEFAULT_FORMAL_EVENT_LOG_PATH:
+            target_path = Path(EVENT_LOG_PATH).resolve()
+            if data_identity == "test":
+                try:
+                    target_path.relative_to(runtime_root_for_identity("production").resolve())
+                except ValueError:
+                    pass
+                else:
+                    raise RuntimeStorageError(
+                        "test runtime guard evidence cannot use a patched formal log path"
+                    )
+        else:
+            target_path = runtime_path(
+                "agent_platform", "business_runtime_guard_events.jsonl", data_identity=data_identity
+            )
     target_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "at": _now(),
@@ -144,7 +186,11 @@ def record_runtime_guard_event(
 
 
 def enforce_atomic_skill_runtime_guard(
-    *, entrypoint: str, operation: str, event_log_path: Path | None = None
+    *,
+    entrypoint: str,
+    operation: str,
+    event_log_path: Path | None = None,
+    data_identity: str | None = None,
 ) -> dict[str, object]:
     """Fail closed while a business-model operation has not yet been converted to an atomic Skill."""
     contract = json.loads(SYSTEM_GOVERNANCE_CONTRACT_PATH.read_text(encoding="utf-8"))
@@ -166,6 +212,7 @@ def enforce_atomic_skill_runtime_guard(
             outcome="blocked",
             details={"entrypoint": entrypoint, "operation": operation, "errors": errors},
             event_log_path=event_log_path,
+            data_identity=data_identity,
         )
         raise AtomicSkillRuntimeError(
             "atomic Skill runtime guard rejected execution: " + "; ".join(errors)
@@ -175,6 +222,7 @@ def enforce_atomic_skill_runtime_guard(
         outcome="passed",
         details={"entrypoint": entrypoint, "operation": operation, "contract_version": contract["contract_version"]},
         event_log_path=event_log_path,
+        data_identity=data_identity,
     )
     return {"valid": True, "contract_version": contract["contract_version"], "operation": operation}
 
@@ -183,6 +231,7 @@ def enforce_runtime_startup_guard(
     *,
     entrypoint: str,
     event_log_path: Path | None = None,
+    data_identity: str,
     scope: str = "full",
 ) -> dict[str, object]:
     """Validate the formal contract before startup.
@@ -198,16 +247,23 @@ def enforce_runtime_startup_guard(
     """
     if scope not in {"full", "daily"}:
         raise ValueError("runtime startup guard scope must be 'full' or 'daily'")
-    guard_event_log_path = event_log_path or EVENT_LOG_PATH
+    guard_event_log_path = event_log_path
     try:
         from scripts.core.production.stage0_content_core import FORMAL_DB_PATH
-        storage_receipt = assert_formal_runtime_storage(database_path=FORMAL_DB_PATH)
+        if data_identity == "production":
+            storage_receipt = assert_formal_runtime_storage(database_path=FORMAL_DB_PATH)
+        elif data_identity == "test":
+            runtime_root_for_identity("test")
+            storage_receipt = {"data_identity": "test", "runtime_root": str(runtime_root_for_identity("test"))}
+        else:
+            raise RuntimeStorageError("runtime startup guard requires production or test identity")
     except (RuntimeStorageError, ImportError) as exc:
         record_runtime_guard_event(
             event="formal_runtime_storage",
             outcome="blocked",
             details={"entrypoint": entrypoint, "error": str(exc)},
             event_log_path=guard_event_log_path,
+            data_identity=data_identity,
         )
         raise RuntimeError(f"runtime storage guard rejected service startup: {exc}") from exc
     if scope == "daily":
@@ -220,6 +276,7 @@ def enforce_runtime_startup_guard(
                 "formal_runtime_storage": "validated",
             },
             event_log_path=guard_event_log_path,
+            data_identity=data_identity,
         )
         return {
             "valid": True,
@@ -378,6 +435,7 @@ def enforce_runtime_startup_guard(
             outcome="blocked",
             details={"entrypoint": entrypoint, "errors": errors},
             event_log_path=guard_event_log_path,
+            data_identity=data_identity,
         )
         raise RuntimeError(
             "runtime alignment guard rejected service startup: "
@@ -402,6 +460,7 @@ def enforce_runtime_startup_guard(
             "runtime_identity_receipt": storage_receipt,
         },
         event_log_path=guard_event_log_path,
+        data_identity=data_identity,
     )
     return {
         "valid": True,
@@ -415,6 +474,7 @@ def enforce_daily_operations_runtime_guard(
     entrypoint: str,
     source_types: tuple[str, ...],
     daily_report_limit: int,
+    data_identity: str,
 ) -> dict[str, object]:
     """Block a real daily run when its executable values drift from the small daily contract."""
     raw = DAILY_OPERATIONS_CONTRACT_PATH.read_bytes()
@@ -514,6 +574,7 @@ def enforce_daily_operations_runtime_guard(
             event="daily_operations_runtime",
             outcome="blocked",
             details={"entrypoint": entrypoint, "errors": errors, "contract_digest": digest},
+            data_identity=data_identity,
         )
         raise RuntimeError(
             "daily operations runtime guard rejected execution: "
@@ -527,6 +588,7 @@ def enforce_daily_operations_runtime_guard(
             "contract_version": contract["contract_version"],
             "contract_digest": digest,
         },
+        data_identity=data_identity,
     )
     return {
         "valid": True,
@@ -542,6 +604,7 @@ def enforce_manual_exploration_runtime_guard(
     exploration_kind: str,
     action: str,
     work_count: int | None = None,
+    data_identity: str,
 ) -> dict[str, object]:
     """Block special exploration writes when their executable boundary drifts."""
     raw = DAILY_OPERATIONS_CONTRACT_PATH.read_bytes()
@@ -630,6 +693,7 @@ def enforce_manual_exploration_runtime_guard(
                 "errors": errors,
                 "contract_digest": digest,
             },
+            data_identity=data_identity,
         )
         raise RuntimeError(
             "manual exploration runtime guard rejected execution: "
@@ -646,6 +710,7 @@ def enforce_manual_exploration_runtime_guard(
             "contract_version": contract["contract_version"],
             "contract_digest": digest,
         },
+        data_identity=data_identity,
     )
     return {
         "valid": True,
@@ -660,6 +725,7 @@ def enforce_topic_intake_runtime_guard(
     domain_label: str,
     route: str,
     action: str,
+    data_identity: str,
 ) -> dict[str, object]:
     """Keep every topic input on the one declared intake boundary."""
     raw = CONTENT_PRODUCTION_CONTRACT_PATH.read_bytes()
@@ -719,6 +785,7 @@ def enforce_topic_intake_runtime_guard(
                 "errors": errors,
                 "contract_digest": digest,
             },
+            data_identity=data_identity,
         )
         raise RuntimeError(
             "topic intake runtime guard rejected execution: "
@@ -735,6 +802,7 @@ def enforce_topic_intake_runtime_guard(
             "contract_version": contract["contract_version"],
             "contract_digest": digest,
         },
+        data_identity=data_identity,
     )
     return {
         "valid": True,
@@ -748,6 +816,7 @@ def enforce_content_production_runtime_guard(
     entrypoint: str,
     current_node: str,
     current_status: str,
+    data_identity: str,
 ) -> dict[str, object]:
     """Block formal content actions when the executable chain drifts from its small contract."""
     raw = CONTENT_PRODUCTION_CONTRACT_PATH.read_bytes()
@@ -862,6 +931,7 @@ def enforce_content_production_runtime_guard(
                 "errors": errors,
                 "contract_digest": digest,
             },
+            data_identity=data_identity,
         )
         raise RuntimeError(
             "content production runtime guard rejected execution: "
@@ -877,6 +947,7 @@ def enforce_content_production_runtime_guard(
             "contract_version": contract["contract_version"],
             "contract_digest": digest,
         },
+        data_identity=data_identity,
     )
     return {
         "valid": True,

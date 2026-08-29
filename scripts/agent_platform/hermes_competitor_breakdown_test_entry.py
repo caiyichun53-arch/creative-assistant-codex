@@ -1,8 +1,8 @@
 """Hermes-owned isolated test for one competitor breakdown with comments.
 
-The entry reads one completed transcript-and-comment material from the formal
-database in read-only mode, passes it through the configured Hermes business
-route, and prints only a test summary.  It never writes formal business data.
+The entry reads selected material from an explicitly supplied TEST database,
+passes it through the configured Hermes business route, and prints only a test
+summary.  It never reads the formal database or writes formal business data.
 """
 
 from __future__ import annotations
@@ -21,10 +21,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.core.production.stage0_content_core import (
-    FORMAL_DB_PATH,
     Stage0ContentProductionCore,
     canonicalize_competitor_content_type,
 )
+from scripts.core.runtime.runtime_storage import runtime_root_for_identity
 from scripts.core.model_gateway.formal_skill_adapter import (
     FormalSkillValidationError,
     validate_competitor_breakdown_question_expansion_output,
@@ -34,11 +34,6 @@ from scripts.core.production.stage1_competitor_registration import (
     run_test_only_competitor_breakdown_batch,
 )
 from scripts.core.production.stage1b_daily_discovery import Stage1BDailyDiscoveryService
-
-
-def _read_only_connection() -> sqlite3.Connection:
-    database = Path(FORMAL_DB_PATH).resolve()
-    return sqlite3.connect(f"file:{database.as_posix()}?mode=ro", uri=True)
 
 
 def _parse_json(value: Any) -> dict[str, Any]:
@@ -427,9 +422,13 @@ def _semantic_boundary_smoke_test() -> dict[str, Any]:
     return {"status": "PASS" if all(checks.values()) else "FAIL", "checks": checks}
 
 
-def _qualification_external_smoke_test(source_id: str) -> dict[str, Any]:
-    """Run one real read-only minimum check against the pinned external search."""
-    core = Stage0ContentProductionCore.open_read_only(FORMAL_DB_PATH, data_identity="production")
+def _qualification_external_smoke_test(
+    source_id: str, *, database_path: Path
+) -> dict[str, Any]:
+    """Run one read-only minimum check against the explicitly supplied TEST DB."""
+    core = Stage0ContentProductionCore.open_read_only(
+        database_path, data_identity="test"
+    )
     try:
         row = core.conn.execute(
             "SELECT registration_id FROM stage0_competitor_registration_item "
@@ -512,6 +511,7 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-id")
+    parser.add_argument("--db-path", type=Path)
     parser.add_argument("--output-file")
     parser.add_argument("--qualification-smoke", action="store_true")
     parser.add_argument("--qualification-external-smoke", action="store_true")
@@ -534,10 +534,14 @@ def main() -> int:
         print(json.dumps(smoke, ensure_ascii=False, indent=2), flush=True)
         return 0
     if args.qualification_external_smoke:
+        if args.db_path is None:
+            parser.error("--db-path is required for qualification external smoke mode")
         source_id = str(args.source_id or "7665354103261842707").strip()
         print(
             json.dumps(
-                _qualification_external_smoke_test(source_id),
+                _qualification_external_smoke_test(
+                    source_id, database_path=args.db_path
+                ),
                 ensure_ascii=False,
                 indent=2,
             ),
@@ -546,11 +550,23 @@ def main() -> int:
         return 0
     if not str(args.source_id or "").strip():
         parser.error("--source-id is required unless a qualification smoke mode is used")
-    connection = _read_only_connection()
+    if args.db_path is None:
+        parser.error("--db-path is required for a TEST material run")
+    formal_root = runtime_root_for_identity("production").resolve()
+    requested_db = args.db_path.resolve()
     try:
-        material = _select_material(connection, str(args.source_id).strip())
+        requested_db.relative_to(formal_root)
+    except ValueError:
+        pass
+    else:
+        parser.error("TEST material runs cannot use a database inside the formal runtime")
+    test_core = Stage0ContentProductionCore.open_read_only(
+        requested_db, data_identity="test"
+    )
+    try:
+        material = _select_material(test_core.conn, str(args.source_id).strip())
     finally:
-        connection.close()
+        test_core.close()
 
     result = run_test_only_competitor_breakdown_batch(
         test_id=f"hermes_breakdown_test_{uuid.uuid4().hex[:10]}",
@@ -579,6 +595,12 @@ def main() -> int:
         summary["raw_model_output"] = outcome.get("raw_model_output")
     if args.output_file:
         output_path = Path(args.output_file).resolve()
+        try:
+            output_path.relative_to(formal_root)
+        except ValueError:
+            pass
+        else:
+            parser.error("TEST output cannot be written inside the formal runtime")
         output_path.parent.mkdir(parents=True, exist_ok=True)
         if output_path.suffix.casefold() == ".md":
             output_path.write_text(_markdown_summary(summary), encoding="utf-8")

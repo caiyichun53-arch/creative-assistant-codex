@@ -56,8 +56,10 @@ _MEDIACRAWLER_BROWSER_LOCK = threading.Lock()
 _MEDIACRAWLER_CDP_PORT = 9222
 
 
-def _active_douyin_profile_name() -> str:
-    state_path = runtime_path("agent_platform", "mediacrawler_browser_state.json")
+def _active_douyin_profile_name(*, data_identity: str) -> str:
+    state_path = runtime_path(
+        "agent_platform", "mediacrawler_browser_state.json", data_identity=data_identity
+    )
     if not state_path.is_file():
         return "primary"
     try:
@@ -70,10 +72,14 @@ def _active_douyin_profile_name() -> str:
     return profile_name
 
 
-def _active_douyin_profile_dir(mediacrawler_dir: Path) -> Path:
+def _active_douyin_profile_dir(
+    mediacrawler_dir: Path, *, data_identity: str
+) -> Path:
     del mediacrawler_dir
-    profile_root = runtime_path("external", "mediacrawler", "browser_data")
-    profile_name = _active_douyin_profile_name()
+    profile_root = runtime_path(
+        "external", "mediacrawler", "browser_data", data_identity=data_identity
+    )
+    profile_name = _active_douyin_profile_name(data_identity=data_identity)
     if profile_name == "primary":
         return profile_root / "cdp_dy_user_data_dir"
     return profile_root / f"cdp_dy_user_data_dir_{profile_name}"
@@ -166,10 +172,14 @@ def _ensure_shared_douyin_browser(mediacrawler_dir: Path) -> None:
         )
 
 
-def retained_douyin_collector_browser_status(mediacrawler_dir: Path) -> dict[str, Any]:
+def retained_douyin_collector_browser_status(
+    mediacrawler_dir: Path, *, data_identity: str
+) -> dict[str, Any]:
     """Report collector-browser readiness without starting or changing anything."""
-    profile_name = _active_douyin_profile_name()
-    profile_dir = _active_douyin_profile_dir(mediacrawler_dir)
+    profile_name = _active_douyin_profile_name(data_identity=data_identity)
+    profile_dir = _active_douyin_profile_dir(
+        mediacrawler_dir, data_identity=data_identity
+    )
     return {
         "status": "ready" if _cdp_port_ready() else "not_ready",
         "cdp_port": _MEDIACRAWLER_CDP_PORT,
@@ -181,7 +191,7 @@ def retained_douyin_collector_browser_status(mediacrawler_dir: Path) -> dict[str
 
 
 def start_retained_douyin_collector_browser(
-    mediacrawler_dir: Path, *, headless: bool = True
+    mediacrawler_dir: Path, *, headless: bool = True, data_identity: str
 ) -> None:
     """Explicit maintenance action: start the one reusable collector browser.
 
@@ -192,7 +202,9 @@ def start_retained_douyin_collector_browser(
         if _cdp_port_ready():
             return
         browser_path = _find_windows_chrome()
-        profile_dir = _active_douyin_profile_dir(mediacrawler_dir)
+        profile_dir = _active_douyin_profile_dir(
+            mediacrawler_dir, data_identity=data_identity
+        )
         profile_dir.mkdir(parents=True, exist_ok=True)
         args = [
             str(browser_path),
@@ -298,6 +310,15 @@ class LocalMediaCrawlerExecutor:
     detail_min_interval_seconds: float = 15.0
     detail_jitter_seconds: float = 15.0
     progress_callback: Callable[[str], None] | None = None
+    data_identity: str | None = None
+
+    def _runtime_identity(self) -> str:
+        identity = str(self.data_identity or "").strip().lower()
+        if identity not in {"production", "test"}:
+            raise ExternalAdapterError(
+                "MediaCrawler runtime storage requires an explicit production or test identity"
+            )
+        return identity
 
     def execute(self, command: ExternalAdapterCommand) -> ExternalCommandResult:
         if command.adapter_id not in {"collector.mediacrawler", "collector.comments"}:
@@ -439,9 +460,12 @@ class LocalMediaCrawlerExecutor:
             )
 
     def _archive_root(self) -> Path:
+        data_identity = self._runtime_identity()
         root = require_runtime_path(
-            self.archive_root or runtime_path("formal", "mediacrawler_runtime"),
+            self.archive_root
+            or runtime_path("mediacrawler_runtime", data_identity=data_identity),
             purpose="MediaCrawler archive",
+            data_identity=data_identity,
         )
         root.mkdir(parents=True, exist_ok=True)
         return root

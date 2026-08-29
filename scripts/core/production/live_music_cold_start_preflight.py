@@ -161,7 +161,8 @@ class LiveColdStartPreflight:
         ]
         if self.repo_root == Path(__file__).resolve().parents[3]:
             media_problems = LocalMediaCrawlerExecutor(
-                python_executable=Path(media_python_value) if media_python_value else None
+                python_executable=Path(media_python_value) if media_python_value else None,
+                data_identity="production",
             ).readiness_problems()
             media_runtime_ok = not media_problems
             media_runtime_detail = "MediaCrawler code and usable Python runtime are present" if media_runtime_ok else "; ".join(media_problems)
@@ -173,7 +174,9 @@ class LiveColdStartPreflight:
             required_for_cold_start=False,
         ))
         try:
-            collector_browser_status = retained_douyin_collector_browser_status(vendor)
+            collector_browser_status = retained_douyin_collector_browser_status(
+                vendor, data_identity="production"
+            )
             media_session_ok = collector_browser_status.get("status") == "ready"
             media_session_detail = (
                 "shared MediaCrawler collector session is ready"

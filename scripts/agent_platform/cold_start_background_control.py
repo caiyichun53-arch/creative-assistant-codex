@@ -45,11 +45,21 @@ def _timestamp(value: Any) -> float | None:
         return None
 
 
-def executor_root(startup_root: Path | None = None) -> Path:
+def executor_root(
+    startup_root: Path | None = None,
+    *,
+    data_identity: str | None = None,
+) -> Path:
+    if startup_root is None and data_identity is None:
+        raise ColdStartExecutorControlError(
+            "background executor storage requires an explicit data identity or startup root"
+        )
     return (
         Path(startup_root).resolve()
         if startup_root is not None
-        else runtime_path("agent_platform", "cold_start_background").resolve()
+        else runtime_path(
+            "agent_platform", "cold_start_background", data_identity=data_identity
+        ).resolve()
     )
 
 
@@ -57,12 +67,13 @@ def executor_record_path(
     cold_start_id: str,
     *,
     startup_root: Path | None = None,
+    data_identity: str | None = None,
 ) -> Path:
     run_id = str(cold_start_id or "").strip()
     if not run_id:
         raise ColdStartExecutorControlError("executor inspection requires a run identity")
     digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:24]
-    return executor_root(startup_root) / f"{digest}.executor.json"
+    return executor_root(startup_root, data_identity=data_identity) / f"{digest}.executor.json"
 
 
 def _local_record_lock(path: Path) -> threading.Lock:

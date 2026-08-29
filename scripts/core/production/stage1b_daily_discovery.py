@@ -499,10 +499,11 @@ def build_production_source_acquirer(
             command_args=tuple(str(value) for value in hotspot_config.get("args", [])),
             normalized_json_path=Path(hotspot_config["normalized_json_path"]),
             timeout_seconds=int(hotspot_config.get("timeout_seconds", 180)),
+            data_identity=core.data_identity,
         )
     if "tag_discovery" in source_types:
         validate_domain_search_execution_contract(domain_search_config)
-        mediacrawler = LocalMediaCrawlerExecutor()
+        mediacrawler = LocalMediaCrawlerExecutor(data_identity=core.data_identity)
     return DailyDiscoverySourceAcquirer(
         conn=core.conn,
         trendradar_executor=trendradar,
@@ -1509,12 +1510,14 @@ class Stage1BDailyDiscoveryService:
         input_payload: dict[str, Any],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         contract = self.source_to_topic_contract
+        data_identity = getattr(self.core, "data_identity", "test")
         enforce_atomic_skill_runtime_guard(
             entrypoint="stage1b_daily_discovery.source_to_topic",
             operation=contract.formal_skill_id,
+            data_identity=data_identity,
             event_log_path=(
                 Path(self.core.db_path).parent / "business_runtime_guard_events.jsonl"
-                if getattr(self.core, "data_identity", "production") != "production"
+                if data_identity != "production"
                 and getattr(self.core, "db_path", None) is not None
                 else None
             ),
@@ -1721,6 +1724,7 @@ class Stage1BDailyDiscoveryService:
         enforce_atomic_skill_runtime_guard(
             entrypoint="stage1b_daily_discovery.hotspot_to_opportunity",
             operation=contract.formal_skill_id,
+            data_identity=self.core.data_identity,
         )
         contract.validate_contract()
         validate_payload(input_payload, contract.input_schema)

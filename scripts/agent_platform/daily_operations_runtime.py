@@ -231,6 +231,7 @@ class DailyOperationsCoordinator:
             entrypoint="daily_operations_one_shot",
             source_types=DAILY_REPORT_SOURCE_TYPES,
             daily_report_limit=DAILY_PRIORITY_REPORT_LIMIT,
+            data_identity=self.data_identity,
         )
         available = tuple(self.domain_provider())
         core = Stage0ContentProductionCore.open(

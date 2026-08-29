@@ -213,7 +213,7 @@ def launch_cold_start_background(
         raise ColdStartBackgroundLaunchError(
             "background launch requires configuration, run and actor identities"
         )
-    root = executor_root(startup_root)
+    root = executor_root(startup_root, data_identity="production")
     root.mkdir(parents=True, exist_ok=True)
     launch_id = uuid.uuid4().hex
     executor_record, worker_token = reserve_cold_start_background(

@@ -17,11 +17,11 @@ from typing import Any
 
 from scripts.core.runtime.runtime_storage import (
     RuntimeStorageError,
-    active_runtime_root,
     file_digest,
     formal_database_path,
     migration_status,
     runtime_identity_receipt,
+    runtime_root_for_identity,
 )
 
 
@@ -80,7 +80,7 @@ class CoreReadOnlySession:
         try:
             if migration_status() != "completed":
                 raise CoreStartupError("formal runtime storage migration is not completed")
-            runtime_root = active_runtime_root()
+            runtime_root = runtime_root_for_identity("production")
             database_path = formal_database_path().resolve()
             receipt = runtime_identity_receipt()
         except RuntimeStorageError as exc:

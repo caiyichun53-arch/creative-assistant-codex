@@ -223,6 +223,7 @@ class ProductionDailyOperationsService:
             "daily_operations",
             "materials",
             hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:16],
+            data_identity=self.core.data_identity,
         )
         media_materializer: LocalCompetitorMediaMaterializer | None = None
         transcriber: AsrAdapter | None = None
@@ -545,11 +546,13 @@ class ProductionDailyOperationsService:
         enforce_runtime_startup_guard(
             entrypoint="production_daily_candidate_discovery",
             scope="daily",
+            data_identity=self.core.data_identity,
         )
         enforce_daily_operations_runtime_guard(
             entrypoint="production_daily_candidate_discovery",
             source_types=DAILY_REPORT_SOURCE_TYPES,
             daily_report_limit=DAILY_PRIORITY_REPORT_LIMIT,
+            data_identity=self.core.data_identity,
         )
         if validation_only:
             return {
@@ -637,11 +640,13 @@ class ProductionDailyOperationsService:
         enforce_runtime_startup_guard(
             entrypoint="production_daily_operations",
             scope="daily",
+            data_identity=self.core.data_identity,
         )
         enforce_daily_operations_runtime_guard(
             entrypoint="production_daily_operations",
             source_types=DAILY_REPORT_SOURCE_TYPES,
             daily_report_limit=DAILY_PRIORITY_REPORT_LIMIT,
+            data_identity=self.core.data_identity,
         )
         if not validation_only and not str(daily_run_id or "").strip():
             raise StateTransitionError("production daily operations require a formal daily run")
@@ -650,7 +655,8 @@ class ProductionDailyOperationsService:
         )
         if self.collector is None:
             browser_status = retained_douyin_collector_browser_status(
-                local_repo_path("vendor", "MediaCrawler")
+                local_repo_path("vendor", "MediaCrawler"),
+                data_identity=self.core.data_identity,
             )
             if browser_status["status"] != "ready":
                 failure = {
@@ -679,8 +685,10 @@ class ProductionDailyOperationsService:
                 }
         collector = self.collector or MediaCrawlerCollectorAdapter(LocalMediaCrawlerExecutor(
             archive_root=runtime_path(
-                "formal", "daily_operations", discovery_date, domain_label, "mediacrawler"
+                "formal", "daily_operations", discovery_date, domain_label, "mediacrawler",
+                data_identity=self.core.data_identity,
             ),
+            data_identity=self.core.data_identity,
         ))
         formal_daily_run_id = str(daily_run_id or "").strip()
         collection_run_id = (

@@ -22,7 +22,7 @@ import tomllib
 from typing import Any
 
 from scripts.core.external_adapters.windows_process import hidden_process_kwargs
-from scripts.core.runtime.runtime_storage import runtime_path
+from scripts.core.runtime.runtime_storage import require_runtime_path, runtime_path
 
 
 _ARTICLE_READER_BOOTSTRAP = """
@@ -286,11 +286,16 @@ def run_once(
     output: Path,
     evidence_root: Path,
     timeout_seconds: int,
+    data_identity: str,
 ) -> dict[str, Any]:
     install = verify_official_install(trendradar_dir)
     trendradar_dir = trendradar_dir.resolve()
-    output = output.resolve()
-    evidence_root = evidence_root.resolve()
+    output = require_runtime_path(
+        output, purpose="TrendRadar normalized output", data_identity=data_identity
+    )
+    evidence_root = require_runtime_path(
+        evidence_root, purpose="TrendRadar evidence", data_identity=data_identity
+    )
     started = datetime.now(timezone.utc)
     run_name = started.strftime("%Y%m%dT%H%M%S.%fZ")
     evidence_dir = evidence_root / run_name
@@ -299,7 +304,9 @@ def run_once(
     stderr_path = evidence_dir / "stderr.log"
     manifest_path = evidence_dir / "manifest.json"
     command = [install["python_executable"], "-m", "trendradar"]
-    data_dir = runtime_path("external_collection", "trendradar", "output")
+    data_dir = runtime_path(
+        "external_collection", "trendradar", "output", data_identity=data_identity
+    )
     before = crawl_record_snapshot(trendradar_dir, data_dir=data_dir)
     env = dict(os.environ)
     env.update({"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"})
@@ -413,6 +420,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--trendradar-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--evidence-root", type=Path, required=True)
+    parser.add_argument("--data-identity", choices=("test", "production"), required=True)
     parser.add_argument("--timeout-seconds", type=int, default=300)
     args = parser.parse_args(argv)
     if args.timeout_seconds < 1:
@@ -423,6 +431,7 @@ def main(argv: list[str] | None = None) -> int:
             output=args.output,
             evidence_root=args.evidence_root,
             timeout_seconds=args.timeout_seconds,
+            data_identity=args.data_identity,
         )
     except Exception as exc:
         print(_canonical({"status": "preflight_failed", "error": str(exc), "automatic_retry": False}))

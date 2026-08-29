@@ -78,12 +78,22 @@ def _collect_missing_details(
     if len(targets) > 20:
         raise RuntimeError("targeted daily repair exceeds one controlled detail batch")
     browser_dir = local_repo_path("vendor", "MediaCrawler")
-    start_retained_douyin_collector_browser(browser_dir, headless=True)
-    collector = MediaCrawlerCollectorAdapter(LocalMediaCrawlerExecutor(
-        archive_root=runtime_path(
-            "formal", "daily_repairs", as_of_business_date, repair_ref, "mediacrawler"
+    start_retained_douyin_collector_browser(
+        browser_dir, headless=True, data_identity="production"
+    )
+    collector = MediaCrawlerCollectorAdapter(
+        LocalMediaCrawlerExecutor(
+            archive_root=runtime_path(
+                "formal",
+                "daily_repairs",
+                as_of_business_date,
+                repair_ref,
+                "mediacrawler",
+                data_identity="production",
+            ),
+            data_identity="production",
         )
-    ))
+    )
     result = collector.collect_video_snapshots(
         platform="douyin",
         source_urls=tuple(str(item["url"]) for item in targets),
@@ -174,7 +184,10 @@ def _apply(as_of_business_date: str) -> dict:
         ).validate_daily_repair_request(as_of_business_date=as_of_business_date)
     finally:
         validation_core.close()
-    enforce_runtime_startup_guard(entrypoint="hermes_daily_observation_repair")
+    enforce_runtime_startup_guard(
+        entrypoint="hermes_daily_observation_repair",
+        data_identity="production",
+    )
     plan = _plan(as_of_business_date)
     repair_ref = uuid.uuid4().hex
     source_backed = [
@@ -196,6 +209,7 @@ def _apply(as_of_business_date: str) -> dict:
         "formal",
         "backups",
         f"pre_daily_observation_reconciliation_{as_of_business_date}_{repair_ref}.sqlite3",
+        data_identity="production",
     )
     backup_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(FORMAL_DB_PATH, backup_path)

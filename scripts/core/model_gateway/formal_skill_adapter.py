@@ -388,9 +388,16 @@ def validate_external_skill_output(
 
 
 class FormalBusinessSkillAdapter:
-    def __init__(self, *, contract: FormalSkillContract, gateway: ModelGateway):
+    def __init__(
+        self,
+        *,
+        contract: FormalSkillContract,
+        gateway: ModelGateway,
+        data_identity: str | None = None,
+    ):
         contract.validate_contract()
         self.contract, self.gateway = contract, gateway
+        self.data_identity = data_identity
 
     def run(
         self,
@@ -405,6 +412,7 @@ class FormalBusinessSkillAdapter:
         enforce_atomic_skill_runtime_guard(
             entrypoint="formal_business_skill_adapter",
             operation=self.contract.formal_skill_id,
+            data_identity=self.data_identity,
         )
         validate_payload(input_payload, self.contract.input_schema)
         prepared = preprocess_formal_skill_input(self.contract.formal_skill_id, input_payload)
@@ -514,6 +522,7 @@ class FormalBusinessSkillAdapter:
         enforce_atomic_skill_runtime_guard(
             entrypoint="formal_business_skill_adapter.test_correction",
             operation=self.contract.formal_skill_id,
+            data_identity=self.data_identity,
         )
         validate_payload(input_payload, self.contract.input_schema)
         prepared = preprocess_formal_skill_input(self.contract.formal_skill_id, input_payload)

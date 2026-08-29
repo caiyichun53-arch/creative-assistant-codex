@@ -18,7 +18,7 @@ from scripts.core.external_adapters.local_mediacrawler_executor import (
     start_retained_douyin_collector_browser,
 )
 from scripts.core.production.stage0_content_core import FORMAL_DB_PATH
-from scripts.core.runtime.runtime_storage import runtime_path
+from scripts.core.runtime.runtime_storage import require_runtime_path, runtime_path
 from scripts.core.scheduler.schedule_registry import (
     assert_automatic_schedule_allowed,
 )
@@ -47,7 +47,7 @@ def _append_log_safely(path: Path, payload: dict) -> None:
 
 def _ensure_runtime_write_access() -> None:
     """Fail early with a clear reason before opening the formal database."""
-    probe_root = runtime_path("agent_platform")
+    probe_root = runtime_path("agent_platform", data_identity="production")
     probe = probe_root / f".daily_collection_write_probe_{uuid.uuid4().hex}"
     try:
         probe_root.mkdir(parents=True, exist_ok=True)
@@ -99,26 +99,41 @@ def main(argv: list[str] | None = None) -> int:
         if effective_at.tzinfo is None:
             raise SystemExit("catch-up effective time must include a timezone")
         default_log = runtime_path(
-            "agent_platform", f"daily_collection_catchup_{business_date.isoformat()}.log"
+            "agent_platform", f"daily_collection_catchup_{business_date.isoformat()}.log",
+            data_identity="production",
         )
         trigger = "daily_missed_batch_catch_up"
     else:
         if args.business_date or args.effective_at:
             raise SystemExit("business date overrides are only allowed in explicit catch-up mode")
         business_date = None
-        default_log = runtime_path("agent_platform", "daily_collection_once.log")
+        default_log = runtime_path(
+            "agent_platform", "daily_collection_once.log", data_identity="production"
+        )
         trigger = "daily_scheduled"
-    run_log = args.run_log or default_log
+    run_log = (
+        require_runtime_path(
+            args.run_log,
+            purpose="formal daily run log",
+            data_identity="production",
+        )
+        if args.run_log is not None
+        else default_log
+    )
     browser_dir = local_repo_path("vendor", "MediaCrawler")
 
     def prepare_collector_browser() -> None:
         try:
-            start_retained_douyin_collector_browser(browser_dir, headless=True)
+            start_retained_douyin_collector_browser(
+                browser_dir, headless=True, data_identity="production"
+            )
         except Exception:
             # Let the formal collection path record the same readiness failure
             # with its normal daily-operation receipt.
             pass
-        retained_douyin_collector_browser_status(browser_dir)
+        retained_douyin_collector_browser_status(
+            browser_dir, data_identity="production"
+        )
 
     coordinator = DailyOperationsCoordinator(
         db_path=FORMAL_DB_PATH,

@@ -12,6 +12,7 @@ from scripts.core.external_adapters.goal_phase4_external_adapters import (
     ExternalCommandResult,
 )
 from scripts.core.external_adapters.windows_process import hidden_process_kwargs
+from scripts.core.runtime.runtime_storage import RuntimeStorageError, runtime_root_for_identity
 
 
 @dataclass(frozen=True)
@@ -28,14 +29,36 @@ class LocalTrendRadarExecutor:
     command_args: tuple[str, ...]
     normalized_json_path: Path
     timeout_seconds: int = 180
+    data_identity: str | None = None
 
     def execute(self, command: ExternalAdapterCommand) -> ExternalCommandResult:
         if command.adapter_id != "collector.trendradar" or command.capability != "hotspot.daily_snapshot":
             raise ExternalAdapterError("unsupported TrendRadar adapter command")
         if not self.project_dir.is_dir():
             raise ExternalAdapterError("configured TrendRadar project_dir does not exist")
+        data_identity = str(self.data_identity or "").strip().lower()
+        if data_identity not in {"production", "test"}:
+            raise ExternalAdapterError(
+                "TrendRadar runtime requires an explicit production or test identity"
+            )
         executable = self.executable if self.executable.is_absolute() else self.project_dir / self.executable
         export_path = self.normalized_json_path if self.normalized_json_path.is_absolute() else self.project_dir / self.normalized_json_path
+        try:
+            other_root = runtime_root_for_identity(
+                "test" if data_identity == "production" else "production"
+            ).resolve()
+        except RuntimeStorageError as exc:
+            raise ExternalAdapterError(
+                "TrendRadar runtime identity could not be verified"
+            ) from exc
+        try:
+            export_path.resolve().relative_to(other_root)
+        except ValueError:
+            pass
+        else:
+            raise ExternalAdapterError(
+                f"{data_identity} TrendRadar output cannot use the other runtime root"
+            )
         if not executable.exists():
             raise ExternalAdapterError("configured TrendRadar executable does not exist")
 

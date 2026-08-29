@@ -70,7 +70,11 @@ from scripts.core.production.business_runtime_guard import (
     enforce_runtime_startup_guard,
     record_runtime_guard_event,
 )
-from scripts.core.runtime.runtime_storage import formal_database_path
+from scripts.core.runtime.runtime_storage import (
+    RuntimeStorageError,
+    formal_database_path,
+    runtime_root_for_identity,
+)
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -797,6 +801,12 @@ class Stage0ContentProductionCore:
         elif data_identity in NON_PRODUCTION_IDENTITIES:
             if resolved == FORMAL_DB_PATH.resolve():
                 raise DataIdentityError("non-production identity must never open the formal production database")
+            try:
+                resolved.relative_to(runtime_root_for_identity("production").resolve())
+            except (ValueError, RuntimeStorageError):
+                pass
+            else:
+                raise DataIdentityError("non-production identity must never open any database inside the formal runtime")
             try:
                 resolved.relative_to(ROOT.resolve())
             except ValueError:
@@ -2504,6 +2514,7 @@ class Stage0ContentProductionCore:
         enforce_atomic_skill_runtime_guard(
             entrypoint="stage0_content_core.prepare_atomic_skill_binding",
             operation=FORMAL_SKILL_BY_NODE[version["node"]],
+            data_identity=self.data_identity,
         )
         assembly = self._assembly(version["input_assembly_id"])
         payload = json.loads(assembly["payload_json"])
@@ -9310,6 +9321,7 @@ class Stage0ContentProductionCore:
                     event="formal_historical_collection_write",
                     outcome="blocked",
                     details={"registration_id": registration_id, "error": str(exc)},
+                    data_identity=self.data_identity,
                 )
                 raise StateTransitionError(
                     f"historical collection runtime guard rejected the result: {exc}"
@@ -9318,6 +9330,7 @@ class Stage0ContentProductionCore:
                 event="formal_historical_collection_write",
                 outcome="passed",
                 details={"registration_id": registration_id},
+                data_identity=self.data_identity,
             )
             if artifact_refs[0].get("collection_status") == "history_exhausted_insufficient":
                 result = {
@@ -9378,12 +9391,14 @@ class Stage0ContentProductionCore:
                     event="formal_high_signal_write",
                     outcome="blocked",
                     details={"registration_id": registration_id, "error": str(exc)},
+                    data_identity=self.data_identity,
                 )
                 raise StateTransitionError(f"high-signal runtime guard rejected the result: {exc}") from exc
             record_runtime_guard_event(
                 event="formal_high_signal_write",
                 outcome="passed",
                 details={"registration_id": registration_id},
+                data_identity=self.data_identity,
             )
         step_index = COMPETITOR_REGISTRATION_STEPS.index(step_name)
         next_step = (
