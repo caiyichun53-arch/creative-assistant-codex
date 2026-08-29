@@ -39,6 +39,7 @@
       "path_prefixes": [
         "execution/current_implementation_stage.json",
         "execution/stages/system_governance.md",
+        "migration_snapshot/migration_freeze.md",
         "config/business_guardrails/system_governance.json",
         "config/business_guardrails/runtime_liveness.json",
         "config/business_guardrails/stage_registry.json",

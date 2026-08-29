@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,6 +17,47 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "config" / "business_guardrails" / "stage_registry.json"
+CURRENT_STAGE_POINTER = ROOT / "execution" / "current_implementation_stage.json"
+FORBIDDEN_COMMIT_PREFIXES = (
+    ".codex/state/",
+    ".stage_runtime/",
+    "artifacts/validation/",
+    "data/",
+    "external_responses/",
+    "logs/",
+    "outputs/",
+    "profiles/",
+    "raw_external/",
+    "sessions/",
+    "validation/",
+    "vault/",
+)
+FORBIDDEN_COMMIT_SUFFIXES = (
+    ".db",
+    ".db-shm",
+    ".db-wal",
+    ".key",
+    ".log",
+    ".pem",
+    ".sqlite",
+    ".sqlite-shm",
+    ".sqlite-wal",
+    ".sqlite3",
+    ".sqlite3-shm",
+    ".sqlite3-wal",
+)
+FORBIDDEN_COMMIT_NAMES = {
+    "auth.json",
+    "credentials.json",
+    "cookies.json",
+    "secrets.json",
+    "tokens.json",
+}
+FORBIDDEN_COMMIT_PATHS = {
+    "config/live_gates.yaml",
+    "config/settings.yaml",
+}
+SAFE_ENV_FILES = {".env.example", ".env.live-gates.example"}
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -159,14 +201,94 @@ def validate(stage: str) -> list[str]:
     return errors
 
 
+def _current_stage_scope() -> tuple[str, list[str]]:
+    pointer = _read_object(CURRENT_STAGE_POINTER)
+    registry = _read_object(REGISTRY)
+    stage = str(pointer.get("stage") or "").strip()
+    stages = registry.get("stages")
+    definition = stages.get(stage) if isinstance(stages, dict) else None
+    paths = definition.get("path_prefixes") if isinstance(definition, dict) else None
+    if not stage or not isinstance(paths, list) or not paths:
+        raise ValueError("current implementation stage has no valid path scope")
+    normalized = [str(path).replace("\\", "/").strip("/") for path in paths if str(path).strip()]
+    if not normalized:
+        raise ValueError("current implementation stage has no path scope")
+    return stage, normalized
+
+
+def _allowed(path: str, paths: list[str]) -> bool:
+    return any(path == item or path.startswith(item.rstrip("/") + "/") for item in paths)
+
+
+def _staged_paths() -> list[str]:
+    result = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=ROOT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
+        raise ValueError(result.stderr.strip() or "cannot read staged paths")
+    return sorted({path.replace("\\", "/").strip() for path in result.stdout.splitlines() if path.strip()})
+
+
+def _forbidden_commit_reason(path: str) -> str | None:
+    normalized = path.replace("\\", "/").strip("/").lower()
+    name = normalized.rsplit("/", 1)[-1]
+    if any(normalized == prefix or normalized.startswith(prefix) for prefix in FORBIDDEN_COMMIT_PREFIXES):
+        return "runtime or generated data path"
+    if normalized in FORBIDDEN_COMMIT_PATHS:
+        return "local configuration or credential path"
+    if name.endswith(FORBIDDEN_COMMIT_SUFFIXES):
+        return "database, log, or credential file"
+    if name in FORBIDDEN_COMMIT_NAMES:
+        return "authentication or credential file"
+    if normalized == ".env" or (normalized.startswith(".env.") and name not in SAFE_ENV_FILES):
+        return "local environment or credential file"
+    if normalized.startswith("config/accounts/") and name != "example.yaml":
+        return "account credential configuration"
+    if normalized.startswith("config/domains/") and name != "example.yaml":
+        return "domain credential configuration"
+    return None
+
+
+def _commit_boundary_errors() -> list[str]:
+    stage, stage_paths = _current_stage_scope()
+    staged = _staged_paths()
+    outside_stage = [path for path in staged if not _allowed(path, stage_paths)]
+    forbidden = [(path, _forbidden_commit_reason(path)) for path in staged]
+    forbidden = [(path, reason) for path, reason in forbidden if reason]
+    errors: list[str] = []
+    if outside_stage:
+        errors.append("current stage " + stage + " does not allow: " + ", ".join(outside_stage))
+    if forbidden:
+        errors.append(
+            "forbidden sensitive or runtime artifacts: "
+            + ", ".join(f"{path} ({reason})" for path, reason in forbidden)
+        )
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stage", required=True)
-    parser.add_argument("--phase", required=True)
+    parser.add_argument("--stage")
+    parser.add_argument("--phase")
     parser.add_argument("--path", action="append", default=[])
+    parser.add_argument("--check-commit-boundary", action="store_true")
     args = parser.parse_args()
-    del args.phase, args.path
-    errors = validate(args.stage)
+    if args.check_commit_boundary:
+        try:
+            errors = _commit_boundary_errors()
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            errors = [f"cannot read commit boundary: {exc}"]
+    else:
+        if not args.stage or not args.phase:
+            parser.error("--stage and --phase are required unless --check-commit-boundary is used")
+        del args.phase, args.path
+        errors = validate(args.stage)
     if errors:
         print("; ".join(errors))
         return 1

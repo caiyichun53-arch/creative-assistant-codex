@@ -63,3 +63,9 @@
 本轮没有建立 migration lock、permission framework、database write firewall、watchdog 或 global write fence。
 
 保护期当前由迁移纪律和入口收敛规则维持。技术层强制只读留到后续独立 Core 和正式/测试隔离阶段。
+
+## Codex Hook 语义边界
+
+项目 PreToolUse 和 Stop Hook 只负责开发期的提前阻断、状态核对和审计记录。它们能够触发时用于尽早发现跑偏，但不是正式业务安全边界，也不是业务正确性的必要条件。
+
+即使 Codex 没有触发项目 Hook，正式业务仍必须由 Core、runtime 以及 FORMAL/TEST 隔离独立拒绝直接正式写入、身份错误和正式/测试串库。Hook 不触发不代表操作已获准；它只代表少了一层提前提醒或开发期门禁。
