@@ -1506,3 +1506,23 @@ Git 用于保存已经确认可以作为下一步起点的代码版本。以后�
 - 清理 failed、processing、running 或补写正式记录。
 
 阶段0已完成。后续迁移必须从本基线和 migration_snapshot/ 开始，并在每个阶段完成真实完成标准后再进入下一阶段。不得把阶段0封存误认为独立 Core、MCP、数据隔离或正式业务验收已经完成。
+
+## 阶段2可信提交与阶段3第一轮实际进展（2026-08-29）
+
+阶段2已建立可信 Git 节点：`054bd79`（`Creation Assistant migration Stage 2 complete`）。该提交包含阶段2正式代码、测试和迁移基线，不包含正式数据库、runtime、日志、用户级 Agent 配置、认证信息或未裁决历史资料。阶段2的正式模型执行权迁移结论保持有效。
+
+阶段3第一轮只收口“谁有权按时间启动业务”和“需要智能任务时如何启动当前外部执行者”，没有开始 cold-start 数据重置或清理。
+
+当前架构事实如下：
+
+- Windows Startup 只保留一条 Creation Assistant 平台启动快捷方式，职责是启动项目运行时；它不再保存 daily 时间、领域时间、Agent 名称、模型或 provider。该快捷方式已从失效的旧平台服务改为当前项目的 runtime bootstrap，并以常驻方式启动。
+- Windows 的消息监听器仍保留，因为已确认它只接收消息，不按时间主动启动 daily；它不是业务计划来源。
+- Creation Assistant 的唯一业务计划来源是 `config/schedule_registry.json`。当前只有一个 `daily` 计划，领域范围由 Core 管理，迁移保护期内 `enabled=false`，时间记录为 `08:00`，但不会自动执行。
+- 业务事件（例如候选准备完成后的汇报）不登记为时间计划；多领域共用同一个 `daily` 计划，不按领域拆出多个计划。
+- 当前默认外部执行者是 `hermes`。启动配置只记录通过 WSL stdio 启动 Hermes 的方式，不记录模型或 provider。执行者是否已经运行由调用方提供；已经运行时不重复启动，启动失败只报告不可用，不切换 Codex，也不切换模型或 provider。
+- 旧的自动 daily 来源保持暂停。WSL Hermes daily 脚本和旧业务入口保留作为兼容资产，但不再拥有计划权；在当前迁移保护配置下，旧自动触发会在打开正式数据库前被拒绝。本轮确认并禁用了 Windows 计划任务 `CreationAssistant_Daily`（每天 08:00 启动旧 Hermes daily 入口），任务和脚本均未删除；此前已确认的 Codex 自动 daily 任务继续保持暂停。
+- 项目代码增加了静态守卫：除 runtime bootstrap 外，业务代码不能直接创建 Windows 计划任务、cron 或 systemd timer。测试还验证唯一计划、测试环境 run-now、不改正式时间、执行者启动失败不回退，以及迁移期间 daily 不运行。
+
+本轮不改变 daily 业务规则，不运行正式业务，不调用真实模型，不修改正式数据库，也不处理 Codex MCP 兼容性。当前正式数据库文件摘要仍以取证后的 `09B245CDCF9969DAEFE163FC6F33EFEDE978E5F9A594CEDA2B6041371B8454A3` 为文件触碰监测基准；阶段0的 `5262A76E395E1B01386192EDA39E6EBAE1018356CF259B90912FB54A095E82BD` 和第一次变化后的 `33E2B8D7CB902B78AD570A3C8214FEA9864A8A526A11F4303E42643AA3A8A732` 仍作为历史凭证保存，不恢复旧备份。
+
+阶段3第一轮完成后，下一轮才处理单领域 cold-start 重置、active 状态指针和历史/知识资产边界。本轮不提交新的阶段3 Git 节点，等待用户确认。

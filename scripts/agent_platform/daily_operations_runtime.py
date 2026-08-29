@@ -20,6 +20,9 @@ from scripts.core.production.stage1b_daily_discovery import (
     DAILY_REPORT_SOURCE_TYPES,
     Stage1BDailyDiscoveryService,
 )
+from scripts.core.scheduler.schedule_registry import (
+    assert_automatic_schedule_allowed,
+)
 
 
 CHINA_TIME = timezone(timedelta(hours=8))
@@ -215,6 +218,14 @@ class DailyOperationsCoordinator:
         effective_at: datetime | None = None,
         task_model_binding: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Reject the retired automatic entry before any formal runtime or
+        # database connection is opened.  Test identities remain isolated
+        # and continue to exercise the same Core path.
+        assert_automatic_schedule_allowed(
+            schedule_key="daily",
+            trigger=trigger,
+            data_identity=self.data_identity,
+        )
         _, now = self._current_date()
         enforce_daily_operations_runtime_guard(
             entrypoint="daily_operations_one_shot",

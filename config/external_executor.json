@@ -1,0 +1,20 @@
+{
+  "config_version": "creation_assistant_external_executor_config_v1",
+  "default_executor": "hermes",
+  "executors": {
+    "hermes": {
+      "launch": {
+        "command": "wsl.exe",
+        "args": [
+          "-d",
+          "Ubuntu",
+          "--",
+          "bash",
+          "-lc",
+          "exec hermes"
+        ],
+        "transport": "stdio"
+      }
+    }
+  }
+}

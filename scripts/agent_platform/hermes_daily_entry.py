@@ -1,8 +1,9 @@
-"""Hermes-owned one-shot entry for the production daily operation.
+"""Legacy one-shot carrier for the production daily operation.
 
-This is deliberately a process-and-exit carrier.  Hermes owns the schedule
-and invokes this entry; the project core owns the business execution and
-formal writes.  No listener, HTTP server, or resident scheduler is started.
+This remains a process-and-exit compatibility carrier.  It does not own the
+business schedule: the Creation Assistant schedule registry and Core do.
+During migration protection the automatic trigger is rejected before formal
+storage is opened.  No listener, HTTP server, or resident scheduler starts.
 """
 
 from __future__ import annotations

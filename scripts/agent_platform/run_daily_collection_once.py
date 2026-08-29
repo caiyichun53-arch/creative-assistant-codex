@@ -19,6 +19,9 @@ from scripts.core.external_adapters.local_mediacrawler_executor import (
 )
 from scripts.core.production.stage0_content_core import FORMAL_DB_PATH
 from scripts.core.runtime.runtime_storage import runtime_path
+from scripts.core.scheduler.schedule_registry import (
+    assert_automatic_schedule_allowed,
+)
 
 
 CHINA_TIME = timezone(timedelta(hours=8))
@@ -122,16 +125,24 @@ def main(argv: list[str] | None = None) -> int:
         data_identity=args.data_identity,
         before_runner=prepare_collector_browser,
     )
+    resume = bool(str(args.resume_domain or "").strip())
+    requested_domains = (
+        (str(args.resume_domain).strip(),)
+        if resume
+        else None
+    )
+    if resume:
+        trigger = "daily_user_resume_catch_up" if args.catch_up else "daily_user_resume"
+    # This check happens before the legacy entry writes a runtime probe or
+    # opens the formal database.  It is the migration guard for old automatic
+    # callers, not a replacement for Core's manual resume rules.
+    assert_automatic_schedule_allowed(
+        schedule_key="daily",
+        trigger=trigger,
+        data_identity=args.data_identity,
+    )
     try:
         _ensure_runtime_write_access()
-        resume = bool(str(args.resume_domain or "").strip())
-        requested_domains = (
-            (str(args.resume_domain).strip(),)
-            if resume
-            else None
-        )
-        if resume:
-            trigger = "daily_user_resume_catch_up" if args.catch_up else "daily_user_resume"
         result = coordinator.schedule_all(
             domain_labels=requested_domains,
             trigger=trigger,

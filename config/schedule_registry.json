@@ -1,0 +1,14 @@
+{
+  "registry_version": "creation_assistant_schedule_registry_v1",
+  "migration_protection": true,
+  "business_event_triggers_are_not_schedules": true,
+  "schedules": {
+    "daily": {
+      "enabled": false,
+      "time": "08:00",
+      "timezone": "Asia/Shanghai",
+      "trigger_type": "absolute_time",
+      "domain_scope": "core_managed"
+    }
+  }
+}
