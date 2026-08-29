@@ -242,10 +242,6 @@ class DailyStoppedBoundaryTests(unittest.TestCase):
                 "scripts.core.production.stage1_daily_operations.require_frozen_content_type_registry",
                 side_effect=ValueError("registry is not frozen"),
             ),
-            patch(
-                "scripts.core.production.stage1_daily_operations.build_production_daily_hit_gateway",
-                side_effect=AssertionError("Breakdown model must not execute while stopped"),
-            ),
         ):
             result = service.run(
                 domain_label="music_entertainment",

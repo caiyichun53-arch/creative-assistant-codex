@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 from typing import Any, Mapping
@@ -10,7 +11,6 @@ from scripts.core.external_adapters.local_mediacrawler_executor import (
     LocalMediaCrawlerExecutor,
     retained_douyin_collector_browser_status,
 )
-from scripts.core.model_gateway.model_router import ModelRouter
 from scripts.core.production.stage0_content_core import Stage0ContentProductionCore, StateTransitionError
 
 
@@ -191,31 +191,21 @@ class LiveColdStartPreflight:
             required_for_cold_start=False,
         ))
 
+        executor_config_path = self.repo_root / "config" / "external_executor.json"
         try:
-            router = ModelRouter.from_file(self.repo_root / "config" / "model_routes.yaml")
-            context = trusted_internal_context or {}
-            binding = router.resolve_hermes_task_binding(
-                route_id="business_analysis",
-                current_model=str(context.get("task_model_name") or ""),
-                current_provider=str(context.get("task_model_provider") or ""),
-                current_endpoint=str(context.get("task_model_base_url") or ""),
-                environment=self.environment,
-                env_path=self.dotenv_path,
-            )
-            route = router.resolve_frozen_task_route(
-                binding, environment=self.environment, env_path=self.dotenv_path
-            )
-            router.validate_bound_provider_configuration(
-                route, environment=self.environment, env_path=self.dotenv_path
-            )
-            model_routes_ok, model_routes_detail = True, (
-                f"business analysis inherits Hermes task model {binding.model_name} "
-                f"through {binding.provider_ref} with no fallback"
+            executor_config = json.loads(executor_config_path.read_text(encoding="utf-8"))
+            default_executor = str(executor_config.get("default_executor") or "").strip()
+            executors = executor_config.get("executors")
+            executor_ready = bool(default_executor and isinstance(executors, dict) and default_executor in executors)
+            executor_detail = (
+                "external executor boundary is configured"
+                if executor_ready
+                else "external executor boundary configuration is incomplete"
             )
         except Exception as exc:
-            model_routes_ok, model_routes_detail = False, f"model route is unresolved: {exc}"
+            executor_ready, executor_detail = False, f"external executor boundary is unresolved: {exc}"
         add(self._check(
-            "model_routes", model_routes_ok, "runtime_configuration", model_routes_detail,
+            "external_executor_boundary", executor_ready, "runtime_configuration", executor_detail,
             required_for_cold_start=False,
         ))
 

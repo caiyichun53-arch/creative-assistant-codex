@@ -1,4 +1,4 @@
-"""Isolated A-F acceptance checks for Hermes task-model inheritance."""
+"""Isolated checks that formal cold-start execution has no model binding."""
 
 from __future__ import annotations
 
@@ -142,7 +142,7 @@ class HermesTaskModelInheritanceTest(unittest.TestCase):
 
     def test_a_new_run_and_breakdown_gateway_use_current_hermes_model(self) -> None:
         created = self._create("模型继承场景A", "model-a")
-        self.assertEqual(created["run_model"], "model-a")
+        self.assertEqual(created["run_model"], "")
         router, environment = _router()
         binding = router.resolve_hermes_task_binding(
             route_id="business_analysis",
@@ -192,8 +192,8 @@ class HermesTaskModelInheritanceTest(unittest.TestCase):
         )
         second = self._create("模型继承场景B新", "model-b")
         self.assertEqual(continued["cold_start_id"], first["cold_start_id"])
-        self.assertEqual(continued["run_model"], "model-a")
-        self.assertEqual(second["run_model"], "model-b")
+        self.assertEqual(continued["run_model"], "")
+        self.assertEqual(second["run_model"], "")
 
     def test_c_stop_and_resume_update_execution_model_and_keep_the_run(self) -> None:
         created = self._create("模型继承场景C", "model-a")
@@ -209,7 +209,7 @@ class HermesTaskModelInheritanceTest(unittest.TestCase):
             cold_start_id=created["cold_start_id"],
         )
         self.assertEqual(resumed["cold_start_id"], created["cold_start_id"])
-        self.assertEqual(resumed["run_model"], "model-b")
+        self.assertEqual(resumed["run_model"], "")
         self.assertFalse(resumed["created_new_run"])
         snapshot = json.loads(
             self.connection.execute(
@@ -218,7 +218,7 @@ class HermesTaskModelInheritanceTest(unittest.TestCase):
                 (created["cold_start_id"],),
             ).fetchone()[0]
         )
-        self.assertEqual(snapshot["run_model"]["model_name"], "model-b")
+        self.assertNotIn("run_model", snapshot)
         audit_rows = list(
             self.connection.execute(
                 "SELECT action, payload_json FROM stage0_audit_event "
@@ -226,11 +226,8 @@ class HermesTaskModelInheritanceTest(unittest.TestCase):
                 "ORDER BY created_at, audit_id"
             )
         )
-        self.assertEqual(json.loads(audit_rows[0][1])["run_model"]["model_name"], "model-a")
-        self.assertEqual(
-            json.loads(audit_rows[1][1])["run_model_binding"]["model_name"],
-            "model-b",
-        )
+        self.assertNotIn("run_model", json.loads(audit_rows[0][1]))
+        self.assertEqual(json.loads(audit_rows[1][1])["run_model_binding"], {})
 
     def test_d_resume_requires_current_runtime_model_without_old_binding_fallback(self) -> None:
         def resolver(context: dict[str, object] | None, _override: str | None) -> dict[str, object]:
@@ -253,17 +250,17 @@ class HermesTaskModelInheritanceTest(unittest.TestCase):
             reason="isolated pause",
             cold_start_id=created["cold_start_id"],
         )
-        with self.assertRaisesRegex(StateTransitionError, "no model binding"):
-            service.resume_current_cold_start(
-                actor="",
-                cold_start_id=created["cold_start_id"],
-            )
+        resumed = service.resume_current_cold_start(
+            actor="",
+            cold_start_id=created["cold_start_id"],
+        )
+        self.assertEqual(resumed["run_model"], "")
         self.assertEqual(
             self.connection.execute(
                 "SELECT status FROM stage0_cold_start WHERE cold_start_id=?",
                 (created["cold_start_id"],),
             ).fetchone()[0],
-            "stopped",
+            "running",
         )
 
     def test_e_legacy_stealth_default_cannot_override_hermes_current_model(self) -> None:
@@ -360,13 +357,7 @@ class HermesTaskModelInheritanceTest(unittest.TestCase):
                 (created["cold_start_id"],),
             ).fetchone()[0]
         )
-        binding = snapshot["run_model"]
-        self.assertNotIn("api_key", binding)
-        self.assertNotIn("access_token", binding)
-        self.assertEqual(set(binding), {
-            "route_id", "provider_ref", "provider_name", "provider_type",
-            "model_name", "endpoint", "source", "explicit_override",
-        })
+        self.assertNotIn("run_model", snapshot)
 
     def test_h_invalid_injected_binding_fails_closed(self) -> None:
         def resolver(_context: dict[str, object] | None, _override: str | None) -> dict[str, object]:
@@ -379,8 +370,8 @@ class HermesTaskModelInheritanceTest(unittest.TestCase):
         )
         payload = _payload("模型绑定缺失")
         preview = service.preview(payload)
-        with self.assertRaisesRegex(StateTransitionError, "invalid model binding"):
-            service.confirm(payload)
+        result = service.confirm(payload)
+        self.assertEqual(result["run_model"], "")
     def test_f_deterministic_hashtag_extraction_never_calls_model(self) -> None:
         executor = ConfiguredCompetitorRegistrationExecutor.__new__(
             ConfiguredCompetitorRegistrationExecutor

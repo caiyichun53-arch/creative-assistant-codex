@@ -205,7 +205,7 @@ class ColdStartBackgroundControlTest(unittest.TestCase):
             trusted_internal_context={"task_model_name": "isolated/model-b"},
         )
         self.assertEqual(resumed["cold_start_id"], cold_start_id)
-        self.assertEqual(resumed["run_model"], "isolated/model-b")
+        self.assertEqual(resumed["run_model"], "")
         self.assertNotEqual(int(resumed["execution"]["pid"]), original_pid)
         self.assertEqual(resumed["status"], "running")
         self.assertEqual(
@@ -268,7 +268,7 @@ class ColdStartBackgroundControlTest(unittest.TestCase):
         )
         self.assertEqual(resumed["cold_start_id"], cold_start_id)
         self.assertEqual(resumed["status"], "running")
-        self.assertEqual(resumed["run_model"], "isolated/model-b")
+        self.assertEqual(resumed["run_model"], "")
         self.assertEqual(
             self.connection.execute("SELECT COUNT(*) FROM stage0_cold_start").fetchone()[0],
             1,
@@ -287,7 +287,7 @@ class ColdStartBackgroundControlTest(unittest.TestCase):
             cold_start_id=cold_start_id,
             trusted_internal_context={"task_model_name": "isolated/model-b"},
         )
-        self.assertEqual(first_resume["run_model"], "isolated/model-b")
+        self.assertEqual(first_resume["run_model"], "")
         service.stop_current_cold_start(
             actor="隔离用户",
             reason="第二次恢复前停止",
@@ -299,7 +299,7 @@ class ColdStartBackgroundControlTest(unittest.TestCase):
             trusted_internal_context={"task_model_name": "isolated/model-c"},
         )
         self.assertEqual(second_resume["cold_start_id"], cold_start_id)
-        self.assertEqual(second_resume["run_model"], "isolated/model-c")
+        self.assertEqual(second_resume["run_model"], "")
         self.assertEqual(
             self.connection.execute(
                 "SELECT COUNT(*) FROM stage0_cold_start WHERE cold_start_id=?",

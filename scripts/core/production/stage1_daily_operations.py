@@ -39,15 +39,13 @@ from scripts.core.production.stage1_competitor_registration import (
     _breakdown_domain_context,
     _filter_comments,
     COMMENT_TOP_N,
-    build_production_daily_hit_gateway,
 )
 from scripts.core.business_data.domain_labels import require_frozen_content_type_registry
-from scripts.core.model_gateway.formal_skill_adapter import FormalBusinessSkillAdapter, FormalSkillContract
+from scripts.core.model_gateway.formal_skill_adapter import FormalSkillContract
 from scripts.core.model_gateway.formal_skill_adapter import (
     prepare_external_skill_task,
     validate_external_skill_output,
 )
-from scripts.core.model_gateway.model_router import ModelRouter
 from scripts.core.production.stage1b_daily_discovery import (
     DAILY_REPORT_SOURCE_TYPES,
     ExternalIntelligenceRequired,
@@ -77,17 +75,10 @@ class ProductionDailyOperationsService:
     ) -> None:
         if core.data_identity != "production":
             raise StateTransitionError("production daily operations require the production data identity")
+        del task_model_binding
         self.core = core
         self.collector = collector
-        self.task_model_binding = dict(task_model_binding or {}) or None
         self.external_executor = external_executor
-
-    def _execution_model_binding(self) -> dict[str, Any]:
-        if self.task_model_binding is None:
-            self.task_model_binding = ModelRouter.from_file().resolve_current_hermes_execution_binding(
-                route_id="business_analysis",
-            ).as_payload()
-        return dict(self.task_model_binding)
 
     def _unfinished_daily_hits(
         self, hit_ids: list[str], *, include_failed: bool = False
@@ -227,8 +218,6 @@ class ProductionDailyOperationsService:
         )
         media_materializer: LocalCompetitorMediaMaterializer | None = None
         transcriber: AsrAdapter | None = None
-        gateway: Any | None = None
-        runner: FormalBusinessSkillAdapter | None = None
         results: list[dict[str, Any]] = []
         for hit in unfinished:
             hit_id = str(hit["hit_id"])

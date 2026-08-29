@@ -8402,6 +8402,9 @@ class Stage0ContentProductionCore:
         task_model_binding: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create or continue exactly one run for one confirmed configuration."""
+        # Kept in the compatibility signature only.  A Business Run does not
+        # carry or resolve a provider/model binding.
+        del task_model_binding
         configuration = self.get_cold_start_configuration(configuration_id=configuration_id)
         cold_start_id = str(configuration.get("cold_start_id") or f"cold_start_{configuration_id}")
         competitor_snapshot = []
@@ -8457,19 +8460,11 @@ class Stage0ContentProductionCore:
                 "registration_ids": [str(row["registration_id"]) for row in registration_rows],
                 "status": str(existing_run["status"]),
             }
-            task_model_binding = self.get_cold_start_run_model_binding(
-                cold_start_id=cold_start_id
-            )
         else:
             if configuration["status"] not in {"confirmed", "started"}:
                 raise StateTransitionError(
                     "only a confirmed configuration can create or continue a cold-start run"
                 )
-            if not isinstance(task_model_binding, dict) or not task_model_binding:
-                raise StateTransitionError(
-                    "new Hermes cold-start run requires its current task model binding"
-                )
-            input_snapshot["run_model"] = dict(task_model_binding)
             try:
                 result = self.start_cold_start(
                     cold_start_id=cold_start_id,
@@ -8509,13 +8504,12 @@ class Stage0ContentProductionCore:
                 "configuration_id": configuration_id, "cold_start_id": cold_start_id,
                 "registration_ids": result["registration_ids"],
                 "cold_start_contract_version": COLD_START_CONTRACT_VERSION,
-                "run_model": dict(task_model_binding),
             })
         return {
             **result,
             "configuration_id": configuration_id,
-            "run_model": str(task_model_binding.get("model_name") or ""),
-            "run_model_binding": dict(task_model_binding),
+            "run_model": "",
+            "run_model_binding": {},
         }
 
     def pause_configured_cold_start(
@@ -8630,7 +8624,8 @@ class Stage0ContentProductionCore:
         actor: str | None = None,
         task_model_binding: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Reactivate the same run with the current execution model."""
+        """Reactivate the same run without changing its business identity."""
+        del task_model_binding
         configuration = self.get_cold_start_configuration(
             configuration_id=configuration_id
         )
@@ -8660,15 +8655,7 @@ class Stage0ContentProductionCore:
             raise StateTransitionError("only a stopped or failed cold start can be resumed")
         if configuration["status"] not in {"started", "cancelled"}:
             raise StateTransitionError("the interrupted cold-start configuration cannot be resumed")
-        if not isinstance(task_model_binding, dict) or not task_model_binding:
-            raise StateTransitionError(
-                "cold-start resume requires the current Hermes model binding"
-            )
         with self.conn:
-            normalized_binding = self._replace_cold_start_run_model_binding(
-                cold_start_id=cold_start_id,
-                task_model_binding=task_model_binding,
-            )
             result = {
                 "configuration_id": configuration_id,
                 "cold_start_id": cold_start_id,
@@ -8676,8 +8663,8 @@ class Stage0ContentProductionCore:
                 "prior_status": prior_status,
                 "resumed": True,
                 "created_new_run": False,
-                "run_model": str(normalized_binding.get("model_name") or ""),
-                "run_model_binding": dict(normalized_binding),
+                "run_model": "",
+                "run_model_binding": {},
             }
             self.conn.execute(
                 "UPDATE stage0_cold_start SET status='running', "
@@ -8946,11 +8933,9 @@ class Stage0ContentProductionCore:
             )
             if run_contract is not None:
                 input_snapshot = run_contract.get("input_snapshot")
-                if not isinstance(input_snapshot, dict) or not isinstance(
-                    input_snapshot.get("run_model"), dict
-                ):
+                if not isinstance(input_snapshot, dict):
                     raise StateTransitionError(
-                        "formal cold-start run contract requires an execution task model"
+                        "cold-start run contract requires an input snapshot"
                     )
                 self.conn.execute(
                     "INSERT INTO stage0_cold_start_run_contract("
@@ -13974,6 +13959,10 @@ class Stage0ContentProductionCore:
         filter_row = self.conn.execute("SELECT outcome FROM stage1b_filter_result WHERE source_version_id=?", (source_version_id,)).fetchone()
         if filter_row is None or filter_row["outcome"] != "eligible":
             raise StateTransitionError("LLM input may only be assembled for deterministically eligible sources")
+        if self.data_identity == "production" and not external_execution:
+            raise StateTransitionError(
+                "formal discovery input must use the external intelligence boundary"
+            )
         if external_execution and model_route is not None:
             raise StateTransitionError("external intelligence assembly cannot contain a model route")
         route = None if external_execution else (model_route or self._resolve_discovery_model_route())
@@ -14051,14 +14040,20 @@ class Stage0ContentProductionCore:
             raise StateTransitionError("external intelligence task requires a formal Skill")
         if not isinstance(input_payload, dict) or not isinstance(constraints, dict) or not isinstance(output_requirements, dict):
             raise StateTransitionError("external intelligence task payload is malformed")
-        if (
-            str(input_payload.get("fixture_id") or "") != str(stored_payload.get("request_id") or "")
-            or str(input_payload.get("domain_label") or "") != str(stored_payload.get("domain_label") or "")
-            or list(input_payload.get("source_evidence_refs") or [])
-            != list(stored_payload.get("source_evidence_items") or [])
-            or " ".join(str(input_payload.get("source_content") or "").split())
-            != " ".join(str(stored_payload.get("source_content") or "").split())
-        ):
+        source_to_topic_material_matches = (
+            str(input_payload.get("fixture_id") or "") == str(stored_payload.get("request_id") or "")
+            and str(input_payload.get("domain_label") or "") == str(stored_payload.get("domain_label") or "")
+            and list(input_payload.get("source_evidence_refs") or [])
+            == list(stored_payload.get("source_evidence_items") or [])
+            and " ".join(str(input_payload.get("source_content") or "").split())
+            == " ".join(str(stored_payload.get("source_content") or "").split())
+        )
+        generic_material_matches = dict(input_payload) == {
+            key: value
+            for key, value in stored_payload.items()
+            if key != "execution_boundary"
+        }
+        if not (source_to_topic_material_matches or generic_material_matches):
             raise StateTransitionError("external intelligence task material does not match the Core assembly")
         context = self._discovery_context(run_id)
         return {
@@ -14306,6 +14301,10 @@ class Stage0ContentProductionCore:
         assembly = self._discovery_assembly(assembly_id)
         if run["status"] != "processing" or source["run_id"] != run_id or assembly["run_id"] != run_id or assembly["source_version_id"] != source_version_id:
             raise StateTransitionError("discovery model request has stale or mismatched input")
+        if self.data_identity == "production":
+            raise ModelGatewayRequiredError(
+                "formal discovery model requests must be submitted by an external executor"
+            )
         route = model_route or self._resolve_discovery_model_route()
         payload = json.loads(assembly["payload_json"])
         expected_binding = {

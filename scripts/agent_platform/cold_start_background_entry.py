@@ -371,15 +371,12 @@ def prepare_cold_start_background_execution(
     registration_service_factory: Callable[..., Any] | None = None,
     progress_callback: Callable[[str, str], None] | None = None,
 ) -> tuple[Any, dict[str, Any]]:
-    """Validate one existing run and build its executor from its execution model."""
+    """Validate one existing run and build its external executor."""
 
     _configuration_and_run(
         core,
         configuration_id=configuration_id,
         cold_start_id=cold_start_id,
-    )
-    run_model_binding = core.get_cold_start_run_model_binding(
-        cold_start_id=cold_start_id
     )
     if executor_builder is None:
         from scripts.core.production.stage1_competitor_registration import (
@@ -387,9 +384,7 @@ def prepare_cold_start_background_execution(
         )
 
         executor_builder = build_configured_competitor_registration_executor
-    executor_kwargs: dict[str, Any] = {
-        "task_model_binding": dict(run_model_binding),
-    }
+    executor_kwargs: dict[str, Any] = {}
     if progress_callback is not None:
         executor_kwargs["progress_callback"] = progress_callback
     executor = executor_builder(core, **executor_kwargs)
@@ -403,7 +398,7 @@ def prepare_cold_start_background_execution(
         core=core,
         executor=executor,
     )
-    return registration_service, dict(run_model_binding)
+    return registration_service, {}
 
 
 def run_cold_start_background_execution(
@@ -497,7 +492,7 @@ def main(argv: list[str] | None = None) -> int:
             data_identity="production",
         )
         business = CreationAssistantFormalBusinessCore(core=core)
-        registration_service, run_model_binding = (
+        registration_service, _external_metadata = (
             prepare_cold_start_background_execution(
                 core,
                 configuration_id=arguments.configuration_id,
@@ -509,7 +504,7 @@ def main(argv: list[str] | None = None) -> int:
         activate_cold_start_background(
             record_path=arguments.executor_record,
             worker_token=arguments.worker_token,
-            run_model=str(run_model_binding.get("model_name") or ""),
+            run_model="",
         )
         heartbeat_stop, heartbeat_thread = start_cold_start_heartbeat(
             record_path=arguments.executor_record,
@@ -522,7 +517,7 @@ def main(argv: list[str] | None = None) -> int:
                 "status": "ready",
                 "cold_start_id": arguments.cold_start_id,
                 "configuration_id": arguments.configuration_id,
-                "run_model": str(run_model_binding.get("model_name") or ""),
+                "run_model": "",
                 "pid": os.getpid(),
                 "ready_at": datetime.now(timezone.utc).isoformat(),
             },

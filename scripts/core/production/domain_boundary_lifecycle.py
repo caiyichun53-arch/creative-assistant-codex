@@ -18,17 +18,6 @@ from scripts.core.business_data.domain_boundaries import (
     get_production_boundary_registry,
     require_frozen_production_boundary,
 )
-from scripts.core.model_gateway.configured_provider import build_configured_model_provider
-from scripts.core.model_gateway.goal07_model_gateway import (
-    ModelGateway,
-    ModelGatewayError,
-    ModelRequest,
-    ModelRunEnvelope,
-)
-from scripts.core.model_gateway.model_router import ModelRouter
-from scripts.core.runtime.liveness import budget_for
-
-
 _BANNED_FORM_TERMS = (
     "内容类型", "表达形式", "内容路线", "故事式", "盘点式",
     "对比式", "问答式", "时间线式", "采访式",
@@ -143,80 +132,118 @@ def self_canonical(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-class CoreDomainBoundaryModelRunMaterializer:
-    def __init__(self, core: Any):
-        self.core = core
-
-    def persist_envelope(self, envelope: ModelRunEnvelope) -> str:
-        binding = dict((envelope.metadata or {}).get("domain_boundary_core") or {})
-        candidate_id = str(binding.get("boundary_candidate_id") or "").strip()
-        if not candidate_id or binding.get("data_identity") != self.core.data_identity:
-            raise self.core.ModelGatewayRequiredError("domain-boundary model run lacks Core binding")
-        model_run_id = self.core._id("domain_boundary_model_run")
-        with self.core.conn:
-            updated = self.core.conn.execute(
-                "UPDATE stage0_cold_start_domain_boundary_candidate SET model_run_json=? "
-                "WHERE boundary_candidate_id=? AND data_identity=? AND status='preparing'",
-                (self_canonical({
-                    "model_run_id": model_run_id,
-                    "status": envelope.status,
-                    "route_name": envelope.route_name,
-                    "provider_name": envelope.provider_name,
-                    "model_name": envelope.model_name,
-                    "input_hash": envelope.input_hash,
-                    "output_hash": envelope.output_hash,
-                    "envelope": envelope.as_payload(),
-                }), candidate_id, self.core.data_identity),
-            ).rowcount
-        if updated != 1:
-            raise self.core.ModelGatewayRequiredError("domain-boundary model run does not belong to a preparing candidate")
-        return model_run_id
+_DOMAIN_BOUNDARY_SKILL_VERSION = "domain_boundary_proposal.v1"
+_DOMAIN_BOUNDARY_OUTPUT_SCHEMA = {
+    "type": "object",
+    "required": ["in_boundary_principles", "out_boundary_principles", "unknown_topic_rule"],
+    "additionalProperties": False,
+}
 
 
-def _run_model(self: Any, *, boundary_candidate_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+def _domain_boundary_external_task(
+    self: Any, *, boundary_candidate_id: str, snapshot: dict[str, Any]
+) -> dict[str, Any]:
+    """Build the same task package shape used by the existing external boundary."""
+    return {
+        "task_type": "domain_boundary_proposal",
+        "skill": {
+            "formal_skill_id": "domain_boundary_proposal",
+            "version": _DOMAIN_BOUNDARY_SKILL_VERSION,
+            "source_reference": "cold_start_domain_boundary",
+            "content": _proposal_prompt(snapshot),
+            "rendered_instructions": _proposal_prompt(snapshot),
+            "input_schema": {"type": "object"},
+            "output_schema": _DOMAIN_BOUNDARY_OUTPUT_SCHEMA,
+            "skill_hash": self._hash({"skill": "domain_boundary_proposal", "version": _DOMAIN_BOUNDARY_SKILL_VERSION}),
+            "binding": {
+                "name": "domain_boundary_proposal",
+                "version": "1.0.0",
+                "hash": self._hash({"binding": "domain_boundary_proposal", "version": "1.0.0"}),
+            },
+        },
+        "input": dict(snapshot),
+        "constraints": {
+            "use_only_supplied_material": True,
+            "do_not_search": True,
+            "cannot_change_business_state": True,
+            "proposal_requires_human_review": True,
+        },
+        "output_requirements": {
+            "submission": "structured_fields",
+            "schema": _DOMAIN_BOUNDARY_OUTPUT_SCHEMA,
+            "response_format": "structured_fields",
+        },
+        "business_context": {
+            "cold_start_id": str(snapshot["cold_start_id"]),
+            "boundary_candidate_id": boundary_candidate_id,
+            "data_identity": self.data_identity,
+            "origin": "cold_start_domain_boundary",
+        },
+    }
+
+
+def _raise_external_intelligence_required(task: dict[str, Any]) -> None:
+    # Import lazily because Stage 1B imports the Core that attaches this module.
+    from scripts.core.production.stage1b_daily_discovery import ExternalIntelligenceRequired
+
+    raise ExternalIntelligenceRequired(task)
+
+
+def _record_external_domain_boundary_execution(
+    self: Any,
+    *,
+    boundary_candidate_id: str,
+    execution_id: str,
+    executor_id: str,
+    model_ref: str | None,
+    submitted_at: str | None,
+    output_payload: dict[str, Any],
+) -> str:
     candidate = self.conn.execute(
-        "SELECT cold_start_id FROM stage0_cold_start_domain_boundary_candidate "
+        "SELECT cold_start_id, source_snapshot_json, status, model_run_json "
+        "FROM stage0_cold_start_domain_boundary_candidate "
         "WHERE boundary_candidate_id=? AND data_identity=?",
         (boundary_candidate_id, self.data_identity),
     ).fetchone()
-    if candidate is None:
-        raise RuntimeError(
-            "domain-boundary candidate does not belong to a cold-start run"
+    if candidate is None or str(candidate["status"]) != "preparing":
+        raise self.StateTransitionError("domain-boundary external result is stale or mismatched")
+    if not str(execution_id or "").strip() or not str(executor_id or "").strip():
+        raise self.StateTransitionError("external result requires execution and executor identity")
+    if not isinstance(output_payload, dict):
+        raise self.StateTransitionError("external result must be structured fields")
+    existing_run = json.loads(str(candidate["model_run_json"] or "{}"))
+    if isinstance(existing_run, dict) and existing_run:
+        raise self.StateTransitionError("this domain-boundary candidate already has an execution result")
+    try:
+        snapshot = json.loads(str(candidate["source_snapshot_json"] or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise self.StateTransitionError("domain-boundary source snapshot is not valid JSON") from exc
+    model_run_id = self._id("domain_boundary_external_execution")
+    execution = {
+        "model_run_id": model_run_id,
+        "status": "succeeded",
+        "execution_id": str(execution_id).strip(),
+        "executor_id": str(executor_id).strip(),
+        "executor_model_ref": str(model_ref or "not_reported").strip() or "not_reported",
+        "input_hash": self._hash(snapshot),
+        "output_hash": self._hash(output_payload),
+        "submitted_at": submitted_at,
+        "via_model_gateway": False,
+    }
+    with self.conn:
+        updated = self.conn.execute(
+            "UPDATE stage0_cold_start_domain_boundary_candidate SET model_run_json=? "
+            "WHERE boundary_candidate_id=? AND data_identity=? AND status='preparing'",
+            (self._canonical(execution), boundary_candidate_id, self.data_identity),
+        ).rowcount
+        if updated != 1:
+            raise self.StateTransitionError("domain-boundary external result no longer belongs to a preparing candidate")
+        self._audit(
+            str(candidate["cold_start_id"]),
+            "cold_start_domain_boundary_external_result_recorded",
+            {key: value for key, value in execution.items() if key != "output_hash"},
         )
-    task_model_binding = self.get_cold_start_run_model_binding(
-        cold_start_id=str(candidate["cold_start_id"])
-    )
-    router = ModelRouter.from_file()
-    route = router.resolve_frozen_task_route(
-        task_model_binding,
-        route_name="stage0.domain_boundary_proposal",
-        parameters={"stream": False},
-    )
-    provider_definition = router.resolve_bound_provider(route)
-    provider = build_configured_model_provider(
-        provider_definition, route, model_limits=budget_for("model")
-    )
-    gateway = ModelGateway(
-        routes={route.route_name: route},
-        providers={route.provider_name: provider},
-        materializer=CoreDomainBoundaryModelRunMaterializer(self),
-    )
-    result = gateway.complete(ModelRequest(
-        route_name=route.route_name,
-        prompt=_proposal_prompt(snapshot),
-        input_payload=snapshot,
-        correlation_id=boundary_candidate_id,
-        skill_name="domain_boundary_proposal",
-        skill_version="domain_boundary_proposal.v1",
-        binding_name="domain_boundary_proposal",
-        binding_version="1.0.0",
-        response_format={"type": "json_object"},
-        metadata={"domain_boundary_core": {
-            "boundary_candidate_id": boundary_candidate_id,
-            "data_identity": self.data_identity,
-        }},
-    ))
-    return self._decode_json_object(result.output_text)
+    return model_run_id
 
 
 def _validate_proposal(
@@ -275,6 +302,102 @@ def _validate_proposal(
             "origin": "model_inference" if model_used else "deterministic_isolated_fallback",
         },
     }
+
+
+def _accept_external_domain_boundary_result(
+    self: Any,
+    *,
+    boundary_candidate_id: str,
+    snapshot: dict[str, Any],
+    submission: Mapping[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(submission, Mapping):
+        raise self.StateTransitionError("external intelligent result must be a structured submission")
+    output = submission.get("output")
+    if not isinstance(output, dict):
+        raise self.StateTransitionError("external intelligent result must provide structured output fields")
+    execution_id = str(submission.get("execution_id") or "").strip()
+    executor_id = str(submission.get("executor_id") or "").strip()
+    model_run_id = self.record_cold_start_domain_boundary_external_execution(
+        boundary_candidate_id=boundary_candidate_id,
+        execution_id=execution_id,
+        executor_id=executor_id,
+        model_ref=str(submission.get("model_ref") or "").strip() or None,
+        submitted_at=str(submission.get("submitted_at") or "").strip() or None,
+        output_payload=output,
+    )
+    try:
+        normalized = _validate_proposal(
+            self, output, snapshot=snapshot, model_used=True
+        )
+    except Exception as exc:
+        failure = {
+            "error_type": type(exc).__name__,
+            "reason": str(exc),
+            "model_run": {"model_run_id": model_run_id},
+            "retry_allowed": True,
+            "candidates_created": False,
+        }
+        with self.conn:
+            self.conn.execute(
+                "UPDATE stage0_cold_start_domain_boundary_candidate "
+                "SET status='failed', failure_json=? "
+                "WHERE boundary_candidate_id=? AND data_identity=?",
+                (self._canonical(failure), boundary_candidate_id, self.data_identity),
+            )
+        raise
+    with self.conn:
+        self.conn.execute(
+            "UPDATE stage0_cold_start_domain_boundary_candidate "
+            "SET status='awaiting_human_decision', proposal_json=? "
+            "WHERE boundary_candidate_id=? AND data_identity=? AND status='preparing'",
+            (self._canonical(normalized), boundary_candidate_id, self.data_identity),
+        )
+        self._audit(
+            str(snapshot["cold_start_id"]),
+            "cold_start_domain_boundary_candidates_built",
+            {
+                "boundary_candidate_id": boundary_candidate_id,
+                "model_used": True,
+                "source_count": len(snapshot["valid_observations"]),
+                "model_run_id": model_run_id,
+            },
+        )
+    return get_candidate(self, cold_start_id=str(snapshot["cold_start_id"])) or {}
+
+
+def submit_cold_start_domain_boundary_external_result(
+    self: Any,
+    *,
+    cold_start_id: str,
+    boundary_candidate_id: str,
+    execution_id: str,
+    executor_id: str,
+    model_ref: str | None,
+    submitted_at: str | None,
+    output: dict[str, Any],
+) -> dict[str, Any]:
+    candidate = self.conn.execute(
+        "SELECT cold_start_id, source_snapshot_json, status "
+        "FROM stage0_cold_start_domain_boundary_candidate "
+        "WHERE boundary_candidate_id=? AND data_identity=?",
+        (boundary_candidate_id, self.data_identity),
+    ).fetchone()
+    if candidate is None or str(candidate["cold_start_id"]) != str(cold_start_id):
+        raise self.StateTransitionError("domain-boundary external result does not belong to the current run")
+    snapshot = json.loads(str(candidate["source_snapshot_json"] or "{}"))
+    return _accept_external_domain_boundary_result(
+        self,
+        boundary_candidate_id=boundary_candidate_id,
+        snapshot=snapshot,
+        submission={
+            "execution_id": execution_id,
+            "executor_id": executor_id,
+            "model_ref": model_ref,
+            "submitted_at": submitted_at,
+            "output": output,
+        },
+    )
 
 
 def _view(self: Any, row: Any) -> dict[str, Any]:
@@ -497,12 +620,28 @@ def _freeze_explicit_boundary(
 def build_candidates(
     self: Any, *, cold_start_id: str, actor: str | None = None,
     proposal_generator: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    external_executor: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not str(cold_start_id or "").strip():
         raise self.StateTransitionError("domain-boundary candidates require a current run")
     existing = _latest(self, cold_start_id=cold_start_id)
-    if existing is not None and str(existing["status"]) in {"preparing", "awaiting_human_decision", "frozen"}:
+    if existing is not None and str(existing["status"]) in {"awaiting_human_decision", "frozen"}:
         return _view(self, existing)
+    if existing is not None and str(existing["status"]) == "preparing":
+        snapshot = json.loads(str(existing["source_snapshot_json"] or "{}"))
+        task = _domain_boundary_external_task(
+            self,
+            boundary_candidate_id=str(existing["boundary_candidate_id"]),
+            snapshot=snapshot,
+        )
+        if external_executor is None:
+            _raise_external_intelligence_required(task)
+        return _accept_external_domain_boundary_result(
+            self,
+            boundary_candidate_id=str(existing["boundary_candidate_id"]),
+            snapshot=snapshot,
+            submission=external_executor(task),
+        )
     snapshot = _observation_snapshot(self, cold_start_id=cold_start_id)
     latest = self.conn.execute(
         "SELECT candidate_version FROM stage0_cold_start_domain_boundary_candidate "
@@ -520,16 +659,29 @@ def build_candidates(
             "VALUES (?, ?, ?, ?, 'preparing', ?, '{}', '{}', '{}', '{}', '{}', ?, ?, ?, NULL, NULL, NULL)",
             (candidate_id, cold_start_id, snapshot["domain_label"], version, self._canonical(snapshot), self.data_identity, "", now),
         )
+    from scripts.core.production.stage1b_daily_discovery import ExternalIntelligenceRequired
     try:
         if not snapshot["valid_observations"]:
             raise self.StateTransitionError("current cold-start run has no usable successful breakdown evidence")
         if proposal_generator is not None:
             proposal, model_used = proposal_generator(snapshot), True
         elif self.data_identity == "production":
-            proposal, model_used = _run_model(self, boundary_candidate_id=candidate_id, snapshot=snapshot), True
+            task = _domain_boundary_external_task(
+                self, boundary_candidate_id=candidate_id, snapshot=snapshot
+            )
+            if external_executor is None:
+                _raise_external_intelligence_required(task)
+            return _accept_external_domain_boundary_result(
+                self,
+                boundary_candidate_id=candidate_id,
+                snapshot=snapshot,
+                submission=external_executor(task),
+            )
         else:
             proposal, model_used = _default_isolated_proposal(snapshot), False
         normalized = _validate_proposal(self, proposal, snapshot=snapshot, model_used=model_used)
+    except ExternalIntelligenceRequired:
+        raise
     except Exception as exc:
         row = self.conn.execute(
             "SELECT model_run_json FROM stage0_cold_start_domain_boundary_candidate WHERE boundary_candidate_id=? AND data_identity=?",
@@ -733,10 +885,8 @@ def attach_core_methods(core_cls: type[Any]) -> None:
     # Reuse the existing Core primitives; this module adds lifecycle methods,
     # not a second persistence or error model.
     from scripts.core.production.stage0_content_core import (
-        ModelGatewayRequiredError,
         StateTransitionError,
         _canonical,
-        _decode_json_object,
         _hash,
         _id,
         _now,
@@ -744,9 +894,7 @@ def attach_core_methods(core_cls: type[Any]) -> None:
     from scripts.core.business_data.domain_labels import get_domain_pack
 
     core_cls.StateTransitionError = StateTransitionError
-    core_cls.ModelGatewayRequiredError = ModelGatewayRequiredError
     core_cls._canonical = staticmethod(_canonical)
-    core_cls._decode_json_object = staticmethod(_decode_json_object)
     core_cls._hash = staticmethod(_hash)
     core_cls._id = staticmethod(_id)
     core_cls._now = staticmethod(_now)
@@ -755,6 +903,8 @@ def attach_core_methods(core_cls: type[Any]) -> None:
     core_cls.get_cold_start_domain_boundary_observations = _observation_snapshot
     core_cls.get_cold_start_domain_boundary_candidate = get_candidate
     core_cls.build_cold_start_domain_boundary_candidates = build_candidates
+    core_cls.record_cold_start_domain_boundary_external_execution = _record_external_domain_boundary_execution
+    core_cls.submit_cold_start_domain_boundary_external_result = submit_cold_start_domain_boundary_external_result
     core_cls.review_cold_start_domain_boundary = review_boundary
     core_cls.cold_start_domain_boundary_is_frozen = boundary_is_frozen
     core_cls.get_production_boundary_for_qualification = production_boundary_for_qualification

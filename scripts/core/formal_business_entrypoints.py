@@ -666,15 +666,18 @@ class CreationAssistantFormalBusinessCore:
     ) -> dict[str, Any]:
         """Run the existing discovery business service through the Core boundary."""
 
+        # Kept in the transport signature for compatibility only.  Formal
+        # discovery never accepts a Core-selected gateway or route.
+        del gateway, model_route
+
         from scripts.core.production.stage1b_daily_discovery import (
             Stage1BDailyDiscoveryService,
         )
 
         service = Stage1BDailyDiscoveryService(
             core=self.core,
-            gateway=gateway,
+            gateway=None,
             source_acquirer=source_acquirer,
-            model_route=model_route,
             external_executor=external_executor,
         )
         return service.run_daily_discovery(
@@ -710,13 +713,14 @@ class CreationAssistantFormalBusinessCore:
         actor: str,
         reason: str,
         idempotency_key: str,
-        gateway: Any,
+        gateway: Any | None = None,
     ) -> dict[str, Any]:
         from scripts.core.production.stage1b_daily_discovery import (
             Stage1BDailyDiscoveryService,
         )
 
-        service = Stage1BDailyDiscoveryService(core=self.core, gateway=gateway)
+        del gateway
+        service = Stage1BDailyDiscoveryService(core=self.core, gateway=None)
         return service.handoff_selected_candidate(
             candidate_version_id=candidate_version_id,
             actor=actor,

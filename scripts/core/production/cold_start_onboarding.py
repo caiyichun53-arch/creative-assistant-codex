@@ -17,7 +17,6 @@ from urllib.parse import urlparse
 
 import yaml
 
-from scripts.core.model_gateway.model_router import HermesTaskModelBinding, ModelRouter
 from scripts.core.business_data.domain_labels import (
     DOMAIN_CONFIG_DIR,
     configured_domain_packs,
@@ -452,41 +451,6 @@ class ColdStartOnboardingService:
             "competitor_accounts": [dict(item) for item in normalized["competitor_accounts"]],
         }
 
-    def _resolve_current_task_model_binding(
-        self,
-        *,
-        trusted_internal_context: dict[str, Any] | None,
-    ) -> dict[str, Any]:
-        if self.task_model_resolver is not None:
-            payload = self.task_model_resolver(
-                trusted_internal_context, None
-            )
-            if not isinstance(payload, dict) or not payload:
-                raise StateTransitionError("task model resolver returned no model binding")
-            try:
-                # Normalize every resolver result through the credential-free
-                # execution binding contract. Extra fields (including secrets)
-                # never enter the run snapshot.
-                return HermesTaskModelBinding.from_payload(payload).as_payload()
-            except Exception as exc:
-                raise StateTransitionError(
-                    f"task model resolver returned an invalid model binding: {exc}"
-                ) from exc
-        context = trusted_internal_context or {}
-        try:
-            binding = ModelRouter.from_file().resolve_hermes_task_binding(
-                route_id="business_analysis",
-                current_model=_clean(context.get("task_model_name")),
-                current_provider=_clean(context.get("task_model_provider")),
-                current_endpoint=_clean(context.get("task_model_base_url")),
-                environment=self.preflight_environment,
-            )
-        except Exception as exc:
-            raise StateTransitionError(
-                f"cannot bind the new cold start to the current Hermes model: {exc}"
-            ) from exc
-        return binding.as_payload()
-
     def _automatic_start(
         self,
         *,
@@ -497,6 +461,7 @@ class ColdStartOnboardingService:
         notification_target: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create one run, then detach production execution from this call."""
+        del task_model_binding
         configuration = self.core.get_cold_start_configuration(
             configuration_id=configuration_id
         )
@@ -508,9 +473,6 @@ class ColdStartOnboardingService:
                 (existing_run_id, self.core.data_identity),
             ).fetchone()
             if run is not None:
-                binding = self.core.get_cold_start_run_model_binding(
-                    cold_start_id=existing_run_id
-                )
                 registrations = self.core.conn.execute(
                     "SELECT registration_id FROM stage0_competitor_registration "
                     "WHERE cold_start_id=? AND data_identity=? "
@@ -524,8 +486,8 @@ class ColdStartOnboardingService:
                         str(row["registration_id"]) for row in registrations
                     ],
                     "status": str(run["status"]),
-                    "run_model": str(binding.get("model_name") or ""),
-                    "run_model_binding": dict(binding),
+                    "run_model": "",
+                    "run_model_binding": {},
                     "execution": {
                         "status": "background_already_started",
                         "started": False,
@@ -555,7 +517,6 @@ class ColdStartOnboardingService:
         result = self.core.start_configured_cold_start(
             configuration_id=configuration_id,
             actor=_clean(actor),
-            task_model_binding=task_model_binding,
         )
         if use_background:
             try:
@@ -678,15 +639,20 @@ class ColdStartOnboardingService:
                         })
                 executor = build_configured_competitor_registration_executor(
                     self.core,
-                    task_model_binding=dict(result["run_model_binding"]),
                     progress_callback=registration_progress_callback,
                 )
                 registration_service = CompetitorRegistrationService(
                     core=self.core, executor=executor
                 )
+            external_executor = getattr(
+                getattr(registration_service, "executor", None),
+                "external_executor",
+                None,
+            )
             execution = ColdStartExecutionOrchestrator(
                 core=self.core, registration_service=registration_service,
                 progress_callback=self.execution_progress_callback,
+                external_executor=external_executor,
             ).run(
                 cold_start_id=str(result["cold_start_id"]),
                 actor=_clean(actor),
@@ -770,9 +736,6 @@ class ColdStartOnboardingService:
         if not preview["ready_to_confirm"]:
             raise StateTransitionError("cold-start configuration still has unresolved required items")
         normalized = preview["normalized"]
-        task_model_binding = self._resolve_current_task_model_binding(
-            trusted_internal_context=trusted_internal_context,
-        )
         self.core.require_domain_zero_state(domain_label=normalized["domain_label"])
         path: Path | None = None
         restore_text: str | None = None
@@ -793,7 +756,6 @@ class ColdStartOnboardingService:
                 configuration_id=configuration_id,
                 actor=_clean(transport_actor),
                 trusted_internal_context=trusted_internal_context,
-                task_model_binding=task_model_binding,
                 notification_target=notification_target,
             )
         except Exception as exc:
@@ -894,13 +856,9 @@ class ColdStartOnboardingService:
             raise StateTransitionError("the configured current cold-start run does not exist")
         run_status = str(run["status"])
         if run_status in {"stopped", "failed"}:
-            task_model_binding = self._resolve_current_task_model_binding(
-                trusted_internal_context=trusted_internal_context,
-            )
             self.core.resume_stopped_cold_start(
                 configuration_id=configuration_id,
                 actor=_clean(actor),
-                task_model_binding=task_model_binding,
             )
         elif run_status != "running":
             raise StateTransitionError(
@@ -1058,16 +1016,6 @@ class ColdStartOnboardingService:
             executor_status["consistency"] = "missing_executor_marked_failed"
         else:
             executor_status["consistency"] = "consistent"
-        contract_row = self.core.conn.execute(
-            "SELECT input_snapshot_json FROM stage0_cold_start_run_contract "
-            "WHERE cold_start_id=? AND data_identity=?",
-            (cold_start_id, self.core.data_identity),
-        ).fetchone()
-        run_model_binding = {}
-        if contract_row is not None:
-            contract_snapshot = json.loads(str(contract_row["input_snapshot_json"]))
-            if isinstance(contract_snapshot.get("run_model"), dict):
-                run_model_binding = dict(contract_snapshot["run_model"])
         report = self.progress(configuration_id)
         summary = dict(report.get("progress_summary") or {})
         stages = dict(summary.get("stages") or {})
@@ -1286,8 +1234,8 @@ class ColdStartOnboardingService:
             "cold_start_id": cold_start_id,
             "current_stage": current_stage,
             "latest_update_at": latest_update_at,
-            "run_model": str(run_model_binding.get("model_name") or ""),
-            "run_model_source": str(run_model_binding.get("source") or ""),
+            "run_model": "",
+            "run_model_source": "external_executor",
             "current_action": current_action,
             "latest_failure": latest_failure,
             "executor": executor_status,
@@ -1405,14 +1353,10 @@ class ColdStartOnboardingService:
             raise StateTransitionError(
                 "the existing cold-start executor must exit before resume"
             )
-        run_model_binding = self._resolve_current_task_model_binding(
-            trusted_internal_context=trusted_internal_context,
-        )
         resume_prior_status = run_status
         lifecycle = self.core.resume_stopped_cold_start(
             configuration_id=configuration_id,
             actor=actor_value,
-            task_model_binding=run_model_binding,
         )
         if not managed:
             result = self.continue_current_cold_start(
@@ -1459,8 +1403,8 @@ class ColdStartOnboardingService:
                 "status": str(rollback.get("status") or resume_prior_status),
                 "resumed": False,
                 "created_new_run": False,
-                "run_model": str(run_model_binding.get("model_name") or ""),
-                "run_model_binding": dict(run_model_binding),
+                "run_model": "",
+                "run_model_binding": {},
                 "execution": {
                     "status": "background_launch_failed",
                     "started": False,
@@ -1474,8 +1418,8 @@ class ColdStartOnboardingService:
             "resumed": True,
             "created_new_run": False,
             "resume_source": "current_user_unfinished_cold_start",
-            "run_model": str(run_model_binding.get("model_name") or ""),
-            "run_model_binding": dict(run_model_binding),
+            "run_model": "",
+            "run_model_binding": {},
             "execution": execution,
         }
 

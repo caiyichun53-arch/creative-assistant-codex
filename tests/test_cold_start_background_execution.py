@@ -262,7 +262,7 @@ class ColdStartBackgroundExecutionTest(unittest.TestCase):
                 "started": True,
                 "cold_start_id": values["cold_start_id"],
                 "configuration_id": values["configuration_id"],
-                "run_model": "isolated/model-a",
+                "run_model": "",
                 "pid": 12345,
             }
 
@@ -273,7 +273,7 @@ class ColdStartBackgroundExecutionTest(unittest.TestCase):
         cold_start_id = str(created["cold_start_id"])
         self.assertTrue(created["automatic_start"])
         self.assertEqual(launches[0]["cold_start_id"], cold_start_id)
-        self.assertEqual(created["run_model"], "isolated/model-a")
+        self.assertEqual(created["run_model"], "")
         self.assertEqual(
             self.connection.execute("SELECT COUNT(*) FROM stage0_cold_start").fetchone()[0],
             1,
@@ -303,23 +303,19 @@ class ColdStartBackgroundExecutionTest(unittest.TestCase):
             self.core,
             configuration_id=str(created["configuration_id"]),
             cold_start_id=cold_start_id,
-            executor_builder=lambda core, task_model_binding: captured.append(
-                dict(task_model_binding)
-            ) or object(),
+            executor_builder=lambda core: captured.append({}) or object(),
             registration_service_factory=RegistrationService,
         )
-        self.assertEqual(frozen["model_name"], "isolated/model-a")
-        self.assertEqual(captured[0], frozen)
+        self.assertEqual(frozen, {})
+        self.assertEqual(captured[0], {})
 
         phase_events: list[tuple[str, str]] = []
 
         def executor_builder_with_progress(
             core: object,
-            task_model_binding: dict[str, object],
             progress_callback: object,
         ) -> object:
             del core
-            self.assertEqual(dict(task_model_binding), frozen)
             progress_callback("hit_filtering", "still working")  # type: ignore[operator]
             return object()
 

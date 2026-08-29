@@ -527,6 +527,10 @@ class Stage1BDailyDiscoveryService:
         model_route: ModelRoute | None = None,
         external_executor: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
     ):
+        if getattr(core, "data_identity", "") == "production" and gateway is not None:
+            raise StateTransitionError(
+                "formal discovery cannot receive a Core model gateway"
+            )
         self.core = core
         self.gateway = gateway
         self.external_executor = external_executor
@@ -1412,6 +1416,7 @@ class Stage1BDailyDiscoveryService:
                 run_id=run_id, source_version_id=source_result["source_version_id"], payload=input_payload,
                 prompt_version="hotspot_to_opportunity.v1", skill_version="hotspot_to_opportunity.v1",
                 idempotency_key=f"{idempotency_key}:hotspot:assembly:{index}",
+                external_execution=True,
             )
             try:
                 model_result, judgement = self._run_hotspot_to_opportunity_skill(
@@ -1419,6 +1424,29 @@ class Stage1BDailyDiscoveryService:
                     assembly_id=assembly["assembly_id"], input_payload=input_payload,
                     enabled_domains=requested_domains,
                 )
+            except ExternalIntelligenceRequired as exc:
+                summary["external_intelligence_required"] = {
+                    "task_type": exc.task.get("task_type"),
+                    "business_context": exc.task.get("business_context"),
+                }
+                summary["failure_details"].append({
+                    "stage": "candidate_discovery",
+                    "operation": "hotspot_to_opportunity",
+                    "status": "requires_external_intelligence",
+                    "reason": str(exc),
+                })
+                return {
+                    "run_id": run_id,
+                    "discovery_date": discovery_date,
+                    "status": "requires_external_intelligence",
+                    "execution_mode": execution_mode,
+                    "source_types": list(requested_source_types),
+                    "failure_reason": None,
+                    "technical_failures": 0,
+                    "failure_details": list(summary["failure_details"]),
+                    "summary": summary,
+                    "task": exc.task,
+                }
             except (ModelGatewayError, json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
                 audit_entry.update({"status": "judgement_failed", "reason_code": "hotspot_judgement_failed", "detail": {"reason": str(exc)}})
                 failed_model_run_id = getattr(exc, "model_run_envelope_version_id", None)
@@ -1500,6 +1528,112 @@ class Stage1BDailyDiscoveryService:
                 "detail": {"candidate_count": len(accepted_candidates), "rejected_candidates": rejected_candidates},
             })
         return result
+
+    def _prepare_hotspot_to_opportunity_task(
+        self,
+        *,
+        run_id: str,
+        source_version_id: str,
+        assembly_id: str,
+        input_payload: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        contract = self.hotspot_to_opportunity_contract
+        enforce_atomic_skill_runtime_guard(
+            entrypoint="stage1b_daily_discovery.hotspot_to_opportunity",
+            operation=contract.formal_skill_id,
+            data_identity=self.core.data_identity,
+        )
+        contract.validate_contract(require_model_route=False)
+        validate_payload(input_payload, contract.input_schema)
+        preprocessed = preprocess_formal_skill_input(contract.formal_skill_id, input_payload)
+        model_input = apply_binding(contract.input_map, input_payload, {}, preprocessed)
+        validate_payload(model_input, contract.model_input_schema)
+        task = self.core.prepare_discovery_external_task(
+            run_id=run_id,
+            source_version_id=source_version_id,
+            assembly_id=assembly_id,
+            skill={
+                "formal_skill_id": contract.formal_skill_id,
+                "version": contract.version,
+                "source_reference": "HOTSPOT_TO_OPPORTUNITY_BUSINESS_CONTRACT.yaml",
+                "content": contract.prompt_template,
+                "rendered_instructions": contract.portable_skill().render_prompt(model_input),
+                "input_schema": contract.model_input_schema,
+                "output_schema": contract.model_output_schema,
+                "skill_hash": contract.skill_hash,
+                "binding": {
+                    "name": contract.binding_name,
+                    "version": contract.binding_version,
+                    "hash": contract.binding_hash,
+                },
+            },
+            input_payload=model_input,
+            constraints={
+                "use_only_supplied_material": True,
+                "do_not_search": True,
+                "preserve_source_identity": True,
+                "respect_domain_boundary": True,
+                "respect_risk_boundary": True,
+                "do_not_force_candidate": True,
+                "no_score_rank_weight": True,
+                "cannot_change_business_state": True,
+            },
+            output_requirements={
+                "submission": "structured_fields",
+                "schema": contract.model_output_schema,
+                "formal_output_schema": contract.output_schema,
+                "response_format": "structured_fields",
+            },
+        )
+        return task, preprocessed
+
+    def _accept_hotspot_to_opportunity_external_result(
+        self,
+        *,
+        run_id: str,
+        source_version_id: str,
+        assembly_id: str,
+        input_payload: dict[str, Any],
+        preprocessed: dict[str, Any],
+        enabled_domains: tuple[str, ...],
+        submission: Mapping[str, Any],
+    ) -> tuple[ExternalIntelligenceReceipt, dict[str, Any]]:
+        if not isinstance(submission, Mapping):
+            raise FormalSkillValidationError("external intelligent result must be a structured submission")
+        external_output = submission.get("output")
+        if not isinstance(external_output, dict):
+            raise FormalSkillValidationError("external intelligent result must provide structured output fields")
+        execution_id = str(submission.get("execution_id") or "").strip()
+        executor_id = str(submission.get("executor_id") or "").strip()
+        if not execution_id or not executor_id:
+            raise FormalSkillValidationError("external intelligent result requires execution and executor identity")
+        model_run_id = self.core.record_discovery_external_execution(
+            run_id=run_id,
+            source_version_id=source_version_id,
+            assembly_id=assembly_id,
+            execution_id=execution_id,
+            executor_id=executor_id,
+            model_ref=str(submission.get("model_ref") or "").strip() or None,
+            submitted_at=str(submission.get("submitted_at") or "").strip() or None,
+            output_payload=external_output,
+        )
+        contract = self.hotspot_to_opportunity_contract
+        try:
+            model_output = dict(external_output)
+            validate_payload(model_output, contract.model_output_schema)
+            output_payload = apply_binding(contract.output_map, input_payload, model_output, preprocessed)
+            validate_payload(output_payload, contract.output_schema)
+            judgement = validate_hotspot_opportunity_judgement(
+                output_payload, enabled_domains=enabled_domains
+            )
+        except (json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
+            self.core.record_discovery_model_validation_failure(
+                model_run_id=model_run_id, reason=str(exc), raw_model_output=None,
+            )
+            raise FormalSkillValidationError(
+                str(exc), model_run_envelope_version_id=model_run_id,
+            ) from exc
+        return ExternalIntelligenceReceipt(model_run_id), judgement
 
     def _prepare_source_to_topic_task(
         self,
@@ -1720,46 +1854,23 @@ class Stage1BDailyDiscoveryService:
         input_payload: dict[str, Any],
         enabled_domains: tuple[str, ...],
     ):
-        contract = self.hotspot_to_opportunity_contract
-        enforce_atomic_skill_runtime_guard(
-            entrypoint="stage1b_daily_discovery.hotspot_to_opportunity",
-            operation=contract.formal_skill_id,
-            data_identity=self.core.data_identity,
-        )
-        contract.validate_contract()
-        validate_payload(input_payload, contract.input_schema)
-        model_input = apply_binding(contract.input_map, input_payload, {}, {})
-        validate_payload(model_input, contract.model_input_schema)
-        prompt = contract.portable_skill().render_prompt(model_input)
-        request = self.core.prepare_discovery_model_request(
+        task, preprocessed = self._prepare_hotspot_to_opportunity_task(
             run_id=run_id,
             source_version_id=source_version_id,
             assembly_id=assembly_id,
-            prompt=prompt,
-            skill_name=contract.formal_skill_id,
-            skill_version=contract.version,
-            skill_hash=contract.skill_hash,
-            binding_name=contract.binding_name,
-            binding_version=contract.binding_version,
-            binding_hash=contract.binding_hash,
-            model_input_payload=model_input,
-            model_route=self._source_to_topic_route(),
+            input_payload=input_payload,
         )
-        model_result = self.gateway.complete(request)
-        try:
-            model_output = parse_model_json(model_result.output_text)
-            validate_payload(model_output, contract.model_output_schema)
-            output_payload = apply_binding(contract.output_map, input_payload, model_output, {})
-            validate_payload(output_payload, contract.output_schema)
-            judgement = validate_hotspot_opportunity_judgement(
-                output_payload, enabled_domains=enabled_domains
-            )
-        except (json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
-            raise FormalSkillValidationError(
-                str(exc), raw_model_output=model_result.output_text,
-                model_run_envelope_version_id=model_result.envelope_version_id,
-            ) from exc
-        return model_result, judgement
+        if self.external_executor is None:
+            raise ExternalIntelligenceRequired(task)
+        return self._accept_hotspot_to_opportunity_external_result(
+            run_id=run_id,
+            source_version_id=source_version_id,
+            assembly_id=assembly_id,
+            input_payload=input_payload,
+            preprocessed=preprocessed,
+            enabled_domains=enabled_domains,
+            submission=self.external_executor(task),
+        )
 
     @staticmethod
     def _hotspot_opportunity_input(
@@ -2099,13 +2210,11 @@ def main(argv: list[str] | None = None) -> int:
             print(_canonical(business.qualify_pending_discovery_sources(actor=args.actor)))
             return 0
         if args.handoff_selected_candidate:
-            gateway = build_production_daily_discovery_gateway(core)
             result = business.handoff_daily_discovery_candidate(
                 candidate_version_id=args.handoff_selected_candidate,
                 actor=args.actor,
                 reason=args.reason or "",
                 idempotency_key=args.idempotency_key,
-                gateway=gateway,
             )
             print(_canonical(result))
             return 0

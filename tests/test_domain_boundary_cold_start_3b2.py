@@ -254,13 +254,9 @@ class DomainBoundaryColdStart3B2Test(unittest.TestCase):
                 "UPDATE stage0_cold_start SET status='completed' WHERE cold_start_id='cold-current'"
             )
         adapter = self._prepare_carrier("3b2-direct-carrier")
-        with patch(
-            "scripts.core.production.domain_boundary_lifecycle._run_model",
-            side_effect=AssertionError("direct human boundary must not call a model"),
-        ):
-            result = adapter.review_domain_boundary(
-                command=self._direct_boundary_command()
-            )
+        result = adapter.review_domain_boundary(
+            command=self._direct_boundary_command()
+        )
 
         self.assertEqual(result["status"], "frozen")
         self.assertEqual(result["source"], "explicit_human_decision")

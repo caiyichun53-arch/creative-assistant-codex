@@ -11,6 +11,7 @@ Preparation and breakdown follow the strict stage order.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any, Callable
 
 from scripts.core.production.stage0_content_core import (
@@ -39,10 +40,12 @@ class ColdStartExecutionOrchestrator:
         core: Stage0ContentProductionCore,
         registration_service: CompetitorRegistrationService,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        external_executor: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
     ) -> None:
         self.core = core
         self.registration_service = registration_service
         self.progress_callback = progress_callback
+        self.external_executor = external_executor
 
     def _emit(self, payload: dict[str, Any]) -> None:
         if self.progress_callback is None:
@@ -361,11 +364,15 @@ class ColdStartExecutionOrchestrator:
                 or domain_boundary_candidate_error is not None
             ):
                 return
+            from scripts.core.production.stage1b_daily_discovery import ExternalIntelligenceRequired
             try:
                 domain_boundary_candidate_result = self.core.build_cold_start_domain_boundary_candidates(
                     cold_start_id=cold_start_id,
                     actor=actor_value,
+                    external_executor=self.external_executor,
                 )
+            except ExternalIntelligenceRequired:
+                raise
             except Exception as exc:
                 domain_boundary_candidate_error = {
                     "error_type": type(exc).__name__,

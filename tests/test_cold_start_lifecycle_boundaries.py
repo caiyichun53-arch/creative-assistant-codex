@@ -12,7 +12,6 @@ from unittest.mock import patch
 from scripts.core.external_adapters.goal_phase4_external_adapters import ExternalAdapterRunResult
 from scripts.core.external_adapters.local_mediacrawler_executor import LocalMediaCrawlerExecutor
 from tests._cold_start_test_model import test_task_model_resolver
-from scripts.core.model_gateway.model_router import ModelRouter
 from scripts.core.production.cold_start_onboarding import ColdStartOnboardingService
 from scripts.core.production.live_music_cold_start_preflight import (
     LiveColdStartPreflight,
@@ -267,12 +266,11 @@ class ColdStartLifecycleBoundaryTest(unittest.TestCase):
             patch.object(LocalMediaCrawlerExecutor, "readiness_problems", return_value=[]),
             patch("scripts.core.production.live_music_cold_start_preflight.retained_douyin_collector_browser_status", return_value={"status": "ready"}),
             patch.object(preflight, "_env", return_value=("C:\fake-runtime", None)),
-            patch.object(ModelRouter, "from_file", return_value=router),
             patch("scripts.core.production.live_music_cold_start_preflight.Path.is_file", return_value=True),
         ):
             report = preflight.inspect(request)
 
-        self.assertEqual(router.route_ids, ["business_analysis"])
+        self.assertEqual(router.route_ids, [])
 
     def test_cold_start_session_check_uses_shared_collector_not_owned_account_login(self) -> None:
         class Route:
@@ -304,7 +302,6 @@ class ColdStartLifecycleBoundaryTest(unittest.TestCase):
             patch.object(LocalMediaCrawlerExecutor, "readiness_problems", return_value=[]),
             patch("scripts.core.production.live_music_cold_start_preflight.retained_douyin_collector_browser_status", return_value={"status": "ready"}),
             patch.object(preflight, "_env", return_value=("C:\fake-runtime", None)),
-            patch.object(ModelRouter, "from_file", return_value=Router()),
             patch("scripts.core.production.live_music_cold_start_preflight.Path.is_file", return_value=True),
         ):
             report = preflight.inspect(request)
@@ -343,7 +340,6 @@ class ColdStartLifecycleBoundaryTest(unittest.TestCase):
             patch.object(LocalMediaCrawlerExecutor, "readiness_problems", return_value=[]),
             patch("scripts.core.production.live_music_cold_start_preflight.retained_douyin_collector_browser_status", return_value={"status": "not_ready"}),
             patch.object(preflight, "_env", return_value=("C:\fake-runtime", None)),
-            patch.object(ModelRouter, "from_file", return_value=Router()),
             patch("scripts.core.production.live_music_cold_start_preflight.Path.is_file", return_value=True),
         ):
             report = preflight.inspect(request)
