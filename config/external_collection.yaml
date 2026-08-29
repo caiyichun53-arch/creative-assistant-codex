@@ -4,7 +4,7 @@
 hotspot_collection:
   provider: trendradar
   live_enabled: false
-  project_dir: "I:/Creation_assistant-codex"
+  project_dir: "I:/Creation-Assistant"
   executable: "C:/Users/15891/anaconda3/python.exe"
   args:
     - "scripts/integrations/trendradar_runtime.py"
