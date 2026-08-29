@@ -17,7 +17,6 @@ from typing import Any
 
 from scripts.core.runtime.runtime_storage import (
     RuntimeStorageError,
-    file_digest,
     formal_database_path,
     migration_status,
     runtime_identity_receipt,
@@ -149,7 +148,6 @@ class CoreReadOnlySession:
         unfinished_present = any(value > 0 for value in unfinished.values())
 
         migration_digest = str(self.identity_receipt.get("formal_database_sha256") or "")
-        live_digest = file_digest(self.database_path) if self.database_path.is_file() else ""
         return {
             "project": PROJECT_NAME,
             "core_entry": "scripts.core.core_entry",
@@ -160,7 +158,8 @@ class CoreReadOnlySession:
             "access_mode": "read_only",
             "runtime_identity_verified": True,
             "database_path_matches_runtime_identity": True,
-            "historical_migration_digest_matches_live_database": live_digest == migration_digest,
+            "historical_migration_digest": migration_digest,
+            "historical_migration_digest_recorded": bool(migration_digest),
             "schema": {"table_count": table_count},
             "business_runs": {
                 "daily_runs": {"total": sum(daily_runs.values()), "by_lifecycle": daily_runs},
@@ -194,8 +193,8 @@ class CoreReadOnlySession:
                 "model_result_submission",
             ],
             "historical_migration_digest_note": (
-                "The migration digest is a historical copy-verification record, "
-                "not a live write lock."
+                "The migration digest is a historical copy-verification baseline, "
+                "not a live database digest and not a live write lock."
             ),
         }
 

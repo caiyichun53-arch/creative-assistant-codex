@@ -1588,3 +1588,21 @@ Core、MCP、调度器、冷启动、daily、研究和内容相关运行均沿�
 - 本轮没有修改正式数据库内容或结构；16 份未跟踪历史/异常资料保持原样且未纳入提交。
 
 阶段3第三轮正式关闭。上述隔离代码、测试和本轮记录作为一个可信 Git 节点封存；不进入阶段4。
+
+## 阶段3正式数据切换完成记录（2026-08-29）
+
+阶段3正式数据切换已完成。正式数据库由旧 schema 升级为 current activation schema；两个正式领域均未继承旧世界的 current activation，历史数据和知识资产继续保留，正式 daily 继续关闭。
+
+切换记录：
+
+- 切换前正式数据库 SHA256：`09B245CDCF9969DAEFE163FC6F33EFEDE978E5F9A594CEDA2B6041371B8454A3`
+- 切换后正式数据库 SHA256：`B8D5A61E656798C485DC51DF64623F3985617C9B9A1BB1ECB2D3C38FDBA174F8`
+- 切换前完整备份：`I:/Creation_assistant-runtime/formal/backups/production_activation_pre_stage3_cutover_20260829T215312137.sqlite3`
+- 两个正式领域 current activation：均为空
+- 历史 cold-start、daily、baseline、视频检查、命中记录、候选经验和研究材料：保留
+- 正式经验：0 条；候选经验：14 条；候选来源引用：112 个；研究材料：89 条
+- 正式 daily：继续关闭；未启动正式 cold-start、daily 或模型
+
+运行身份记录中的 `formal_database_sha256` 是建立运行身份或迁移时的历史复制校验基准，不是正式数据库自身的实时 SHA256。Core status 只报告该历史基准是否存在，不再把它与当前数据库摘要不相等解释为数据库异常。该语义避免了把摘要写回同一个被计算摘要的数据库而形成自引用。
+
+阶段3正式数据切换完成；后续是否开始新的正式业务运行，另由用户明确决定。
