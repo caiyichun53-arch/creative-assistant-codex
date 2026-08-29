@@ -192,7 +192,15 @@ class DailyDiscoverySourceAcquirer:
             cluster["event_detail"] = detail["event_detail"]
         return enriched, detail
 
-    def search_tags(self, *, discovery_run_id: str, domain: str, now: datetime, deadline_monotonic: float | None = None) -> dict[str, Any]:
+    def search_tags(
+        self,
+        *,
+        discovery_run_id: str,
+        domain: str,
+        now: datetime,
+        deadline_monotonic: float | None = None,
+        allowed_tag_ids: tuple[str, ...] | None = None,
+    ) -> dict[str, Any]:
         if self.mediacrawler_executor is None:
             raise ValueError("platform search executor is not configured for this source-specific run")
         return run_daily_tag_searches(
@@ -203,6 +211,7 @@ class DailyDiscoverySourceAcquirer:
             domain_search_cfg=self.domain_search_config,
             now=now,
             deadline_monotonic=deadline_monotonic,
+            allowed_tag_ids=allowed_tag_ids,
         )
 
     def acquire_daily_sources(

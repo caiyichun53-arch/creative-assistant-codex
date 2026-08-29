@@ -42,7 +42,7 @@ class CreationAssistantFormalBusinessCore:
     def list_daily_domains(self) -> list[str]:
         """Return the domains that Core allows the daily flow to address."""
 
-        rows = self.core.conn.execute(
+        query = (
             "SELECT DISTINCT account.domain_label FROM competitor_accounts account "
             "JOIN stage0_content_account formal_account "
             "ON formal_account.content_account_id=account.account_id "
@@ -56,9 +56,26 @@ class CreationAssistantFormalBusinessCore:
             "AND configuration.data_identity=registration.data_identity "
             "WHERE account.registration_status='active' "
             "AND configuration.status IN ('started','completed') "
-            "ORDER BY account.domain_label",
-            (self.core.data_identity, self.core.data_identity),
-        ).fetchall()
+        )
+        params: tuple[Any, ...] = (
+            self.core.data_identity,
+            self.core.data_identity,
+        )
+        if self.core.domain_activation_schema_available():
+            query += (
+                "AND ("
+                "EXISTS (SELECT 1 FROM stage0_domain_activation current_activation "
+                "WHERE current_activation.domain_label=account.domain_label "
+                "AND current_activation.cold_start_id=registration.cold_start_id "
+                "AND current_activation.data_identity=? AND current_activation.is_current=1) "
+                "OR NOT EXISTS (SELECT 1 FROM stage0_domain_activation activation_history "
+                "WHERE activation_history.domain_label=account.domain_label "
+                "AND activation_history.data_identity=? )"
+                ") "
+            )
+            params += (self.core.data_identity, self.core.data_identity)
+        query += "ORDER BY account.domain_label"
+        rows = self.core.conn.execute(query, params).fetchall()
         return [str(row["domain_label"]) for row in rows]
 
     def normalize_daily_request(
@@ -514,6 +531,11 @@ class CreationAssistantFormalBusinessCore:
             task_model_binding=task_model_binding,
             preflight_receipt_id=preflight_receipt_id,
         )
+
+    def reset_domain(self, *, domain_label: str, actor: str) -> dict[str, Any]:
+        """Release one domain's current activation while preserving its history."""
+
+        return self.core.reset_domain(domain_label=domain_label, actor=actor)
 
     def resume_cold_start(
         self,

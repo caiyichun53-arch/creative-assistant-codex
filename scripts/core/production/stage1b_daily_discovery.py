@@ -817,7 +817,15 @@ class Stage1BDailyDiscoveryService:
                         return
                     try:
                         tag_result = self.source_acquirer.search_tags(
-                            discovery_run_id=run["run_id"], domain=domain_label, now=now, deadline_monotonic=deadline
+                            discovery_run_id=run["run_id"],
+                            domain=domain_label,
+                            now=now,
+                            deadline_monotonic=deadline,
+                            allowed_tag_ids=(
+                                self.core.current_domain_tag_ids(domain_label=domain_label)
+                                if callable(getattr(self.core, "current_domain_tag_ids", None))
+                                else None
+                            ),
                         )
                     except Exception as exc:
                         tag_result = {"status": "failed", "reason": str(exc), "failed": 1, "retry": "forbidden"}
@@ -885,6 +893,18 @@ class Stage1BDailyDiscoveryService:
                         domain_label=domain_label,
                         limit=3,
                     )
+                    current_boundary_reader = getattr(
+                        self.core, "current_domain_boundary_frozen", None
+                    )
+                    current_boundary = (
+                        current_boundary_reader(domain_label=domain_label)
+                        if callable(current_boundary_reader)
+                        else None
+                    )
+                    if current_boundary is False:
+                        raise DailyDiscoveryValidationError(
+                            "the current domain activation has no frozen production boundary"
+                        )
                     assembly_payload = self._assembly_payload(
                         run_id=run["run_id"],
                         domain_label=domain_label,
@@ -1183,11 +1203,32 @@ class Stage1BDailyDiscoveryService:
         now = now or datetime.now(timezone.utc)
         daily_since = (now - timedelta(hours=DAILY_SOURCE_VALIDITY_HOURS)).isoformat()
         sources_config = load_sources_yaml(DOMAIN_PACK_DIR / f"{domain_label}.yaml")
-        due_topics = select_tags_due_for_search(self.core.conn, domain_label=domain_label)
-        registered_topic_rows = self.core.conn.execute(
-            "SELECT tag FROM domain_search_tags WHERE domain_label=? AND status='active' ORDER BY tag_id",
-            (domain_label,),
-        ).fetchall()
+        current_tag_reader = getattr(self.core, "current_domain_tag_ids", None)
+        current_tag_ids = (
+            current_tag_reader(domain_label=domain_label)
+            if callable(current_tag_reader)
+            else None
+        )
+        due_topics = select_tags_due_for_search(
+            self.core.conn,
+            domain_label=domain_label,
+            allowed_tag_ids=current_tag_ids,
+        )
+        if current_tag_ids is None:
+            registered_topic_rows = self.core.conn.execute(
+                "SELECT tag FROM domain_search_tags WHERE domain_label=? "
+                "AND status='active' ORDER BY tag_id",
+                (domain_label,),
+            ).fetchall()
+        elif not current_tag_ids:
+            registered_topic_rows = []
+        else:
+            placeholders = ",".join("?" for _ in current_tag_ids)
+            registered_topic_rows = self.core.conn.execute(
+                "SELECT tag FROM domain_search_tags WHERE domain_label=? "
+                "AND status='active' AND tag_id IN (" + placeholders + ") ORDER BY tag_id",
+                (domain_label, *current_tag_ids),
+            ).fetchall()
         registered_topics = [str(row["tag"]) for row in registered_topic_rows]
         sources = [
             source for source in self.core.load_real_discovery_sources(

@@ -233,10 +233,26 @@ def suggest_tags_from_hit_library(
         "pending_review": pending_review,
         "candidates_scanned": len(rows),
     }
-def select_tags_due_for_search(conn: sqlite3.Connection, *, domain_label: str, limit: int = DAILY_TAG_SEARCH_COUNT, now: datetime | None = None) -> list[sqlite3.Row]:
+def select_tags_due_for_search(
+    conn: sqlite3.Connection,
+    *,
+    domain_label: str,
+    limit: int = DAILY_TAG_SEARCH_COUNT,
+    now: datetime | None = None,
+    allowed_tag_ids: tuple[str, ...] | None = None,
+) -> list[sqlite3.Row]:
     """每天按从未搜索、最久未搜索的稳定顺序轮换最多三个活跃标签。"""
     del now
     effective_limit = min(max(int(limit), 0), DAILY_TAG_SEARCH_COUNT)
+    if allowed_tag_ids is not None and not allowed_tag_ids:
+        return []
+    tag_clause = ""
+    params: list[object] = [domain_label]
+    if allowed_tag_ids is not None:
+        placeholders = ",".join("?" for _ in allowed_tag_ids)
+        tag_clause = f" AND domain_search_tags.tag_id IN ({placeholders})"
+        params.extend(allowed_tag_ids)
+    params.append(effective_limit)
     return conn.execute(
         """
         SELECT domain_search_tags.*, domain_search_cursor.last_searched_at
@@ -244,12 +260,13 @@ def select_tags_due_for_search(conn: sqlite3.Connection, *, domain_label: str, l
           JOIN domain_search_cursor ON domain_search_cursor.tag_id = domain_search_tags.tag_id
          WHERE domain_search_tags.domain_label = ?
            AND domain_search_tags.status = 'active'
+        """ + tag_clause + """
          ORDER BY domain_search_cursor.last_searched_at IS NOT NULL,
                   domain_search_cursor.last_searched_at ASC,
                   domain_search_tags.tag_id ASC
          LIMIT ?
         """,
-        (domain_label, effective_limit),
+        tuple(params),
     ).fetchall()
 
 
@@ -510,6 +527,7 @@ def run_daily_tag_searches(
     domain_search_cfg: dict[str, Any],
     now: datetime | None = None,
     deadline_monotonic: float | None = None,
+    allowed_tag_ids: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Run at most three one-page tag searches sequentially, without retries or padding."""
     # Accepted tags from the cold-start library are written to
@@ -518,17 +536,31 @@ def run_daily_tag_searches(
     # rows at the actual production search boundary so the approved library
     # participates in daily rotation as intended.  INSERT OR IGNORE keeps this
     # idempotent and preserves existing last_searched_at values.
+    if allowed_tag_ids is not None and not allowed_tag_ids:
+        return {"status": "no_current_tags", "raw_results": 0, "inserted": 0, "account_reviews_created": 0}
+    tag_clause = ""
+    cursor_params: list[object] = [domain_label]
+    if allowed_tag_ids is not None:
+        placeholders = ",".join("?" for _ in allowed_tag_ids)
+        tag_clause = f" AND tag_id IN ({placeholders})"
+        cursor_params.extend(allowed_tag_ids)
     conn.execute(
         """
         INSERT OR IGNORE INTO domain_search_cursor(tag_id)
         SELECT tag_id
           FROM domain_search_tags
          WHERE domain_label=? AND status='active'
-        """,
-        (domain_label,),
+        """ + tag_clause,
+        tuple(cursor_params),
     )
     conn.commit()
-    selected = select_tags_due_for_search(conn, domain_label=domain_label, limit=DAILY_TAG_SEARCH_COUNT, now=now)
+    selected = select_tags_due_for_search(
+        conn,
+        domain_label=domain_label,
+        limit=DAILY_TAG_SEARCH_COUNT,
+        now=now,
+        allowed_tag_ids=allowed_tag_ids,
+    )
     results: list[dict[str, Any]] = []
     for tag_row in selected:
         if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:

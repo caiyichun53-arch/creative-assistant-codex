@@ -1257,9 +1257,25 @@ class Stage0ContentProductionCore:
                 data_identity TEXT NOT NULL,
                 created_by TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                completed_at TEXT,
-                UNIQUE(owned_account_id, domain_label, data_identity)
+                completed_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS stage0_domain_activation (
+                activation_id TEXT PRIMARY KEY,
+                domain_label TEXT NOT NULL,
+                cold_start_id TEXT NOT NULL REFERENCES stage0_cold_start(cold_start_id),
+                configuration_id TEXT NOT NULL REFERENCES stage0_cold_start_configuration(configuration_id),
+                data_identity TEXT NOT NULL,
+                is_current INTEGER NOT NULL CHECK(is_current IN (0, 1)),
+                created_at TEXT NOT NULL,
+                released_at TEXT,
+                released_by TEXT,
+                release_reason TEXT,
+                UNIQUE(cold_start_id, data_identity),
+                UNIQUE(configuration_id, data_identity)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS stage0_domain_activation_current_unique
+            ON stage0_domain_activation(domain_label, data_identity)
+            WHERE is_current=1;
             CREATE TABLE IF NOT EXISTS stage0_cold_start_run_contract (
                 cold_start_id TEXT PRIMARY KEY REFERENCES stage0_cold_start(cold_start_id),
                 domain_label TEXT NOT NULL,
@@ -1545,7 +1561,8 @@ class Stage0ContentProductionCore:
                 started_at TEXT,
                 finished_at TEXT,
                 data_identity TEXT NOT NULL,
-                UNIQUE(domain_label, business_date)
+                cold_start_id TEXT REFERENCES stage0_cold_start(cold_start_id),
+                UNIQUE(domain_label, business_date, cold_start_id)
             );
             CREATE TABLE IF NOT EXISTS stage1b_discovery_run (
                 run_id TEXT PRIMARY KEY,
@@ -1825,6 +1842,7 @@ class Stage0ContentProductionCore:
         )
         competitor_schema = Path(__file__).resolve().parents[1] / "business_data" / "competitor_accounts_schema.sqlite.sql"
         self.conn.executescript(competitor_schema.read_text(encoding="utf-8"))
+        self._migrate_cold_start_reuse_constraint()
         self._migrate_daily_batch_dates()
         discovery_schema = Path(__file__).resolve().parents[1] / "business_data" / "domain_search_schema.sqlite.sql"
         self.conn.executescript(discovery_schema.read_text(encoding="utf-8"))
@@ -1884,9 +1902,27 @@ class Stage0ContentProductionCore:
             "started_at TEXT, "
             "finished_at TEXT, "
             "data_identity TEXT NOT NULL, "
-            "UNIQUE(domain_label, business_date)"
+            "cold_start_id TEXT REFERENCES stage0_cold_start(cold_start_id), "
+            "UNIQUE(domain_label, business_date, cold_start_id)"
             ")"
         )
+        columns = {
+            str(row["name"])
+            for row in self.conn.execute(
+                "PRAGMA table_info(stage0_daily_run)"
+            ).fetchall()
+        }
+        if "cold_start_id" not in columns:
+            self.conn.execute(
+                "ALTER TABLE stage0_daily_run ADD COLUMN cold_start_id TEXT "
+                "REFERENCES stage0_cold_start(cold_start_id)"
+            )
+        schema_row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='stage0_daily_run'"
+        ).fetchone()
+        schema_sql = str(schema_row["sql"] or "") if schema_row is not None else ""
+        if "UNIQUE(domain_label,business_date)" in schema_sql.replace(" ", "").replace("\n", ""):
+            self._migrate_daily_run_reuse_constraint()
         context_columns = {
             str(row["name"])
             for row in self.conn.execute(
@@ -1901,6 +1937,56 @@ class Stage0ContentProductionCore:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS stage1b_run_execution_context_daily_run_idx "
             "ON stage1b_run_execution_context(daily_run_id, execution_mode)"
+        )
+
+    def _migrate_cold_start_reuse_constraint(self) -> None:
+        """Allow the same account identity to start a later cold-start round."""
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='stage0_cold_start'"
+        ).fetchone()
+        schema_sql = str(row["sql"] or "") if row is not None else ""
+        compact = schema_sql.replace(" ", "").replace("\n", "")
+        if "UNIQUE(owned_account_id,domain_label,data_identity)" not in compact:
+            return
+        self.conn.execute(
+            "CREATE TABLE stage0_cold_start__v2 ("
+            "cold_start_id TEXT PRIMARY KEY, "
+            "owned_account_id TEXT NOT NULL REFERENCES stage0_content_account(content_account_id), "
+            "domain_label TEXT NOT NULL, "
+            "status TEXT NOT NULL CHECK(status IN ('running', 'stopped', 'failed', 'waiting_human', 'completed')), "
+            "data_identity TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL, completed_at TEXT"
+            ")"
+        )
+        self.conn.execute(
+            "INSERT INTO stage0_cold_start__v2 "
+            "SELECT cold_start_id, owned_account_id, domain_label, status, data_identity, "
+            "created_by, created_at, completed_at FROM stage0_cold_start"
+        )
+        self.conn.execute("DROP TABLE stage0_cold_start")
+        self.conn.execute(
+            "ALTER TABLE stage0_cold_start__v2 RENAME TO stage0_cold_start"
+        )
+
+    def _migrate_daily_run_reuse_constraint(self) -> None:
+        """Allow a new activation to use the same business date as old history."""
+        self.conn.execute(
+            "CREATE TABLE stage0_daily_run__v2 ("
+            "daily_run_id TEXT PRIMARY KEY, domain_label TEXT NOT NULL, "
+            "business_date TEXT NOT NULL, "
+            "lifecycle TEXT NOT NULL CHECK(lifecycle IN ('running', 'failed', 'stopped', 'completed')), "
+            "created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, data_identity TEXT NOT NULL, "
+            "cold_start_id TEXT REFERENCES stage0_cold_start(cold_start_id), "
+            "UNIQUE(domain_label, business_date, cold_start_id)"
+            ")"
+        )
+        self.conn.execute(
+            "INSERT INTO stage0_daily_run__v2 "
+            "SELECT daily_run_id, domain_label, business_date, lifecycle, created_at, "
+            "started_at, finished_at, data_identity, cold_start_id FROM stage0_daily_run"
+        )
+        self.conn.execute("DROP TABLE stage0_daily_run")
+        self.conn.execute(
+            "ALTER TABLE stage0_daily_run__v2 RENAME TO stage0_daily_run"
         )
 
     def _migrate_daily_batch_dates(self) -> None:
@@ -2240,12 +2326,32 @@ class Stage0ContentProductionCore:
         return normalized
 
     def _require_owned_account_for_domain(self, *, domain_label: str, account_ref: str) -> None:
-        row = self.conn.execute(
-            "SELECT 1 FROM stage0_content_account "
-            "WHERE account_role='owned' AND domain_label=? AND external_account_ref=? "
-            "AND data_identity=? LIMIT 1",
-            (domain_label, account_ref, self.data_identity),
-        ).fetchone()
+        activation = self.get_current_domain_activation(domain_label=domain_label)
+        if activation is None and self.domain_has_activation_history(domain_label=domain_label):
+            raise StateTransitionError(
+                "the requested domain has no current owned-account configuration"
+            )
+        if activation is not None:
+            configuration = self.get_cold_start_configuration(
+                configuration_id=str(activation["configuration_id"])
+            )
+            row = self.conn.execute(
+                "SELECT 1 FROM stage0_content_account "
+                "WHERE content_account_id=? AND account_role='owned' "
+                "AND external_account_ref=? AND data_identity=? LIMIT 1",
+                (
+                    configuration["owned_account_id"],
+                    account_ref,
+                    self.data_identity,
+                ),
+            ).fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT 1 FROM stage0_content_account "
+                "WHERE account_role='owned' AND domain_label=? AND external_account_ref=? "
+                "AND data_identity=? LIMIT 1",
+                (domain_label, account_ref, self.data_identity),
+            ).fetchone()
         if row is None:
             raise StateTransitionError("the service account does not belong to the requested domain")
 
@@ -3265,11 +3371,23 @@ class Stage0ContentProductionCore:
     def get_daily_run_for_domain_date(
         self, *, domain_label: str, business_date: str
     ) -> dict[str, Any] | None:
-        row = self.conn.execute(
-            "SELECT * FROM stage0_daily_run "
-            "WHERE domain_label=? AND business_date=?",
-            (str(domain_label).strip(), str(business_date).strip()),
-        ).fetchone()
+        domain = str(domain_label).strip()
+        selected_date = str(business_date).strip()
+        activation = self.get_current_domain_activation(domain_label=domain)
+        if activation is not None:
+            row = self.conn.execute(
+                "SELECT * FROM stage0_daily_run WHERE domain_label=? "
+                "AND business_date=? AND cold_start_id=?",
+                (domain, selected_date, activation["cold_start_id"]),
+            ).fetchone()
+        elif self.domain_has_activation_history(domain_label=domain):
+            row = None
+        else:
+            row = self.conn.execute(
+                "SELECT * FROM stage0_daily_run WHERE domain_label=? "
+                "AND business_date=? AND cold_start_id IS NULL",
+                (domain, selected_date),
+            ).fetchone()
         return {key: row[key] for key in row.keys()} if row is not None else None
 
     def get_or_create_daily_run(
@@ -3285,6 +3403,9 @@ class Stage0ContentProductionCore:
             raise StateTransitionError("daily run requires a valid business date") from exc
         if not str(actor).strip():
             raise StateTransitionError("daily run requires an actor")
+        activation = self.get_current_domain_activation(domain_label=domain)
+        if activation is None and self.domain_has_activation_history(domain_label=domain):
+            raise StateTransitionError("daily run requires a current cold-start activation")
         existing = self.get_daily_run_for_domain_date(
             domain_label=domain, business_date=selected_date
         )
@@ -3296,14 +3417,24 @@ class Stage0ContentProductionCore:
             self.conn.execute(
                 "INSERT OR IGNORE INTO stage0_daily_run("
                 "daily_run_id, domain_label, business_date, lifecycle, created_at, "
-                "started_at, finished_at, data_identity"
-                ") VALUES (?, ?, ?, 'running', ?, NULL, NULL, ?)",
-                (daily_run_id, domain, selected_date, created_at, self.data_identity),
+                "started_at, finished_at, data_identity, cold_start_id"
+                ") VALUES (?, ?, ?, 'running', ?, NULL, NULL, ?, ?)",
+                (
+                    daily_run_id, domain, selected_date, created_at,
+                    self.data_identity,
+                    str(activation["cold_start_id"]) if activation is not None else None,
+                ),
             )
             row = self.conn.execute(
-                "SELECT * FROM stage0_daily_run "
-                "WHERE domain_label=? AND business_date=?",
-                (domain, selected_date),
+                "SELECT * FROM stage0_daily_run WHERE domain_label=? "
+                "AND business_date=? AND ((cold_start_id=? AND ? IS NOT NULL) "
+                "OR (cold_start_id IS NULL AND ? IS NULL))",
+                (
+                    domain, selected_date,
+                    str(activation["cold_start_id"]) if activation is not None else None,
+                    str(activation["cold_start_id"]) if activation is not None else None,
+                    str(activation["cold_start_id"]) if activation is not None else None,
+                ),
             ).fetchone()
             if row is None:
                 raise StateTransitionError("daily run could not be created")
@@ -3321,12 +3452,26 @@ class Stage0ContentProductionCore:
                 )
         return result
 
+    def _require_current_daily_run(self, run: dict[str, Any]) -> None:
+        """Prevent a released activation's daily run from being resumed or finished."""
+        domain = str(run.get("domain_label") or "").strip()
+        if not self.domain_has_activation_history(domain_label=domain):
+            return
+        activation = self.get_current_domain_activation(domain_label=domain)
+        if activation is None or str(run.get("cold_start_id") or "") != str(
+            activation["cold_start_id"]
+        ):
+            raise StateTransitionError(
+                "the daily run does not belong to the domain's current activation"
+            )
+
     def start_daily_run(
         self, *, daily_run_id: str, resume: bool, actor: str
     ) -> dict[str, Any]:
         run = self.get_daily_run(daily_run_id=daily_run_id)
         if run is None:
             raise StateTransitionError("daily run does not exist")
+        self._require_current_daily_run(run)
         lifecycle = str(run["lifecycle"])
         if lifecycle == "completed":
             return run
@@ -3383,6 +3528,7 @@ class Stage0ContentProductionCore:
         run = self.get_daily_run(daily_run_id=daily_run_id)
         if run is None:
             raise StateTransitionError("daily run does not exist")
+        self._require_current_daily_run(run)
         current = str(run["lifecycle"])
         if current == lifecycle:
             return run
@@ -7154,12 +7300,32 @@ class Stage0ContentProductionCore:
         }
 
     def resolve_owned_account_ref(self, *, domain_label: str, content_account_id: str) -> str:
-        row = self.conn.execute(
-            "SELECT external_account_ref FROM stage0_content_account "
-            "WHERE content_account_id=? AND account_role='owned' AND domain_label=? "
-            "AND status='active' AND data_identity=?",
-            (content_account_id.strip(), domain_label.strip(), self.data_identity),
-        ).fetchone()
+        activation = self.get_current_domain_activation(domain_label=domain_label)
+        if activation is None and self.domain_has_activation_history(domain_label=domain_label):
+            raise StateTransitionError(
+                "the requested domain has no current owned-account configuration"
+            )
+        if activation is not None:
+            configuration = self.get_cold_start_configuration(
+                configuration_id=str(activation["configuration_id"])
+            )
+            if str(configuration["owned_account_id"]) != content_account_id.strip():
+                raise StateTransitionError(
+                    "the selected owned account is not current in the requested domain"
+                )
+            row = self.conn.execute(
+                "SELECT external_account_ref FROM stage0_content_account "
+                "WHERE content_account_id=? AND account_role='owned' "
+                "AND status='active' AND data_identity=?",
+                (content_account_id.strip(), self.data_identity),
+            ).fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT external_account_ref FROM stage0_content_account "
+                "WHERE content_account_id=? AND account_role='owned' AND domain_label=? "
+                "AND status='active' AND data_identity=?",
+                (content_account_id.strip(), domain_label.strip(), self.data_identity),
+            ).fetchone()
         if row is None or not str(row["external_account_ref"] or "").strip():
             raise StateTransitionError("the selected owned account is not active in the requested domain")
         return str(row["external_account_ref"]).strip()
@@ -7365,6 +7531,34 @@ class Stage0ContentProductionCore:
         candidates.  The mirror must read this candidate table instead of
         presenting every input as a candidate direction.
         """
+        current_activation_filter = ""
+        query_params: list[Any] = [self.data_identity]
+        if self.domain_activation_schema_available():
+            current_activation_filter = (
+                "AND ("
+                "  EXISTS ("
+                "    SELECT 1 FROM stage1b_source_version current_source "
+                "    JOIN stage1b_run_execution_context current_context "
+                "      ON current_context.run_id=current_source.run_id "
+                "      AND current_context.data_identity=current_source.data_identity "
+                "    JOIN stage0_daily_run current_daily "
+                "      ON current_daily.daily_run_id=current_context.daily_run_id "
+                "    JOIN stage0_domain_activation current_activation "
+                "      ON current_activation.domain_label=candidate.domain_label "
+                "      AND current_activation.cold_start_id=current_daily.cold_start_id "
+                "      AND current_activation.data_identity=candidate.data_identity "
+                "      AND current_activation.is_current=1 "
+                "    WHERE current_source.source_version_id=candidate.source_version_id "
+                "      AND current_source.data_identity=candidate.data_identity"
+                "  ) "
+                "  OR NOT EXISTS ("
+                "    SELECT 1 FROM stage0_domain_activation activation_history "
+                "    WHERE activation_history.domain_label=candidate.domain_label "
+                "      AND activation_history.data_identity=candidate.data_identity"
+                "  )"
+                ") "
+            )
+        query_params.extend([_now()])
         rows = self.conn.execute(
             "SELECT candidate.*, source.source_type, source.source_time, "
             "source.expires_at, source.payload_json AS source_payload_json "
@@ -7378,13 +7572,14 @@ class Stage0ContentProductionCore:
             "WHERE state.candidate_version_id=candidate.candidate_version_id AND state.data_identity=candidate.data_identity "
             "ORDER BY state.effective_at DESC, state.pool_state_id DESC LIMIT 1), 'current')='current' "
             "AND (source.expires_at IS NULL OR source.expires_at >= ?) "
-            "AND NOT EXISTS ("
+            + current_activation_filter
+            + "AND NOT EXISTS ("
             "  SELECT 1 FROM stage1b_candidate_decision decision "
             "  WHERE decision.candidate_version_id=candidate.candidate_version_id "
             "  AND decision.data_identity=candidate.data_identity"
             ") "
             "ORDER BY candidate.domain_label, candidate.created_at, candidate.candidate_version_id",
-            (self.data_identity, _now()),
+            tuple(query_params),
         ).fetchall()
         results: list[dict[str, Any]] = []
         for row in rows:
@@ -7610,14 +7805,210 @@ class Stage0ContentProductionCore:
             )
         return {"content_account_id": content_account_id.strip(), "account_role": account_role, "created_at": now}
 
-    def domain_business_state(self, *, domain_label: str) -> dict[str, Any]:
-        """Return only formal, non-draft business state for one domain.
+    def get_current_domain_activation(self, *, domain_label: str) -> dict[str, Any] | None:
+        """Return the one current activation, without consulting old domain rows."""
+        label = str(domain_label or "").strip()
+        if not label:
+            raise StateTransitionError("current domain activation requires a domain")
+        if not self.domain_activation_schema_available():
+            return None
+        row = self.conn.execute(
+            "SELECT * FROM stage0_domain_activation "
+            "WHERE domain_label=? AND data_identity=? AND is_current=1",
+            (label, self.data_identity),
+        ).fetchone()
+        return {key: row[key] for key in row.keys()} if row is not None else None
 
-        Account input rows and pending configuration rows are intentionally
-        excluded: they are onboarding material, not proof that a cold start
-        has been created.  A real cold-start row or downstream domain-owned
-        result is what closes the zero-state gate.
-        """
+    def domain_activation_schema_available(self) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='stage0_domain_activation'"
+        ).fetchone()
+        return row is not None
+
+    def domain_has_activation_history(self, *, domain_label: str) -> bool:
+        """Tell callers whether this domain has entered the activation-aware layout."""
+        label = str(domain_label or "").strip()
+        if not label:
+            raise StateTransitionError("domain activation history requires a domain")
+        if not self.domain_activation_schema_available():
+            return False
+        row = self.conn.execute(
+            "SELECT 1 FROM stage0_domain_activation "
+            "WHERE domain_label=? AND data_identity=? LIMIT 1",
+            (label, self.data_identity),
+        ).fetchone()
+        return row is not None
+
+    def get_current_domain_configuration(self, *, domain_label: str) -> dict[str, Any] | None:
+        activation = self.get_current_domain_activation(domain_label=domain_label)
+        if activation is None:
+            return None
+        return self.get_cold_start_configuration(
+            configuration_id=str(activation["configuration_id"])
+        )
+
+    def current_domain_tag_ids(
+        self, *, domain_label: str
+    ) -> tuple[str, ...] | None:
+        """Return tags approved by the current cold-start, or legacy fallback state."""
+        activation = self.get_current_domain_activation(domain_label=domain_label)
+        if activation is None:
+            return None if not self.domain_has_activation_history(domain_label=domain_label) else ()
+        row = self.conn.execute(
+            "SELECT tag_ids_json FROM stage0_cold_start_tag_library "
+            "WHERE cold_start_id=? AND domain_label=? AND data_identity=? "
+            "AND status='accepted'",
+            (
+                activation["cold_start_id"],
+                str(domain_label).strip(),
+                self.data_identity,
+            ),
+        ).fetchone()
+        if row is None:
+            return ()
+        try:
+            values = json.loads(str(row["tag_ids_json"] or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise StateTransitionError("current cold-start tag library is not valid JSON") from exc
+        if not isinstance(values, list):
+            raise StateTransitionError("current cold-start tag library must contain tag IDs")
+        return tuple(str(value).strip() for value in values if str(value).strip())
+
+    def current_domain_content_types_frozen(self, *, domain_label: str) -> bool | None:
+        """Check content-type readiness for the current activation only."""
+        activation = self.get_current_domain_activation(domain_label=domain_label)
+        if activation is None:
+            return None if not self.domain_has_activation_history(domain_label=domain_label) else False
+        return bool(
+            self.cold_start_content_types_are_frozen(
+                cold_start_id=str(activation["cold_start_id"])
+            )
+        )
+
+    def current_domain_boundary_frozen(self, *, domain_label: str) -> bool | None:
+        """Check production-boundary readiness for the current activation only."""
+        activation = self.get_current_domain_activation(domain_label=domain_label)
+        if activation is None:
+            return None if not self.domain_has_activation_history(domain_label=domain_label) else False
+        return bool(
+            self.cold_start_domain_boundary_is_frozen(
+                cold_start_id=str(activation["cold_start_id"])
+            )
+        )
+
+    def _ensure_current_domain_activation(
+        self, *, domain_label: str, cold_start_id: str, configuration_id: str
+    ) -> dict[str, Any]:
+        """Bind a newly started run to the domain's current view."""
+        label = str(domain_label or "").strip()
+        run_id = str(cold_start_id or "").strip()
+        config_id = str(configuration_id or "").strip()
+        if not label or not run_id or not config_id:
+            raise StateTransitionError("current domain activation requires domain, run and configuration")
+        current = self.get_current_domain_activation(domain_label=label)
+        if current is not None:
+            if (
+                str(current["cold_start_id"]) == run_id
+                and str(current["configuration_id"]) == config_id
+            ):
+                return current
+            raise StateTransitionError("the domain already has another current cold-start activation")
+        activation = {
+            "activation_id": _id("domain_activation"),
+            "domain_label": label,
+            "cold_start_id": run_id,
+            "configuration_id": config_id,
+            "data_identity": self.data_identity,
+            "is_current": 1,
+            "created_at": _now(),
+        }
+        self.conn.execute(
+            "INSERT INTO stage0_domain_activation("
+            "activation_id, domain_label, cold_start_id, configuration_id, data_identity, "
+            "is_current, created_at, released_at, released_by, release_reason) "
+            "VALUES (?, ?, ?, ?, ?, 1, ?, NULL, NULL, NULL)",
+            (
+                activation["activation_id"], activation["domain_label"],
+                activation["cold_start_id"], activation["configuration_id"],
+                activation["data_identity"], activation["created_at"],
+            ),
+        )
+        self._audit(None, "domain_activation_created", {
+            "activation_id": activation["activation_id"],
+            "domain_label": label,
+            "cold_start_id": run_id,
+            "configuration_id": config_id,
+        })
+        return activation
+
+    def _require_current_cold_start_configuration(
+        self, configuration: dict[str, Any]
+    ) -> None:
+        """Keep lifecycle commands attached to the current activation only."""
+        domain = str(configuration.get("domain_label") or "").strip()
+        activation = self.get_current_domain_activation(domain_label=domain)
+        if activation is None:
+            if self.domain_has_activation_history(domain_label=domain):
+                raise StateTransitionError(
+                    "the cold-start configuration belongs to a released domain activation"
+                )
+            return
+        if str(activation["configuration_id"]) != str(configuration["configuration_id"]):
+            raise StateTransitionError(
+                "the cold-start configuration is not the domain's current activation"
+            )
+        configured_run = str(configuration.get("cold_start_id") or "").strip()
+        if configured_run and str(activation["cold_start_id"]) != configured_run:
+            raise StateTransitionError(
+                "the cold-start run is not the domain's current activation"
+            )
+
+    def reset_domain(self, *, domain_label: str, actor: str) -> dict[str, Any]:
+        """Release only the current domain view; all historical facts remain."""
+        label = str(domain_label or "").strip()
+        actor_value = str(actor or "").strip()
+        if not label or not actor_value:
+            raise StateTransitionError("domain reset requires a domain and actor")
+        current = self.get_current_domain_activation(domain_label=label)
+        if current is None:
+            return {
+                "domain_label": label,
+                "reset": False,
+                "status": "no_current_activation",
+                "released_activation_id": None,
+            }
+        released_at = _now()
+        with self.conn:
+            updated = self.conn.execute(
+                "UPDATE stage0_domain_activation SET is_current=0, released_at=?, "
+                "released_by=?, release_reason=? "
+                "WHERE activation_id=? AND data_identity=? AND is_current=1",
+                (
+                    released_at, actor_value, "user_requested_domain_reset",
+                    current["activation_id"], self.data_identity,
+                ),
+            ).rowcount
+            if not updated:
+                raise StateTransitionError("the domain current activation changed before reset completed")
+            self._audit(None, "domain_activation_released", {
+                "activation_id": current["activation_id"],
+                "domain_label": label,
+                "cold_start_id": current["cold_start_id"],
+                "configuration_id": current["configuration_id"],
+                "actor": actor_value,
+            })
+        return {
+            "domain_label": label,
+            "reset": True,
+            "status": "reset",
+            "released_activation_id": str(current["activation_id"]),
+            "cold_start_id": str(current["cold_start_id"]),
+            "configuration_id": str(current["configuration_id"]),
+        }
+
+    def _legacy_domain_business_state(self, *, domain_label: str) -> dict[str, Any]:
+        """Read the pre-activation layout only for databases not yet migrated."""
         label = str(domain_label or "").strip()
         if not label:
             raise StateTransitionError("domain zero-state check requires a domain")
@@ -7676,6 +8067,42 @@ class Stage0ContentProductionCore:
                     "status": str(row["status"] if "status" in row_keys else "active"),
                 })
         return {"domain_label": label, "zero_state": not blockers, "blockers": blockers}
+
+    def domain_business_state(self, *, domain_label: str) -> dict[str, Any]:
+        """Return current activation state; old rows are not a current-state source."""
+        label = str(domain_label or "").strip()
+        if not label:
+            raise StateTransitionError("domain zero-state check requires a domain")
+        activation = self.get_current_domain_activation(domain_label=label)
+        if activation is None:
+            if not self.domain_has_activation_history(domain_label=label):
+                return self._legacy_domain_business_state(domain_label=label)
+            return {"domain_label": label, "zero_state": True, "blockers": []}
+
+        blockers: list[dict[str, Any]] = [{
+            "table": "stage0_domain_activation",
+            "row_id": str(activation["activation_id"]),
+            "status": "current",
+        }]
+        configuration = self.get_cold_start_configuration(
+            configuration_id=str(activation["configuration_id"])
+        )
+        blockers.append({
+            "table": "stage0_cold_start_configuration",
+            "row_id": str(configuration["configuration_id"]),
+            "status": str(configuration["status"]),
+        })
+        run = self.conn.execute(
+            "SELECT status FROM stage0_cold_start WHERE cold_start_id=? AND data_identity=?",
+            (activation["cold_start_id"], self.data_identity),
+        ).fetchone()
+        if run is not None:
+            blockers.append({
+                "table": "stage0_cold_start",
+                "row_id": str(activation["cold_start_id"]),
+                "status": str(run["status"]),
+            })
+        return {"domain_label": label, "zero_state": False, "blockers": blockers}
 
     def require_domain_zero_state(self, *, domain_label: str) -> dict[str, Any]:
         state = self.domain_business_state(domain_label=domain_label)
@@ -7998,6 +8425,13 @@ class Stage0ContentProductionCore:
             "SELECT * FROM stage0_cold_start WHERE cold_start_id=? AND data_identity=?",
             (cold_start_id, self.data_identity),
         ).fetchone()
+        current_activation = self.get_current_domain_activation(
+            domain_label=str(configuration["domain_label"])
+        )
+        if current_activation is not None and str(current_activation["cold_start_id"]) != cold_start_id:
+            raise StateTransitionError(
+                "the configured cold-start is not the domain's current activation"
+            )
         if existing_run is not None:
             registration_rows = self.conn.execute(
                 "SELECT registration_id FROM stage0_competitor_registration "
@@ -8052,6 +8486,11 @@ class Stage0ContentProductionCore:
                 "WHERE configuration_id=? AND data_identity=? AND status IN ('confirmed', 'started')",
                 (cold_start_id, configuration_id, self.data_identity),
             )
+            self._ensure_current_domain_activation(
+                domain_label=str(configuration["domain_label"]),
+                cold_start_id=cold_start_id,
+                configuration_id=configuration_id,
+            )
             self._audit(None, "configured_cold_start_started", {
                 "configuration_id": configuration_id, "cold_start_id": cold_start_id,
                 "registration_ids": result["registration_ids"],
@@ -8085,6 +8524,7 @@ class Stage0ContentProductionCore:
         replay = self._replay("pause_configured_cold_start", idempotency_key, request)
         if replay:
             return replay
+        self._require_current_cold_start_configuration(configuration)
         if configuration["status"] != "started" or not str(configuration.get("cold_start_id") or "").strip():
             raise StateTransitionError("only a started configured cold start can be paused")
         result = {
@@ -8121,6 +8561,7 @@ class Stage0ContentProductionCore:
         configuration = self.get_cold_start_configuration(
             configuration_id=configuration_id
         )
+        self._require_current_cold_start_configuration(configuration)
         cold_start_id = str(configuration.get("cold_start_id") or "").strip()
         if not cold_start_id:
             raise StateTransitionError("there is no existing cold-start run to stop")
@@ -8179,6 +8620,7 @@ class Stage0ContentProductionCore:
         configuration = self.get_cold_start_configuration(
             configuration_id=configuration_id
         )
+        self._require_current_cold_start_configuration(configuration)
         cold_start_id = str(configuration.get("cold_start_id") or "").strip()
         if not cold_start_id:
             raise StateTransitionError("there is no existing cold-start run to resume")
@@ -8254,6 +8696,7 @@ class Stage0ContentProductionCore:
         configuration = self.get_cold_start_configuration(
             configuration_id=configuration_id
         )
+        self._require_current_cold_start_configuration(configuration)
         cold_start_id = str(configuration.get("cold_start_id") or "").strip()
         if not cold_start_id:
             raise StateTransitionError("there is no existing cold-start run to fail")

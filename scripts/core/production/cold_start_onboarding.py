@@ -128,21 +128,32 @@ class ColdStartOnboardingService:
             raise StateTransitionError(
                 "cold-start status/stop/resume requires the exact cold_start_id"
             )
-        row = self.core.conn.execute(
-            """
-            SELECT configuration.configuration_id, configuration.status AS configuration_status,
-                   run.cold_start_id, run.status AS run_status, run.created_at,
-                   run.completed_at
-            FROM stage0_cold_start_configuration configuration
-            JOIN stage0_cold_start run
-              ON run.cold_start_id=configuration.cold_start_id
-             AND run.data_identity=configuration.data_identity
-            WHERE configuration.data_identity=?
-              AND run.data_identity=?
-              AND run.cold_start_id=?
-            """,
-            (self.core.data_identity, self.core.data_identity, run_id),
-        ).fetchone()
+        base_query = (
+            "SELECT configuration.configuration_id, configuration.status AS configuration_status, "
+            "run.cold_start_id, run.status AS run_status, run.created_at, run.completed_at "
+            "FROM stage0_cold_start_configuration configuration "
+            "JOIN stage0_cold_start run ON run.cold_start_id=configuration.cold_start_id "
+            "AND run.data_identity=configuration.data_identity "
+            "WHERE configuration.data_identity=? AND run.data_identity=? "
+            "AND run.cold_start_id=? "
+        )
+        params: tuple[Any, ...] = (
+            self.core.data_identity,
+            self.core.data_identity,
+            run_id,
+        )
+        if self.core.domain_activation_schema_available():
+            base_query += (
+                "AND (EXISTS (SELECT 1 FROM stage0_domain_activation current_activation "
+                "WHERE current_activation.domain_label=run.domain_label "
+                "AND current_activation.cold_start_id=run.cold_start_id "
+                "AND current_activation.data_identity=? AND current_activation.is_current=1) "
+                "OR NOT EXISTS (SELECT 1 FROM stage0_domain_activation activation_history "
+                "WHERE activation_history.domain_label=run.domain_label "
+                "AND activation_history.data_identity=?)) "
+            )
+            params += (self.core.data_identity, self.core.data_identity)
+        row = self.core.conn.execute(base_query, params).fetchone()
         if row is None:
             raise StateTransitionError(
                 "the requested cold-start run does not exist in this data identity"

@@ -1526,3 +1526,38 @@ Git 用于保存已经确认可以作为下一步起点的代码版本。以后�
 本轮不改变 daily 业务规则，不运行正式业务，不调用真实模型，不修改正式数据库，也不处理 Codex MCP 兼容性。当前正式数据库文件摘要仍以取证后的 `09B245CDCF9969DAEFE163FC6F33EFEDE978E5F9A594CEDA2B6041371B8454A3` 为文件触碰监测基准；阶段0的 `5262A76E395E1B01386192EDA39E6EBAE1018356CF259B90912FB54A095E82BD` 和第一次变化后的 `33E2B8D7CB902B78AD570A3C8214FEA9864A8A526A11F4303E42643AA3A8A732` 仍作为历史凭证保存，不恢复旧备份。
 
 阶段3第一轮完成后，下一轮才处理单领域 cold-start 重置、active 状态指针和历史/知识资产边界。本轮不提交新的阶段3 Git 节点，等待用户确认。
+
+## 阶段3第二轮第二步完成记录（2026-08-29）
+
+本步完成单领域重新开始 cold-start 的正式 Core 边界，并准备建立可信 Git 节点。
+
+### 当前 activation 和 reset 语义
+
+- 每个领域最多只有一个 current activation。
+- current activation 只绑定当前 cold-start、当前配置和已有运行身份，不给全库增加 generation_id 或 activation_id。
+- 没有 current activation 时，Core 按必要输入判断是否允许新的 cold-start；历史记录本身不再构成阻塞。
+- reset 只解除该领域 current activation，并记录审计事实；不删除、不改写旧业务记录。
+- reset 后，普通 resume 只能作用于当前 activation 对应的 cold-start。已解除的旧 run 不会重新成为当前世界。
+
+### 已收口的旧状态查询
+
+own account、competitor、tag、content type、production boundary、daily、baseline、D0-D7、候选和 discovery/content 运行关系，当前业务读取均以 current activation 对应的已有 run/configuration 身份为边界。旧记录继续保留为历史，但不能因为仍存在就被当作当前配置、当前 daily 或当前候选池。
+
+候选经验不再参与 cold-start 零状态阻塞判断。候选经验仍然保持候选状态，不会自动变成正式规则。
+
+### 知识资产保留边界
+
+正式经验、候选经验、候选经验来源、候选经验的证据，以及为追溯所需的拆解、研究、视频、评论和转写材料均不因 reset 删除。验证确认了 reset 前后知识资产数量和来源证据解析结果保持一致；未发现本步新增的删除级联。
+
+### 验证结果
+
+- 单领域已验证 cold-start、reset、cold-start、reset、cold-start 可连续重复执行。
+- 同一 own account 和相同 competitor 可在后续 cold-start 重新使用。
+- 领域之间互不影响。
+- 专项 reset 测试 2 项通过。
+- 完整测试 325 项通过，0 失败，0 错误。
+- 测试只使用隔离测试数据库和 fixture，没有调用真实模型。
+- 正式数据库未执行 reset，未执行 INSERT、UPDATE、DELETE、DROP、VACUUM、restore 或替换。
+- 正式数据库当前文件摘要仍为 `09B245CDCF9969DAEFE163FC6F33EFEDE978E5F9A594CEDA2B6041371B8454A3`。
+
+本步不修改 Agent/MCP 架构，不进入阶段4，不实现正式领域 reset 操作，不处理 16 份未跟踪历史/异常资料。上述代码、测试和本记录由本次可信 Git 提交一并封存。

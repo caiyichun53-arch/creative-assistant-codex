@@ -202,6 +202,22 @@ class ProductionDailyOperationsService:
         unfinished = self._unfinished_daily_hits(hit_ids, include_failed=resume)
         if not unfinished:
             return []
+        current_content_types = None
+        current_content_types_reader = getattr(
+            self.core, "current_domain_content_types_frozen", None
+        )
+        if callable(current_content_types_reader):
+            current_content_types = current_content_types_reader(
+                domain_label=str(unfinished[0]["domain_label"] or "")
+            )
+        if not validation_only and current_content_types is False:
+            return [{
+                "hit_id": str(hit["hit_id"]),
+                "status": "stopped",
+                "stop_reason": "content_type_registry_not_current_for_activation",
+                "detail": "the current domain activation has no frozen content-type registry",
+                "automatic_retry": False,
+            } for hit in unfinished]
         archive_root = runtime_path(
             "formal",
             "daily_operations",
@@ -428,6 +444,18 @@ class ProductionDailyOperationsService:
     def _active_accounts(
         self, domain_label: str, *, validation_only: bool = False, account_id: str | None = None
     ) -> list[dict[str, Any]]:
+        activation_reader = getattr(self.core, "get_current_domain_activation", None)
+        history_reader = getattr(self.core, "domain_has_activation_history", None)
+        if not callable(activation_reader) or not callable(history_reader):
+            activation = None
+            has_activation_history = False
+        else:
+            activation = activation_reader(domain_label=domain_label)
+            has_activation_history = history_reader(domain_label=domain_label)
+        if activation is None and has_activation_history:
+            raise StateTransitionError(
+                "daily operations require a current cold-start activation"
+            )
         query = (
             "SELECT account.account_id, account.platform, account.account_name, account.homepage_url "
             "FROM competitor_accounts account "
@@ -443,6 +471,9 @@ class ProductionDailyOperationsService:
             "AND configuration.status IN ('started','completed')"
         )
         params: list[str] = [self.core.data_identity, self.core.data_identity, domain_label]
+        if activation is not None:
+            query += " AND registration.cold_start_id=?"
+            params.append(str(activation["cold_start_id"]))
         if validation_only:
             if not str(account_id or "").strip():
                 raise StateTransitionError("single-account validation requires an explicit account")
@@ -459,11 +490,33 @@ class ProductionDailyOperationsService:
         return result
 
     def _is_ready_for_candidate_discovery(self, domain_label: str) -> bool:
-        row = self.core.conn.execute(
-            "SELECT 1 FROM stage0_cold_start_configuration "
-            "WHERE domain_label=? AND status='completed' AND data_identity=? LIMIT 1",
-            (domain_label, self.core.data_identity),
-        ).fetchone()
+        activation_reader = getattr(self.core, "get_current_domain_activation", None)
+        history_reader = getattr(self.core, "domain_has_activation_history", None)
+        if not callable(activation_reader) or not callable(history_reader):
+            activation = None
+            has_activation_history = False
+        else:
+            activation = activation_reader(domain_label=domain_label)
+            has_activation_history = history_reader(domain_label=domain_label)
+        if activation is None and has_activation_history:
+            return False
+        if activation is not None:
+            row = self.core.conn.execute(
+                "SELECT 1 FROM stage0_cold_start_configuration "
+                "WHERE configuration_id=? AND cold_start_id=? "
+                "AND status='completed' AND data_identity=? LIMIT 1",
+                (
+                    activation["configuration_id"],
+                    activation["cold_start_id"],
+                    self.core.data_identity,
+                ),
+            ).fetchone()
+        else:
+            row = self.core.conn.execute(
+                "SELECT 1 FROM stage0_cold_start_configuration "
+                "WHERE domain_label=? AND status='completed' AND data_identity=? LIMIT 1",
+                (domain_label, self.core.data_identity),
+            ).fetchone()
         return row is not None
 
     def run_candidate_discovery(
