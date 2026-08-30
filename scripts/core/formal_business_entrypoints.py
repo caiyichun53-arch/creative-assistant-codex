@@ -15,6 +15,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -66,6 +67,32 @@ class CreationAssistantFormalBusinessCore:
         """Apply the Core-owned migration boundary before a mutable open."""
 
         assert_business_action_allowed(data_identity=data_identity)
+
+    def change_domain_workflow_mode(
+        self,
+        *,
+        domain_label: str,
+        workflow_mode: str,
+        actor: str,
+        reason: str,
+        config_dir: Path | None = None,
+    ) -> dict[str, Any]:
+        """Apply the existing user-controlled domain mode switch through Core."""
+
+        self.assert_action_allowed(data_identity=self.core.data_identity)
+        from scripts.core.production.cold_start_onboarding import (
+            ColdStartOnboardingService,
+        )
+
+        return ColdStartOnboardingService(
+            core=self.core,
+            config_dir=config_dir,
+        ).change_workflow_mode(
+            domain_label=domain_label,
+            workflow_mode=workflow_mode,
+            actor=actor,
+            reason=reason,
+        )
 
     def list_daily_domains(self) -> list[str]:
         """Return the domains that Core allows the daily flow to address."""
@@ -1888,6 +1915,7 @@ FORMAL_BUSINESS_CAPABILITIES = {
     "cold_start": "CreationAssistantFormalBusinessCore.start_cold_start",
     "cold_start_resume": "CreationAssistantFormalBusinessCore.resume_cold_start",
     "cold_start_stop": "CreationAssistantFormalBusinessCore.stop_cold_start",
+    "domain_workflow_mode": "CreationAssistantFormalBusinessCore.change_domain_workflow_mode",
     "human_decision": "CreationAssistantFormalBusinessCore.submit_human_decision",
     "candidate_decision": "CreationAssistantFormalBusinessCore.record_discovery_decision",
     "candidate_selection": "CreationAssistantFormalBusinessCore.select_discovery_candidate",

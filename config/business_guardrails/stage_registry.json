@@ -98,6 +98,7 @@
         "tests/test_publication_feedback_p0b.py",
         "tests/test_formal_production_mode_chain.py",
         "tests/test_stage2b2_second_round_content_external_intelligence.py",
+        "tests/test_p1a_workflow_mode_web.py",
         "runtime_skills/experience_candidate_propose/",
         "config/runtime_storage.json"
       ]

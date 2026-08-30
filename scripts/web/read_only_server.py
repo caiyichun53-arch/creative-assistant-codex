@@ -121,6 +121,7 @@ class ActionWebApplication(ReadOnlyWebApplication):
             "review_tags",
             "review_content_types",
             "review_domain_boundary",
+            "change_workflow_mode",
             "daily_start",
             "daily_resume",
             "accept_experience_candidate",
@@ -144,6 +145,7 @@ class ActionWebApplication(ReadOnlyWebApplication):
             "review_tags",
             "review_content_types",
             "review_domain_boundary",
+            "change_workflow_mode",
             "daily_start",
             "daily_resume",
             "accept_experience_candidate",
@@ -440,6 +442,40 @@ class ActionWebApplication(ReadOnlyWebApplication):
                     core=core,
                     command=received,
                     decision=decision,
+                ),
+            )
+            return dict(result)
+
+        if action == "change_workflow_mode":
+            domain_label = str(payload.get("domain_label") or "").strip()
+            workflow_mode = str(payload.get("workflow_mode") or "").strip()
+            reason = str(payload.get("reason") or "").strip()
+            if not domain_label or not workflow_mode or not reason:
+                raise StateTransitionError(
+                    "workflow mode change requires a domain, target mode and reason"
+                )
+            command = FormalHumanDecisionCommand(
+                command_id=f"web-human-{uuid4().hex}",
+                carrier_binding_id=self.carrier_binding_id,
+                session_ref=self._session_ref,
+                action="change_domain_workflow_mode",
+                target_ref=f"domain:{domain_label}",
+                payload={
+                    "domain_label": domain_label,
+                    "workflow_mode": workflow_mode,
+                    "reason": reason,
+                },
+                actor=self.actor,
+                actor_kind="user",
+            )
+            result = business.submit_human_decision(
+                command=command,
+                apply_formal_decision=lambda received: business.change_domain_workflow_mode(
+                    domain_label=str(received.payload["domain_label"]),
+                    workflow_mode=str(received.payload["workflow_mode"]),
+                    actor=received.actor,
+                    reason=str(received.payload["reason"]),
+                    config_dir=self.config_dir,
                 ),
             )
             return dict(result)

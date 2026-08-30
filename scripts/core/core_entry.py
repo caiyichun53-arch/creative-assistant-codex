@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from scripts.core.business_data.domain_labels import configured_domain_packs
 from scripts.core.runtime.runtime_storage import (
     RuntimeStorageError,
     database_path_for_identity,
@@ -213,6 +214,11 @@ class CoreReadOnlySession:
                 label,
                 {"domain_identity": label, "name": label, "platform": None, "configuration_id": None},
             )
+        packs = configured_domain_packs()
+        for label, domain in domains.items():
+            pack = packs.get(label)
+            if isinstance(pack, dict):
+                domain["workflow_mode"] = str(pack.get("workflow_mode") or "")
         return domains
 
     def _current_activation(self, domain_label: str) -> sqlite3.Row | None:

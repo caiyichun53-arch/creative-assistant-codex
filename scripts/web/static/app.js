@@ -14,6 +14,18 @@
     return value ? "\u662f" : "\u5426";
   }
 
+  function workflowModeLabel(mode) {
+    return mode === "manual_guard" ? "\u4eba\u5de5\u62a4\u822a\u6a21\u5f0f" :
+      mode === "mature_automatic" ? "\u6210\u719f\u81ea\u52a8\u6a21\u5f0f" :
+      mode || "\u672a\u77e5\u6a21\u5f0f";
+  }
+
+  function workflowModeImpact(mode) {
+    return mode === "manual_guard"
+      ? "\u7814\u7a76\u8ba1\u5212\u3001\u7814\u7a76\u7ed3\u679c\u3001\u5185\u5bb9\u8ba1\u5212\u3001\u521d\u7a3f\u3001\u5ba1\u6838\u548c\u6700\u7ec8\u7a3f\u90fd\u9700\u8981\u4eba\u5de5\u786e\u8ba4\u3002"
+      : "\u7814\u7a76\u7ed3\u679c\u548c\u521d\u7a3f\u4f1a\u6309\u73b0\u6709\u89c4\u5219\u81ea\u52a8\u7ee7\u7eed\uff1b\u7814\u7a76\u8ba1\u5212\u3001\u5185\u5bb9\u8ba1\u5212\u3001\u5ba1\u6838\u548c\u6700\u7ec8\u7a3f\u4ecd\u9700\u4eba\u5de5\u786e\u8ba4\u3002";
+  }
+
   function renderError(message) {
     document.querySelector("#loading-panel").hidden = true;
     document.querySelector("#status-panel").hidden = true;
@@ -25,12 +37,27 @@
   function domainActionControls(domain) {
     const label = escapeHtml(domain.domain_identity);
     const current = domain.current_cold_start || {};
+    const mode = domain.workflow_mode || "";
     const buttons = [];
     if (current.status === "running") {
       buttons.push('<button data-web-action="stop" data-domain="' + label + '">停止当前 cold-start</button>');
     }
     if (current.status === "stopped" || current.status === "failed") {
       buttons.push('<button data-web-action="resume" data-domain="' + label + '">恢复当前 cold-start</button>');
+    }
+    if (mode === "manual_guard" || mode === "mature_automatic") {
+      const target = mode === "manual_guard" ? "mature_automatic" : "manual_guard";
+      buttons.push(
+        '<div class="workflow-mode-controls">' +
+        '<p><strong>当前工作模式：</strong>' + escapeHtml(workflowModeLabel(mode)) + '</p>' +
+        '<label>目标模式<select data-mode-target>' +
+        '<option value="' + escapeHtml(target) + '">' + escapeHtml(workflowModeLabel(target)) + '</option>' +
+        '</select></label>' +
+        '<p data-mode-impact><strong>切换影响：</strong>' + escapeHtml(workflowModeImpact(target)) + '</p>' +
+        '<label>切换理由<textarea data-mode-reason rows="2" placeholder="请说明为什么切换"></textarea></label>' +
+        '<button type="button" data-web-action="change-workflow-mode" data-domain="' + label + '">确认切换工作模式</button>' +
+        '</div>'
+      );
     }
     return buttons.join("");
   }
@@ -49,9 +76,10 @@
       ? domain.history.unfinished_business_runs.total
       : 0;
     return [
-      '<article class="domain-card">',
+      '<article class="domain-card" data-domain-card="' + escapeHtml(domain.domain_identity) + '">',
       "<h3>" + escapeHtml(domain.name || domain.domain_identity) + "</h3>",
       '<div class="domain-details">',
+      '<p><span>\u5de5\u4f5c\u6a21\u5f0f</span>' + escapeHtml(workflowModeLabel(domain.workflow_mode)) + "</p>",
       '<p><span>\u9886\u57DF\u6807\u8BC6</span>' + escapeHtml(domain.domain_identity) + "</p>",
       '<p><span>\u5F53\u524D activation</span>' + (domain.current_activation.exists ? "\u6709" : "\u65E0") + "</p>",
       '<p><span>\u5F53\u524D cold-start</span>' + escapeHtml(domain.current_cold_start.status) + "</p>",
@@ -558,11 +586,38 @@
       return;
     }
     const domain = button.dataset.domain;
+    if (button.dataset.webAction === "change-workflow-mode") {
+      const card = button.closest("[data-domain-card]");
+      const targetField = card ? card.querySelector("[data-mode-target]") : null;
+      const reasonField = card ? card.querySelector("[data-mode-reason]") : null;
+      const target = targetField ? targetField.value : "";
+      const reason = reasonField ? reasonField.value.trim() : "";
+      if (!target || !reason) {
+        showActionResult({ outcome: "rejected", error: "请填写切换理由" });
+        return;
+      }
+      postAction("change_workflow_mode", {
+        domain_label: domain,
+        workflow_mode: target,
+        reason: reason,
+      });
+      return;
+    }
     if (button.dataset.webAction === "stop") {
       const reason = window.prompt("请说明停止原因");
       if (reason) postAction("cold_start_stop", { domain_label: domain, reason: reason });
     } else if (button.dataset.webAction === "resume") {
       postAction("cold_start_resume", { domain_label: domain });
+    }
+  });
+
+  document.addEventListener("change", function (event) {
+    const select = event.target.closest("select[data-mode-target]");
+    if (!select) return;
+    const card = select.closest("[data-domain-card]");
+    const impact = card ? card.querySelector("[data-mode-impact]") : null;
+    if (impact) {
+      impact.innerHTML = "<strong>切换影响：</strong>" + escapeHtml(workflowModeImpact(select.value));
     }
   });
 
