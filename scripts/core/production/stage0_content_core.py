@@ -15426,12 +15426,92 @@ class Stage0ContentProductionCore:
                 moved.append(result)
         return moved
 
+    def _latest_completed_production_daily_discovery_run(
+        self, *, domain_label: str
+    ) -> sqlite3.Row | None:
+        domain = str(domain_label or "").strip()
+        if domain not in formal_domain_labels():
+            raise StateTransitionError("daily candidate view received an unapproved domain")
+        return self.conn.execute(
+            "SELECT run.run_id, run.discovery_date, run.status, run.completed_at, "
+            "run.failure_reason, context.lifecycle_status, context.execution_mode, "
+            "context.daily_run_id "
+            "FROM stage1b_discovery_run run "
+            "JOIN stage1b_run_execution_context context ON context.run_id=run.run_id "
+            "JOIN stage1b_run_domain_scope scope ON scope.run_id=run.run_id "
+            "JOIN stage0_daily_run daily ON daily.daily_run_id=context.daily_run_id "
+            "JOIN stage0_domain_activation activation ON activation.domain_label=scope.domain_label "
+            "AND activation.cold_start_id=daily.cold_start_id AND activation.is_current=1 "
+            "WHERE scope.domain_label=? AND scope.data_identity=? "
+            "AND run.data_identity=? AND context.data_identity=? AND daily.data_identity=? "
+            "AND activation.data_identity=? "
+            "AND run.status='completed' "
+            "AND context.execution_mode='production_daily' "
+            "AND context.lifecycle_status IN ('completed', 'completed_with_failures') "
+            "ORDER BY run.completed_at DESC, run.created_at DESC, run.run_id DESC LIMIT 1",
+            (
+                domain,
+                self.data_identity,
+                self.data_identity,
+                self.data_identity,
+                self.data_identity,
+                self.data_identity,
+            ),
+        ).fetchone()
+
+    def list_current_daily_candidate_snapshots(
+        self, *, domains: tuple[str, ...] | None = None
+    ) -> list[dict[str, Any]]:
+        """Return each domain's latest completed production-daily candidate set."""
+        approved_domains = formal_domain_labels()
+        requested_domains = (
+            tuple(domains) if domains is not None else tuple(sorted(approved_domains))
+        )
+        if (
+            not requested_domains
+            or len(set(requested_domains)) != len(requested_domains)
+            or any(domain not in approved_domains for domain in requested_domains)
+        ):
+            raise StateTransitionError("daily candidate view received an unapproved domain")
+        result: list[dict[str, Any]] = []
+        for domain_label in requested_domains:
+            run = self._latest_completed_production_daily_discovery_run(
+                domain_label=domain_label
+            )
+            if run is None:
+                result.append(
+                    {"domain_label": domain_label, "run": None, "candidates": []}
+                )
+                continue
+            run_summary = {
+                "run_id": run["run_id"],
+                "discovery_date": run["discovery_date"],
+                "status": run["status"],
+                "lifecycle_status": run["lifecycle_status"],
+                "execution_mode": run["execution_mode"],
+                "daily_run_id": run["daily_run_id"],
+                "failure_reason": run["failure_reason"],
+            }
+            result.append(
+                {
+                    "domain_label": domain_label,
+                    "run": run_summary,
+                    "candidates": self.get_discovery_snapshot(
+                        run_id=str(run["run_id"]), domain_label=domain_label
+                    ),
+                }
+            )
+        return result
+
     def get_discovery_snapshot(self, *, run_id: str, domain_label: str) -> list[dict[str, Any]]:
         self._discovery_run(run_id)
         context = self._discovery_context(run_id)
         rows = self.conn.execute(
-            "SELECT snapshot.display_position, candidate.candidate_version_id, candidate.candidate_id, candidate.payload_json, source.source_type, source.source_time, source.expires_at, source.payload_json AS source_payload_json, assessment.total_score, assessment.dimension_scores_json, assessment.dimension_reasons_json FROM stage1b_daily_snapshot snapshot LEFT JOIN stage1b_candidate_version candidate ON candidate.candidate_version_id=snapshot.candidate_version_id LEFT JOIN stage1b_source_version source ON source.source_version_id=candidate.source_version_id LEFT JOIN stage1b_candidate_assessment_revision assessment ON assessment.assessment_revision_id=(SELECT newest.assessment_revision_id FROM stage1b_candidate_assessment_revision newest WHERE newest.candidate_version_id=candidate.candidate_version_id AND newest.data_identity=? ORDER BY newest.assessed_at DESC, newest.assessment_revision_id DESC LIMIT 1) WHERE snapshot.run_id=? AND snapshot.domain_label=? ORDER BY snapshot.display_position, snapshot.snapshot_id",
-            (self.data_identity, run_id, domain_label),
+            "SELECT snapshot.display_position, candidate.candidate_version_id, candidate.candidate_id, candidate.payload_json, candidate.status AS candidate_status, "
+            "(SELECT decision.decision FROM stage1b_candidate_decision decision WHERE decision.candidate_version_id=candidate.candidate_version_id AND decision.data_identity=? ORDER BY decision.created_at DESC, decision.decision_id DESC LIMIT 1) AS user_decision, "
+            "source.source_type, source.source_time, source.expires_at, source.payload_json AS source_payload_json, assessment.total_score, assessment.dimension_scores_json, assessment.dimension_reasons_json "
+            "FROM stage1b_daily_snapshot snapshot LEFT JOIN stage1b_candidate_version candidate ON candidate.candidate_version_id=snapshot.candidate_version_id LEFT JOIN stage1b_source_version source ON source.source_version_id=candidate.source_version_id LEFT JOIN stage1b_candidate_assessment_revision assessment ON assessment.assessment_revision_id=(SELECT newest.assessment_revision_id FROM stage1b_candidate_assessment_revision newest WHERE newest.candidate_version_id=candidate.candidate_version_id AND newest.data_identity=? ORDER BY newest.assessed_at DESC, newest.assessment_revision_id DESC LIMIT 1) WHERE snapshot.run_id=? AND snapshot.domain_label=? ORDER BY snapshot.display_position, snapshot.snapshot_id",
+            (self.data_identity, self.data_identity, run_id, domain_label),
         ).fetchall()
         result: list[dict[str, Any]] = []
         for row in rows:
@@ -15484,7 +15564,7 @@ class Stage0ContentProductionCore:
                 "timeliness_limits": row["expires_at"] or "not_time_limited",
                 "user_confirmation_required": True,
             }
-            result.append({"display_position": row["display_position"], "candidate_version_id": row["candidate_version_id"], "candidate_id": row["candidate_id"], "candidate": candidate_payload, "score": {"total": row["total_score"], "dimensions": json.loads(row["dimension_scores_json"]) if row["dimension_scores_json"] else None, "reasons": json.loads(row["dimension_reasons_json"]) if row["dimension_reasons_json"] else None}, "source_type": row["source_type"], "source_time": row["source_time"], "expires_at": row["expires_at"], "source": source_payload, "support_materials": support_materials, "related_candidates": [{"candidate_version_id": relation["related_candidate_version_id"], "kind": relation["relation_kind"], "reason": relation["relation_reason"]} for relation in relation_rows], "stage1a_handoff_packet": stage1a_handoff_packet, "execution_mode": context["execution_mode"], "lifecycle_status": context["lifecycle_status"], "formal_candidate_pool": context["execution_mode"] == "production_daily" and context["lifecycle_status"] == "completed"})
+            result.append({"display_position": row["display_position"], "candidate_version_id": row["candidate_version_id"], "candidate_id": row["candidate_id"], "candidate": candidate_payload, "status": row["candidate_status"], "user_decision": row["user_decision"], "score": {"total": row["total_score"], "dimensions": json.loads(row["dimension_scores_json"]) if row["dimension_scores_json"] else None, "reasons": json.loads(row["dimension_reasons_json"]) if row["dimension_reasons_json"] else None}, "source_type": row["source_type"], "source_time": row["source_time"], "expires_at": row["expires_at"], "source": source_payload, "support_materials": support_materials, "related_candidates": [{"candidate_version_id": relation["related_candidate_version_id"], "kind": relation["relation_kind"], "reason": relation["relation_reason"]} for relation in relation_rows], "stage1a_handoff_packet": stage1a_handoff_packet, "execution_mode": context["execution_mode"], "lifecycle_status": context["lifecycle_status"], "formal_candidate_pool": context["execution_mode"] == "production_daily" and context["lifecycle_status"] == "completed"})
         return result
 
     def record_discovery_decision(
@@ -15541,6 +15621,11 @@ class Stage0ContentProductionCore:
             raise StateTransitionError("only a completed production_daily candidate may enter Stage 1A")
         if run["status"] != "completed" or candidate["status"] != "awaiting_user_decision":
             raise StateTransitionError("only a completed awaiting-user-decision candidate may be selected")
+        latest_run = self._latest_completed_production_daily_discovery_run(
+            domain_label=str(candidate["domain_label"])
+        )
+        if latest_run is None or str(latest_run["run_id"]) != str(run["run_id"]):
+            raise StateTransitionError("historical or non-current candidate cannot be selected")
         if self.conn.execute("SELECT 1 FROM stage1b_candidate_decision WHERE candidate_version_id=?", (candidate_version_id,)).fetchone():
             raise StateTransitionError("candidate already has a user decision")
         payload = json.loads(candidate["payload_json"])

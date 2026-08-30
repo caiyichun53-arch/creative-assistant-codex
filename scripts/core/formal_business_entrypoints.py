@@ -734,6 +734,13 @@ class CreationAssistantFormalBusinessCore:
             core=self.core, gateway=None  # type: ignore[arg-type]
         ).view_daily_snapshot(run_id=run_id, domains=domains)
 
+    def list_current_daily_candidates(
+        self, *, domains: tuple[str, ...] | None = None
+    ) -> list[dict[str, Any]]:
+        """Read the current daily candidate set through the Core boundary."""
+
+        return self.core.list_current_daily_candidate_snapshots(domains=domains)
+
     def handoff_daily_discovery_candidate(
         self,
         *,

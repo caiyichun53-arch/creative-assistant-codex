@@ -130,6 +130,60 @@
     }[status] || status || "未知";
   }
 
+  function dailyCandidateStatus(item) {
+    if (item.user_decision === "selected") return "\u5df2\u63d0\u4ea4\u6b63\u5f0f\u9009\u9898";
+    if (item.user_decision) return item.user_decision;
+    return item.status || "\u5f85\u7528\u6237\u9009\u62e9";
+  }
+
+  function renderDailyCandidates(groups) {
+    const container = document.querySelector("#daily-candidates");
+    const rendered = (groups || []).map(function (group) {
+      const candidates = group.candidates || [];
+      if (!candidates.length) return "";
+      const run = group.run || {};
+      const cards = candidates.map(function (item) {
+        const candidate = item.candidate || {};
+        const title = candidate.title || candidate.candidate_topic || "daily\u5019\u9009\u9009\u9898";
+        const summary = candidate.core_question || candidate.topic_angle || candidate.new_angle || "";
+        const score = item.score && item.score.total != null ? item.score.total : "";
+        const selected = Boolean(item.user_decision);
+        const controls = selected
+          ? '<p class="notice">\u5f53\u524d\u72b6\u6001\uff1a' + escapeHtml(dailyCandidateStatus(item)) + '</p>'
+          : '<label>\u9009\u62e9\u7406\u7531<textarea data-daily-reason rows="2" placeholder="\u8bf7\u8bf4\u660e\u4e3a\u4ec0\u4e48\u9009\u62e9\u8be5\u9009\u9898"></textarea></label>' +
+            '<button type="button" data-daily-action="select_daily_candidate" data-domain="' + escapeHtml(group.domain_label) + '" data-candidate-id="' + escapeHtml(item.candidate_version_id) + '">\u9009\u62e9\u5e76\u63d0\u4ea4\u6b63\u5f0f\u9009\u9898</button>';
+        return '<article class="experience-card daily-candidate-card" data-daily-candidate-card="' + escapeHtml(item.candidate_version_id) + '">' +
+          '<div class="experience-card-header"><h3>' + escapeHtml(title) + '</h3>' +
+          '<span class="experience-status">' + escapeHtml(dailyCandidateStatus(item)) + '</span></div>' +
+          '<p><strong>\u95ee\u9898\u6458\u8981\uff1a</strong>' + escapeHtml(summary) + '</p>' +
+          '<p><strong>\u6765\u6e90\u7c7b\u578b\uff1a</strong>' + escapeHtml(item.source_type || "") + '</p>' +
+          '<p><strong>\u8bc4\u5206\uff1a</strong>' + escapeHtml(score) + '</p>' +
+          '<details><summary>\u67e5\u770b\u6765\u6e90\u548c\u8bc1\u636e\u6458\u8981</summary><pre class="summary">' + escapeHtml(readableValue(item.source || {})) + '</pre></details>' +
+          controls +
+          '</article>';
+      }).join("");
+      return '<section class="daily-domain-candidates"><h3>\u9886\u57df\uff1a' + escapeHtml(group.domain_label) + '</h3>' +
+        '<p class="notice">\u5019\u9009\u6279\u6b21\uff1a' + escapeHtml(run.discovery_date || "") + '\uff0c\u72b6\u6001\uff1a' + escapeHtml(run.lifecycle_status || "") + '</p>' +
+        cards + '</section>';
+    }).filter(Boolean).join("");
+    container.innerHTML = rendered || '<p class="notice">\u5f53\u524d\u6ca1\u6709\u53ef\u4f9b\u7528\u6237\u9009\u62e9\u7684daily\u5019\u9009\u3002</p>';
+  }
+
+  async function loadDailyCandidates() {
+    try {
+      const response = await fetch("/api/daily-candidates", { method: "GET", cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        document.querySelector("#daily-candidates").innerHTML = '<p class="notice error">' +
+          escapeHtml(payload.error || "daily\u5019\u9009\u8bfb\u53d6\u5931\u8d25") + '</p>';
+        return;
+      }
+      renderDailyCandidates(payload.domains || []);
+    } catch (error) {
+      document.querySelector("#daily-candidates").innerHTML = '<p class="notice error">\u65e0\u6cd5\u8fde\u63a5 Creation Assistant Core</p>';
+    }
+  }
+
   function readableValue(value) {
     if (Array.isArray(value)) return value.join("；");
     if (value && typeof value === "object") return JSON.stringify(value);
@@ -417,6 +471,10 @@
       if (action === "accept_experience_candidate" || action === "reject_experience_candidate" || action === "promote_experience_candidate") {
         loadExperienceCandidates();
       }
+      if (action === "select_daily_candidate") {
+        loadDailyCandidates();
+        loadContentTasks();
+      }
       if (action === "approve_content_node" || action === "return_content_node" || action === "approve_final_content") {
         loadContentTasks();
       }
@@ -447,8 +505,23 @@
   }
 
   document.addEventListener("click", function (event) {
-    const button = event.target.closest("button[data-web-action],button[data-experience-action],button[data-content-action],button[data-publication-action]");
+    const button = event.target.closest("button[data-web-action],button[data-daily-action],button[data-experience-action],button[data-content-action],button[data-publication-action]");
     if (!button) return;
+    if (button.dataset.dailyAction) {
+      const card = button.closest("[data-daily-candidate-card]");
+      const reasonField = card ? card.querySelector("[data-daily-reason]") : null;
+      const reason = reasonField ? reasonField.value.trim() : "";
+      if (!reason) {
+        showActionResult({ outcome: "rejected", error: "\u8bf7\u586b\u5199\u9009\u62e9\u7406\u7531" });
+        return;
+      }
+      postAction(button.dataset.dailyAction, {
+        domain_label: button.dataset.domain,
+        candidate_version_id: button.dataset.candidateId,
+        reason: reason,
+      });
+      return;
+    }
     if (button.dataset.experienceAction) {
       const card = button.closest("[data-candidate-card]");
       const reason = card ? card.querySelector("[data-experience-reason]").value.trim() : "";
@@ -653,6 +726,7 @@
       postAction("daily_start", values);
     });
     loadStatus();
+    loadDailyCandidates();
     loadExperienceCandidates();
     loadContentTasks();
     loadPublications();

@@ -53,6 +53,19 @@ class ReadOnlyWebApplication:
             database_path=self.database_path,
         )
 
+    def read_daily_candidates(self) -> list[dict[str, Any]]:
+        """Read the current daily candidate sets through Core."""
+        database = Stage0ContentProductionCore.open_read_only(
+            self.database_path or database_path_for_identity(self.data_identity),
+            data_identity=self.data_identity,
+        )
+        try:
+            return CreationAssistantFormalBusinessCore(
+                core=database
+            ).list_current_daily_candidates()
+        finally:
+            database.close()
+
     def read_experience_candidates(self) -> list[dict[str, Any]]:
         """Read the current pre-topic experience candidates through Core."""
 
@@ -122,6 +135,7 @@ class ActionWebApplication(ReadOnlyWebApplication):
             "review_content_types",
             "review_domain_boundary",
             "change_workflow_mode",
+            "select_daily_candidate",
             "daily_start",
             "daily_resume",
             "accept_experience_candidate",
@@ -146,6 +160,7 @@ class ActionWebApplication(ReadOnlyWebApplication):
             "review_content_types",
             "review_domain_boundary",
             "change_workflow_mode",
+            "select_daily_candidate",
             "daily_start",
             "daily_resume",
             "accept_experience_candidate",
@@ -445,6 +460,41 @@ class ActionWebApplication(ReadOnlyWebApplication):
                 ),
             )
             return dict(result)
+
+        if action == "select_daily_candidate":
+            candidate_version_id = str(payload.get("candidate_version_id") or "").strip()
+            domain_label = str(payload.get("domain_label") or "").strip()
+            reason = str(payload.get("reason") or "").strip()
+            if not candidate_version_id or not domain_label or not reason:
+                raise StateTransitionError(
+                    "daily candidate selection requires a domain, candidate and reason"
+                )
+            candidate = next(
+                (
+                    item
+                    for group in self.read_daily_candidates()
+                    if str(group.get("domain_label") or "") == domain_label
+                    for item in group.get("candidates") or []
+                    if str(item.get("candidate_version_id") or "") == candidate_version_id
+                ),
+                None,
+            )
+            if candidate is None:
+                raise StateTransitionError(
+                    "the candidate is not in the current Core daily candidate set for this domain"
+                )
+            if candidate.get("user_decision"):
+                raise StateTransitionError("the daily candidate already has a user decision")
+            if str(candidate.get("status") or "") != "awaiting_user_decision":
+                raise StateTransitionError("the daily candidate is not awaiting user selection")
+            return dict(
+                business.handoff_daily_discovery_candidate(
+                    candidate_version_id=candidate_version_id,
+                    actor=self.actor,
+                    reason=reason,
+                    idempotency_key=f"web-daily-select-{uuid4().hex}",
+                )
+            )
 
         if action == "change_workflow_mode":
             domain_label = str(payload.get("domain_label") or "").strip()
@@ -751,6 +801,9 @@ class ReadOnlyRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/status":
             self._serve_status()
             return
+        if path == "/api/daily-candidates":
+            self._serve_daily_candidates()
+            return
         if path == "/api/experience-candidates":
             self._serve_experience_candidates()
             return
@@ -797,6 +850,28 @@ class ReadOnlyRequestHandler(BaseHTTPRequestHandler):
             )
             return
         self._send_json(HTTPStatus.OK, {"ok": True, "status": status})
+
+    def _serve_daily_candidates(self) -> None:
+        try:
+            candidates = self.application.read_daily_candidates()
+        except Exception as exc:
+            self._send_json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {
+                    "ok": False,
+                    "source": "Creation Assistant Core",
+                    "error": f"daily candidate read failed: {exc}",
+                },
+            )
+            return
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "source": "Creation Assistant Core",
+                "domains": candidates,
+            },
+        )
 
     def _serve_experience_candidates(self) -> None:
         try:
