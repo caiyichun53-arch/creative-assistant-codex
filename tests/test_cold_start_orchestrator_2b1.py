@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 from tests._cold_start_test_model import test_task_model_resolver
 
 from scripts.core.business_data.domain_labels import DOMAIN_CONFIG_DIR, set_domain_pack_config_dir
+from scripts.core.runtime.runtime_storage import runtime_path
 from scripts.core.production.cold_start_onboarding import ColdStartOnboardingService
 from scripts.core.production.cold_start_orchestrator import ColdStartExecutionOrchestrator
 from scripts.core.production.high_signal_policy import (
@@ -37,9 +38,11 @@ class FakeContentBranchExecutor:
         *,
         fail_high_signal_once_for: set[str] | None = None,
         fail_breakdown_once_for: set[str] | None = None,
+        core: Stage0ContentProductionCore | None = None,
     ) -> None:
         self.fail_high_signal_once_for = set(fail_high_signal_once_for or set())
         self.fail_breakdown_once_for = set(fail_breakdown_once_for or set())
+        self.core = core
         self.calls: list[tuple[str, str]] = []
 
     def execute(self, *, step_name, registration, completed_artifacts):
@@ -87,11 +90,89 @@ class FakeContentBranchExecutor:
             )
             return (build_high_signal_artifact(historical["items"], evaluated_at=historical["evaluated_at"]),)
         if step_name == "transcripts_and_comments":
+            if self.core is not None:
+                high_signal = next(
+                    item["artifact_refs"][0]
+                    for item in completed_artifacts
+                    if item["step_name"] == "high_signal_identification"
+                )
+                selected_items = [
+                    item for item in high_signal.get("selected_items", [])
+                    if isinstance(item, dict) and str(item.get("source_id") or "").strip()
+                ]
+                for item in selected_items:
+                    source_id = str(item["source_id"])
+                    transcript = "test retained transcript evidence"
+                    transcript_path = runtime_path(
+                        "cold_start_test_materials",
+                        registration_id,
+                        f"{source_id}.txt",
+                        data_identity="test",
+                    )
+                    transcript_path.parent.mkdir(parents=True, exist_ok=True)
+                    transcript_path.write_text(transcript, encoding="utf-8")
+                    self.core.record_competitor_registration_item(
+                        registration_id=registration_id,
+                        step_name="transcripts_and_comments",
+                        item_ref=source_id,
+                        status="completed",
+                        artifact={
+                            "artifact_kind": "transcript_and_comments",
+                            "source_id": source_id,
+                            "transcript_ref": str(transcript_path),
+                            "transcript": transcript,
+                            "metrics": dict(item.get("metrics") or {}),
+                            "comments": [],
+                        },
+                        error=None,
+                    )
             return ({"artifact_kind": "isolated_prepared_materials", "selected_count": 1},)
         if step_name == "breakdown":
             if registration_id in self.fail_breakdown_once_for:
                 self.fail_breakdown_once_for.remove(registration_id)
                 raise RuntimeError("isolated breakdown failure")
+            if self.core is not None:
+                materials = [
+                    item for item in self.core.list_competitor_registration_items(
+                        registration_id=registration_id,
+                        step_name="transcripts_and_comments",
+                    )
+                    if item["status"] == "completed"
+                ]
+                for item in materials:
+                    source_id = str(item["item_ref"])
+                    deep_breakdown = {
+                        "source_id": source_id,
+                        "source_content_type": "人物经历故事",
+                        "analysis_text": "test structured breakdown evidence",
+                        "boundary_observation": "test evidence shows a concrete subject and its change or impact",
+                        "schema_version": "competitor_breakdown.output.raw.v5",
+                    }
+                    raw_output = json.dumps(deep_breakdown, ensure_ascii=False, sort_keys=True)
+                    self.core.record_competitor_breakdown_attempt(
+                        registration_id=registration_id,
+                        source_id=source_id,
+                        attempt_kind="initial",
+                        outcome="completed",
+                        raw_model_output=raw_output,
+                        raw_model_output_status="available",
+                        model_run_id=f"test-breakdown-{registration_id}-{source_id}",
+                    )
+                    self.core.record_competitor_registration_item(
+                        registration_id=registration_id,
+                        step_name="breakdown",
+                        item_ref=source_id,
+                        status="completed",
+                        artifact={
+                            "artifact_kind": "deep_breakdown",
+                            "source_id": source_id,
+                            "model_run_id": f"test-breakdown-{registration_id}-{source_id}",
+                            "raw_model_output": raw_output,
+                            "deep_breakdown": deep_breakdown,
+                        },
+                        error=None,
+                    )
+                return ({"artifact_kind": "isolated_breakdown", "selected_count": len(materials)},)
             return ({
                 "artifact_kind": "isolated_breakdown",
                 "selected_count": 1,
