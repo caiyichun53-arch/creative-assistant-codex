@@ -53,6 +53,40 @@ class ReadOnlyWebApplication:
             database_path=self.database_path,
         )
 
+    def read_experience_candidates(self) -> list[dict[str, Any]]:
+        """Read the current pre-topic experience candidates through Core."""
+
+        database = Stage0ContentProductionCore.open_read_only(
+            self.database_path or database_path_for_identity(self.data_identity),
+            data_identity=self.data_identity,
+        )
+        try:
+            candidates = database.list_pre_topic_experience_candidates()
+            source_cards = database.list_experience_candidate_source_cards(
+                candidate_ids=[str(item["experience_candidate_id"]) for item in candidates]
+            )
+            result: list[dict[str, Any]] = []
+            for candidate in candidates:
+                proposal = candidate.get("proposal")
+                proposal = proposal if isinstance(proposal, Mapping) else {}
+                body = proposal.get("candidate")
+                body = body if isinstance(body, Mapping) else {}
+                result.append(
+                    {
+                        "experience_candidate_id": candidate["experience_candidate_id"],
+                        "domain_label": candidate["domain_label"],
+                        "status": candidate["status"],
+                        "source_count": candidate["source_count"],
+                        "candidate": dict(body),
+                        "sources": source_cards.get(
+                            str(candidate["experience_candidate_id"]), []
+                        ),
+                    }
+                )
+            return result
+        finally:
+            database.close()
+
 
 class ActionWebApplication(ReadOnlyWebApplication):
     """Bind one local Web process to Core's existing human action boundary."""
@@ -67,6 +101,8 @@ class ActionWebApplication(ReadOnlyWebApplication):
             "review_domain_boundary",
             "daily_start",
             "daily_resume",
+            "accept_experience_candidate",
+            "reject_experience_candidate",
         }
     )
     _ACTION_NAMES = frozenset(
@@ -80,6 +116,8 @@ class ActionWebApplication(ReadOnlyWebApplication):
             "review_domain_boundary",
             "daily_start",
             "daily_resume",
+            "accept_experience_candidate",
+            "reject_experience_candidate",
         }
     )
 
@@ -204,6 +242,47 @@ class ActionWebApplication(ReadOnlyWebApplication):
             actor_kind="user",
         )
 
+    def _experience_candidate_command(
+        self,
+        *,
+        action: str,
+        payload: Mapping[str, Any],
+    ) -> FormalHumanDecisionCommand:
+        candidate_id = str(payload.get("experience_candidate_id") or "").strip()
+        reason = str(payload.get("reason") or "").strip()
+        if not candidate_id:
+            raise StateTransitionError("experience candidate action requires a candidate")
+        if not reason:
+            raise StateTransitionError("experience candidate action requires a reason")
+        candidate = next(
+            (
+                item
+                for item in self.read_experience_candidates()
+                if str(item.get("experience_candidate_id") or "") == candidate_id
+            ),
+            None,
+        )
+        if candidate is None:
+            raise StateTransitionError("the experience candidate is not in the current Core review set")
+        if str(candidate.get("status") or "") != "awaiting_human_decision":
+            raise StateTransitionError(
+                "only an experience candidate awaiting human decision may be accepted or rejected"
+            )
+        return FormalHumanDecisionCommand(
+            command_id=f"web-human-{uuid4().hex}",
+            carrier_binding_id=self.carrier_binding_id,
+            session_ref=self._session_ref,
+            action=action,
+            target_ref=f"experience_candidate:{candidate_id}",
+            payload={
+                "experience_candidate_id": candidate_id,
+                "decision": "accepted" if action == "accept_experience_candidate" else "rejected",
+                "reason": reason,
+            },
+            actor=self.actor,
+            actor_kind="user",
+        )
+
     def _invoke_core_action(
         self,
         core: Stage0ContentProductionCore,
@@ -299,6 +378,19 @@ class ActionWebApplication(ReadOnlyWebApplication):
             }[action]
             return dict(handler(command=command))
 
+        if action in {"accept_experience_candidate", "reject_experience_candidate"}:
+            command = self._experience_candidate_command(action=action, payload=payload)
+            decision = str(command.payload["decision"])
+            result = business.submit_human_decision(
+                command=command,
+                apply_formal_decision=lambda received: self._apply_experience_candidate_decision(
+                    core=core,
+                    command=received,
+                    decision=decision,
+                ),
+            )
+            return dict(result)
+
         if action == "daily_start":
             domain_label = str(payload.get("domain_label") or "").strip()
             selected_date, domains = business.normalize_daily_request(
@@ -330,6 +422,21 @@ class ActionWebApplication(ReadOnlyWebApplication):
             return dict(business.resume_daily(daily_run_id=daily_run_id, actor=self.actor))
 
         raise StateTransitionError(f"unsupported Web action: {action}")
+
+    @staticmethod
+    def _apply_experience_candidate_decision(
+        *,
+        core: Stage0ContentProductionCore,
+        command: FormalHumanDecisionCommand,
+        decision: str,
+    ) -> dict[str, str]:
+        return core.decide_experience_candidate(
+            experience_candidate_id=str(command.payload["experience_candidate_id"]),
+            decision=decision,
+            actor=command.actor,
+            actor_kind=command.actor_kind,
+            reason=str(command.payload["reason"]),
+        )
 
     def invoke_action(self, payload: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
         """Run one existing Core action and reread Core status afterwards."""
@@ -417,6 +524,9 @@ class ReadOnlyRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/status":
             self._serve_status()
             return
+        if path == "/api/experience-candidates":
+            self._serve_experience_candidates()
+            return
         if path in {"/", "/index.html"}:
             self._serve_static("index.html")
             return
@@ -454,6 +564,28 @@ class ReadOnlyRequestHandler(BaseHTTPRequestHandler):
             )
             return
         self._send_json(HTTPStatus.OK, {"ok": True, "status": status})
+
+    def _serve_experience_candidates(self) -> None:
+        try:
+            candidates = self.application.read_experience_candidates()
+        except Exception as exc:
+            self._send_json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {
+                    "ok": False,
+                    "source": "Creation Assistant Core",
+                    "error": f"experience candidate read failed: {exc}",
+                },
+            )
+            return
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "source": "Creation Assistant Core",
+                "candidates": candidates,
+            },
+        )
 
     def _serve_static(self, relative_name: str) -> None:
         try:

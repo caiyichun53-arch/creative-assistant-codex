@@ -16,7 +16,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Mapping
 
 from scripts.core.business_data.domain_labels import (
     DOMAIN_CONFIG_DIR,
@@ -1203,6 +1203,19 @@ class Stage0ContentProductionCore:
                 confirmed_by TEXT NOT NULL,
                 confirmed_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS stage0_content_experience_usage (
+                usage_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL REFERENCES stage0_content_task(task_id),
+                content_version_id TEXT NOT NULL REFERENCES stage0_content_node_version(version_id),
+                usage_stage TEXT NOT NULL CHECK(usage_stage IN ('content_plan')),
+                experience_id TEXT NOT NULL REFERENCES stage0_confirmed_experience(experience_id),
+                rationale TEXT NOT NULL,
+                data_identity TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(task_id, content_version_id, usage_stage, experience_id)
+            );
+            CREATE INDEX IF NOT EXISTS stage0_content_experience_usage_task_idx
+                ON stage0_content_experience_usage(task_id, data_identity);
             CREATE TABLE IF NOT EXISTS stage0_unregistered_account_video (
                 account_video_observation_id TEXT PRIMARY KEY,
                 domain_label TEXT NOT NULL,
@@ -2548,6 +2561,85 @@ class Stage0ContentProductionCore:
             }
         }
 
+    def _validate_content_experience_usage(
+        self,
+        *,
+        task_id: str,
+        node_version_id: str,
+        usage: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Validate the content-plan adoption decision against Core's frozen input."""
+        if not isinstance(usage, Mapping):
+            raise StateTransitionError(
+                "content plan completion requires a structured experience usage decision"
+            )
+        if set(usage) != {
+            "adopted_experience_ids",
+            "not_adopted_experience_ids",
+            "rationale",
+        }:
+            raise StateTransitionError(
+                "experience usage must contain exactly adopted, not-adopted and rationale fields"
+            )
+        adopted = usage["adopted_experience_ids"]
+        not_adopted = usage["not_adopted_experience_ids"]
+        rationale = str(usage["rationale"] or "").strip()
+        if (
+            not isinstance(adopted, list)
+            or not isinstance(not_adopted, list)
+            or not rationale
+            or any(not isinstance(item, str) or not item.strip() for item in (*adopted, *not_adopted))
+        ):
+            raise StateTransitionError(
+                "experience usage needs two string lists and a non-empty rationale"
+            )
+        adopted = [str(item).strip() for item in adopted]
+        not_adopted = [str(item).strip() for item in not_adopted]
+        if len(set(adopted)) != len(adopted) or len(set(not_adopted)) != len(not_adopted):
+            raise StateTransitionError("experience usage lists must not contain duplicates")
+        if set(adopted) & set(not_adopted):
+            raise StateTransitionError("an experience cannot be both adopted and not adopted")
+
+        task = self._task(task_id)
+        version = self._version(node_version_id)
+        if version["task_id"] != task_id or version["node"] != "content_plan":
+            raise StateTransitionError("experience usage must belong to the current content plan")
+        assembly = self._assembly(str(version["input_assembly_id"]))
+        assembly_payload = json.loads(str(assembly["payload_json"]))
+        considered = assembly_payload.get("considered_experience") or []
+        if not isinstance(considered, list):
+            raise StateTransitionError("content plan input has an invalid experience candidate list")
+        expected_ids: list[str] = []
+        for item in considered:
+            if not isinstance(item, Mapping):
+                raise StateTransitionError("content plan input has an invalid experience card")
+            experience_id = str(item.get("experience_id") or "").strip()
+            if not experience_id or experience_id in expected_ids:
+                raise StateTransitionError("content plan input has duplicate or missing experience ids")
+            expected_ids.append(experience_id)
+        supplied_ids = set(adopted) | set(not_adopted)
+        if supplied_ids != set(expected_ids):
+            raise StateTransitionError(
+                "experience usage must account for every experience supplied to the content plan"
+            )
+        if expected_ids:
+            placeholders = ",".join("?" for _ in expected_ids)
+            rows = self.conn.execute(
+                "SELECT experience_id FROM stage0_confirmed_experience "
+                f"WHERE data_identity=? AND status='active' AND experience_id IN ({placeholders})",
+                [self.data_identity, *expected_ids],
+            ).fetchall()
+            active_ids = {str(row["experience_id"]) for row in rows}
+            if active_ids != set(expected_ids):
+                raise StateTransitionError(
+                    "experience usage may reference only active formal experiences in this identity"
+                )
+        return {
+            "adopted_experience_ids": adopted,
+            "not_adopted_experience_ids": not_adopted,
+            "rationale": rationale,
+        }
+
     def complete_node_from_model(
         self,
         *,
@@ -2581,6 +2673,7 @@ class Stage0ContentProductionCore:
         expected_task_revision: int,
         idempotency_key: str,
         artifact_payload: dict[str, Any] | None = None,
+        experience_usage: Mapping[str, Any] | None = None,
     ) -> dict[str, str]:
         """Accept one structured result supplied by an outside executor."""
         return self._complete_node_from_execution(
@@ -2589,6 +2682,7 @@ class Stage0ContentProductionCore:
             expected_task_revision=expected_task_revision, idempotency_key=idempotency_key,
             artifact_payload=artifact_payload, expected_via_model_gateway=0,
             command_name="complete_node_from_external_result",
+            experience_usage=experience_usage,
         )
 
     def _complete_node_from_execution(
@@ -2605,6 +2699,7 @@ class Stage0ContentProductionCore:
         artifact_payload: dict[str, Any] | None,
         expected_via_model_gateway: int,
         command_name: str,
+        experience_usage: Mapping[str, Any] | None = None,
     ) -> dict[str, str]:
         if validation_status != "passed":
             raise StateTransitionError("only schema-validated output may await human review")
@@ -2617,10 +2712,29 @@ class Stage0ContentProductionCore:
             raise ModelGatewayRequiredError("execution result is not the successful current run")
         if int(run["via_model_gateway"]) != expected_via_model_gateway or run["data_identity"] != self.data_identity:
             raise ModelGatewayRequiredError("execution result does not match the expected execution boundary")
-        request = {"task_id": task_id, "node_version_id": node_version_id, "model_run_id": model_run_id, "output_ref": output_ref}
+        request = {
+            "task_id": task_id,
+            "node_version_id": node_version_id,
+            "model_run_id": model_run_id,
+            "output_ref": output_ref,
+            "experience_usage": experience_usage,
+        }
         replay = self._replay(command_name, idempotency_key, request)
         if replay:
             return replay
+        node = str(request_version["node"])
+        if node == "content_plan":
+            normalized_experience_usage = self._validate_content_experience_usage(
+                task_id=task_id,
+                node_version_id=node_version_id,
+                usage=experience_usage,
+            )
+        elif experience_usage is not None:
+            raise StateTransitionError(
+                "experience usage may only be submitted with a content plan"
+            )
+        else:
+            normalized_experience_usage = None
         output_version_id, revision = _id("version"), int(task["task_revision"]) + 1
         with self.conn:
             self.conn.execute(
@@ -2631,6 +2745,22 @@ class Stage0ContentProductionCore:
                 if request_version["node"] not in ARTIFACT_NODES:
                     raise StateTransitionError("artifact payload persistence is only enabled for formal artifact nodes")
                 self._insert_artifact_payload(output_version_id, request_version["node"], artifact_payload)
+            if normalized_experience_usage is not None:
+                for experience_id in normalized_experience_usage["adopted_experience_ids"]:
+                    self.conn.execute(
+                        "INSERT INTO stage0_content_experience_usage "
+                        "(usage_id, task_id, content_version_id, usage_stage, experience_id, rationale, data_identity, created_at) "
+                        "VALUES (?, ?, ?, 'content_plan', ?, ?, ?, ?)",
+                        (
+                            _id("content_experience_usage"),
+                            task_id,
+                            output_version_id,
+                            experience_id,
+                            normalized_experience_usage["rationale"],
+                            self.data_identity,
+                            _now(),
+                        ),
+                    )
             self.conn.execute("UPDATE stage0_model_run SET output_version_id=? WHERE model_run_id=?", (output_version_id, model_run_id))
             self._set_task(task_id, node=request_version["node"], version_id=output_version_id, status="awaiting_human_review", revision=revision)
             result = {"node_version_id": output_version_id, "task_revision": str(revision)}
@@ -6589,6 +6719,7 @@ class Stage0ContentProductionCore:
                         deleted["旧模型运行"] = delete_rows("stage0_model_run", f"node_version_id IN ({marks})", version_params)
                         deleted["旧失败记录"] = delete_rows("stage0_content_node_failure", f"failed_version_id IN ({marks}) OR request_version_id IN ({marks})", (*version_params, *version_params))
                         deleted["旧人工决定"] = delete_rows("stage0_content_decision", f"version_id IN ({marks})", version_params)
+                        deleted["旧经验使用记录"] = delete_rows("stage0_content_experience_usage", f"content_version_id IN ({marks})", version_params)
                         deleted["旧内容载荷"] = delete_rows("stage0_content_artifact_payload", f"version_id IN ({marks})", version_params)
                         deleted["旧研究载荷"] = delete_rows("stage1a_artifact_payload", f"version_id IN ({marks})", version_params)
                     if assembly_ids:
@@ -6771,6 +6902,76 @@ class Stage0ContentProductionCore:
             )
         )
         return experiences[:limit] if limit is not None else experiences
+
+    def list_content_experience_usage(
+        self, *, task_id: str | None = None, content_version_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Return adopted content-plan experiences with their source evidence."""
+        if not task_id and not content_version_id:
+            raise StateTransitionError(
+                "experience usage lookup requires a task or content version"
+            )
+        if content_version_id:
+            version = self._version(content_version_id)
+            resolved_task_id = str(version["task_id"])
+            if task_id is not None and str(task_id) != resolved_task_id:
+                raise StateTransitionError(
+                    "content version does not belong to the requested task"
+                )
+            task_id = resolved_task_id
+        assert task_id is not None
+        self._task(task_id)
+        rows = self.conn.execute(
+            "SELECT usage.usage_id, usage.task_id, usage.content_version_id, "
+            "usage.usage_stage, usage.experience_id, usage.rationale, usage.created_at, "
+            "experience.experience_candidate_id, experience.domain_label, "
+            "experience.summary, experience.applicable_when_json, experience.method_json, "
+            "experience.source_refs_json, experience.boundary_json, experience.experience_layer, "
+            "experience.use_positions_json, experience.trigger_signals_json, "
+            "experience.not_applicable_when_json "
+            "FROM stage0_content_experience_usage usage "
+            "JOIN stage0_confirmed_experience experience "
+            "ON experience.experience_id=usage.experience_id "
+            "AND experience.data_identity=usage.data_identity "
+            "WHERE usage.task_id=? AND usage.data_identity=? "
+            "ORDER BY usage.created_at, usage.usage_id",
+            (task_id, self.data_identity),
+        ).fetchall()
+        candidate_ids = [str(row["experience_candidate_id"]) for row in rows]
+        source_cards = self.list_experience_candidate_source_cards(
+            candidate_ids=candidate_ids
+        )
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            candidate_id = str(row["experience_candidate_id"])
+            result.append(
+                {
+                    "usage_id": str(row["usage_id"]),
+                    "task_id": str(row["task_id"]),
+                    "content_version_id": str(row["content_version_id"]),
+                    "usage_stage": str(row["usage_stage"]),
+                    "experience_id": str(row["experience_id"]),
+                    "rationale": str(row["rationale"]),
+                    "created_at": str(row["created_at"]),
+                    "experience": {
+                        "experience_candidate_id": candidate_id,
+                        "domain_label": str(row["domain_label"]),
+                        "summary": str(row["summary"]),
+                        "applicable_when": json.loads(str(row["applicable_when_json"])),
+                        "method": json.loads(str(row["method_json"])),
+                        "source_ids": json.loads(str(row["source_refs_json"])),
+                        "boundary": json.loads(str(row["boundary_json"])),
+                        "experience_layer": str(row["experience_layer"] or "section_method"),
+                        "use_positions": json.loads(str(row["use_positions_json"] or '["body"]')),
+                        "trigger_signals": json.loads(str(row["trigger_signals_json"] or "[]")),
+                        "not_applicable_when": json.loads(
+                            str(row["not_applicable_when_json"] or "[]")
+                        ),
+                    },
+                    "source_cards": source_cards.get(candidate_id, []),
+                }
+            )
+        return result
 
     @staticmethod
     def _experience_candidate_view(row: sqlite3.Row) -> dict[str, Any]:
@@ -6957,6 +7158,9 @@ class Stage0ContentProductionCore:
         return row
 
     def list_content_workbench(self) -> list[dict[str, Any]]:
+        usage_table_exists = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='stage0_content_experience_usage'"
+        ).fetchone() is not None
         rows = self.conn.execute(
             "SELECT * FROM stage0_content_task WHERE data_identity=? "
             "ORDER BY created_at DESC, task_id DESC",
@@ -7050,6 +7254,11 @@ class Stage0ContentProductionCore:
                         else None
                     ),
                     "experience_candidates": self.list_task_experience_candidates(task_id=str(row["task_id"])),
+                    "experience_usage": (
+                        self.list_content_experience_usage(task_id=str(row["task_id"]))
+                        if usage_table_exists
+                        else []
+                    ),
                     "research_materials": [
                         {
                             "research_material_id": str(material["research_material_id"]),

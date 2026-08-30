@@ -24,6 +24,21 @@ h2 { font-size: 18px; margin-bottom: 18px; }
 .detail-grid div { padding: 12px; background: #f8fafc; border-radius: 8px; }
 .detail-grid dd { margin: 6px 0 0; }
 .domain-list { display: grid; gap: 12px; }
+.experience-list { display: grid; gap: 12px; }
+.experience-card { background: #f8fafc; border: 1px solid #dbe2e8; border-radius: 10px; padding: 16px; }
+.experience-card-header { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+.experience-card h3 { margin: 0; font-size: 16px; }
+.experience-status { color: #24527a; font-size: 13px; white-space: nowrap; }
+.experience-card p { margin: 8px 0 0; line-height: 1.5; }
+.experience-card details { margin-top: 12px; }
+.experience-sources { margin: 8px 0 0; padding-left: 20px; }
+.experience-sources li { margin: 8px 0; }
+.experience-sources span, .experience-sources small { display: block; margin-top: 3px; }
+.experience-actions { display: flex; gap: 8px; margin-top: 10px; }
+button { border: 1px solid #9fb4c8; border-radius: 6px; padding: 8px 12px; background: #fff; cursor: pointer; }
+button:hover { background: #eef5fb; }
+textarea, input, select { width: 100%; margin-top: 5px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; font: inherit; }
+.experience-card label { display: block; margin-top: 12px; color: #64748b; font-size: 13px; }
 .domain-card { background: #fff; border: 1px solid #dbe2e8; border-radius: 10px; padding: 18px; }
 .domain-card h3 { margin: 0 0 14px; font-size: 17px; }
 .domain-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }

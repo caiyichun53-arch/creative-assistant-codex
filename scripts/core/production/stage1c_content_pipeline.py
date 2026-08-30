@@ -9,7 +9,7 @@ controlled audio-production chain.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 from scripts.core.model_gateway.goal07_model_gateway import ModelGateway
@@ -600,6 +600,7 @@ class Stage1CContentPipelineService:
             constraints = {
                 "use_only_core_approved_materials": True,
                 "match_current_topic": True,
+                "report_experience_adoption_in_structured_submission_metadata": True,
                 "cannot_change_business_state": True,
                 "do_not_approve_or_skip_human_review": True,
             }
@@ -643,6 +644,7 @@ class Stage1CContentPipelineService:
         model_ref: str | None,
         submitted_at: str | None,
         output: dict[str, Any],
+        experience_usage: Mapping[str, Any] | None = None,
         actor: str,
         idempotency_key: str,
     ) -> dict[str, Any]:
@@ -687,6 +689,7 @@ class Stage1CContentPipelineService:
             expected_task_revision=int(task["task_revision"]),
             idempotency_key=idempotency_key,
             artifact_payload=document,
+            experience_usage=(experience_usage if node == "content_plan" else None),
         )
 
     def _complete_processing_version(
@@ -777,6 +780,7 @@ class Stage1CContentPipelineService:
             model_ref=str(submission.get("model_ref") or "") or None,
             submitted_at=str(submission.get("submitted_at") or "") or None,
             output=submission.get("output"),
+            experience_usage=submission.get("experience_usage") if node == "content_plan" else None,
             actor=actor,
             idempotency_key=f"{idempotency_key}:external-complete",
         )

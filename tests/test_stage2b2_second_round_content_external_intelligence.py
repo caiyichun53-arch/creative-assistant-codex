@@ -201,13 +201,20 @@ class Stage2B2SecondRoundContentExternalIntelligenceTests(unittest.TestCase):
             counter += 1
             received.append(task)
             node = str(task["business_context"]["node"])
-            return {
+            submission = {
                 "execution_id": f"execution-{counter}",
                 "executor_id": "isolated-executor-a" if counter % 2 else "isolated-executor-b",
                 "model_ref": f"isolated-model-{counter}",
                 "submitted_at": "2026-08-29T00:00:00+00:00",
                 "output": _result_for(node),
             }
+            if node == "content_plan":
+                submission["experience_usage"] = {
+                    "adopted_experience_ids": [],
+                    "not_adopted_experience_ids": [],
+                    "rationale": "本次测试输入没有提供正式经验。",
+                }
+            return submission
 
         service = Stage1CContentPipelineService(core=core, external_executor=executor)
         outputs: list[dict[str, Any]] = []

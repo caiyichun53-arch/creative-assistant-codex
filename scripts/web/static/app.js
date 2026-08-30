@@ -89,6 +89,73 @@
     document.querySelector("#status-panel").hidden = false;
   }
 
+  function experienceStatus(status) {
+    return {
+      awaiting_human_decision: "等待人工决定",
+      preparing: "准备中",
+      accepted: "已接受",
+      rejected: "已拒绝",
+      no_proposal: "无可用提案",
+      failed: "处理失败",
+    }[status] || status || "未知";
+  }
+
+  function readableValue(value) {
+    if (Array.isArray(value)) return value.join("；");
+    if (value && typeof value === "object") return JSON.stringify(value);
+    return String(value == null ? "" : value);
+  }
+
+  function renderExperienceCandidates(candidates) {
+    const container = document.querySelector("#experience-candidates");
+    if (!candidates.length) {
+      container.innerHTML = '<p class="notice">当前没有候选经验。</p>';
+      return;
+    }
+    container.innerHTML = candidates.map(function (item) {
+      const candidate = item.candidate || {};
+      const sources = (item.sources || []).map(function (source) {
+        const quotes = (source.evidence_quotes || []).slice(0, 2).map(escapeHtml).join("；");
+        return '<li><strong>' + escapeHtml(source.title || "来源") + '</strong>' +
+          '<span>' + escapeHtml(source.account_name || "") + '</span>' +
+          (quotes ? '<small>' + quotes + '</small>' : '') + '</li>';
+      }).join("");
+      const waiting = item.status === "awaiting_human_decision";
+      const actionMarkup = waiting
+        ? '<label>决定理由<textarea data-experience-reason rows="2" placeholder="请说明接受或拒绝的理由"></textarea></label>' +
+          '<div class="experience-actions">' +
+          '<button type="button" data-experience-action="accept_experience_candidate" data-candidate-id="' + escapeHtml(item.experience_candidate_id) + '">接受</button>' +
+          '<button type="button" data-experience-action="reject_experience_candidate" data-candidate-id="' + escapeHtml(item.experience_candidate_id) + '">拒绝</button>' +
+          '</div>'
+        : '<p class="notice">当前状态不能进行人工确认。</p>';
+      return '<article class="experience-card" data-candidate-card="' + escapeHtml(item.experience_candidate_id) + '">' +
+        '<div class="experience-card-header"><h3>' + escapeHtml(candidate.summary || "候选经验") + '</h3>' +
+        '<span class="experience-status">' + escapeHtml(experienceStatus(item.status)) + '</span></div>' +
+        '<p><strong>适用条件：</strong>' + escapeHtml(readableValue(candidate.applicable_when)) + '</p>' +
+        '<p><strong>方法：</strong>' + escapeHtml(readableValue(candidate.method)) + '</p>' +
+        '<p><strong>边界：</strong>' + escapeHtml(readableValue(candidate.boundary)) + '</p>' +
+        '<p><strong>依据来源：</strong>' + escapeHtml(item.source_count) + ' 条</p>' +
+        '<details><summary>查看来源与证据摘要</summary><ul class="experience-sources">' + sources + '</ul></details>' +
+        actionMarkup +
+        '</article>';
+    }).join("");
+  }
+
+  async function loadExperienceCandidates() {
+    try {
+      const response = await fetch("/api/experience-candidates", { method: "GET", cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        document.querySelector("#experience-candidates").innerHTML = '<p class="notice error">' +
+          escapeHtml(payload.error || "候选经验读取失败") + '</p>';
+        return;
+      }
+      renderExperienceCandidates(payload.candidates || []);
+    } catch (error) {
+      document.querySelector("#experience-candidates").innerHTML = '<p class="notice error">无法连接 Creation Assistant Core</p>';
+    }
+  }
+
   async function loadStatus() {
     try {
       const response = await fetch("/api/status", { method: "GET", cache: "no-store" });
@@ -137,6 +204,9 @@
       const payload = await response.json();
       showActionResult(payload);
       if (payload.status) renderStatus(payload.status);
+      if (action === "accept_experience_candidate" || action === "reject_experience_candidate") {
+        loadExperienceCandidates();
+      }
     } catch (error) {
       showActionResult({ outcome: "failed", error: "Core动作调用失败" });
     }
@@ -160,8 +230,21 @@
   }
 
   document.addEventListener("click", function (event) {
-    const button = event.target.closest("button[data-web-action]");
+    const button = event.target.closest("button[data-web-action],button[data-experience-action]");
     if (!button) return;
+    if (button.dataset.experienceAction) {
+      const card = button.closest("[data-candidate-card]");
+      const reason = card ? card.querySelector("[data-experience-reason]").value.trim() : "";
+      if (!reason) {
+        showActionResult({ outcome: "rejected", error: "请填写决定理由" });
+        return;
+      }
+      postAction(button.dataset.experienceAction, {
+        experience_candidate_id: button.dataset.candidateId,
+        reason: reason,
+      });
+      return;
+    }
     const domain = button.dataset.domain;
     if (button.dataset.webAction === "stop") {
       const reason = window.prompt("请说明停止原因");
@@ -203,5 +286,6 @@
       postAction("daily_start", values);
     });
     loadStatus();
+    loadExperienceCandidates();
   });
 }());
