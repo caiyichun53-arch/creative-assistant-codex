@@ -385,6 +385,7 @@ class Stage1CContentPipelineService:
             raise StateTransitionError("post-plan generation requires the current approved next production step")
         if not actor.strip() or not user_requirements.strip():
             raise StateTransitionError("post-plan generation requires an explicit actor and requirements")
+        considered_validation_candidates: tuple[dict[str, Any], ...] = ()
         if node == "deep_research" and research_refs:
             raise StateTransitionError("deep research reads retained Core research materials; do not pass transient references")
         if node == "deep_research":
@@ -418,6 +419,16 @@ class Stage1CContentPipelineService:
                 ) + tuple(
                     item for item in retained if str(item["experience_id"]) not in requested_ids
                 )
+                list_validation_candidates = getattr(
+                    self.core, "list_validation_ready_experience_candidates", None
+                )
+                if list_validation_candidates is not None:
+                    considered_validation_candidates = tuple(
+                        list_validation_candidates(
+                            domain_label=domain_label,
+                            context_text=context_text,
+                        )
+                    )
         upstream_version_id = str(task["current_version_id"] or "")
         upstream = self.core.get_artifact_payload(upstream_version_id)
         assembly = InputAssembly(
@@ -437,6 +448,7 @@ class Stage1CContentPipelineService:
             prompt_version=f"stage1c.{node}.prompt.v3.1" if node == "deep_research" else f"stage1c.{node}.prompt.v1",
             skill_version=f"stage1c.{node}.skill.v3.1" if node == "deep_research" else f"stage1c.{node}.skill.v1",
             model_config_version="model_routes.v1",
+            considered_validation_candidates=considered_validation_candidates,
         )
         assembly_result = self.core.create_input_assembly(assembly, idempotency_key=f"{idempotency_key}:assembly")
         request_result = self.core.create_node_request(
@@ -601,6 +613,7 @@ class Stage1CContentPipelineService:
                 "use_only_core_approved_materials": True,
                 "match_current_topic": True,
                 "report_experience_adoption_in_structured_submission_metadata": True,
+                "report_validation_candidate_adoption_in_structured_submission_metadata": True,
                 "cannot_change_business_state": True,
                 "do_not_approve_or_skip_human_review": True,
             }
@@ -645,6 +658,7 @@ class Stage1CContentPipelineService:
         submitted_at: str | None,
         output: dict[str, Any],
         experience_usage: Mapping[str, Any] | None = None,
+        validation_usage: Mapping[str, Any] | None = None,
         actor: str,
         idempotency_key: str,
     ) -> dict[str, Any]:
@@ -690,6 +704,7 @@ class Stage1CContentPipelineService:
             idempotency_key=idempotency_key,
             artifact_payload=document,
             experience_usage=(experience_usage if node == "content_plan" else None),
+            validation_usage=(validation_usage if node == "content_plan" else None),
         )
 
     def _complete_processing_version(
@@ -781,6 +796,7 @@ class Stage1CContentPipelineService:
             submitted_at=str(submission.get("submitted_at") or "") or None,
             output=submission.get("output"),
             experience_usage=submission.get("experience_usage") if node == "content_plan" else None,
+            validation_usage=submission.get("validation_usage") if node == "content_plan" else None,
             actor=actor,
             idempotency_key=f"{idempotency_key}:external-complete",
         )
@@ -999,6 +1015,7 @@ class Stage1CContentPipelineService:
             considered_experience=tuple(previous_assembly["considered_experience"]), adopted_experience=(),
             rejected_experience=(), omitted_materials=(), prompt_version=previous_assembly["prompt_version"],
             skill_version=previous_assembly["skill_version"], model_config_version=previous_assembly["model_config_version"],
+            considered_validation_candidates=tuple(previous_assembly.get("considered_validation_candidates") or ()),
         )
         assembly = self.core.create_input_assembly(replacement, idempotency_key=f"{idempotency_key}:assembly")
         return self.core.return_current_node(

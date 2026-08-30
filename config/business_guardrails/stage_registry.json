@@ -56,6 +56,8 @@
         "scripts/core/production/stage1_daily_operations.py",
         "scripts/core/production/stage1b_daily_discovery.py",
         "scripts/core/production/stage1c_content_pipeline.py",
+        "scripts/core/production/human_decision_entry.py",
+        "scripts/core/production/publication_feedback.py",
         "scripts/core/production/experience_candidate_proposal.py",
         "scripts/core/production/stage1d_audio_production.py",
         "scripts/core/production/business_runtime_guard.py",

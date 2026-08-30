@@ -103,6 +103,7 @@ class ActionWebApplication(ReadOnlyWebApplication):
             "daily_resume",
             "accept_experience_candidate",
             "reject_experience_candidate",
+            "promote_experience_candidate",
         }
     )
     _ACTION_NAMES = frozenset(
@@ -118,6 +119,7 @@ class ActionWebApplication(ReadOnlyWebApplication):
             "daily_resume",
             "accept_experience_candidate",
             "reject_experience_candidate",
+            "promote_experience_candidate",
         }
     )
 
@@ -264,9 +266,14 @@ class ActionWebApplication(ReadOnlyWebApplication):
         )
         if candidate is None:
             raise StateTransitionError("the experience candidate is not in the current Core review set")
-        if str(candidate.get("status") or "") != "awaiting_human_decision":
+        expected_status = (
+            "validation_ready"
+            if action == "promote_experience_candidate"
+            else "awaiting_human_decision"
+        )
+        if str(candidate.get("status") or "") != expected_status:
             raise StateTransitionError(
-                "only an experience candidate awaiting human decision may be accepted or rejected"
+                "the experience candidate is not in the required state for this action"
             )
         return FormalHumanDecisionCommand(
             command_id=f"web-human-{uuid4().hex}",
@@ -276,7 +283,13 @@ class ActionWebApplication(ReadOnlyWebApplication):
             target_ref=f"experience_candidate:{candidate_id}",
             payload={
                 "experience_candidate_id": candidate_id,
-                "decision": "accepted" if action == "accept_experience_candidate" else "rejected",
+                "decision": (
+                    "promoted"
+                    if action == "promote_experience_candidate"
+                    else "accepted"
+                    if action == "accept_experience_candidate"
+                    else "rejected"
+                ),
                 "reason": reason,
             },
             actor=self.actor,
@@ -378,7 +391,11 @@ class ActionWebApplication(ReadOnlyWebApplication):
             }[action]
             return dict(handler(command=command))
 
-        if action in {"accept_experience_candidate", "reject_experience_candidate"}:
+        if action in {
+            "accept_experience_candidate",
+            "reject_experience_candidate",
+            "promote_experience_candidate",
+        }:
             command = self._experience_candidate_command(action=action, payload=payload)
             decision = str(command.payload["decision"])
             result = business.submit_human_decision(
@@ -430,6 +447,13 @@ class ActionWebApplication(ReadOnlyWebApplication):
         command: FormalHumanDecisionCommand,
         decision: str,
     ) -> dict[str, str]:
+        if decision == "promoted":
+            return core.promote_experience_candidate(
+                experience_candidate_id=str(command.payload["experience_candidate_id"]),
+                actor=command.actor,
+                actor_kind=command.actor_kind,
+                reason=str(command.payload["reason"]),
+            )
         return core.decide_experience_candidate(
             experience_candidate_id=str(command.payload["experience_candidate_id"]),
             decision=decision,

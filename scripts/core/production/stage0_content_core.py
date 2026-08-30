@@ -248,6 +248,7 @@ class InputAssembly:
     prompt_version: str
     skill_version: str
     model_config_version: str
+    considered_validation_candidates: tuple[dict[str, Any], ...] = ()
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -265,6 +266,7 @@ class InputAssembly:
             "prompt_version": self.prompt_version,
             "skill_version": self.skill_version,
             "model_config_version": self.model_config_version,
+            "considered_validation_candidates": list(self.considered_validation_candidates),
         }
 
 
@@ -2640,6 +2642,85 @@ class Stage0ContentProductionCore:
             "rationale": rationale,
         }
 
+    def _validate_content_validation_usage(
+        self,
+        *,
+        task_id: str,
+        node_version_id: str,
+        usage: Mapping[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Validate separately recorded use of candidates under real production."""
+
+        version = self._version(node_version_id)
+        assembly = self._assembly(str(version["input_assembly_id"]))
+        assembly_payload = json.loads(str(assembly["payload_json"]))
+        considered = assembly_payload.get("considered_validation_candidates") or []
+        if not isinstance(considered, list):
+            raise StateTransitionError("content plan input has an invalid validation candidate list")
+        expected_ids: list[str] = []
+        for item in considered:
+            if not isinstance(item, Mapping):
+                raise StateTransitionError("content plan input has an invalid validation candidate")
+            candidate_id = str(item.get("experience_candidate_id") or "").strip()
+            if not candidate_id or candidate_id in expected_ids:
+                raise StateTransitionError("content plan input has duplicate or missing validation candidate ids")
+            expected_ids.append(candidate_id)
+        if not expected_ids:
+            if usage is not None:
+                raise StateTransitionError("validation usage was supplied without validation candidates")
+            return None
+        if not isinstance(usage, Mapping) or set(usage) != {
+            "adopted_candidate_ids",
+            "not_adopted_candidate_ids",
+            "rationale",
+        }:
+            raise StateTransitionError(
+                "validation usage must contain adopted candidates, not-adopted candidates and rationale"
+            )
+        adopted = usage["adopted_candidate_ids"]
+        not_adopted = usage["not_adopted_candidate_ids"]
+        rationale = str(usage["rationale"] or "").strip()
+        if (
+            not isinstance(adopted, list)
+            or not isinstance(not_adopted, list)
+            or not rationale
+            or any(not isinstance(item, str) or not item.strip() for item in (*adopted, *not_adopted))
+        ):
+            raise StateTransitionError("validation usage needs two string lists and a non-empty rationale")
+        adopted = [str(item).strip() for item in adopted]
+        not_adopted = [str(item).strip() for item in not_adopted]
+        if len(set(adopted)) != len(adopted) or len(set(not_adopted)) != len(not_adopted):
+            raise StateTransitionError("validation usage lists must not contain duplicates")
+        if set(adopted) & set(not_adopted):
+            raise StateTransitionError("a validation candidate cannot be both adopted and not adopted")
+        if set(adopted) | set(not_adopted) != set(expected_ids):
+            raise StateTransitionError("validation usage must account for every supplied validation candidate")
+        rows = self.conn.execute(
+            "SELECT * FROM stage0_experience_candidate WHERE data_identity=? "
+            "AND experience_candidate_id IN ({})".format(",".join("?" for _ in expected_ids)),
+            (self.data_identity, *expected_ids),
+        ).fetchall()
+        by_id = {str(row["experience_candidate_id"]): row for row in rows}
+        if set(by_id) != set(expected_ids):
+            raise StateTransitionError("validation usage references an unknown candidate in this identity")
+        formal_rows = self.conn.execute(
+            "SELECT experience_candidate_id FROM stage0_confirmed_experience "
+            "WHERE data_identity=? AND experience_candidate_id IN ({})".format(
+                ",".join("?" for _ in expected_ids)
+            ),
+            (self.data_identity, *expected_ids),
+        ).fetchall()
+        if formal_rows:
+            raise StateTransitionError("formal experiences may not be submitted as validation candidates")
+        for candidate_id in expected_ids:
+            if self._logical_experience_candidate_status(by_id[candidate_id]) != "validation_ready":
+                raise StateTransitionError("only validation-ready candidates may enter production validation")
+        return {
+            "adopted_candidate_ids": adopted,
+            "not_adopted_candidate_ids": not_adopted,
+            "rationale": rationale,
+        }
+
     def complete_node_from_model(
         self,
         *,
@@ -2674,6 +2755,7 @@ class Stage0ContentProductionCore:
         idempotency_key: str,
         artifact_payload: dict[str, Any] | None = None,
         experience_usage: Mapping[str, Any] | None = None,
+        validation_usage: Mapping[str, Any] | None = None,
     ) -> dict[str, str]:
         """Accept one structured result supplied by an outside executor."""
         return self._complete_node_from_execution(
@@ -2683,6 +2765,7 @@ class Stage0ContentProductionCore:
             artifact_payload=artifact_payload, expected_via_model_gateway=0,
             command_name="complete_node_from_external_result",
             experience_usage=experience_usage,
+            validation_usage=validation_usage,
         )
 
     def _complete_node_from_execution(
@@ -2700,6 +2783,7 @@ class Stage0ContentProductionCore:
         expected_via_model_gateway: int,
         command_name: str,
         experience_usage: Mapping[str, Any] | None = None,
+        validation_usage: Mapping[str, Any] | None = None,
     ) -> dict[str, str]:
         if validation_status != "passed":
             raise StateTransitionError("only schema-validated output may await human review")
@@ -2718,6 +2802,7 @@ class Stage0ContentProductionCore:
             "model_run_id": model_run_id,
             "output_ref": output_ref,
             "experience_usage": experience_usage,
+            "validation_usage": validation_usage,
         }
         replay = self._replay(command_name, idempotency_key, request)
         if replay:
@@ -2729,12 +2814,18 @@ class Stage0ContentProductionCore:
                 node_version_id=node_version_id,
                 usage=experience_usage,
             )
-        elif experience_usage is not None:
+            normalized_validation_usage = self._validate_content_validation_usage(
+                task_id=task_id,
+                node_version_id=node_version_id,
+                usage=validation_usage,
+            )
+        elif experience_usage is not None or validation_usage is not None:
             raise StateTransitionError(
                 "experience usage may only be submitted with a content plan"
             )
         else:
             normalized_experience_usage = None
+            normalized_validation_usage = None
         output_version_id, revision = _id("version"), int(task["task_revision"]) + 1
         with self.conn:
             self.conn.execute(
@@ -2760,6 +2851,27 @@ class Stage0ContentProductionCore:
                             self.data_identity,
                             _now(),
                         ),
+                    )
+            if normalized_validation_usage is not None:
+                candidate_cards = {
+                    str(item.get("experience_candidate_id") or ""): item
+                    for item in json.loads(str(self._assembly(str(request_version["input_assembly_id"]))["payload_json"])).get(
+                        "considered_validation_candidates", []
+                    )
+                    if isinstance(item, dict)
+                }
+                for candidate_id in normalized_validation_usage["adopted_candidate_ids"]:
+                    self._audit(
+                        task_id,
+                        "validation_candidate_used",
+                        {
+                            "validation_usage_id": _id("validation_candidate_usage"),
+                            "task_id": task_id,
+                            "content_version_id": output_version_id,
+                            "experience_candidate_id": candidate_id,
+                            "rationale": normalized_validation_usage["rationale"],
+                            "candidate": candidate_cards.get(candidate_id, {}),
+                        },
                     )
             self.conn.execute("UPDATE stage0_model_run SET output_version_id=? WHERE model_run_id=?", (output_version_id, model_run_id))
             self._set_task(task_id, node=request_version["node"], version_id=output_version_id, status="awaiting_human_review", revision=revision)
@@ -6249,32 +6361,156 @@ class Stage0ContentProductionCore:
         result = {"experience_candidate_id": experience_candidate_id, "decision": decision}
         with self.conn:
             if decision == "accepted":
-                body = proposal["candidate"]
-                experience_id = _id("confirmed_experience")
-                sources = list(proposal["source_ids"])
+                if not isinstance(proposal, dict) or not isinstance(proposal.get("candidate"), dict):
+                    raise StateTransitionError("accepted experience candidate has no valid proposal")
+                proposal = {**proposal, "validation_state": "validation_ready"}
                 self.conn.execute(
-                    "INSERT INTO stage0_confirmed_experience "
-                    "(experience_id, experience_candidate_id, domain_label, classification, summary, "
-                    "applicable_when_json, method_json, source_refs_json, boundary_json, "
-                    "experience_layer, use_positions_json, trigger_signals_json, not_applicable_when_json, "
-                    "status, data_identity, confirmed_by, confirmed_at) "
-                    "VALUES (?, ?, ?, 'shared_pattern', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)",
-                    (
-                        experience_id, experience_candidate_id, candidate["domain_label"], body["summary"],
-                        _canonical(body["applicable_when"]), _canonical(body["method"]), _canonical(sources),
-                        _canonical(body["boundary"]), body.get("experience_layer", "section_method"),
-                        _canonical(body.get("use_positions") or ["body"]),
-                        _canonical(body.get("trigger_signals") or body["applicable_when"]),
-                        _canonical(body.get("not_applicable_when") or body["boundary"]),
-                        self.data_identity, "", _now(),
-                    ),
+                    "UPDATE stage0_experience_candidate SET proposal_json=? WHERE experience_candidate_id=?",
+                    (_canonical(proposal), experience_candidate_id),
                 )
-                result["experience_id"] = experience_id
+                result["status"] = "validation_ready"
             self.conn.execute(
                 "UPDATE stage0_experience_candidate SET status=?, decided_by=?, decided_at=?, decision_reason=? WHERE experience_candidate_id=?",
                 (decision, actor.strip(), _now(), reason.strip(), experience_candidate_id),
             )
             self._audit(candidate["task_id"], "experience_candidate_decided", result)
+        return result
+
+    @staticmethod
+    def _logical_experience_candidate_status(row: sqlite3.Row) -> str:
+        stored_status = str(row["status"])
+        if stored_status != "accepted":
+            return stored_status
+        try:
+            proposal = json.loads(str(row["proposal_json"] or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            proposal = {}
+        state = str(proposal.get("validation_state") or "") if isinstance(proposal, dict) else ""
+        return state if state in {"validation_ready", "promoted"} else "validation_ready"
+
+    def promote_experience_candidate(
+        self, *, experience_candidate_id: str, actor: str, actor_kind: str, reason: str
+    ) -> dict[str, str]:
+        """Promote one candidate only after confirmed P7 support evidence."""
+
+        candidate = self._experience_candidate(experience_candidate_id)
+        if self._logical_experience_candidate_status(candidate) != "validation_ready":
+            raise StateTransitionError("only a validation-ready candidate may be promoted")
+        if actor_kind != "user" or not actor.strip() or not reason.strip():
+            raise StateTransitionError("experience promotion requires an explicit user and reason")
+        existing = self.conn.execute(
+            "SELECT experience_id FROM stage0_confirmed_experience "
+            "WHERE experience_candidate_id=? AND data_identity=?",
+            (experience_candidate_id, self.data_identity),
+        ).fetchone()
+        if existing is not None:
+            raise StateTransitionError("experience candidate has already been promoted")
+        usage_rows = self.conn.execute(
+            "SELECT payload_json FROM stage0_audit_event "
+            "WHERE action='validation_candidate_used' AND data_identity=? "
+            "ORDER BY created_at, audit_id",
+            (self.data_identity,),
+        ).fetchall()
+        usages: list[dict[str, Any]] = []
+        for row in usage_rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict) and str(payload.get("experience_candidate_id") or "") == experience_candidate_id:
+                usages.append(payload)
+        if not usages:
+            raise StateTransitionError("experience promotion requires real production usage")
+        supportive_reviews: list[dict[str, Any]] = []
+        for usage in usages:
+            task_id = str(usage.get("task_id") or "").strip()
+            if not task_id:
+                continue
+            publications = self.conn.execute(
+                "SELECT publication.publication_id, review.review_id, review.feedback_candidate_json "
+                "FROM stage0_publication_registration publication "
+                "JOIN stage0_publication_p7_review review "
+                "ON review.publication_id=publication.publication_id "
+                "AND review.data_identity=publication.data_identity "
+                "WHERE publication.task_id=? AND publication.approved_content_version_id=? "
+                "AND publication.data_identity=? AND review.status='confirmed'",
+                (task_id, str(usage.get("content_version_id") or ""), self.data_identity),
+            ).fetchall()
+            for publication in publications:
+                points = self.conn.execute(
+                    "SELECT COUNT(DISTINCT point_code) FROM stage0_publication_observation "
+                    "WHERE publication_id=? AND data_identity=?",
+                    (publication["publication_id"], self.data_identity),
+                ).fetchone()[0]
+                if int(points) != 8:
+                    continue
+                try:
+                    feedback = json.loads(str(publication["feedback_candidate_json"] or "{}"))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    feedback = {}
+                results = feedback.get("validation_results") if isinstance(feedback, dict) else None
+                if not isinstance(results, list):
+                    continue
+                for item in results:
+                    if not isinstance(item, dict):
+                        continue
+                    validation_usage_ids = {
+                        str(value).strip()
+                        for value in item.get("validation_usage_ids", [])
+                        if str(value).strip()
+                    }
+                    if (
+                        str(item.get("experience_candidate_id") or "") == experience_candidate_id
+                        and str(item.get("result") or "") == "supports"
+                        and str(usage.get("validation_usage_id") or "") in validation_usage_ids
+                    ):
+                        supportive_reviews.append({
+                            "publication_id": str(publication["publication_id"]),
+                            "review_id": str(publication["review_id"]),
+                            "validation_usage_id": str(usage.get("validation_usage_id") or ""),
+                        })
+        if not supportive_reviews:
+            raise StateTransitionError(
+                "experience promotion requires a confirmed P7 review with supportive validation evidence"
+            )
+        proposal = json.loads(str(candidate["proposal_json"] or "{}"))
+        body = proposal.get("candidate") if isinstance(proposal, dict) else None
+        if not isinstance(body, dict):
+            raise StateTransitionError("validation-ready candidate has no valid proposal body")
+        experience_id = _id("confirmed_experience")
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO stage0_confirmed_experience "
+                "(experience_id, experience_candidate_id, domain_label, classification, summary, "
+                "applicable_when_json, method_json, source_refs_json, boundary_json, "
+                "experience_layer, use_positions_json, trigger_signals_json, not_applicable_when_json, "
+                "status, data_identity, confirmed_by, confirmed_at) "
+                "VALUES (?, ?, ?, 'shared_pattern', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)",
+                (
+                    experience_id, experience_candidate_id, candidate["domain_label"], body["summary"],
+                    _canonical(body["applicable_when"]), _canonical(body["method"]),
+                    _canonical(list(proposal.get("source_ids") or [])), _canonical(body["boundary"]),
+                    body.get("experience_layer", "section_method"),
+                    _canonical(body.get("use_positions") or ["body"]),
+                    _canonical(body.get("trigger_signals") or body["applicable_when"]),
+                    _canonical(body.get("not_applicable_when") or body["boundary"]),
+                    self.data_identity, actor.strip(), _now(),
+                ),
+            )
+            self.conn.execute(
+                "UPDATE stage0_experience_candidate SET proposal_json=? WHERE experience_candidate_id=?",
+                (_canonical({**proposal, "validation_state": "promoted"}), experience_candidate_id),
+            )
+            result = {
+                "experience_candidate_id": experience_candidate_id,
+                "experience_id": experience_id,
+                "status": "promoted",
+            }
+            self._audit(
+                candidate["task_id"],
+                "experience_candidate_promoted",
+                {**result, "reason": reason.strip(), "supportive_reviews": supportive_reviews},
+            )
         return result
 
     def purge_stale_experience_candidates(
@@ -6903,6 +7139,61 @@ class Stage0ContentProductionCore:
         )
         return experiences[:limit] if limit is not None else experiences
 
+    def list_validation_ready_experience_candidates(
+        self, *, domain_label: str, context_text: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Return validation candidates separately from the formal experience library."""
+
+        candidates = self.list_pre_topic_experience_candidates(domain_label=domain_label)
+        candidate_ids = [str(item["experience_candidate_id"]) for item in candidates]
+        source_cards = self.list_experience_candidate_source_cards(candidate_ids=candidate_ids)
+        formal_candidate_ids = {
+            str(row["experience_candidate_id"])
+            for row in self.conn.execute(
+                "SELECT experience_candidate_id FROM stage0_confirmed_experience "
+                "WHERE data_identity=?",
+                (self.data_identity,),
+            ).fetchall()
+        }
+        result: list[dict[str, Any]] = []
+        for item in candidates:
+            if (
+                str(item.get("status") or "") != "validation_ready"
+                or str(item.get("experience_candidate_id") or "") in formal_candidate_ids
+            ):
+                continue
+            proposal = item.get("proposal") if isinstance(item.get("proposal"), dict) else {}
+            body = proposal.get("candidate") if isinstance(proposal.get("candidate"), dict) else {}
+            applicable_when = list(body.get("applicable_when") or [])
+            trigger_signals = list(body.get("trigger_signals") or applicable_when)
+            explicit_context_match = (
+                _experience_context_matches(
+                    context_text=context_text,
+                    applicable_when=[*trigger_signals, *applicable_when],
+                )
+                if context_text is not None
+                else []
+            )
+            if context_text is not None and not explicit_context_match:
+                continue
+            result.append({
+                "experience_candidate_id": str(item["experience_candidate_id"]),
+                "status": "validation_ready",
+                "domain_label": str(item["domain_label"]),
+                "summary": str(body.get("summary") or ""),
+                "candidate": dict(body),
+                "source_ids": list(proposal.get("source_ids") or []),
+                "source_cards": source_cards.get(str(item["experience_candidate_id"]), []),
+                "explicit_context_match": explicit_context_match,
+            })
+        result.sort(
+            key=lambda candidate: (
+                -len(candidate["explicit_context_match"]),
+                str(candidate["experience_candidate_id"]),
+            )
+        )
+        return result
+
     def list_content_experience_usage(
         self, *, task_id: str | None = None, content_version_id: str | None = None
     ) -> list[dict[str, Any]]:
@@ -6973,6 +7264,57 @@ class Stage0ContentProductionCore:
             )
         return result
 
+    def list_content_validation_usage(
+        self, *, task_id: str | None = None, content_version_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Return validation-candidate use records from the Core audit ledger."""
+
+        if not task_id and not content_version_id:
+            raise StateTransitionError(
+                "validation usage lookup requires a task or content version"
+            )
+        if content_version_id:
+            version = self._version(content_version_id)
+            resolved_task_id = str(version["task_id"])
+            if task_id is not None and str(task_id) != resolved_task_id:
+                raise StateTransitionError(
+                    "content version does not belong to the requested task"
+                )
+            task_id = resolved_task_id
+        assert task_id is not None
+        self._task(task_id)
+        rows = self.conn.execute(
+            "SELECT payload_json, created_at FROM stage0_audit_event "
+            "WHERE task_id=? AND action='validation_candidate_used' AND data_identity=? "
+            "ORDER BY created_at, audit_id",
+            (task_id, self.data_identity),
+        ).fetchall()
+        payloads: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict):
+                payloads.append({**payload, "created_at": str(row["created_at"])})
+        candidate_ids = [str(item.get("experience_candidate_id") or "") for item in payloads]
+        source_cards = self.list_experience_candidate_source_cards(candidate_ids=candidate_ids)
+        result: list[dict[str, Any]] = []
+        for item in payloads:
+            candidate_id = str(item.get("experience_candidate_id") or "")
+            result.append({
+                "validation_usage_id": str(item.get("validation_usage_id") or ""),
+                "task_id": str(item.get("task_id") or task_id),
+                "content_version_id": str(item.get("content_version_id") or ""),
+                "usage_stage": "content_plan",
+                "experience_candidate_id": candidate_id,
+                "rationale": str(item.get("rationale") or ""),
+                "created_at": str(item.get("created_at") or ""),
+                "candidate": item.get("candidate") if isinstance(item.get("candidate"), dict) else {},
+                "source_cards": source_cards.get(candidate_id, []),
+            })
+        return result
+
     @staticmethod
     def _experience_candidate_view(row: sqlite3.Row) -> dict[str, Any]:
         return {
@@ -6984,7 +7326,7 @@ class Stage0ContentProductionCore:
                 else None
             ),
             "domain_label": str(row["domain_label"]),
-            "status": str(row["status"]),
+            "status": Stage0ContentProductionCore._logical_experience_candidate_status(row),
             "proposal": json.loads(str(row["proposal_json"] or "{}")),
             "failure": json.loads(str(row["failure_json"])),
             "source_count": len(json.loads(str(row["frozen_sources_json"]))),
@@ -7254,11 +7596,14 @@ class Stage0ContentProductionCore:
                         else None
                     ),
                     "experience_candidates": self.list_task_experience_candidates(task_id=str(row["task_id"])),
-                    "experience_usage": (
-                        self.list_content_experience_usage(task_id=str(row["task_id"]))
-                        if usage_table_exists
-                        else []
-                    ),
+                     "experience_usage": (
+                         self.list_content_experience_usage(task_id=str(row["task_id"]))
+                         if usage_table_exists
+                         else []
+                     ),
+                     "validation_usage": self.list_content_validation_usage(
+                         task_id=str(row["task_id"])
+                     ),
                     "research_materials": [
                         {
                             "research_material_id": str(material["research_material_id"]),

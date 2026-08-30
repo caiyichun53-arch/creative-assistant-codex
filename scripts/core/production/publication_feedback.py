@@ -12,7 +12,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -47,6 +47,99 @@ def _json_object(value: Any, field: str) -> str:
 
 def _same_payload(row: sqlite3.Row, expected: dict[str, Any]) -> bool:
     return all(str(row[key] or "") == str(value or "") for key, value in expected.items())
+
+
+def _validation_usage_records(
+    conn: sqlite3.Connection, *, task_id: str, data_identity: str
+) -> list[dict[str, Any]]:
+    """Read validation-candidate usage from the existing Core audit ledger."""
+
+    table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='stage0_audit_event'"
+    ).fetchone()
+    if table is None:
+        return []
+    rows = conn.execute(
+        "SELECT payload_json FROM stage0_audit_event "
+        "WHERE task_id=? AND action='validation_candidate_used' AND data_identity=? "
+        "ORDER BY created_at, audit_id",
+        (task_id, data_identity),
+    ).fetchall()
+    records: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            payload = json.loads(str(row["payload_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict) and str(payload.get("experience_candidate_id") or "").strip():
+            records.append(payload)
+    return records
+
+
+def _normalize_validation_results(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    feedback_candidate: Mapping[str, Any] | None,
+    data_identity: str,
+) -> dict[str, Any]:
+    usage_records = _validation_usage_records(
+        conn, task_id=task_id, data_identity=data_identity
+    )
+    payload = dict(feedback_candidate or {})
+    raw_results = payload.get("validation_results")
+    if not usage_records:
+        if raw_results is not None:
+            raise PublicationFeedbackError(
+                "validation results require a validation candidate used by this task"
+            )
+        return payload
+    if not isinstance(raw_results, list):
+        raise PublicationFeedbackError(
+            "P7 review requires structured validation results for every used candidate"
+        )
+    by_candidate: dict[str, list[str]] = {}
+    for record in usage_records:
+        candidate_id = str(record.get("experience_candidate_id") or "").strip()
+        usage_id = str(record.get("validation_usage_id") or "").strip()
+        if candidate_id and usage_id:
+            by_candidate.setdefault(candidate_id, []).append(usage_id)
+    if not by_candidate:
+        raise PublicationFeedbackError("validation usage records are missing candidate identity")
+    if len(raw_results) != len(by_candidate):
+        raise PublicationFeedbackError(
+            "P7 validation results must contain exactly one result for each used candidate"
+        )
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw_results:
+        if not isinstance(item, Mapping):
+            raise PublicationFeedbackError("each P7 validation result must be an object")
+        candidate_id = str(item.get("experience_candidate_id") or "").strip()
+        result = str(item.get("result") or "").strip()
+        performance_summary = str(item.get("performance_summary") or "").strip()
+        review_basis = str(item.get("review_basis") or "").strip()
+        if candidate_id not in by_candidate or candidate_id in seen:
+            raise PublicationFeedbackError("P7 validation result references an unexpected candidate")
+        if result not in {"supports", "contradicts", "inconclusive"}:
+            raise PublicationFeedbackError(
+                "P7 validation result must be supports, contradicts or inconclusive"
+            )
+        if not performance_summary or not review_basis:
+            raise PublicationFeedbackError(
+                "P7 validation result requires performance and review basis"
+            )
+        normalized.append({
+            **dict(item),
+            "experience_candidate_id": candidate_id,
+            "result": result,
+            "performance_summary": performance_summary,
+            "review_basis": review_basis,
+            "validation_usage_ids": sorted(by_candidate[candidate_id]),
+        })
+        seen.add(candidate_id)
+    payload["validation_results"] = normalized
+    return payload
 
 
 def install_schema(conn: sqlite3.Connection) -> None:
@@ -98,7 +191,7 @@ def _require_approved_audio(
         raise PublicationFeedbackError("approved audio delivery does not exist in this data identity")
     if row["task_id"] != task_id or row["approved_content_version_id"] != approved_content_version_id:
         raise PublicationFeedbackError("publication must reference the exact approved content and audio task")
-    if row["status"] != "approved":
+    if row["status"] != "delivered":
         raise PublicationFeedbackError("publication registration requires approved audio")
 
 
@@ -296,7 +389,7 @@ def prepare_p7_review(
         "external_conditions_assessment": _text(external_conditions_assessment, "external_conditions_assessment"),
     }
     publication = conn.execute(
-        "SELECT publication_id FROM stage0_publication_registration WHERE publication_id=? AND data_identity=?",
+        "SELECT publication_id, task_id FROM stage0_publication_registration WHERE publication_id=? AND data_identity=?",
         (publication_id, data_identity),
     ).fetchone()
     if publication is None:
@@ -309,7 +402,13 @@ def prepare_p7_review(
     missing_points = [point for point in POINT_CODES if point not in observed]
     if missing_points:
         raise PublicationFeedbackError(f"P7 review requires every observation point, missing: {', '.join(missing_points)}")
-    candidate_json = _json_object(feedback_candidate, "feedback_candidate")
+    feedback_payload = _normalize_validation_results(
+        conn,
+        task_id=str(publication["task_id"]),
+        feedback_candidate=feedback_candidate,
+        data_identity=data_identity,
+    )
+    candidate_json = _json_object(feedback_payload, "feedback_candidate")
     existing = conn.execute(
         "SELECT * FROM stage0_publication_p7_review WHERE publication_id=? AND data_identity=?",
         (publication_id, data_identity),

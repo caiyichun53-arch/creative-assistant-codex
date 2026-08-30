@@ -24,6 +24,7 @@ FORMAL_HUMAN_ACTIONS = frozenset({
     "return_content_plan",
     "accept_experience_candidate",
     "reject_experience_candidate",
+    "promote_experience_candidate",
     "purge_stale_experience_candidates",
     "prepare_experience_candidate",
     "prepare_experience_candidate_batch",

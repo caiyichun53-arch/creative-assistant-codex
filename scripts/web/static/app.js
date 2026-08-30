@@ -90,6 +90,8 @@
   }
 
   function experienceStatus(status) {
+    if (status === "validation_ready") return "\u5f85\u771f\u5b9e\u9a8c\u8bc1";
+    if (status === "promoted") return "\u5df2\u664b\u5347\u6b63\u5f0f\u7ecf\u9a8c";
     return {
       awaiting_human_decision: "等待人工决定",
       preparing: "准备中",
@@ -121,7 +123,14 @@
           (quotes ? '<small>' + quotes + '</small>' : '') + '</li>';
       }).join("");
       const waiting = item.status === "awaiting_human_decision";
-      const actionMarkup = waiting
+      const validationReady = item.status === "validation_ready";
+      const validationActionMarkup = validationReady
+        ? '<label>\u664b\u5347\u7406\u7531<textarea data-experience-reason rows="2" placeholder="\u8bf7\u8bf4\u660e\u4e3a\u4ec0\u4e48\u6839\u636e\u9a8c\u8bc1\u7ed3\u679c\u664b\u5347"></textarea></label>' +
+          '<div class="experience-actions">' +
+          '<button type="button" data-experience-action="promote_experience_candidate" data-candidate-id="' + escapeHtml(item.experience_candidate_id) + '">\u4eba\u5de5\u664b\u5347\u6b63\u5f0f\u7ecf\u9a8c</button>' +
+          '</div>'
+        : null;
+      const actionMarkup = validationReady ? validationActionMarkup : waiting
         ? '<label>决定理由<textarea data-experience-reason rows="2" placeholder="请说明接受或拒绝的理由"></textarea></label>' +
           '<div class="experience-actions">' +
           '<button type="button" data-experience-action="accept_experience_candidate" data-candidate-id="' + escapeHtml(item.experience_candidate_id) + '">接受</button>' +
@@ -204,7 +213,7 @@
       const payload = await response.json();
       showActionResult(payload);
       if (payload.status) renderStatus(payload.status);
-      if (action === "accept_experience_candidate" || action === "reject_experience_candidate") {
+      if (action === "accept_experience_candidate" || action === "reject_experience_candidate" || action === "promote_experience_candidate") {
         loadExperienceCandidates();
       }
     } catch (error) {
