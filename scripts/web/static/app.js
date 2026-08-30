@@ -165,6 +165,64 @@
     }
   }
 
+  function contentNodeLabel(node) {
+    return {
+      research_plan: "研究计划",
+      deep_research: "实际研究结果",
+      content_plan: "内容计划",
+      formal_draft: "初稿",
+      copy_optimization: "文案优化",
+      de_ai_revision: "去模板化修订",
+      review: "审核",
+      user_final_confirmation: "最终稿确认",
+    }[node] || node || "未知节点";
+  }
+
+  function renderContentTasks(tasks) {
+    const container = document.querySelector("#content-tasks");
+    if (!tasks.length) {
+      container.innerHTML = '<p class="notice">当前没有正式内容生产任务。</p>';
+      return;
+    }
+    container.innerHTML = tasks.map(function (task) {
+      const artifact = task.current_artifact || {};
+      const artifactPayload = artifact.payload || artifact;
+      const artifactText = JSON.stringify(artifactPayload || {}, null, 2);
+      const waiting = task.current_status === "awaiting_human_review";
+      const finalConfirmation = task.current_node === "user_final_confirmation" && task.current_status === "approved";
+      const controls = waiting
+        ? '<label>本次确认理由或修改要求<textarea data-content-reason rows="2"></textarea></label>' +
+          '<div class="experience-actions">' +
+          '<button type="button" data-content-action="approve_content_node" data-task-id="' + escapeHtml(task.task_id) + '">确认并继续</button>' +
+          '<button type="button" data-content-action="return_content_node" data-task-id="' + escapeHtml(task.task_id) + '">要求修改</button>' +
+          '</div>'
+        : finalConfirmation
+          ? '<p class="notice">已到最终稿确认节点，仍需用户单独确认。</p>'
+          : '<p class="notice">当前等待外部执行者完成：' + escapeHtml(contentNodeLabel(task.current_node)) + '</p>';
+      return '<article class="experience-card content-task-card" data-content-task-card="' + escapeHtml(task.task_id) + '">' +
+        '<div class="experience-card-header"><h3>' + escapeHtml(task.topic && task.topic.payload && task.topic.payload.title || "正式内容任务") + '</h3>' +
+        '<span class="experience-status">' + escapeHtml(contentNodeLabel(task.current_node)) + ' / ' + escapeHtml(task.current_status) + '</span></div>' +
+        '<details><summary>查看当前内容</summary><pre class="summary">' + escapeHtml(artifactText) + '</pre></details>' +
+        controls +
+        '</article>';
+    }).join("");
+  }
+
+  async function loadContentTasks() {
+    try {
+      const response = await fetch("/api/content-tasks", { method: "GET", cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        document.querySelector("#content-tasks").innerHTML = '<p class="notice error">' +
+          escapeHtml(payload.error || "正式内容任务读取失败") + '</p>';
+        return;
+      }
+      renderContentTasks(payload.tasks || []);
+    } catch (error) {
+      document.querySelector("#content-tasks").innerHTML = '<p class="notice error">无法连接 Creation Assistant Core</p>';
+    }
+  }
+
   async function loadStatus() {
     try {
       const response = await fetch("/api/status", { method: "GET", cache: "no-store" });
@@ -216,6 +274,9 @@
       if (action === "accept_experience_candidate" || action === "reject_experience_candidate" || action === "promote_experience_candidate") {
         loadExperienceCandidates();
       }
+      if (action === "approve_content_node" || action === "return_content_node") {
+        loadContentTasks();
+      }
     } catch (error) {
       showActionResult({ outcome: "failed", error: "Core动作调用失败" });
     }
@@ -239,7 +300,7 @@
   }
 
   document.addEventListener("click", function (event) {
-    const button = event.target.closest("button[data-web-action],button[data-experience-action]");
+    const button = event.target.closest("button[data-web-action],button[data-experience-action],button[data-content-action]");
     if (!button) return;
     if (button.dataset.experienceAction) {
       const card = button.closest("[data-candidate-card]");
@@ -252,6 +313,26 @@
         experience_candidate_id: button.dataset.candidateId,
         reason: reason,
       });
+      return;
+    }
+    if (button.dataset.contentAction) {
+      const card = button.closest("[data-content-task-card]");
+      const reason = card ? card.querySelector("[data-content-reason]").value.trim() : "";
+      if (!reason) {
+        showActionResult({ outcome: "rejected", error: "请填写确认理由或修改要求" });
+        return;
+      }
+      if (button.dataset.contentAction === "approve_content_node") {
+        postAction("approve_content_node", {
+          task_id: button.dataset.taskId,
+          reason: reason,
+        });
+      } else {
+        postAction("return_content_node", {
+          task_id: button.dataset.taskId,
+          requirements: reason,
+        });
+      }
       return;
     }
     const domain = button.dataset.domain;
@@ -296,5 +377,6 @@
     });
     loadStatus();
     loadExperienceCandidates();
+    loadContentTasks();
   });
 }());

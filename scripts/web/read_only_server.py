@@ -87,6 +87,17 @@ class ReadOnlyWebApplication:
         finally:
             database.close()
 
+    def read_content_tasks(self) -> list[dict[str, Any]]:
+        """Read formal content tasks through Core without choosing a task."""
+        database = Stage0ContentProductionCore.open_read_only(
+            self.database_path or database_path_for_identity(self.data_identity),
+            data_identity=self.data_identity,
+        )
+        try:
+            return database.list_content_workbench()
+        finally:
+            database.close()
+
 
 class ActionWebApplication(ReadOnlyWebApplication):
     """Bind one local Web process to Core's existing human action boundary."""
@@ -104,6 +115,8 @@ class ActionWebApplication(ReadOnlyWebApplication):
             "accept_experience_candidate",
             "reject_experience_candidate",
             "promote_experience_candidate",
+            "approve_content_node",
+            "return_content_node",
         }
     )
     _ACTION_NAMES = frozenset(
@@ -120,6 +133,8 @@ class ActionWebApplication(ReadOnlyWebApplication):
             "accept_experience_candidate",
             "reject_experience_candidate",
             "promote_experience_candidate",
+            "approve_content_node",
+            "return_content_node",
         }
     )
 
@@ -408,6 +423,35 @@ class ActionWebApplication(ReadOnlyWebApplication):
             )
             return dict(result)
 
+        if action in {"approve_content_node", "return_content_node"}:
+            task_id = str(payload.get("task_id") or "").strip()
+            if not task_id:
+                raise StateTransitionError("content action requires a production task")
+            if action == "approve_content_node":
+                reason = str(payload.get("reason") or "").strip()
+                if not reason:
+                    raise StateTransitionError("content approval requires a reason")
+                return dict(
+                    business.approve_formal_production_node(
+                        task_id=task_id,
+                        actor=self.actor,
+                        reason=reason,
+                        user_requirements=reason,
+                        idempotency_key=f"web-content-{uuid4().hex}",
+                    )
+                )
+            requirements = str(payload.get("requirements") or "").strip()
+            if not requirements:
+                raise StateTransitionError("content return requires revision requirements")
+            return dict(
+                business.return_formal_production_node(
+                    task_id=task_id,
+                    actor=self.actor,
+                    requirements=requirements,
+                    idempotency_key=f"web-content-{uuid4().hex}",
+                )
+            )
+
         if action == "daily_start":
             domain_label = str(payload.get("domain_label") or "").strip()
             selected_date, domains = business.normalize_daily_request(
@@ -551,6 +595,9 @@ class ReadOnlyRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/experience-candidates":
             self._serve_experience_candidates()
             return
+        if path == "/api/content-tasks":
+            self._serve_content_tasks()
+            return
         if path in {"/", "/index.html"}:
             self._serve_static("index.html")
             return
@@ -608,6 +655,28 @@ class ReadOnlyRequestHandler(BaseHTTPRequestHandler):
                 "ok": True,
                 "source": "Creation Assistant Core",
                 "candidates": candidates,
+            },
+        )
+
+    def _serve_content_tasks(self) -> None:
+        try:
+            tasks = self.application.read_content_tasks()
+        except Exception as exc:
+            self._send_json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {
+                    "ok": False,
+                    "source": "Creation Assistant Core",
+                    "error": f"content task read failed: {exc}",
+                },
+            )
+            return
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "source": "Creation Assistant Core",
+                "tasks": tasks,
             },
         )
 

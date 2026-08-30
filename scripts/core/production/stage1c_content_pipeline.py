@@ -62,6 +62,13 @@ AUTOMATIC_REFINEMENT_NODES = frozenset(
 )
 
 
+def content_node_requires_human_confirmation(*, node: str, domain_label: str) -> bool:
+    """Apply the frozen domain workflow rule to one content node."""
+    if node in HUMAN_REVIEW_NODES:
+        return True
+    return node in {"deep_research", "formal_draft"} and get_content_workflow_mode(domain_label) == "manual_guard"
+
+
 class ContentPipelineValidationError(StateTransitionError):
     pass
 
@@ -801,6 +808,57 @@ class Stage1CContentPipelineService:
             idempotency_key=f"{idempotency_key}:external-complete",
         )
 
+    def continue_after_external_result(
+        self,
+        *,
+        task_id: str,
+        actor: str,
+        user_requirements: str,
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        """Continue one task after Core accepted an external result.
+
+        The external executor only submits a result.  Core keeps the same
+        production task, applies the existing domain mode, and either leaves
+        the result at its human gate or advances to the next external task.
+        """
+        task = self.core.get_task(task_id)
+        node = str(task["current_node"])
+        if task["current_status"] != "awaiting_human_review":
+            raise StateTransitionError(
+                "external-result continuation requires an accepted output awaiting review"
+            )
+        topic_payload = self.core.get_artifact_payload(str(task["topic_version_id"]))["payload"]
+        domain_label = str(topic_payload.get("domain_label") or topic_payload.get("domain") or "").strip()
+        if content_node_requires_human_confirmation(node=node, domain_label=domain_label):
+            return {
+                "task_id": task_id,
+                "status": "awaiting_human_review",
+                "current_node": node,
+            }
+        if node not in AUTOMATIC_REFINEMENT_NODES:
+            raise StateTransitionError(
+                "the accepted external result is not an automatically continuable content node"
+            )
+        approval = self.core.approve_current_node(
+            task_id=task_id,
+            version_id=str(task["current_version_id"]),
+            actor="content_pipeline",
+            actor_kind="system",
+            reason="continued the accepted external result under the current domain workflow mode",
+            idempotency_key=f"{idempotency_key}:{node}:automatic-approval",
+        )
+        continuation = self.advance_formal_content(
+            task_id=task_id,
+            actor=actor,
+            user_requirements=user_requirements,
+            idempotency_key=f"{idempotency_key}:{node}:next",
+        )
+        return {
+            **continuation,
+            "automatic_approval": approval,
+        }
+
     def advance_to_next_human_gate(
         self,
         *,
@@ -869,10 +927,7 @@ class Stage1CContentPipelineService:
                 }
             topic_payload = self.core.get_artifact_payload(str(task["topic_version_id"]))["payload"]
             domain_label = str(topic_payload.get("domain_label") or topic_payload.get("domain") or "").strip()
-            if node in HUMAN_REVIEW_NODES or (
-                node in {"deep_research", "formal_draft"}
-                and get_content_workflow_mode(domain_label) == "manual_guard"
-            ):
+            if content_node_requires_human_confirmation(node=node, domain_label=domain_label):
                 return {
                     "task_id": task_id,
                     "status": "awaiting_human_review",
@@ -951,10 +1006,7 @@ class Stage1CContentPipelineService:
             current = self.core.get_task(task_id)
             topic_payload = self.core.get_artifact_payload(str(current["topic_version_id"]))["payload"]
             domain_label = str(topic_payload.get("domain_label") or topic_payload.get("domain") or "").strip()
-            if node in HUMAN_REVIEW_NODES or (
-                node in {"deep_research", "formal_draft"}
-                and get_content_workflow_mode(domain_label) == "manual_guard"
-            ):
+            if content_node_requires_human_confirmation(node=node, domain_label=domain_label):
                 return {
                     "task_id": task_id,
                     "status": "awaiting_human_review",

@@ -2374,7 +2374,7 @@ class Stage0ContentProductionCore:
             raise StateTransitionError(f"{context} requires a configured formal domain")
         return normalized
 
-    def _require_owned_account_for_domain(self, *, domain_label: str, account_ref: str) -> None:
+    def _require_owned_account_for_domain(self, *, domain_label: str, account_ref: str) -> dict[str, Any]:
         activation = self.get_current_domain_activation(domain_label=domain_label)
         if activation is None:
             raise StateTransitionError(
@@ -2396,6 +2396,7 @@ class Stage0ContentProductionCore:
             ).fetchone()
         if row is None:
             raise StateTransitionError("the service account does not belong to the requested domain")
+        return activation
 
     def submit_formal_topic(
         self,
@@ -2460,19 +2461,34 @@ class Stage0ContentProductionCore:
             raise StateTransitionError("only a user may confirm a formal topic")
         task, version = self._task(task_id), self._version(topic_version_id)
         topic_payload = self.get_artifact_payload(topic_version_id)["payload"]
-        self._require_configured_domain(
+        topic_domain = self._require_configured_domain(
             str(topic_payload.get("domain_label") or topic_payload.get("domain") or ""),
             context="formal topic confirmation",
         )
+        activation = self.get_current_domain_activation(domain_label=topic_domain)
+        if activation is None:
+            raise StateTransitionError("formal topic confirmation requires a current domain activation")
+        topic_payload = {**topic_payload, "activation_id": str(activation["activation_id"])}
         self._assert_current_node(task, "formal_topic", "awaiting_human_review", topic_version_id)
         if version["node"] != "formal_topic":
             raise StateTransitionError("version is not a formal topic")
-        request = {"task_id": task_id, "topic_version_id": topic_version_id, "actor": actor, "reason": reason}
+        request = {
+            "task_id": task_id,
+            "topic_version_id": topic_version_id,
+            "activation_id": str(activation["activation_id"]),
+            "actor": actor,
+            "reason": reason,
+        }
         replay = self._replay("confirm_formal_topic", idempotency_key, request)
         if replay:
             return replay
         revision = int(task["task_revision"]) + 1
         with self.conn:
+            self.conn.execute(
+                "UPDATE stage1a_artifact_payload SET payload_json=?, integrity_hash=? "
+                "WHERE version_id=? AND data_identity=?",
+                (_canonical(topic_payload), _hash(topic_payload), topic_version_id, self.data_identity),
+            )
             self._decision(task_id, "formal_topic", topic_version_id, "approved", actor, actor_kind, reason)
             self._set_task(task_id, node="research_plan", version_id=topic_version_id, status="not_started", revision=revision)
             result = {"task_id": task_id, "current_node": "research_plan", "task_revision": str(revision)}
@@ -2484,6 +2500,7 @@ class Stage0ContentProductionCore:
         if assembly.node not in MODEL_BINDINGS:
             raise StateTransitionError(f"{assembly.node} has no model-input assembly in Stage 0")
         task = self._task(assembly.task_id)
+        self.assert_current_content_task(assembly.task_id)
         if task["current_node"] != assembly.node or task["current_status"] not in {"not_started", "awaiting_human_review"}:
             raise StateTransitionError("input assembly may only be prepared for the current new or returned node")
         upstream = self._approved_upstream(task, assembly.node, assembly.upstream_version_id)
@@ -2514,6 +2531,7 @@ class Stage0ContentProductionCore:
         if node not in MODEL_BINDINGS:
             raise StateTransitionError(f"{node} is not a model-backed Stage 0 node")
         task = self._task(task_id)
+        self.assert_current_content_task(task_id)
         self._assert_current_node(task, node, "not_started")
         assembly = self._assembly(input_assembly_id)
         if assembly["task_id"] != task_id or assembly["node"] != node or assembly["data_identity"] != self.data_identity:
@@ -2758,6 +2776,7 @@ class Stage0ContentProductionCore:
         validation_usage: Mapping[str, Any] | None = None,
     ) -> dict[str, str]:
         """Accept one structured result supplied by an outside executor."""
+        self.assert_current_content_task(task_id)
         return self._complete_node_from_execution(
             task_id=task_id, node_version_id=node_version_id, model_run_id=model_run_id,
             output_ref=output_ref, validation_status=validation_status, actor=actor,
@@ -2788,6 +2807,7 @@ class Stage0ContentProductionCore:
         if validation_status != "passed":
             raise StateTransitionError("only schema-validated output may await human review")
         task, request_version = self._task(task_id), self._version(node_version_id)
+        self.assert_current_content_task(task_id)
         if int(task["task_revision"]) != expected_task_revision:
             raise StaleResultError("execution result is stale because the task revision changed")
         run = self._model_run(model_run_id)
@@ -2893,6 +2913,7 @@ class Stage0ContentProductionCore:
     ) -> str:
         """Record an outside execution as an audit fact, without a model call."""
         task, version = self._task(task_id), self._version(node_version_id)
+        self.assert_current_content_task(task_id)
         execution_id, executor_id = str(execution_id or "").strip(), str(executor_id or "").strip()
         if not execution_id or not executor_id or not isinstance(output_payload, dict):
             raise StateTransitionError("external result requires execution identity and structured fields")
@@ -2930,6 +2951,7 @@ class Stage0ContentProductionCore:
 
     def approve_current_node(self, *, task_id: str, version_id: str, actor: str, actor_kind: str, reason: str, idempotency_key: str) -> dict[str, str]:
         task, version = self._task(task_id), self._version(version_id)
+        self.assert_current_content_task(task_id)
         self._assert_current_node(task, version["node"], "awaiting_human_review", version_id)
         topic_payload = self.get_artifact_payload(str(task["topic_version_id"]))["payload"]
         domain_label = str(topic_payload.get("domain_label") or topic_payload.get("domain") or "").strip()
@@ -2959,6 +2981,7 @@ class Stage0ContentProductionCore:
 
     def return_current_node(self, *, task_id: str, version_id: str, input_assembly_id: str, actor: str, reason: str, idempotency_key: str) -> dict[str, str]:
         task, previous = self._task(task_id), self._version(version_id)
+        self.assert_current_content_task(task_id)
         self._assert_current_node(task, previous["node"], "awaiting_human_review", version_id)
         assembly = self._assembly(input_assembly_id)
         if assembly["task_id"] != task_id or assembly["node"] != previous["node"] or assembly["upstream_version_id"] != previous["upstream_version_id"]:
@@ -2990,6 +3013,7 @@ class Stage0ContentProductionCore:
     ) -> dict[str, str]:
         """Requeue one failed node only after an explicit user retry request."""
         task = self._task(task_id)
+        self.assert_current_content_task(task_id)
         if task["current_status"] != "failed":
             raise StateTransitionError("manual retry is available only for a failed node")
         failed_version = self._version(str(task["current_version_id"]))
@@ -3237,6 +3261,22 @@ class Stage0ContentProductionCore:
         if row is None or row["data_identity"] != self.data_identity:
             raise StateTransitionError("task does not exist in this data identity")
         return row
+
+    def assert_current_content_task(self, task_id: str) -> None:
+        """Reject content work whose topic is no longer tied to the current activation."""
+        task = self._task(task_id)
+        topic = self.get_artifact_payload(str(task["topic_version_id"]))["payload"]
+        domain_label = str(topic.get("domain_label") or topic.get("domain") or "").strip()
+        if not domain_label:
+            raise StateTransitionError("content task has no formal domain binding")
+        activation_id = str(topic.get("activation_id") or "").strip()
+        if not activation_id:
+            if self.data_identity == "production":
+                raise StateTransitionError("production content task has no current activation binding")
+            return
+        activation = self.get_current_domain_activation(domain_label=domain_label)
+        if activation is None or str(activation["activation_id"]) != activation_id:
+            raise StateTransitionError("content task belongs to a historical or non-current domain activation")
 
     def _version(self, version_id: str) -> sqlite3.Row:
         row = self.conn.execute("SELECT * FROM stage0_content_node_version WHERE version_id=?", (version_id,)).fetchone()
@@ -13771,7 +13811,9 @@ class Stage0ContentProductionCore:
             raise StateTransitionError("direct formal topic requires a user and a configured domain")
         if not account_ref.strip() or len(core_question.strip()) < 6 or not scope_or_requirement.strip() or original_instruction is None:
             raise StateTransitionError("direct formal topic requires account, core question, scope and the original user instruction")
-        self._require_owned_account_for_domain(domain_label=domain_label, account_ref=account_ref.strip())
+        activation = self._require_owned_account_for_domain(
+            domain_label=domain_label, account_ref=account_ref.strip()
+        )
         request = {
             "domain_label": domain_label, "account_ref": account_ref.strip(), "core_question": core_question.strip(),
             "scope_or_requirement": scope_or_requirement.strip(), "original_instruction": original_instruction,
@@ -13800,6 +13842,7 @@ class Stage0ContentProductionCore:
         }
         topic_payload = {
             "title": core_question.strip(), "core_question": core_question.strip(), "domain": domain_label,
+            "activation_id": str(activation["activation_id"]),
             "account_ref": account_ref.strip(), "scope_or_requirement": scope_or_requirement.strip(),
             "topic_origin": "direct_user_instruction", "known_materials": known_materials or [],
             "material_gaps": material_gaps or [], "timeliness": timeliness or {}, "risks": risks or [],
@@ -13847,6 +13890,7 @@ class Stage0ContentProductionCore:
     ) -> dict[str, str]:
         """Retain a traceable external research source before the deep-research model step may use it."""
         task = self._task(task_id)
+        self.assert_current_content_task(task_id)
         if task["current_node"] != "deep_research" or task["current_status"] not in {"not_started", "processing"}:
             raise StateTransitionError("research material may only be retained for the active deep-research step")
         if evidence_role not in {"fact_evidence", "professional_interpretation", "audience_perception", "research_clue"}:

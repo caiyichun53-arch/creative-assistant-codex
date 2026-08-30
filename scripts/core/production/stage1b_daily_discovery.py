@@ -1174,7 +1174,7 @@ class Stage1BDailyDiscoveryService:
         actor: str,
         reason: str,
         idempotency_key: str,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         selected = self.core.select_discovery_candidate(
             candidate_version_id=candidate_version_id,
             actor=actor,
@@ -1196,7 +1196,12 @@ class Stage1BDailyDiscoveryService:
             actor=actor,
             idempotency_key=f"{idempotency_key}:research-plan",
         )
-        return {**selected, "research_plan_version_id": plan["node_version_id"], "research_plan_status": "awaiting_human_review"}
+        return {
+            **selected,
+            "research_plan_version_id": plan["node_version_id"],
+            "research_plan_status": str(plan.get("status") or "awaiting_human_review"),
+            **({"external_task": plan["task"]} if isinstance(plan.get("task"), dict) else {}),
+        }
 
     def verify_stage1_production_closure(self) -> dict[str, str]:
         return self.core.latest_stage1_production_handoff()

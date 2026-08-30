@@ -737,12 +737,239 @@ class CreationAssistantFormalBusinessCore:
     def verify_stage1_production_closure(self) -> dict[str, Any]:
         return self.core.latest_stage1_production_handoff()
 
+    def continue_formal_production(
+        self,
+        *,
+        task_id: str,
+        actor: str,
+        user_requirements: str,
+        idempotency_key: str,
+        external_executor: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Continue the current Core-owned production task to its next boundary."""
+        from scripts.core.production.stage1c_content_pipeline import (
+            Stage1CContentPipelineService,
+        )
+
+        return dict(
+            Stage1CContentPipelineService(
+                core=self.core,
+                gateway=None,
+                external_executor=external_executor,
+            ).advance_formal_content(
+                task_id=task_id,
+                actor=actor,
+                user_requirements=user_requirements,
+                idempotency_key=idempotency_key,
+            )
+        )
+
+    def approve_formal_production_node(
+        self,
+        *,
+        task_id: str,
+        actor: str,
+        reason: str,
+        idempotency_key: str,
+        version_id: str | None = None,
+        user_requirements: str | None = None,
+        external_executor: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Approve the current human gate and continue the same production task."""
+        from scripts.core.production.stage1c_content_pipeline import (
+            Stage1CContentPipelineService,
+        )
+
+        task = self.core.get_task(task_id)
+        current_version_id = str(version_id or task.get("current_version_id") or "").strip()
+        if not current_version_id:
+            raise StateTransitionError("formal production approval requires the current version")
+        decision = Stage1CContentPipelineService(
+            core=self.core,
+            gateway=None,
+            external_executor=external_executor,
+        ).approve(
+            task_id=task_id,
+            version_id=current_version_id,
+            actor=actor,
+            reason=reason,
+            idempotency_key=f"{idempotency_key}:approve",
+        )
+        if decision.get("current_node") == "user_final_confirmation":
+            return {
+                "decision": decision,
+                "continuation": {
+                    "task_id": task_id,
+                    "status": "awaiting_final_confirmation",
+                    "current_node": "user_final_confirmation",
+                },
+            }
+        continuation = self.continue_formal_production(
+            task_id=task_id,
+            actor=actor,
+            user_requirements=str(user_requirements or reason),
+            idempotency_key=f"{idempotency_key}:continue",
+            external_executor=external_executor,
+        )
+        return {"decision": decision, "continuation": continuation}
+
+    def return_formal_production_node(
+        self,
+        *,
+        task_id: str,
+        actor: str,
+        requirements: str,
+        idempotency_key: str,
+        version_id: str | None = None,
+        external_executor: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Return the current human output and regenerate its replacement version."""
+        from scripts.core.production.stage1a_research_plan import (
+            Stage1AResearchPlanService,
+        )
+        from scripts.core.production.stage1c_content_pipeline import (
+            Stage1CContentPipelineService,
+        )
+
+        if not requirements.strip():
+            raise StateTransitionError("returning a formal production output requires requirements")
+        task = self.core.get_task(task_id)
+        current_version_id = str(version_id or task.get("current_version_id") or "").strip()
+        if not current_version_id:
+            raise StateTransitionError("formal production return requires the current version")
+        current_version = self.core.get_node_version(current_version_id)
+        if current_version["node"] == "research_plan":
+            returned = Stage1AResearchPlanService(
+                core=self.core,
+                gateway=None,
+                external_executor=external_executor,
+            ).return_research_plan(
+                task_id=task_id,
+                research_plan_version_id=current_version_id,
+                modification_requirements=requirements,
+                actor=actor,
+                idempotency_key=f"{idempotency_key}:return",
+            )
+            regenerated = Stage1AResearchPlanService(
+                core=self.core,
+                gateway=None,
+                external_executor=external_executor,
+            ).generate_research_plan(
+                task_id=task_id,
+                user_requirements=requirements,
+                actor=actor,
+                idempotency_key=f"{idempotency_key}:research-plan",
+            )
+            continuation = {
+                **returned,
+                "research_plan_version_id": regenerated["node_version_id"],
+                "research_plan_status": str(regenerated.get("status") or "awaiting_human_review"),
+                **({"external_task": regenerated["task"]} if isinstance(regenerated.get("task"), dict) else {}),
+            }
+            return {"return": returned, "continuation": continuation}
+        returned = Stage1CContentPipelineService(
+            core=self.core,
+            gateway=None,
+            external_executor=external_executor,
+        ).return_for_revision(
+            task_id=task_id,
+            version_id=current_version_id,
+            actor=actor,
+            requirements=requirements,
+            idempotency_key=f"{idempotency_key}:return",
+        )
+        continuation = self.continue_formal_production(
+            task_id=task_id,
+            actor=actor,
+            user_requirements=requirements,
+            idempotency_key=f"{idempotency_key}:continue",
+            external_executor=external_executor,
+        )
+        return {"return": returned, "continuation": continuation}
+
+    def submit_formal_external_result(
+        self,
+        *,
+        task_id: str,
+        node_version_id: str,
+        execution_id: str,
+        executor_id: str,
+        model_ref: str | None,
+        submitted_at: str | None,
+        output: dict[str, Any],
+        actor: str,
+        idempotency_key: str,
+        experience_usage: Mapping[str, Any] | None = None,
+        validation_usage: Mapping[str, Any] | None = None,
+        user_requirements: str = "continue the current formal production task",
+        external_executor: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Accept one structured external result and continue the same task when allowed."""
+        from scripts.core.production.stage1a_research_plan import (
+            Stage1AResearchPlanService,
+        )
+        from scripts.core.production.stage1c_content_pipeline import (
+            Stage1CContentPipelineService,
+        )
+
+        version = self.core.get_node_version(node_version_id)
+        if str(version["task_id"]) != str(task_id):
+            raise StateTransitionError("external result does not belong to the current production task")
+        service = Stage1AResearchPlanService(
+            core=self.core,
+            gateway=None,
+            external_executor=external_executor,
+        ) if version["node"] == "research_plan" else Stage1CContentPipelineService(
+            core=self.core,
+            gateway=None,
+            external_executor=external_executor,
+        )
+        if version["node"] == "research_plan":
+            submitted = service.submit_research_plan_external_result(  # type: ignore[union-attr]
+                task_id=task_id,
+                node_version_id=node_version_id,
+                execution_id=execution_id,
+                executor_id=executor_id,
+                model_ref=model_ref,
+                submitted_at=submitted_at,
+                output=output,
+                actor=actor,
+                idempotency_key=idempotency_key,
+            )
+            continuation = {
+                "task_id": task_id,
+                "status": "awaiting_human_review",
+                "current_node": "research_plan",
+            }
+        else:
+            submitted = service.submit_content_external_result(  # type: ignore[union-attr]
+                task_id=task_id,
+                node_version_id=node_version_id,
+                execution_id=execution_id,
+                executor_id=executor_id,
+                model_ref=model_ref,
+                submitted_at=submitted_at,
+                output=output,
+                experience_usage=experience_usage,
+                validation_usage=validation_usage,
+                actor=actor,
+                idempotency_key=idempotency_key,
+            )
+            continuation = service.continue_after_external_result(  # type: ignore[union-attr]
+                task_id=task_id,
+                actor=actor,
+                user_requirements=user_requirements,
+                idempotency_key=f"{idempotency_key}:continue",
+            )
+        return {"submitted": submitted, "continuation": continuation}
+
     def execute_formal_research(
         self,
         *,
         action: str,
         payload: dict[str, Any],
         research_gateway: Any | None = None,
+        external_executor: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Apply one named research operation using the existing Core services."""
         # The formal route no longer chooses or calls a model.  The parameter
@@ -798,6 +1025,7 @@ class CreationAssistantFormalBusinessCore:
             service = Stage1AResearchPlanService(
                 core=self.core,
                 gateway=None,
+                external_executor=external_executor,
             )
             return service.create_direct_formal_topic_and_generate_plan(
                 domain_label=str(domain_label),
@@ -821,14 +1049,14 @@ class CreationAssistantFormalBusinessCore:
                 "reason",
                 "idempotency_key",
             )
-            return Stage1AResearchPlanService(
-                core=self.core, gateway=None  # type: ignore[arg-type]
-            ).approve_research_plan(
+            return self.approve_formal_production_node(
                 task_id=str(task_id),
-                research_plan_version_id=str(version_id),
                 actor=str(actor),
                 reason=str(reason),
                 idempotency_key=str(idempotency_key),
+                version_id=str(version_id),
+                user_requirements=str(payload.get("user_requirements") or reason),
+                external_executor=external_executor,
             )
 
         if action == "retry_plan":
@@ -870,7 +1098,7 @@ class CreationAssistantFormalBusinessCore:
                     "retry_plan requires a failed or manually requeued research_plan task"
                 )
             plan = Stage1AResearchPlanService(
-                core=self.core, gateway=None
+                core=self.core, gateway=None, external_executor=external_executor
             ).generate_research_plan(
                 task_id=str(task_id),
                 user_requirements=user_requirements,
@@ -893,7 +1121,7 @@ class CreationAssistantFormalBusinessCore:
                 "idempotency_key",
             )
             service = Stage1AResearchPlanService(
-                core=self.core, gateway=None
+                core=self.core, gateway=None, external_executor=external_executor
             )
             returned = service.return_research_plan(
                 task_id=str(task_id),
@@ -920,7 +1148,7 @@ class CreationAssistantFormalBusinessCore:
                 "task_id", "actor", "user_requirements", "idempotency_key"
             )
             return Stage1CContentPipelineService(
-                core=self.core, gateway=None  # type: ignore[arg-type]
+                core=self.core, gateway=None, external_executor=external_executor  # type: ignore[arg-type]
             ).advance_formal_content(
                 task_id=str(task_id),
                 actor=str(actor),
@@ -936,14 +1164,14 @@ class CreationAssistantFormalBusinessCore:
                 "reason",
                 "idempotency_key",
             )
-            return Stage1CContentPipelineService(
-                core=self.core, gateway=None  # type: ignore[arg-type]
-            ).approve(
+            return self.approve_formal_production_node(
                 task_id=str(task_id),
-                version_id=str(version_id),
                 actor=str(actor),
                 reason=str(reason),
                 idempotency_key=str(idempotency_key),
+                version_id=str(version_id),
+                user_requirements=str(payload.get("user_requirements") or reason),
+                external_executor=external_executor,
             )
 
         if action == "return_research_result":
@@ -954,14 +1182,64 @@ class CreationAssistantFormalBusinessCore:
                 "actor",
                 "idempotency_key",
             )
-            return Stage1CContentPipelineService(
-                core=self.core, gateway=None  # type: ignore[arg-type]
-            ).return_for_revision(
+            return self.return_formal_production_node(
                 task_id=str(task_id),
-                version_id=str(version_id),
                 actor=str(actor),
                 requirements=str(requirements),
                 idempotency_key=str(idempotency_key),
+                version_id=str(version_id),
+                external_executor=external_executor,
+            )
+
+        if action in {"approve_content_node", "approve_content_plan", "approve_draft", "approve_review"}:
+            task_id, actor, reason, idempotency_key = required(
+                "task_id", "actor", "reason", "idempotency_key"
+            )
+            version_id = payload.get("version_id") or payload.get("content_version_id")
+            return self.approve_formal_production_node(
+                task_id=str(task_id),
+                actor=str(actor),
+                reason=str(reason),
+                idempotency_key=str(idempotency_key),
+                version_id=str(version_id) if version_id else None,
+                user_requirements=str(payload.get("user_requirements") or reason),
+                external_executor=external_executor,
+            )
+
+        if action in {"return_content_node", "return_content_plan", "return_draft", "return_review"}:
+            task_id, actor, requirements, idempotency_key = required(
+                "task_id", "actor", "modification_requirements", "idempotency_key"
+            )
+            version_id = payload.get("version_id") or payload.get("content_version_id")
+            return self.return_formal_production_node(
+                task_id=str(task_id),
+                actor=str(actor),
+                requirements=str(requirements),
+                idempotency_key=str(idempotency_key),
+                version_id=str(version_id) if version_id else None,
+                external_executor=external_executor,
+            )
+
+        if action == "submit_external_result":
+            task_id, node_version_id, execution_id, executor_id, output, actor, idempotency_key = required(
+                "task_id", "node_version_id", "execution_id", "executor_id", "output", "actor", "idempotency_key"
+            )
+            if not isinstance(output, dict):
+                raise StateTransitionError("external result output must be an object")
+            return self.submit_formal_external_result(
+                task_id=str(task_id),
+                node_version_id=str(node_version_id),
+                execution_id=str(execution_id),
+                executor_id=str(executor_id),
+                model_ref=(str(payload.get("model_ref") or "").strip() or None),
+                submitted_at=(str(payload.get("submitted_at") or "").strip() or None),
+                output=output,
+                actor=str(actor),
+                idempotency_key=str(idempotency_key),
+                experience_usage=payload.get("experience_usage") if isinstance(payload.get("experience_usage"), Mapping) else None,
+                validation_usage=payload.get("validation_usage") if isinstance(payload.get("validation_usage"), Mapping) else None,
+                user_requirements=str(payload.get("user_requirements") or "continue the current formal production task"),
+                external_executor=external_executor,
             )
 
         if action == "view_task":
