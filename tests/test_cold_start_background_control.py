@@ -36,7 +36,7 @@ from scripts.core.production.stage0_content_core import (
     Stage0ContentProductionCore,
     StateTransitionError,
 )
-from tests._cold_start_test_model import test_task_model_resolver
+from tests._cold_start_test_model import resolve_task_model
 
 
 class ColdStartBackgroundControlTest(unittest.TestCase):
@@ -117,7 +117,7 @@ class ColdStartBackgroundControlTest(unittest.TestCase):
         return ColdStartOnboardingService(
             core=self.core,
             config_dir=self.config_dir,
-            task_model_resolver=test_task_model_resolver,
+            task_model_resolver=resolve_task_model,
             background_execution_launcher=launcher or self.launcher,
             background_execution_inspector=self.inspector,
             background_execution_stopper=self.stopper,

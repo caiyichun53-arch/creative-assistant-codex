@@ -400,6 +400,39 @@ def submit_cold_start_domain_boundary_external_result(
     )
 
 
+def prepare_cold_start_domain_boundary_external_task(
+    self: Any, *, cold_start_id: str, boundary_candidate_id: str
+) -> dict[str, Any]:
+    """Expose the existing Core-owned boundary task to a transport adapter."""
+    candidate = self.conn.execute(
+        "SELECT cold_start_id, source_snapshot_json, status "
+        "FROM stage0_cold_start_domain_boundary_candidate "
+        "WHERE boundary_candidate_id=? AND data_identity=?",
+        (boundary_candidate_id, self.data_identity),
+    ).fetchone()
+    if candidate is None or str(candidate["cold_start_id"]) != str(cold_start_id):
+        raise self.StateTransitionError(
+            "domain-boundary external task does not belong to the current run"
+        )
+    if str(candidate["status"] or "") != "preparing":
+        raise self.StateTransitionError(
+            "domain-boundary external task requires a preparing candidate"
+        )
+    try:
+        snapshot = json.loads(str(candidate["source_snapshot_json"] or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise self.StateTransitionError(
+            "domain-boundary source snapshot is not valid JSON"
+        ) from exc
+    if not isinstance(snapshot, dict):
+        raise self.StateTransitionError("domain-boundary source snapshot must be an object")
+    return _domain_boundary_external_task(
+        self,
+        boundary_candidate_id=boundary_candidate_id,
+        snapshot=snapshot,
+    )
+
+
 def _view(self: Any, row: Any) -> dict[str, Any]:
     def read_json(name: str, fallback: Any) -> Any:
         try:
@@ -904,6 +937,7 @@ def attach_core_methods(core_cls: type[Any]) -> None:
     core_cls.get_cold_start_domain_boundary_candidate = get_candidate
     core_cls.build_cold_start_domain_boundary_candidates = build_candidates
     core_cls.record_cold_start_domain_boundary_external_execution = _record_external_domain_boundary_execution
+    core_cls.prepare_cold_start_domain_boundary_external_task = prepare_cold_start_domain_boundary_external_task
     core_cls.submit_cold_start_domain_boundary_external_result = submit_cold_start_domain_boundary_external_result
     core_cls.review_cold_start_domain_boundary = review_boundary
     core_cls.cold_start_domain_boundary_is_frozen = boundary_is_frozen

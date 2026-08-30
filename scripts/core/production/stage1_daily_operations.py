@@ -791,3 +791,174 @@ class ProductionDailyOperationsService:
             "upstream_failures": upstream_failures,
             "stop_reason": stop_reason,
         }
+
+
+def _load_daily_hit_external_material(
+    core: Stage0ContentProductionCore, *, hit_id: str
+) -> dict[str, Any]:
+    hit = core.conn.execute(
+        "SELECT hit.*, account.domain_label FROM hits hit "
+        "JOIN competitor_accounts account ON account.account_id=hit.account_id "
+        "JOIN stage0_content_account formal_account "
+        "ON formal_account.content_account_id=account.account_id "
+        "AND formal_account.data_identity=? "
+        "AND formal_account.account_role='competitor' "
+        "AND formal_account.status='active' "
+        "WHERE hit.hit_id=?",
+        (core.data_identity, hit_id),
+    ).fetchone()
+    if hit is None or str(hit["preparation_status"] or "") != "completed":
+        raise StateTransitionError(
+            "daily competitor breakdown external task requires completed hit material"
+        )
+    transcript = core.conn.execute(
+        "SELECT cleaned_transcript_text, raw_transcript_text FROM hit_transcripts "
+        "WHERE hit_id=? AND processing_status='completed' "
+        "ORDER BY version DESC, created_at DESC LIMIT 1",
+        (hit_id,),
+    ).fetchone()
+    if transcript is None:
+        raise StateTransitionError("daily competitor breakdown requires a completed transcript")
+    transcript_text = str(
+        transcript["cleaned_transcript_text"]
+        or transcript["raw_transcript_text"]
+        or ""
+    ).strip()
+    if not transcript_text:
+        raise StateTransitionError("daily competitor breakdown requires non-empty transcript material")
+    comment_rows = core.conn.execute(
+        "SELECT comment_id, text, like_count, sample_rank FROM hit_comments "
+        f"WHERE hit_id=? ORDER BY sample_rank, comment_id LIMIT {COMMENT_TOP_N}",
+        (hit_id,),
+    ).fetchall()
+    comments = [
+        {
+            "comment_id": str(row["comment_id"]),
+            "text": str(row["text"]),
+            "like_count": int(row["like_count"] or 0),
+            "sample_rank": int(row["sample_rank"] or 0),
+        }
+        for row in comment_rows
+    ]
+    domain_label = str(hit["domain_label"] or "generic")
+    input_payload = {
+        "correlation_id": f"{hit['run_id']}:{hit_id}",
+        "source_id": str(hit["platform_item_id"]),
+        "transcript": transcript_text,
+        "metrics": {
+            "like_count": int(hit["like_count"] or 0),
+            "comment_count": int(hit["comment_count"] or 0),
+            "share_count": int(hit["share_count"] or 0),
+            "collect_count": int(hit["collect_count"] or 0),
+        },
+        "comments": comments,
+        "domain_label": domain_label,
+        "domain_context": _breakdown_domain_context(
+            domain_label,
+            observed_content_types=core.observed_breakdown_content_types(
+                domain_label=domain_label
+            ),
+            content_type_lifecycle="classify",
+        ),
+        "schema_version": "competitor_breakdown.input.v1",
+    }
+    return {
+        "hit_id": hit_id,
+        "run_id": str(hit["run_id"] or ""),
+        "input_payload": input_payload,
+    }
+
+
+def prepare_daily_competitor_breakdown_external_task(
+    core: Stage0ContentProductionCore, *, hit_id: str
+) -> dict[str, Any]:
+    """Expose the existing daily hit breakdown task through the common boundary."""
+    material = _load_daily_hit_external_material(core, hit_id=hit_id)
+    input_payload = material["input_payload"]
+    external_task, _ = prepare_external_skill_task(
+        FormalSkillContract.from_runtime_skill("competitor_breakdown"),
+        input_payload,
+        constraints={
+            "use_only_supplied_material": True,
+            "preserve_source_identity": True,
+            "cannot_change_business_state": True,
+            "do_not_search": True,
+            "no_fuzzy_evidence_matching": True,
+        },
+        business_context={
+            "hit_id": hit_id,
+            "run_id": material["run_id"],
+            "data_identity": core.data_identity,
+            "origin": "daily_competitor_breakdown",
+        },
+    )
+    external_task["task_identity"] = {
+        "hit_id": hit_id,
+        "run_id": material["run_id"],
+    }
+    return external_task
+
+
+def submit_daily_competitor_breakdown_external_result(
+    core: Stage0ContentProductionCore,
+    *,
+    hit_id: str,
+    execution_id: str,
+    executor_id: str,
+    model_ref: str | None,
+    submitted_at: str | None,
+    output: dict[str, Any],
+) -> dict[str, Any]:
+    """Accept a daily hit breakdown through the existing Core records."""
+    material = _load_daily_hit_external_material(core, hit_id=hit_id)
+    input_payload = material["input_payload"]
+    if not isinstance(output, dict):
+        raise StateTransitionError("daily competitor breakdown external result must be structured fields")
+    model_run_id = core.record_external_daily_hit_execution(
+        hit_id=hit_id,
+        execution_id=execution_id,
+        executor_id=executor_id,
+        model_ref=model_ref,
+        submitted_at=submitted_at,
+        input_payload=input_payload,
+        output_payload=output,
+    )
+    try:
+        validated = validate_external_skill_output(
+            FormalSkillContract.from_runtime_skill("competitor_breakdown"),
+            input_payload,
+            output,
+        )
+    except Exception as exc:
+        core.conn.execute(
+            "UPDATE stage0_daily_hit_model_run SET error_json=? "
+            "WHERE daily_hit_model_run_id=?",
+            (
+                json.dumps({"validation_error": str(exc)}, ensure_ascii=False),
+                model_run_id,
+            ),
+        )
+        raise
+    breakdown = core.record_daily_hit_breakdown(
+        hit_id=hit_id,
+        artifact=validated,
+        model_run_id=model_run_id,
+    )
+    expansions = core.register_breakdown_question_expansions(
+        domain_label=str(input_payload["domain_label"]),
+        breakdown=validated,
+        parent_source_ref={
+            "source_type": "hit_breakdown",
+            "source_object_id": hit_id,
+            "source_object_version": model_run_id,
+        },
+        actor="daily_hit_breakdown",
+        content_type_lifecycle="classify",
+    )
+    return {
+        "hit_id": hit_id,
+        "status": "completed",
+        "model_run_id": model_run_id,
+        "breakdown": breakdown,
+        "question_expansions": expansions,
+    }

@@ -18,7 +18,7 @@ from scripts.core.production.stage1_competitor_registration import (
     ConfiguredCompetitorRegistrationExecutor,
     build_production_competitor_registration_gateway,
 )
-from tests._cold_start_test_model import test_task_model_resolver
+from tests._cold_start_test_model import resolve_task_model
 
 
 def _payload(domain: str) -> dict:
@@ -124,7 +124,7 @@ class HermesTaskModelInheritanceTest(unittest.TestCase):
         self.service = ColdStartOnboardingService(
             core=self.core,
             config_dir=self.config_dir,
-            task_model_resolver=test_task_model_resolver,
+            task_model_resolver=resolve_task_model,
         )
 
     def tearDown(self) -> None:
@@ -233,7 +233,7 @@ class HermesTaskModelInheritanceTest(unittest.TestCase):
         def resolver(context: dict[str, object] | None, _override: str | None) -> dict[str, object]:
             if not context or not str(context.get("task_model_name") or "").strip():
                 return {}
-            return test_task_model_resolver(context, None)
+            return resolve_task_model(context, None)
 
         service = ColdStartOnboardingService(
             core=self.core,
@@ -335,7 +335,7 @@ class HermesTaskModelInheritanceTest(unittest.TestCase):
 
     def test_g_injected_binding_is_normalized_without_secrets(self) -> None:
         def resolver(context: dict[str, object] | None, override: str | None) -> dict[str, object]:
-            binding = test_task_model_resolver(context, override)
+            binding = resolve_task_model(context, override)
             binding["api_key"] = "must-not-be-persisted"
             binding["access_token"] = "must-not-be-persisted"
             return binding

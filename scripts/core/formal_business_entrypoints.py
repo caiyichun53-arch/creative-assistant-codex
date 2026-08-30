@@ -976,6 +976,24 @@ class CreationAssistantFormalBusinessCore:
                 "status": "awaiting_human_review",
                 "current_node": "research_plan",
             }
+        elif version["node"] == "deep_research":
+            submitted = service.submit_deep_research_external_result(  # type: ignore[union-attr]
+                task_id=task_id,
+                node_version_id=node_version_id,
+                execution_id=execution_id,
+                executor_id=executor_id,
+                model_ref=model_ref,
+                submitted_at=submitted_at,
+                output=output,
+                actor=actor,
+                idempotency_key=idempotency_key,
+            )
+            continuation = service.continue_after_external_result(  # type: ignore[union-attr]
+                task_id=task_id,
+                actor=actor,
+                user_requirements=user_requirements,
+                idempotency_key=f"{idempotency_key}:continue",
+            )
         else:
             submitted = service.submit_content_external_result(  # type: ignore[union-attr]
                 task_id=task_id,

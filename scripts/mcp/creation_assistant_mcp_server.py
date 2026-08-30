@@ -1,4 +1,4 @@
-"""Minimal stdio MCP server for the Stage 2B-1 external task boundary.
+"""Minimal stdio MCP server for the shared external task boundary.
 
 The server is deliberately an adapter: it exposes fixed Core operations and
 does not expose SQL, a task queue, a second lifecycle, or model selection.
@@ -13,15 +13,49 @@ from pathlib import Path
 from typing import Any
 
 from scripts.core.core_entry import build_status
+from scripts.core.formal_business_entrypoints import (
+    CreationAssistantFormalBusinessCore,
+)
 from scripts.core.production.stage0_content_core import Stage0ContentProductionCore
+from scripts.core.production.domain_boundary_lifecycle import (
+    prepare_cold_start_domain_boundary_external_task,
+)
+from scripts.core.production.experience_candidate_proposal import (
+    ExperienceCandidateProposalService,
+)
+from scripts.core.production.stage1_competitor_registration import (
+    prepare_competitor_breakdown_external_task,
+    submit_competitor_breakdown_external_result,
+)
+from scripts.core.production.stage1a_research_plan import Stage1AResearchPlanService
+from scripts.core.production.stage1_daily_operations import (
+    prepare_daily_competitor_breakdown_external_task,
+    submit_daily_competitor_breakdown_external_result,
+)
 from scripts.core.production.stage1b_daily_discovery import (
     Stage1BDailyDiscoveryService,
+)
+from scripts.core.production.stage1c_content_pipeline import (
+    Stage1CContentPipelineService,
 )
 
 
 SERVER_NAME = "creation-assistant"
 SERVER_VERSION = "stage2b-1"
 MCP_PROTOCOL_VERSION = "2024-11-05"
+SUPPORTED_EXTERNAL_TASK_TYPES = (
+    "source_to_topic",
+    "competitor_breakdown",
+    "research_plan",
+    "content_deep_research",
+    "content_plan_generation",
+    "formal_draft_generate",
+    "copy_optimization",
+    "de_ai_revision",
+    "final_content_review",
+    "experience_candidate_propose",
+    "domain_boundary_proposal",
+)
 
 
 class CreationAssistantMcpError(RuntimeError):
@@ -51,7 +85,11 @@ class CreationAssistantMcpApplication:
 
     def __init__(self, core: Stage0ContentProductionCore) -> None:
         self.core = core
+        self.business = CreationAssistantFormalBusinessCore(core=core)
         self.discovery = Stage1BDailyDiscoveryService(core=core, gateway=None)
+        self.research = Stage1AResearchPlanService(core=core, gateway=None)
+        self.content = Stage1CContentPipelineService(core=core, gateway=None)
+        self.experience = ExperienceCandidateProposalService(core=core)
 
     def close(self) -> None:
         self.core.close()
@@ -67,7 +105,7 @@ class CreationAssistantMcpApplication:
             "mcp_database": None,
             "database_path": str(self.core.db_path),
             "external_task_boundary": {
-                "task_types": ["source_to_topic"],
+                "task_types": list(SUPPORTED_EXTERNAL_TASK_TYPES),
                 "model_selection": "external_client",
                 "provider_selection": "external_client",
                 "formal_skill_source": "Creation Assistant runtime skill",
@@ -75,41 +113,273 @@ class CreationAssistantMcpApplication:
         })
         return status
 
+    @staticmethod
+    def _task_request(arguments: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        task_type = arguments.get("task_type")
+        task_identity = arguments.get("task_identity")
+        # Keep the original source-to-topic calls readable for existing
+        # clients while normalizing them into the same generic protocol.
+        if task_type is None and all(
+            isinstance(arguments.get(key), str) and arguments.get(key).strip()
+            for key in ("run_id", "source_version_id", "assembly_id")
+        ):
+            task_type = "source_to_topic"
+            task_identity = {
+                "run_id": arguments["run_id"],
+                "source_version_id": arguments["source_version_id"],
+                "assembly_id": arguments["assembly_id"],
+            }
+        if not isinstance(task_type, str) or not task_type.strip():
+            raise CreationAssistantMcpError("task_type is required")
+        task_type = task_type.strip()
+        if task_type not in SUPPORTED_EXTERNAL_TASK_TYPES:
+            raise CreationAssistantMcpError(
+                f"task_type is not exposed by the standard external boundary: {task_type}"
+            )
+        if not isinstance(task_identity, dict):
+            raise CreationAssistantMcpError("task_identity must be an object")
+        return task_type, dict(task_identity)
+
+    @staticmethod
+    def _identity_text(identity: dict[str, Any], name: str) -> str:
+        value = identity.get(name)
+        if not isinstance(value, str) or not value.strip():
+            raise CreationAssistantMcpError(
+                f"task_identity.{name} is required for the requested task type"
+            )
+        return value.strip()
+
+    @staticmethod
+    def _attach_identity(
+        task: dict[str, Any], *, task_type: str, task_identity: dict[str, Any]
+    ) -> dict[str, Any]:
+        if str(task.get("task_type") or "") != task_type:
+            raise CreationAssistantMcpError(
+                "Core returned a task type different from the requested task type"
+            )
+        result = dict(task)
+        result["task_identity"] = dict(task_identity)
+        return result
+
     def get_external_task(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        task = self.discovery.prepare_source_to_topic_external_task(
-            run_id=_required_text(arguments, "run_id"),
-            source_version_id=_required_text(arguments, "source_version_id"),
-            assembly_id=_required_text(arguments, "assembly_id"),
+        task_type, identity = self._task_request(arguments)
+        if task_type == "source_to_topic":
+            task = self.discovery.prepare_source_to_topic_external_task(
+                run_id=self._identity_text(identity, "run_id"),
+                source_version_id=self._identity_text(identity, "source_version_id"),
+                assembly_id=self._identity_text(identity, "assembly_id"),
+            )
+        elif task_type == "competitor_breakdown":
+            if "hit_id" in identity:
+                if "registration_id" in identity or "source_id" in identity:
+                    raise CreationAssistantMcpError(
+                        "competitor breakdown identity cannot mix hit and registration identities"
+                    )
+                task = prepare_daily_competitor_breakdown_external_task(
+                    self.core,
+                    hit_id=self._identity_text(identity, "hit_id"),
+                )
+            else:
+                if "registration_id" not in identity or "source_id" not in identity:
+                    raise CreationAssistantMcpError(
+                        "competitor breakdown identity needs a hit or registration/source identity"
+                    )
+                task = prepare_competitor_breakdown_external_task(
+                    self.core,
+                    registration_id=self._identity_text(identity, "registration_id"),
+                    source_id=self._identity_text(identity, "source_id"),
+                )
+        elif task_type == "research_plan":
+            task = self.research.prepare_research_plan_external_task(
+                task_id=self._identity_text(identity, "task_id"),
+                node_version_id=self._identity_text(identity, "node_version_id"),
+            )
+        elif task_type == "content_deep_research":
+            task = self.content.prepare_deep_research_external_task(
+                task_id=self._identity_text(identity, "task_id"),
+                node_version_id=self._identity_text(identity, "node_version_id"),
+            )
+        elif task_type in {
+            "content_plan_generation",
+            "formal_draft_generate",
+            "copy_optimization",
+            "de_ai_revision",
+            "final_content_review",
+        }:
+            task = self.content.prepare_content_external_task(
+                task_id=self._identity_text(identity, "task_id"),
+                node_version_id=self._identity_text(identity, "node_version_id"),
+            )
+        elif task_type == "experience_candidate_propose":
+            task = self.experience.prepare_external_task(
+                experience_candidate_id=self._identity_text(
+                    identity, "experience_candidate_id"
+                ),
+            )
+        elif task_type == "domain_boundary_proposal":
+            task = prepare_cold_start_domain_boundary_external_task(
+                self.core,
+                cold_start_id=self._identity_text(identity, "cold_start_id"),
+                boundary_candidate_id=self._identity_text(
+                    identity, "boundary_candidate_id"
+                ),
+            )
+        else:  # pragma: no cover - guarded by _task_request
+            raise CreationAssistantMcpError(f"unsupported task type: {task_type}")
+        task = self._attach_identity(
+            task, task_type=task_type, task_identity=identity
         )
         return {"status": "ready", "task": task}
 
     def submit_external_result(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        run_id = _required_text(arguments, "run_id")
-        source_version_id = _required_text(arguments, "source_version_id")
-        assembly_id = _required_text(arguments, "assembly_id")
-        receipt, output_payload = self.discovery.submit_source_to_topic_external_result(
-            run_id=run_id,
-            source_version_id=source_version_id,
-            assembly_id=assembly_id,
-            execution_id=_required_text(arguments, "execution_id"),
-            executor_id=_required_text(arguments, "executor_id"),
-            model_ref=(
-                str(arguments.get("model_ref") or "").strip() or None
+        task_type, identity = self._task_request(arguments)
+        execution_id = _required_text(arguments, "execution_id")
+        executor_id = _required_text(arguments, "executor_id")
+        output = _required_object(arguments, "output")
+        model_ref = str(arguments.get("model_ref") or "").strip() or None
+        submitted_at = str(arguments.get("submitted_at") or "").strip() or None
+        if task_type == "source_to_topic":
+            receipt, output_payload = self.discovery.submit_source_to_topic_external_result(
+                run_id=self._identity_text(identity, "run_id"),
+                source_version_id=self._identity_text(identity, "source_version_id"),
+                assembly_id=self._identity_text(identity, "assembly_id"),
+                execution_id=execution_id,
+                executor_id=executor_id,
+                model_ref=model_ref,
+                submitted_at=submitted_at,
+                output=output,
+            )
+            return {
+                "status": "accepted",
+                "task_type": task_type,
+                "model_run_id": receipt.model_run_id,
+                "validated_output": output_payload,
+                "business_state_changed_by": "Creation Assistant Core",
+            }
+        if task_type == "competitor_breakdown":
+            if "hit_id" in identity:
+                if "registration_id" in identity or "source_id" in identity:
+                    raise CreationAssistantMcpError(
+                        "competitor breakdown identity cannot mix hit and registration identities"
+                    )
+                result = submit_daily_competitor_breakdown_external_result(
+                    self.core,
+                    hit_id=self._identity_text(identity, "hit_id"),
+                    execution_id=execution_id,
+                    executor_id=executor_id,
+                    model_ref=model_ref,
+                    submitted_at=submitted_at,
+                    output=output,
+                )
+            else:
+                if "registration_id" not in identity or "source_id" not in identity:
+                    raise CreationAssistantMcpError(
+                        "competitor breakdown identity needs a hit or registration/source identity"
+                    )
+                result = submit_competitor_breakdown_external_result(
+                    self.core,
+                    registration_id=self._identity_text(identity, "registration_id"),
+                    source_id=self._identity_text(identity, "source_id"),
+                    execution_id=execution_id,
+                    executor_id=executor_id,
+                    model_ref=model_ref,
+                    submitted_at=submitted_at,
+                    output=output,
+                )
+            return {
+                "status": "accepted",
+                "task_type": task_type,
+                "result": result,
+                "business_state_changed_by": "Creation Assistant Core",
+            }
+        if task_type == "domain_boundary_proposal":
+            result = self.core.submit_cold_start_domain_boundary_external_result(
+                cold_start_id=self._identity_text(identity, "cold_start_id"),
+                boundary_candidate_id=self._identity_text(
+                    identity, "boundary_candidate_id"
+                ),
+                execution_id=execution_id,
+                executor_id=executor_id,
+                model_ref=model_ref,
+                submitted_at=submitted_at,
+                output=output,
+            )
+            return {
+                "status": "accepted",
+                "task_type": task_type,
+                "result": result,
+                "business_state_changed_by": "Creation Assistant Core",
+            }
+        if task_type == "experience_candidate_propose":
+            task = self.get_external_task(
+                {"task_type": task_type, "task_identity": identity}
+            )["task"]
+            result = self.experience.submit_experience_candidate_external_result(
+                task=task,
+                execution_id=execution_id,
+                executor_id=executor_id,
+                model_ref=model_ref,
+                submitted_at=submitted_at,
+                output=output,
+            )
+            return {
+                "status": "accepted",
+                "task_type": task_type,
+                "result": result,
+                "business_state_changed_by": "Creation Assistant Core",
+            }
+        task = self.get_external_task(
+            {"task_type": task_type, "task_identity": identity}
+        )["task"]
+        user_requirements = str(
+            arguments.get("user_requirements")
+            or "continue the current formal production task"
+        ).strip()
+        if not user_requirements:
+            raise CreationAssistantMcpError("user_requirements cannot be empty")
+        usage = arguments.get("experience_usage")
+        validation_usage = arguments.get("validation_usage")
+        if usage is not None and not isinstance(usage, dict):
+            raise CreationAssistantMcpError("experience_usage must be an object")
+        if validation_usage is not None and not isinstance(validation_usage, dict):
+            raise CreationAssistantMcpError("validation_usage must be an object")
+        identity_key = _json_text(identity)
+        result = self.business.submit_formal_external_result(
+            task_id=self._identity_text(identity, "task_id"),
+            node_version_id=self._identity_text(identity, "node_version_id"),
+            execution_id=execution_id,
+            executor_id=executor_id,
+            model_ref=model_ref,
+            submitted_at=submitted_at,
+            output=output,
+            actor=executor_id,
+            idempotency_key=str(
+                arguments.get("idempotency_key")
+                or f"mcp-external:{task_type}:{identity_key}:{execution_id}"
             ),
-            submitted_at=(
-                str(arguments.get("submitted_at") or "").strip() or None
-            ),
-            output=_required_object(arguments, "output"),
+            experience_usage=usage,
+            validation_usage=validation_usage,
+            user_requirements=user_requirements,
         )
         return {
             "status": "accepted",
-            "task_type": "source_to_topic",
-            "model_run_id": receipt.model_run_id,
-            "validated_output": output_payload,
+            "task_type": task_type,
+            "result": result,
             "business_state_changed_by": "Creation Assistant Core",
         }
 
     def get_external_result(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if "task_type" in arguments or "task_identity" in arguments:
+            task_type, identity = self._task_request(arguments)
+            if task_type != "source_to_topic":
+                raise CreationAssistantMcpError(
+                    "persisted external-result lookup is not defined for this task type"
+                )
+            arguments = {
+                "run_id": self._identity_text(identity, "run_id"),
+                "source_version_id": self._identity_text(identity, "source_version_id"),
+                "assembly_id": self._identity_text(identity, "assembly_id"),
+            }
         return self.core.get_discovery_external_execution_result(
             run_id=_required_text(arguments, "run_id"),
             source_version_id=_required_text(arguments, "source_version_id"),
@@ -133,6 +403,21 @@ def _identifier_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
+            "task_type": {
+                "type": "string",
+                "enum": list(SUPPORTED_EXTERNAL_TASK_TYPES),
+            },
+            "task_identity": {"type": "object"},
+        },
+        "required": ["task_type", "task_identity"],
+        "additionalProperties": False,
+    }
+
+
+def _legacy_source_identifier_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
             "run_id": {"type": "string"},
             "source_version_id": {"type": "string"},
             "assembly_id": {"type": "string"},
@@ -152,12 +437,12 @@ def tool_definitions() -> list[dict[str, Any]]:
         },
         {
             "name": "creation_assistant_get_external_task",
-            "description": "Get one Core-prepared source_to_topic task, including its formal Skill and minimal material.",
+            "description": "Get one Core-prepared external task of the requested type, including its formal Skill, material, constraints, and output schema.",
             "inputSchema": identifiers,
         },
         {
             "name": "creation_assistant_submit_external_result",
-            "description": "Submit structured source_to_topic fields for Core validation and acceptance.",
+            "description": "Submit one structured external result for Core validation and continuation of the same business task.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -166,10 +451,14 @@ def tool_definitions() -> list[dict[str, Any]]:
                     "executor_id": {"type": "string"},
                     "model_ref": {"type": "string"},
                     "submitted_at": {"type": "string"},
+                    "idempotency_key": {"type": "string"},
+                    "user_requirements": {"type": "string"},
+                    "experience_usage": {"type": "object"},
+                    "validation_usage": {"type": "object"},
                     "output": {"type": "object"},
                 },
                 "required": [
-                    "run_id", "source_version_id", "assembly_id",
+                    "task_type", "task_identity",
                     "execution_id", "executor_id", "output",
                 ],
                 "additionalProperties": False,
@@ -178,7 +467,7 @@ def tool_definitions() -> list[dict[str, Any]]:
         {
             "name": "creation_assistant_get_external_result",
             "description": "Read the persisted Core processing result for one external execution.",
-            "inputSchema": identifiers,
+            "inputSchema": _legacy_source_identifier_schema(),
         },
     ]
 

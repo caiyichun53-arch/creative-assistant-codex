@@ -9,7 +9,7 @@ import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
-from tests._cold_start_test_model import test_task_model_resolver
+from tests._cold_start_test_model import resolve_task_model
 
 from scripts.core.business_data.domain_labels import DOMAIN_CONFIG_DIR, set_domain_pack_config_dir
 from scripts.core.runtime.runtime_storage import runtime_path
@@ -282,11 +282,11 @@ class ColdStartOrchestrator2B1Test(unittest.TestCase):
         self.core.install_schema()
         self.onboarding = ColdStartOnboardingService(
             core=self.core, config_dir=self.config_dir,
-            task_model_resolver=test_task_model_resolver,
+            task_model_resolver=resolve_task_model,
         )
         self.adapter = ColdStartHumanDecisionAdapter(
             core=self.core, config_dir=self.config_dir,
-            task_model_resolver=test_task_model_resolver,
+            task_model_resolver=resolve_task_model,
         )
         self.core.propose_human_decision_carrier(
             carrier_binding_id="isolated-2b2-carrier",

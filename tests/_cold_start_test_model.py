@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 
-def test_task_model_resolver(
+def resolve_task_model(
     trusted_context: dict[str, Any] | None,
     explicit_override: str | None,
 ) -> dict[str, Any]:

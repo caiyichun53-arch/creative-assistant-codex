@@ -275,6 +275,72 @@ class ExperienceCandidateProposalService:
         )
         return task
 
+    def prepare_external_task(
+        self, *, experience_candidate_id: str
+    ) -> dict[str, Any]:
+        """Rebuild the current candidate proposal task from Core facts only."""
+        candidate = self.core._experience_candidate(experience_candidate_id)
+        status = Stage0ContentProductionCore._logical_experience_candidate_status(candidate)
+        if status != "preparing":
+            raise StateTransitionError(
+                "experience candidate external task requires a preparing candidate"
+            )
+        try:
+            frozen_sources = json.loads(str(candidate["frozen_sources_json"] or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise StateTransitionError("experience candidate sources are not valid JSON") from exc
+        if not isinstance(frozen_sources, list) or not frozen_sources:
+            raise StateTransitionError("experience candidate external task has no frozen sources")
+        domain_label = str(candidate["domain_label"] or "").strip()
+        task_id = str(candidate["task_id"] or "").strip()
+        candidate_run_id = str(candidate["experience_candidate_run_id"] or "").strip() or None
+        if task_id:
+            task = self.core.get_task(task_id)
+            upstream = self.core.get_artifact_payload(str(task["current_version_id"]))
+            input_payload = {
+                "correlation_id": experience_candidate_id,
+                "domain_label": domain_label,
+                "content_plan_context": {
+                    "topic": self.core.get_artifact_payload(str(task["topic_version_id"]))["payload"],
+                    "approved_research": upstream["payload"],
+                    "existing_experience_summaries": _existing_experience_summaries(
+                        self.core, domain_label=domain_label
+                    ),
+                },
+                "frozen_breakdowns": frozen_sources,
+                "schema_version": "experience_candidate_propose.input.v1",
+            }
+            context = {
+                "task_id": task_id,
+                "origin": "content_plan_experience_proposal",
+            }
+        else:
+            input_payload = {
+                "correlation_id": experience_candidate_id,
+                "domain_label": domain_label,
+                "content_plan_context": {
+                    "stage": "pre_topic_experience_review",
+                    "domain_label": domain_label,
+                    "purpose": "pre_topic_experience_proposal",
+                    "existing_experience_summaries": _existing_experience_summaries(
+                        self.core,
+                        domain_label=domain_label,
+                        experience_candidate_run_id=candidate_run_id,
+                    ),
+                },
+                "frozen_breakdowns": frozen_sources,
+                "schema_version": "experience_candidate_propose.input.v1",
+            }
+            context = {
+                "origin": "pre_topic_experience_proposal",
+                "experience_candidate_run_id": candidate_run_id,
+            }
+        return self._external_candidate_task(
+            candidate_id=experience_candidate_id,
+            input_payload=input_payload,
+            context=context,
+        )
+
     def _submit_external_candidate(
         self,
         *,

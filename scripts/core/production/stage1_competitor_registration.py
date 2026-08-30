@@ -2506,3 +2506,241 @@ class CompetitorRegistrationService:
             else "completed_with_failures"
         )
         return {**batch, "status": result_status, "results": results}
+
+
+def _load_competitor_breakdown_external_material(
+    core: Stage0ContentProductionCore,
+    *,
+    registration_id: str,
+    source_id: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    registration = core.get_competitor_registration(registration_id=registration_id)
+    prepared = next(
+        (
+            item
+            for item in core.list_competitor_registration_items(
+                registration_id=registration_id,
+                step_name="transcripts_and_comments",
+            )
+            if str(item.get("item_ref") or "") == source_id
+            and item.get("status") == "completed"
+            and isinstance(item.get("artifact"), dict)
+        ),
+        None,
+    )
+    if prepared is None:
+        raise StateTransitionError(
+            "competitor breakdown external task requires completed spoken material"
+        )
+    return registration, dict(prepared["artifact"])
+
+
+def _build_competitor_breakdown_external_task(
+    core: Stage0ContentProductionCore,
+    *,
+    registration: dict[str, Any],
+    material: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    source_id = str(material.get("source_id") or "").strip()
+    if not source_id:
+        raise StateTransitionError("prepared competitor material has no source identity")
+    transcript_ref = str(material.get("transcript_ref") or "").strip()
+    if not transcript_ref:
+        raise StateTransitionError("prepared competitor material has no transcript reference")
+    transcript_text = Path(transcript_ref).read_text(encoding="utf-8")
+    domain_label = str(registration.get("domain_label") or "generic")
+    content_type_lifecycle = (
+        "discover"
+        if str(registration.get("status") or "").strip() == "processing"
+        else "classify"
+    )
+    input_payload = {
+        "correlation_id": f"{registration['registration_id']}:breakdown:{source_id}",
+        "source_id": source_id,
+        "transcript": transcript_text,
+        "metrics": dict(material.get("metrics") or {}),
+        "comments": list(material.get("comments") or []),
+        "domain_label": domain_label,
+        "domain_context": _breakdown_domain_context(
+            domain_label,
+            observed_content_types=core.observed_breakdown_content_types(
+                domain_label=domain_label
+            ),
+            content_type_lifecycle=content_type_lifecycle,
+        ),
+        "schema_version": "competitor_breakdown.input.v1",
+    }
+    task, _ = prepare_external_skill_task(
+        FormalSkillContract.from_runtime_skill("competitor_breakdown"),
+        input_payload,
+        constraints={
+            "use_only_supplied_material": True,
+            "preserve_source_identity": True,
+            "cannot_change_business_state": True,
+            "do_not_search": True,
+            "no_fuzzy_evidence_matching": True,
+        },
+        business_context={
+            "registration_id": str(registration["registration_id"]),
+            "source_id": source_id,
+            "origin": (
+                "cold_start_intelligent_judgment"
+                if registration.get("cold_start_id")
+                else "competitor_breakdown"
+            ),
+            "data_identity": core.data_identity,
+        },
+    )
+    task["task_identity"] = {
+        "registration_id": str(registration["registration_id"]),
+        "source_id": source_id,
+    }
+    return task, input_payload
+
+
+def prepare_competitor_breakdown_external_task(
+    core: Stage0ContentProductionCore,
+    *,
+    registration_id: str,
+    source_id: str,
+) -> dict[str, Any]:
+    """Return one existing competitor breakdown task without executing it."""
+    registration, material = _load_competitor_breakdown_external_material(
+        core,
+        registration_id=registration_id,
+        source_id=source_id,
+    )
+    task, _ = _build_competitor_breakdown_external_task(
+        core,
+        registration=registration,
+        material=material,
+    )
+    return task
+
+
+def submit_competitor_breakdown_external_result(
+    core: Stage0ContentProductionCore,
+    *,
+    registration_id: str,
+    source_id: str,
+    execution_id: str,
+    executor_id: str,
+    model_ref: str | None,
+    submitted_at: str | None,
+    output: dict[str, Any],
+) -> dict[str, Any]:
+    """Accept one competitor result using the existing item/attempt records."""
+    registration, material = _load_competitor_breakdown_external_material(
+        core,
+        registration_id=registration_id,
+        source_id=source_id,
+    )
+    _, input_payload = _build_competitor_breakdown_external_task(
+        core,
+        registration=registration,
+        material=material,
+    )
+    if not isinstance(output, dict):
+        raise StateTransitionError("competitor breakdown external result must be structured fields")
+    model_run_id = core.record_external_competitor_execution(
+        registration_id=registration_id,
+        source_id=source_id,
+        execution_id=execution_id,
+        executor_id=executor_id,
+        model_ref=model_ref,
+        submitted_at=submitted_at,
+        input_payload=input_payload,
+        output_payload=output,
+    )
+    try:
+        artifact = validate_external_skill_output(
+            FormalSkillContract.from_runtime_skill("competitor_breakdown"),
+            input_payload,
+            output,
+        )
+        ConfiguredCompetitorRegistrationExecutor._validate_core_breakdown_artifact(
+            artifact=artifact,
+            source_id=source_id,
+        )
+    except Exception as exc:
+        core.conn.execute(
+            "UPDATE stage0_competitor_registration_model_run SET error_json=? "
+            "WHERE registration_model_run_id=?",
+            (
+                json.dumps({"validation_error": str(exc)}, ensure_ascii=False),
+                model_run_id,
+            ),
+        )
+        raise
+    stored_artifact = {
+        "artifact_kind": "deep_breakdown",
+        "source_id": source_id,
+        "model_run_id": model_run_id,
+        "raw_model_output": json.dumps(artifact, ensure_ascii=False, sort_keys=True),
+        "deep_breakdown": artifact,
+    }
+    core.record_competitor_breakdown_attempt(
+        registration_id=registration_id,
+        source_id=source_id,
+        attempt_kind="initial",
+        outcome="completed",
+        raw_model_output=stored_artifact["raw_model_output"],
+        raw_model_output_status="available",
+        model_run_id=model_run_id,
+    )
+    if registration["status"] == "processing":
+        core.record_competitor_registration_item(
+            registration_id=registration_id,
+            step_name="breakdown",
+            item_ref=source_id,
+            status="completed",
+            artifact=stored_artifact,
+            error=None,
+        )
+    else:
+        core.record_independent_competitor_breakdown(
+            registration_id=registration_id,
+            item_ref=source_id,
+            status="completed",
+            artifact=stored_artifact,
+            error=None,
+        )
+    try:
+        optional = core.register_breakdown_question_expansions(
+            domain_label=str(registration.get("domain_label") or "generic"),
+            breakdown=dict(artifact),
+            parent_source_ref={
+                "source_type": "competitor_breakdown",
+                "source_object_id": source_id,
+                "registration_id": registration_id,
+                "source_object_version": model_run_id,
+            },
+            actor="competitor_breakdown",
+            content_type_lifecycle=(
+                "discover"
+                if str(registration.get("status") or "").strip() == "processing"
+                else "classify"
+            ),
+        )
+        optional_result = {"status": "completed", "result": optional}
+    except Exception as exc:
+        optional_result = {
+            "status": "failed",
+            "error_type": type(exc).__name__,
+            "reason": str(exc),
+        }
+    try:
+        core.record_competitor_breakdown_optional_result(
+            registration_id=registration_id,
+            item_ref=source_id,
+            optional_result=optional_result,
+        )
+    except Exception:
+        pass
+    return {
+        "registration_id": registration_id,
+        "source_id": source_id,
+        "status": "completed",
+        "model_run_id": model_run_id,
+        "artifact": stored_artifact,
+    }

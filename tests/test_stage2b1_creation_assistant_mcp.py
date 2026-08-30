@@ -187,6 +187,36 @@ class CreationAssistantMcpStage2B1Tests(unittest.TestCase):
             self.fail(result["content"][0]["text"])
         return result["structuredContent"]
 
+    @staticmethod
+    def _generic_source_identity(identifiers: dict[str, str]) -> dict:
+        return {
+            "task_type": "source_to_topic",
+            "task_identity": dict(identifiers),
+        }
+
+    def test_generic_task_identity_protocol_uses_the_existing_source_boundary(self) -> None:
+        task_response = self._call_tool(
+            "creation_assistant_get_external_task",
+            self._generic_source_identity(self.identifiers),
+        )
+        task = task_response["task"]
+        self.assertEqual(task["task_type"], "source_to_topic")
+        self.assertEqual(task["task_identity"], self.identifiers)
+        submitted = self._call_tool(
+            "creation_assistant_submit_external_result",
+            {
+                **self._generic_source_identity(self.identifiers),
+                "execution_id": "mcp-generic-execution",
+                "executor_id": "generic-test-executor",
+                "model_ref": "executor-current-model",
+                "output": _valid_source_to_topic_output(
+                    task["input"]["source_evidence_refs"][0]
+                ),
+            },
+        )
+        self.assertEqual(submitted["status"], "accepted")
+        self.assertEqual(submitted["task_type"], "source_to_topic")
+
     def test_real_stdio_mcp_flow_uses_one_core_skill_and_structured_submission(self) -> None:
         tools = self.client.request("tools/list")
         tool_names = {tool["name"] for tool in tools["result"]["tools"]}
@@ -204,7 +234,22 @@ class CreationAssistantMcpStage2B1Tests(unittest.TestCase):
         self.assertEqual(status["business_state_owner"], "Creation Assistant Core")
         self.assertEqual(status["mcp_state"], "none")
         self.assertEqual(status["mcp_database"], None)
-        self.assertEqual(status["external_task_boundary"]["task_types"], ["source_to_topic"])
+        self.assertEqual(
+            status["external_task_boundary"]["task_types"],
+            [
+                "source_to_topic",
+                "competitor_breakdown",
+                "research_plan",
+                "content_deep_research",
+                "content_plan_generation",
+                "formal_draft_generate",
+                "copy_optimization",
+                "de_ai_revision",
+                "final_content_review",
+                "experience_candidate_propose",
+                "domain_boundary_proposal",
+            ],
+        )
 
         task_response = self._call_tool("creation_assistant_get_external_task", self.identifiers)
         task = task_response["task"]

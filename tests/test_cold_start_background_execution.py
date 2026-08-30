@@ -28,7 +28,7 @@ from scripts.core.business_data.domain_labels import (
 )
 from scripts.core.production.cold_start_onboarding import ColdStartOnboardingService
 from scripts.core.production.stage0_content_core import Stage0ContentProductionCore
-from tests._cold_start_test_model import test_task_model_resolver
+from tests._cold_start_test_model import resolve_task_model
 
 
 class ColdStartBackgroundExecutionTest(unittest.TestCase):
@@ -75,7 +75,7 @@ class ColdStartBackgroundExecutionTest(unittest.TestCase):
         service = ColdStartOnboardingService(
             core=self.core,
             config_dir=self.config_dir,
-            task_model_resolver=test_task_model_resolver,
+            task_model_resolver=resolve_task_model,
             background_execution_launcher=launcher,
         )
         payload = self.configuration(domain)

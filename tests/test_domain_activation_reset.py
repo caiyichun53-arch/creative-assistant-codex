@@ -9,7 +9,7 @@ from pathlib import Path
 from scripts.core.business_data.domain_labels import DOMAIN_CONFIG_DIR, set_domain_pack_config_dir
 from scripts.core.production.cold_start_onboarding import ColdStartOnboardingService
 from scripts.core.production.stage0_content_core import Stage0ContentProductionCore, StateTransitionError
-from tests._cold_start_test_model import test_task_model_resolver
+from tests._cold_start_test_model import resolve_task_model
 
 
 class DomainActivationResetTests(unittest.TestCase):
@@ -29,7 +29,7 @@ class DomainActivationResetTests(unittest.TestCase):
         self.service = ColdStartOnboardingService(
             core=self.core,
             config_dir=self.config_dir,
-            task_model_resolver=test_task_model_resolver,
+            task_model_resolver=resolve_task_model,
         )
 
     def tearDown(self) -> None:
