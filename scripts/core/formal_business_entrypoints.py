@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
 from typing import Any, Callable
+from uuid import uuid4
 
 from scripts.core.production.human_decision_entry import (
     FormalHumanDecisionCommand,
@@ -962,6 +963,330 @@ class CreationAssistantFormalBusinessCore:
                 idempotency_key=f"{idempotency_key}:continue",
             )
         return {"submitted": submitted, "continuation": continuation}
+
+    def approve_final_content(
+        self,
+        *,
+        task_id: str,
+        version_id: str,
+        actor: str,
+        reason: str,
+        idempotency_key: str,
+    ) -> dict[str, str]:
+        """Record the final user confirmation before any publication registration."""
+
+        return self.core.approve_final_content(
+            task_id=task_id,
+            version_id=version_id,
+            actor=actor,
+            reason=reason,
+            idempotency_key=idempotency_key,
+        )
+
+    def _current_publication_context(self, *, task_id: str) -> dict[str, str]:
+        """Resolve publication prerequisites from the current Core task only."""
+
+        self.core.assert_current_content_task(task_id)
+        task = self.core.get_task(task_id)
+        version_id = str(task.get("current_version_id") or "").strip()
+        if (
+            task.get("current_node") != "user_final_confirmation"
+            or task.get("current_status") != "approved"
+            or not version_id
+        ):
+            raise StateTransitionError(
+                "publication registration requires the current final-content confirmation"
+            )
+        version = self.core.get_node_version(version_id)
+        if version.get("node") != "review":
+            raise StateTransitionError(
+                "publication registration requires the current approved review version"
+            )
+        confirmed = self.core.conn.execute(
+            "SELECT 1 FROM stage0_content_decision "
+            "WHERE task_id=? AND version_id=? AND node='user_final_confirmation' "
+            "AND decision='approved' AND actor_kind='user' AND data_identity=?",
+            (task_id, version_id, self.core.data_identity),
+        ).fetchone()
+        if confirmed is None:
+            raise StateTransitionError(
+                "publication registration requires final-content confirmation"
+            )
+        topic = self.core.get_artifact_payload(str(task["topic_version_id"]))["payload"]
+        domain_label = str(topic.get("domain_label") or topic.get("domain") or "").strip()
+        activation = self.core.get_current_domain_activation(domain_label=domain_label)
+        if activation is None:
+            raise StateTransitionError(
+                "publication registration requires a current domain activation"
+            )
+        configuration = self.core.get_cold_start_configuration(
+            configuration_id=str(activation["configuration_id"])
+        )
+        account_id = str(configuration["owned_account_id"] or "").strip()
+        audio_rows = self.core.conn.execute(
+            "SELECT audio_delivery_id FROM stage0_audio_delivery "
+            "WHERE task_id=? AND approved_content_version_id=? AND status='delivered' "
+            "AND data_identity=? ORDER BY created_at, audio_delivery_id",
+            (task_id, version_id, self.core.data_identity),
+        ).fetchall()
+        if not audio_rows:
+            raise StateTransitionError(
+                "publication registration requires the approved audio delivery"
+            )
+        if len(audio_rows) != 1:
+            raise StateTransitionError(
+                "publication registration requires one unambiguous approved audio delivery"
+            )
+        return {
+            "domain_label": domain_label,
+            "content_account_id": account_id,
+            "task_id": task_id,
+            "audio_delivery_id": str(audio_rows[0]["audio_delivery_id"]),
+            "approved_content_version_id": version_id,
+        }
+
+    def register_publication_for_task(
+        self,
+        *,
+        task_id: str,
+        platform: str,
+        external_video_url: str,
+        published_at: str,
+        actual_content_status: str,
+        actual_content_note: str,
+        actor: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Register a user-confirmed external publication for the current task."""
+
+        context = self._current_publication_context(task_id=task_id)
+        request = {
+            **context,
+            "platform": platform,
+            "external_video_url": external_video_url,
+            "published_at": published_at,
+            "actual_content_status": actual_content_status,
+            "actual_content_note": actual_content_note,
+            "actor": actor,
+        }
+        replay = self.core.find_command_replay(
+            "register_formal_publication", idempotency_key, request
+        )
+        if replay:
+            return replay
+        from scripts.core.production.publication_feedback import register_publication
+
+        result = register_publication(
+            self.core.conn,
+            publication_id=f"publication_{uuid4().hex}",
+            content_account_id=context["content_account_id"],
+            domain_label=context["domain_label"],
+            task_id=context["task_id"],
+            audio_delivery_id=context["audio_delivery_id"],
+            approved_content_version_id=context["approved_content_version_id"],
+            platform=platform,
+            external_video_url=external_video_url,
+            published_at=published_at,
+            actual_content_status=actual_content_status,
+            actual_content_note=actual_content_note,
+            confirmed_by=actor,
+            data_identity=self.core.data_identity,
+            created_by=actor,
+        )
+        self.core.record_completed_command(
+            command="register_formal_publication",
+            idempotency_key=idempotency_key,
+            request=request,
+            task_id=task_id,
+            event="formal_publication_registered",
+            result=result,
+        )
+        return result
+
+    def _current_publication_row(self, *, publication_id: str) -> Any:
+        row = self.core.conn.execute(
+            "SELECT publication_id, task_id FROM stage0_publication_registration "
+            "WHERE publication_id=? AND data_identity=?",
+            (publication_id, self.core.data_identity),
+        ).fetchone()
+        if row is None:
+            raise StateTransitionError(
+                "publication does not exist in this data identity"
+            )
+        self.core.assert_current_content_task(str(row["task_id"]))
+        return row
+
+    def list_publications(self) -> list[dict[str, Any]]:
+        """Read publication feedback through the Core workbench."""
+
+        return self.core.list_publication_workbench()
+
+    def record_publication_observation(
+        self,
+        *,
+        publication_id: str,
+        point_code: str,
+        observation_status: str,
+        metrics: Mapping[str, Any] | None,
+        missing_reason: str,
+        source_ref: str,
+        observed_at: str,
+        actor: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Record one user-confirmed P0-P7 observation for a current publication."""
+
+        row = self._current_publication_row(publication_id=publication_id)
+        if metrics is not None and not isinstance(metrics, Mapping):
+            raise StateTransitionError("publication metrics must be an object")
+        request = {
+            "publication_id": publication_id,
+            "point_code": point_code,
+            "observation_status": observation_status,
+            "metrics": dict(metrics or {}),
+            "missing_reason": missing_reason,
+            "source_ref": source_ref,
+            "observed_at": observed_at,
+            "actor": actor,
+        }
+        replay = self.core.find_command_replay(
+            "record_formal_publication_observation", idempotency_key, request
+        )
+        if replay:
+            return replay
+        from scripts.core.production.publication_feedback import record_observation
+
+        result = record_observation(
+            self.core.conn,
+            observation_id=f"observation_{uuid4().hex}",
+            publication_id=publication_id,
+            point_code=point_code,
+            observation_status=observation_status,
+            metrics=dict(metrics or {}),
+            missing_reason=missing_reason,
+            source_ref=source_ref,
+            observed_at=observed_at,
+            recorded_by=actor,
+            data_identity=self.core.data_identity,
+        )
+        self.core.record_completed_command(
+            command="record_formal_publication_observation",
+            idempotency_key=idempotency_key,
+            request=request,
+            task_id=str(row["task_id"]),
+            event="formal_publication_observation_recorded",
+            result=result,
+        )
+        return result
+
+    def prepare_p7_review(
+        self,
+        *,
+        publication_id: str,
+        selection_assessment: str,
+        narrative_assessment: str,
+        material_assessment: str,
+        external_conditions_assessment: str,
+        feedback_candidate: Mapping[str, Any] | None,
+        actor: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Prepare the existing P7 review record after all observation points exist."""
+
+        row = self._current_publication_row(publication_id=publication_id)
+        if feedback_candidate is not None and not isinstance(feedback_candidate, Mapping):
+            raise StateTransitionError("P7 feedback candidate must be an object")
+        request = {
+            "publication_id": publication_id,
+            "selection_assessment": selection_assessment,
+            "narrative_assessment": narrative_assessment,
+            "material_assessment": material_assessment,
+            "external_conditions_assessment": external_conditions_assessment,
+            "feedback_candidate": dict(feedback_candidate or {}),
+            "actor": actor,
+        }
+        replay = self.core.find_command_replay(
+            "prepare_formal_p7_review", idempotency_key, request
+        )
+        if replay:
+            return replay
+        from scripts.core.production.publication_feedback import prepare_p7_review
+
+        result = prepare_p7_review(
+            self.core.conn,
+            review_id=f"p7_review_{uuid4().hex}",
+            publication_id=publication_id,
+            selection_assessment=selection_assessment,
+            narrative_assessment=narrative_assessment,
+            material_assessment=material_assessment,
+            external_conditions_assessment=external_conditions_assessment,
+            feedback_candidate=dict(feedback_candidate or {}),
+            created_by=actor,
+            data_identity=self.core.data_identity,
+        )
+        self.core.record_completed_command(
+            command="prepare_formal_p7_review",
+            idempotency_key=idempotency_key,
+            request=request,
+            task_id=str(row["task_id"]),
+            event="formal_p7_review_prepared",
+            result=result,
+        )
+        return result
+
+    def decide_p7_review(
+        self,
+        *,
+        review_id: str,
+        decision: str,
+        actor: str,
+        reason: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Apply the explicit human decision to an existing P7 review."""
+
+        row = self.core.conn.execute(
+            "SELECT review.publication_id, publication.task_id "
+            "FROM stage0_publication_p7_review review "
+            "JOIN stage0_publication_registration publication "
+            "ON publication.publication_id=review.publication_id "
+            "AND publication.data_identity=review.data_identity "
+            "WHERE review.review_id=? AND review.data_identity=?",
+            (review_id, self.core.data_identity),
+        ).fetchone()
+        if row is None:
+            raise StateTransitionError("P7 review does not exist in this data identity")
+        self.core.assert_current_content_task(str(row["task_id"]))
+        request = {
+            "review_id": review_id,
+            "decision": decision,
+            "actor": actor,
+            "reason": reason,
+        }
+        replay = self.core.find_command_replay(
+            "decide_formal_p7_review", idempotency_key, request
+        )
+        if replay:
+            return replay
+        from scripts.core.production.publication_feedback import decide_p7_review
+
+        result = decide_p7_review(
+            self.core.conn,
+            review_id=review_id,
+            decision=decision,
+            actor=actor,
+            reason=reason,
+            data_identity=self.core.data_identity,
+        )
+        self.core.record_completed_command(
+            command="decide_formal_p7_review",
+            idempotency_key=idempotency_key,
+            request=request,
+            task_id=str(row["task_id"]),
+            event="formal_p7_review_decided",
+            result=result,
+        )
+        return result
 
     def execute_formal_research(
         self,

@@ -98,6 +98,17 @@ class ReadOnlyWebApplication:
         finally:
             database.close()
 
+    def read_publications(self) -> list[dict[str, Any]]:
+        """Read publication observations and P7 reviews through Core."""
+        database = Stage0ContentProductionCore.open_read_only(
+            self.database_path or database_path_for_identity(self.data_identity),
+            data_identity=self.data_identity,
+        )
+        try:
+            return database.list_publication_workbench()
+        finally:
+            database.close()
+
 
 class ActionWebApplication(ReadOnlyWebApplication):
     """Bind one local Web process to Core's existing human action boundary."""
@@ -117,6 +128,11 @@ class ActionWebApplication(ReadOnlyWebApplication):
             "promote_experience_candidate",
             "approve_content_node",
             "return_content_node",
+            "approve_final_content",
+            "register_publication",
+            "record_publication_observation",
+            "prepare_p7_review",
+            "confirm_p7_review",
         }
     )
     _ACTION_NAMES = frozenset(
@@ -135,6 +151,11 @@ class ActionWebApplication(ReadOnlyWebApplication):
             "promote_experience_candidate",
             "approve_content_node",
             "return_content_node",
+            "approve_final_content",
+            "register_publication",
+            "record_publication_observation",
+            "prepare_p7_review",
+            "confirm_p7_review",
         }
     )
 
@@ -452,6 +473,108 @@ class ActionWebApplication(ReadOnlyWebApplication):
                 )
             )
 
+        if action == "approve_final_content":
+            task_id = str(payload.get("task_id") or "").strip()
+            reason = str(payload.get("reason") or "").strip()
+            if not task_id or not reason:
+                raise StateTransitionError(
+                    "final content confirmation requires a task and reason"
+                )
+            task = core.get_task(task_id)
+            version_id = str(task.get("current_version_id") or "").strip()
+            return dict(
+                business.approve_final_content(
+                    task_id=task_id,
+                    version_id=version_id,
+                    actor=self.actor,
+                    reason=reason,
+                    idempotency_key=f"web-final-content-{uuid4().hex}",
+                )
+            )
+
+        if action == "register_publication":
+            task_id = str(payload.get("task_id") or "").strip()
+            required = {
+                "platform": str(payload.get("platform") or "").strip(),
+                "external_video_url": str(payload.get("external_video_url") or "").strip(),
+                "published_at": str(payload.get("published_at") or "").strip(),
+                "actual_content_status": str(payload.get("actual_content_status") or "").strip(),
+                "actual_content_note": str(payload.get("actual_content_note") or "").strip(),
+            }
+            if not task_id or any(
+                not required[key] for key in ("platform", "external_video_url", "published_at", "actual_content_status")
+            ):
+                raise StateTransitionError(
+                    "publication registration requires the task and confirmed publication facts"
+                )
+            return dict(
+                business.register_publication_for_task(
+                    task_id=task_id,
+                    **required,
+                    actor=self.actor,
+                    idempotency_key=f"web-publication-{uuid4().hex}",
+                )
+            )
+
+        if action == "record_publication_observation":
+            publication_id = str(payload.get("publication_id") or "").strip()
+            if not publication_id:
+                raise StateTransitionError("publication observation requires a publication")
+            metrics = payload.get("metrics")
+            if metrics is not None and not isinstance(metrics, Mapping):
+                raise StateTransitionError("publication metrics must be an object")
+            return dict(
+                business.record_publication_observation(
+                    publication_id=publication_id,
+                    point_code=str(payload.get("point_code") or "").strip(),
+                    observation_status=str(payload.get("observation_status") or "").strip(),
+                    metrics=dict(metrics or {}),
+                    missing_reason=str(payload.get("missing_reason") or "").strip(),
+                    source_ref=str(payload.get("source_ref") or "").strip(),
+                    observed_at=str(payload.get("observed_at") or "").strip(),
+                    actor=self.actor,
+                    idempotency_key=f"web-observation-{uuid4().hex}",
+                )
+            )
+
+        if action == "prepare_p7_review":
+            publication_id = str(payload.get("publication_id") or "").strip()
+            feedback_candidate = payload.get("feedback_candidate")
+            if feedback_candidate is not None and not isinstance(feedback_candidate, Mapping):
+                raise StateTransitionError("P7 feedback candidate must be an object")
+            if not publication_id:
+                raise StateTransitionError("P7 review preparation requires a publication")
+            return dict(
+                business.prepare_p7_review(
+                    publication_id=publication_id,
+                    selection_assessment=str(payload.get("selection_assessment") or ""),
+                    narrative_assessment=str(payload.get("narrative_assessment") or ""),
+                    material_assessment=str(payload.get("material_assessment") or ""),
+                    external_conditions_assessment=str(payload.get("external_conditions_assessment") or ""),
+                    feedback_candidate=dict(feedback_candidate or {}),
+                    actor=self.actor,
+                    idempotency_key=f"web-p7-prepare-{uuid4().hex}",
+                )
+            )
+
+        if action == "confirm_p7_review":
+            review_id = str(payload.get("review_id") or "").strip()
+            decision = str(payload.get("decision") or "").strip()
+            reason = str(payload.get("reason") or "").strip()
+            if not review_id or not decision or not reason:
+                raise StateTransitionError(
+                    "P7 review confirmation requires a review, decision and reason"
+                )
+            return dict(
+                business.decide_p7_review(
+                    review_id=review_id,
+                    decision=decision,
+                    actor=self.actor,
+                    reason=reason,
+                    idempotency_key=f"web-p7-confirm-{uuid4().hex}",
+                )
+            )
+
         if action == "daily_start":
             domain_label = str(payload.get("domain_label") or "").strip()
             selected_date, domains = business.normalize_daily_request(
@@ -598,6 +721,9 @@ class ReadOnlyRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/content-tasks":
             self._serve_content_tasks()
             return
+        if path == "/api/publications":
+            self._serve_publications()
+            return
         if path in {"/", "/index.html"}:
             self._serve_static("index.html")
             return
@@ -677,6 +803,28 @@ class ReadOnlyRequestHandler(BaseHTTPRequestHandler):
                 "ok": True,
                 "source": "Creation Assistant Core",
                 "tasks": tasks,
+            },
+        )
+
+    def _serve_publications(self) -> None:
+        try:
+            publications = self.application.read_publications()
+        except Exception as exc:
+            self._send_json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {
+                    "ok": False,
+                    "source": "Creation Assistant Core",
+                    "error": f"publication feedback read failed: {exc}",
+                },
+            )
+            return
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "source": "Creation Assistant Core",
+                "publications": publications,
             },
         )
 

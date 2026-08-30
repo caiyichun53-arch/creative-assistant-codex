@@ -218,8 +218,123 @@
         return;
       }
       renderContentTasks(payload.tasks || []);
+      renderPublicationTasks(payload.tasks || []);
     } catch (error) {
       document.querySelector("#content-tasks").innerHTML = '<p class="notice error">无法连接 Creation Assistant Core</p>';
+    }
+  }
+
+  function renderPublicationTasks(tasks) {
+    const container = document.querySelector("#publication-tasks");
+    const actionable = (tasks || []).filter(function (task) {
+      return task.current_node === "user_final_confirmation" && task.current_status === "approved";
+    });
+    if (!actionable.length) {
+      container.innerHTML = '<p class="notice">当前没有可登记发布的内容。</p>';
+      return;
+    }
+    container.innerHTML = actionable.map(function (task) {
+      const title = task.topic && task.topic.payload && task.topic.payload.title || "正式内容";
+      const finalConfirmed = (task.content_decisions || []).some(function (decision) {
+        return decision.node === "user_final_confirmation" && decision.decision === "approved";
+      });
+      if (!finalConfirmed) {
+        return '<article class="experience-card content-task-card" data-content-task-card="' + escapeHtml(task.task_id) + '">' +
+          '<h3>' + escapeHtml(title) + '</h3>' +
+          '<p class="notice">发布前需要先完成最终稿确认。</p>' +
+          '<label>最终稿确认理由<textarea data-content-reason rows="2"></textarea></label>' +
+          '<div class="experience-actions"><button type="button" data-content-action="approve_final_content" data-task-id="' + escapeHtml(task.task_id) + '">确认最终稿</button></div>' +
+          '</article>';
+      }
+      return '<article class="experience-card content-task-card" data-publication-task-card="' + escapeHtml(task.task_id) + '">' +
+        '<h3>' + escapeHtml(title) + '</h3>' +
+        '<p class="notice">请先在系统外完成发布，再登记真实发布信息。</p>' +
+        '<label>平台<input data-publication-field="platform" type="text"></label>' +
+        '<label>作品链接<input data-publication-field="external_video_url" type="url"></label>' +
+        '<label>真实发布时间<input data-publication-field="published_at" type="datetime-local"></label>' +
+        '<label>发布内容<select data-publication-field="actual_content_status"><option value="same_as_approved">与确认稿一致</option><option value="different_from_approved">与确认稿有变化</option></select></label>' +
+        '<label>变化说明（如有）<textarea data-publication-field="actual_content_note" rows="2"></textarea></label>' +
+        '<div class="experience-actions"><button type="button" data-publication-action="register_publication" data-task-id="' + escapeHtml(task.task_id) + '">登记已发布内容</button></div>' +
+        '</article>';
+    }).join("");
+  }
+
+  function validationResultFields(publication) {
+    return (publication.validation_usage || []).map(function (usage) {
+      const candidate = usage.candidate || {};
+      const summary = candidate.summary || usage.experience_candidate_id;
+      return '<fieldset data-validation-candidate="' + escapeHtml(usage.experience_candidate_id) + '">' +
+        '<legend>' + escapeHtml(summary) + '</legend>' +
+        '<label>验证结果<select data-validation-field="result"><option value="supports">supports</option><option value="contradicts">contradicts</option><option value="inconclusive">inconclusive</option></select></label>' +
+        '<label>实际表现摘要<textarea data-validation-field="performance_summary" rows="2"></textarea></label>' +
+        '<label>复盘依据<textarea data-validation-field="review_basis" rows="2"></textarea></label>' +
+        '</fieldset>';
+    }).join("");
+  }
+
+  function renderPublications(publications) {
+    const container = document.querySelector("#publications");
+    if (!publications.length) {
+      container.innerHTML = '<p class="notice">当前还没有发布登记。</p>';
+      return;
+    }
+    container.innerHTML = publications.map(function (item) {
+      const publication = item.publication || {};
+      const observations = item.observations || [];
+      const reviews = item.reviews || [];
+      const review = reviews.length ? reviews[reviews.length - 1] : null;
+      const observed = {};
+      observations.forEach(function (observation) { observed[observation.point_code] = observation; });
+      const pointForms = ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7"].map(function (point) {
+        const observation = observed[point];
+        if (observation) {
+          return '<li>' + escapeHtml(point) + '：' + escapeHtml(observation.observation_status) + '</li>';
+        }
+        return '<li><strong>' + escapeHtml(point) + '</strong>' +
+          '<label>数据（JSON）<textarea data-observation-field="metrics" rows="1">{}</textarea></label>' +
+          '<label>缺失说明（如适用）<input data-observation-field="missing_reason" type="text"></label>' +
+          '<label>来源记录<input data-observation-field="source_ref" type="text"></label>' +
+          '<label>观察时间<input data-observation-field="observed_at" type="datetime-local"></label>' +
+          '<select data-observation-field="observation_status"><option value="recorded">已记录</option><option value="missing">缺失</option></select>' +
+          '<button type="button" data-publication-action="record_publication_observation" data-publication-id="' + escapeHtml(publication.publication_id) + '" data-point-code="' + point + '">记录' + escapeHtml(point) + '</button></li>';
+      }).join("");
+      const complete = observations.length === 8 && ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7"].every(function (point) { return observed[point]; });
+      let reviewMarkup = '';
+      if (complete && !review) {
+        reviewMarkup = '<details><summary>准备 P7 复盘</summary>' +
+          '<label>选题复盘<textarea data-p7-field="selection_assessment" rows="2"></textarea></label>' +
+          '<label>叙事复盘<textarea data-p7-field="narrative_assessment" rows="2"></textarea></label>' +
+          '<label>材料复盘<textarea data-p7-field="material_assessment" rows="2"></textarea></label>' +
+          '<label>外部条件复盘<textarea data-p7-field="external_conditions_assessment" rows="2"></textarea></label>' +
+          validationResultFields(item) +
+          '<button type="button" data-publication-action="prepare_p7_review" data-publication-id="' + escapeHtml(publication.publication_id) + '">提交 P7 复盘</button></details>';
+      } else if (review && review.status === "awaiting_user_confirmation") {
+        reviewMarkup = '<label>P7 确认理由<textarea data-p7-reason rows="2"></textarea></label>' +
+          '<button type="button" data-publication-action="confirm_p7_review" data-review-id="' + escapeHtml(review.review_id) + '" data-decision="confirmed">确认 P7 复盘</button>';
+      } else if (review) {
+        reviewMarkup = '<p class="notice">P7 复盘状态：' + escapeHtml(review.status) + '</p>';
+      }
+      return '<article class="experience-card publication-card" data-publication-card="' + escapeHtml(publication.publication_id) + '">' +
+        '<h3>' + escapeHtml(publication.platform || "已发布内容") + '</h3>' +
+        '<p>作品：' + escapeHtml(publication.external_video_url || "") + '</p>' +
+        '<p>发布时间：' + escapeHtml(publication.published_at || "") + '</p>' +
+        '<details><summary>P0-P7 观察记录</summary><ul>' + pointForms + '</ul></details>' +
+        reviewMarkup +
+        '</article>';
+    }).join("");
+  }
+
+  async function loadPublications() {
+    try {
+      const response = await fetch("/api/publications", { method: "GET", cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        document.querySelector("#publications").innerHTML = '<p class="notice error">' + escapeHtml(payload.error || "发布反馈读取失败") + '</p>';
+        return;
+      }
+      renderPublications(payload.publications || []);
+    } catch (error) {
+      document.querySelector("#publications").innerHTML = '<p class="notice error">无法连接 Creation Assistant Core</p>';
     }
   }
 
@@ -274,7 +389,11 @@
       if (action === "accept_experience_candidate" || action === "reject_experience_candidate" || action === "promote_experience_candidate") {
         loadExperienceCandidates();
       }
-      if (action === "approve_content_node" || action === "return_content_node") {
+      if (action === "approve_content_node" || action === "return_content_node" || action === "approve_final_content") {
+        loadContentTasks();
+      }
+      if (action === "register_publication" || action === "record_publication_observation" || action === "prepare_p7_review" || action === "confirm_p7_review") {
+        loadPublications();
         loadContentTasks();
       }
     } catch (error) {
@@ -300,7 +419,7 @@
   }
 
   document.addEventListener("click", function (event) {
-    const button = event.target.closest("button[data-web-action],button[data-experience-action],button[data-content-action]");
+    const button = event.target.closest("button[data-web-action],button[data-experience-action],button[data-content-action],button[data-publication-action]");
     if (!button) return;
     if (button.dataset.experienceAction) {
       const card = button.closest("[data-candidate-card]");
@@ -316,7 +435,7 @@
       return;
     }
     if (button.dataset.contentAction) {
-      const card = button.closest("[data-content-task-card]");
+      const card = button.closest("[data-content-task-card],[data-publication-task-card]");
       const reason = card ? card.querySelector("[data-content-reason]").value.trim() : "";
       if (!reason) {
         showActionResult({ outcome: "rejected", error: "请填写确认理由或修改要求" });
@@ -327,10 +446,113 @@
           task_id: button.dataset.taskId,
           reason: reason,
         });
+      } else if (button.dataset.contentAction === "approve_final_content") {
+        postAction("approve_final_content", {
+          task_id: button.dataset.taskId,
+          reason: reason,
+        });
       } else {
         postAction("return_content_node", {
           task_id: button.dataset.taskId,
           requirements: reason,
+        });
+      }
+      return;
+    }
+    if (button.dataset.publicationAction) {
+      const action = button.dataset.publicationAction;
+      if (action === "register_publication") {
+        const card = button.closest("[data-publication-task-card]");
+        const value = function (name) {
+          const field = card ? card.querySelector('[data-publication-field="' + name + '"]') : null;
+          return field ? field.value.trim() : "";
+        };
+        const values = {
+          task_id: button.dataset.taskId,
+          platform: value("platform"),
+          external_video_url: value("external_video_url"),
+          published_at: value("published_at"),
+          actual_content_status: value("actual_content_status"),
+          actual_content_note: value("actual_content_note"),
+        };
+        if (!values.platform || !values.external_video_url || !values.published_at) {
+          showActionResult({ outcome: "rejected", error: "请填写平台、作品链接和真实发布时间" });
+          return;
+        }
+        postAction(action, values);
+        return;
+      }
+      if (action === "record_publication_observation") {
+        const row = button.closest("li");
+        let metrics;
+        try {
+          metrics = JSON.parse((row.querySelector('[data-observation-field="metrics"]') || {}).value || "{}");
+        } catch (error) {
+          showActionResult({ outcome: "rejected", error: "观察数据不是有效JSON" });
+          return;
+        }
+        const value = function (name) {
+          const field = row.querySelector('[data-observation-field="' + name + '"]');
+          return field ? field.value.trim() : "";
+        };
+        postAction(action, {
+          publication_id: button.dataset.publicationId,
+          point_code: button.dataset.pointCode,
+          observation_status: value("observation_status"),
+          metrics: metrics,
+          missing_reason: value("missing_reason"),
+          source_ref: value("source_ref"),
+          observed_at: value("observed_at"),
+        });
+        return;
+      }
+      if (action === "prepare_p7_review") {
+        const card = button.closest("[data-publication-card]");
+        const validationResults = [];
+        let invalidValidation = false;
+        card.querySelectorAll("[data-validation-candidate]").forEach(function (fieldset) {
+          const value = function (name) {
+            const field = fieldset.querySelector('[data-validation-field="' + name + '"]');
+            return field ? field.value.trim() : "";
+          };
+          validationResults.push({
+            experience_candidate_id: fieldset.dataset.validationCandidate,
+            result: value("result"),
+            performance_summary: value("performance_summary"),
+            review_basis: value("review_basis"),
+          });
+          if (!value("performance_summary") || !value("review_basis")) invalidValidation = true;
+        });
+        if (invalidValidation) {
+          showActionResult({ outcome: "rejected", error: "请补充每条验证候选的表现摘要和复盘依据" });
+          return;
+        }
+        const value = function (name) {
+          const field = card.querySelector('[data-p7-field="' + name + '"]');
+          return field ? field.value.trim() : "";
+        };
+        postAction(action, {
+          publication_id: button.dataset.publicationId,
+          selection_assessment: value("selection_assessment"),
+          narrative_assessment: value("narrative_assessment"),
+          material_assessment: value("material_assessment"),
+          external_conditions_assessment: value("external_conditions_assessment"),
+          feedback_candidate: validationResults.length ? { validation_results: validationResults } : {},
+        });
+        return;
+      }
+      if (action === "confirm_p7_review") {
+        const card = button.closest("[data-publication-card]");
+        const reasonField = card ? card.querySelector("[data-p7-reason]") : null;
+        const reason = reasonField ? reasonField.value.trim() : "";
+        if (!reason) {
+          showActionResult({ outcome: "rejected", error: "请填写P7确认理由" });
+          return;
+        }
+        postAction(action, {
+          review_id: button.dataset.reviewId,
+          decision: button.dataset.decision,
+          reason: reason,
         });
       }
       return;
@@ -378,5 +600,6 @@
     loadStatus();
     loadExperienceCandidates();
     loadContentTasks();
+    loadPublications();
   });
 }());

@@ -95,6 +95,7 @@
         "tests/test_stage7_web_actions.py",
         "tests/test_stage8_hermes_retirement.py",
         "tests/test_experience_confirmation_and_usage.py",
+        "tests/test_publication_feedback_p0b.py",
         "tests/test_formal_production_mode_chain.py",
         "tests/test_stage2b2_second_round_content_external_intelligence.py",
         "runtime_skills/experience_candidate_propose/",

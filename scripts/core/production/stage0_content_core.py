@@ -3003,6 +3003,78 @@ class Stage0ContentProductionCore:
             self._audit(task_id, "human_returned_new_version", {**result, "returned_version_id": version_id})
         return result
 
+    def approve_final_content(
+        self,
+        *,
+        task_id: str,
+        version_id: str,
+        actor: str,
+        reason: str,
+        idempotency_key: str,
+    ) -> dict[str, str]:
+        """Record the user's final-content confirmation for the current review."""
+        task, version = self._task(task_id), self._version(version_id)
+        self.assert_current_content_task(task_id)
+        if (
+            task["current_node"] != "user_final_confirmation"
+            or task["current_status"] != "approved"
+            or task["current_version_id"] != version_id
+            or version["node"] != "review"
+        ):
+            raise StateTransitionError(
+                "final content confirmation requires the current approved review version"
+            )
+        if not actor.strip() or not reason.strip():
+            raise StateTransitionError(
+                "final content confirmation requires an explicit user and reason"
+            )
+        review_approval = self.conn.execute(
+            "SELECT 1 FROM stage0_content_decision "
+            "WHERE task_id=? AND version_id=? AND node='review' "
+            "AND decision='approved' AND actor_kind='user' AND data_identity=?",
+            (task_id, version_id, self.data_identity),
+        ).fetchone()
+        if review_approval is None:
+            raise StateTransitionError(
+                "final content confirmation requires an approved review decision"
+            )
+        request = {
+            "task_id": task_id,
+            "version_id": version_id,
+            "actor": actor,
+            "reason": reason,
+        }
+        replay = self._replay("approve_final_content", idempotency_key, request)
+        if replay:
+            return {str(key): str(value) for key, value in replay.items()}
+        existing = self.conn.execute(
+            "SELECT 1 FROM stage0_content_decision "
+            "WHERE task_id=? AND version_id=? AND node='user_final_confirmation' "
+            "AND decision='approved' AND data_identity=?",
+            (task_id, version_id, self.data_identity),
+        ).fetchone()
+        if existing is not None:
+            raise StateTransitionError("final content has already been confirmed")
+        with self.conn:
+            self._decision(
+                task_id,
+                "user_final_confirmation",
+                version_id,
+                "approved",
+                actor,
+                "user",
+                reason,
+            )
+            result = {
+                "task_id": task_id,
+                "version_id": version_id,
+                "current_node": "user_final_confirmation",
+                "status": "confirmed",
+            }
+            self._receipt("approve_final_content", idempotency_key, request, result)
+            self._audit(task_id, "final_content_confirmed", result)
+        return result
+
     def requeue_failed_node_for_manual_retry(
         self,
         *,
@@ -8303,22 +8375,25 @@ class Stage0ContentProductionCore:
                 "ORDER BY decided_at, review_id",
                 (publication_id, self.data_identity),
             ).fetchall()
+            task_id = str(publication["task_id"])
             results.append({
-                "publication": {key: row[key] for key in publication.keys()},
+                "publication": {key: publication[key] for key in publication.keys()},
                 "observations": [
                     {
-                        key: self._knowledge_json(row[key]) if key == "metrics_json" else row[key]
+                        key: self._knowledge_json(observation[key]) if key == "metrics_json" else observation[key]
                         for key in observation.keys()
                     }
                     for observation in observations
                 ],
                 "reviews": [
                     {
-                        key: self._knowledge_json(row[key]) if key == "feedback_candidate_json" else row[key]
+                        key: self._knowledge_json(review[key]) if key == "feedback_candidate_json" else review[key]
                         for key in review.keys()
                     }
                     for review in reviews
                 ],
+                "experience_usage": self.list_content_experience_usage(task_id=task_id),
+                "validation_usage": self.list_content_validation_usage(task_id=task_id),
             })
         return results
 
