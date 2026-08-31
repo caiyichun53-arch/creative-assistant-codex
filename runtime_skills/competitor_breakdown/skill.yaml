@@ -1,7 +1,7 @@
 schema_version: formal_skill_manifest.v1
 formal_skill_id: competitor_breakdown
-skill_version: 1.7.0
-responsibility: Analyze one supplied short-video spoken script and return a source-bound full breakdown for review and later original adaptation.
+skill_version: 1.8.0
+responsibility: Analyze one supplied short-video spoken script and return a source-bound core breakdown for review and later original adaptation.
 non_responsibilities:
   - collection
   - transcription

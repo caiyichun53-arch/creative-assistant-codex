@@ -278,7 +278,11 @@ class _ColdStartExternalFixture:
             "output": {
                 "source_id": source_id,
                 "source_content_type": "人物经历故事",
-                "analysis_text": "测试外部任务返回的结构化拆解",
+                "analysis_text": (
+                    "WHAT\n测试材料的核心对象和命题。\n"
+                    "HOW\n测试材料中的推进动作及其关系。\n"
+                    "SO WHAT\n无有效复用参考。"
+                ),
                 "boundary_observation": "材料展示了具体人物及其变化或影响",
                 "schema_version": "competitor_breakdown.output.raw.v5",
             },

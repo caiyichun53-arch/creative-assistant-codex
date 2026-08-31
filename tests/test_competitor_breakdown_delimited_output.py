@@ -9,6 +9,7 @@ from scripts.core.model_gateway.formal_skill_adapter import (
     FormalSkillContract,
     FormalSkillValidationError,
     parse_competitor_breakdown_delimited_output,
+    validate_competitor_breakdown_question_expansion_output,
 )
 
 
@@ -74,6 +75,14 @@ def _response(
     if boundary_observation is not None:
         lines.extend(["---BOUNDARY---", boundary_observation])
     return "\n".join(lines) + "\n"
+
+
+def _core_analysis() -> str:
+    return (
+        "WHAT\n核心对象和内容命题以本次输入材料为准。\n"
+        "HOW\n只说明材料中实际出现的推进动作及其前后关系。\n"
+        "SO WHAT\n无有效复用参考；其余判断以材料不足为准。"
+    )
 
 
 class CompetitorBreakdownDelimitedOutputTest(unittest.TestCase):
@@ -189,7 +198,7 @@ class CompetitorBreakdownDelimitedOutputTest(unittest.TestCase):
         self.assertIn("QUESTION:", parsed["question_expansions"][0]["core_question"])
 
     def test_adapter_preserves_formal_object_and_sends_no_response_format(self) -> None:
-        body = "一、内容类型\n二、推进与兑现\n六、候选复用原则与边界\n无明显短板。"
+        body = _core_analysis()
         gateway = _FakeGateway(_response("case/explanation", body))
         contract = FormalSkillContract.from_runtime_skill("competitor_breakdown")
         self.assertIsNone(contract.model_response_format)
@@ -216,7 +225,7 @@ class CompetitorBreakdownDelimitedOutputTest(unittest.TestCase):
         self.assertEqual(result.output_payload["analysis_text"].rstrip("\r\n"), body.rstrip("\r\n"))
 
     def test_adapter_maps_optional_text_blocks_without_repeated_labels(self) -> None:
-        body = "一、内容类型\n二、推进与兑现\n六、候选复用原则与边界\n无明显短板。"
+        body = _core_analysis()
         gateway = _FakeGateway(_response("case/explanation", body, include_blocks=True))
         contract = FormalSkillContract.from_runtime_skill("competitor_breakdown")
         adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
@@ -231,7 +240,7 @@ class CompetitorBreakdownDelimitedOutputTest(unittest.TestCase):
         self.assertEqual(result.output_payload["typed_expansion_leads"][0]["signal_id"], "S1")
 
     def test_adapter_maps_boundary_observation_without_changing_formal_object(self) -> None:
-        body = "一、内容类型\n二、推进与兑现\n六、候选复用原则与边界\n无明显短板。"
+        body = _core_analysis()
         gateway = _FakeGateway(
             _response(
                 "case/explanation",
@@ -272,6 +281,59 @@ class CompetitorBreakdownDelimitedOutputTest(unittest.TestCase):
                 )
                 self.assertEqual(parsed["analysis_text"].rstrip("\r\n"), analysis.rstrip("\r\n"))
                 self.assertEqual(parsed["source_content_type"], "case/explanation")
+
+    def test_core_sections_are_required_but_legacy_six_sections_are_not(self) -> None:
+        base = {
+            "source_id": "core-contract",
+            "source_content_type": "case/explanation",
+            "schema_version": "competitor_breakdown.output.raw.v5",
+        }
+        with self.assertRaises(FormalSkillValidationError):
+            validate_competitor_breakdown_question_expansion_output(
+                _input("core-contract"),
+                {**base, "analysis_text": "一、内容类型\n二、推进与兑现\n六、候选复用原则与边界\n无。"},
+            )
+        validate_competitor_breakdown_question_expansion_output(
+            _input("core-contract"),
+            {**base, "analysis_text": _core_analysis()},
+        )
+
+    def test_simple_analysis_can_omit_optional_sections_and_use_unknown(self) -> None:
+        validate_competitor_breakdown_question_expansion_output(
+            _input("simple-core"),
+            {
+                "source_id": "simple-core",
+                "source_content_type": "case/explanation",
+                "analysis_text": (
+                    "WHAT\n材料只支持识别一个简单对象和命题。\n"
+                    "HOW\n材料只显示一次直接交付，没有可可靠拆出的情绪或转折。\n"
+                    "SO WHAT\nunknown；无有效复用参考。"
+                ),
+                "schema_version": "competitor_breakdown.output.raw.v5",
+            },
+        )
+
+    def test_explicit_evidence_reference_must_exist_in_supplied_material(self) -> None:
+        valid = _core_analysis() + "\nHOW补充：这一观察依据 P001。"
+        validate_competitor_breakdown_question_expansion_output(
+            _input("evidence-contract"),
+            {
+                "source_id": "evidence-contract",
+                "source_content_type": "case/explanation",
+                "analysis_text": valid,
+                "schema_version": "competitor_breakdown.output.raw.v5",
+            },
+        )
+        with self.assertRaises(FormalSkillValidationError):
+            validate_competitor_breakdown_question_expansion_output(
+                _input("evidence-contract"),
+                {
+                    "source_id": "evidence-contract",
+                    "source_content_type": "case/explanation",
+                    "analysis_text": _core_analysis() + "\nHOW补充：这一观察依据 P999。",
+                    "schema_version": "competitor_breakdown.output.raw.v5",
+                },
+            )
 
 
 if __name__ == "__main__":

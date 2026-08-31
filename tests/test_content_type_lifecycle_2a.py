@@ -318,7 +318,13 @@ class ContentTypeLifecycle2ATest(unittest.TestCase):
                 "source_id": "source_fixture",
                 "source_content_type": "work_context_story",
                 "source_content_type_id": "work_context_story",
-                "analysis_text": "五、评论信号\n评论者提出一个待核实的问题。\n六、候选复用原则与边界\n无明显短板。",
+                "analysis_text": (
+                    "WHAT\n本条材料的核心对象和命题。\n"
+                    "HOW\n材料实际推进了一个待核实的问题。\n"
+                    "SO WHAT\n无有效复用参考。\n"
+                    "五、评论信号\n评论者提出一个待核实的问题。\n"
+                    "六、候选复用原则与边界\n无明显短板。"
+                ),
                 "expansion_signals": [{
                     "signal_id": "signal_01",
                     "signal_kind": "comment_question",

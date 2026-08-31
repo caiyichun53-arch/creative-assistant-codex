@@ -144,7 +144,7 @@ class FakeContentBranchExecutor:
                     deep_breakdown = {
                         "source_id": source_id,
                         "source_content_type": "人物经历故事",
-                        "analysis_text": "test structured breakdown evidence",
+                        "analysis_text": "WHAT\n测试材料的核心对象和命题。\nHOW\n测试材料中的推进动作及其关系。\nSO WHAT\n无有效复用参考。",
                         "boundary_observation": "test evidence shows a concrete subject and its change or impact",
                         "schema_version": "competitor_breakdown.output.raw.v5",
                     }
@@ -447,7 +447,12 @@ class ColdStartOrchestrator2B1Test(unittest.TestCase):
         return {
             "source_id": source_id,
             "source_content_type": "person/story",
-            "analysis_text": "完整核心拆解" if valid_core else "",
+            "analysis_text": (
+                "WHAT\n完整核心拆解的对象和命题。\n"
+                "HOW\n完整核心拆解的推进动作及其关系。\n"
+                "SO WHAT\n无有效复用参考。"
+                if valid_core else ""
+            ),
             "schema_version": "competitor_breakdown.output.raw.v4",
             "question_expansions": [{"core_question": "", "content_type": "", "reason": ""}],
             "expansion_signals": {},
@@ -497,7 +502,7 @@ class ColdStartOrchestrator2B1Test(unittest.TestCase):
                 registration=registration,
                 material=material,
             )
-        self.assertEqual(completed["deep_breakdown"]["analysis_text"], "完整核心拆解")
+        self.assertIn("WHAT\n完整核心拆解", completed["deep_breakdown"]["analysis_text"])
         stored = next(
             item for item in self.core.list_competitor_registration_items(
                 registration_id=str(registration["registration_id"]), step_name="breakdown"

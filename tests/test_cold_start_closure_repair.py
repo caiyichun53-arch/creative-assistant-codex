@@ -46,7 +46,7 @@ class BreakdownTransportRepairTest(unittest.TestCase):
         return {
             "source_id": "source-1",
             "source_content_type": "case/explanation",
-            "analysis_text": "一、材料观察\n六、候选复用原则与边界\n无明显短板",
+            "analysis_text": "WHAT\n材料对象和命题以输入为准。\nHOW\n材料中实际推进形成一个可核实观察。\nSO WHAT\n无有效复用参考。",
             "schema_version": "competitor_breakdown.output.raw.v5",
             "expansion_signals": [{
                 "signal_id": "signal-1",
@@ -141,4 +141,3 @@ class DiscoverySignalPersistenceBoundaryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

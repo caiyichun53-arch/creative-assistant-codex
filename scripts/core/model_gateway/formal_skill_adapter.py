@@ -1938,10 +1938,11 @@ def _semantic_sentences(text: str) -> list[str]:
 
 def _comment_section_text(analysis_text: str) -> str:
     comment_section = str(analysis_text or "")
-    if "五、评论信号" in comment_section:
-        comment_section = comment_section.split("五、评论信号", 1)[1]
-        if "六、" in comment_section:
-            comment_section = comment_section.split("六、", 1)[0]
+    if "五、评论信号" not in comment_section:
+        return ""
+    comment_section = comment_section.split("五、评论信号", 1)[1]
+    if "六、" in comment_section:
+        comment_section = comment_section.split("六、", 1)[0]
     return comment_section
 
 
@@ -2052,6 +2053,52 @@ def _validate_comment_semantics(input_payload: dict[str, Any], analysis_text: st
                 )
 
 
+_CORE_BREAKDOWN_HEADINGS = ("WHAT", "HOW", "SO WHAT")
+_BREAKDOWN_EVIDENCE_REFERENCE_RE = re.compile(r"(?<![A-Za-z0-9_])([PC]\d{3})(?![A-Za-z0-9_])")
+
+
+def _validate_breakdown_evidence_references(input_payload: dict[str, Any], text: str) -> None:
+    transcript_ids = {
+        item["id"]
+        for item in _build_numbered_transcript_catalog(str(input_payload.get("transcript") or ""))
+    }
+    comment_ids = {
+        item["id"]
+        for item in _build_numbered_comment_catalog(list(input_payload.get("comments") or []))
+    }
+    for reference in _BREAKDOWN_EVIDENCE_REFERENCE_RE.findall(str(text or "")):
+        if reference.startswith("P") and reference not in transcript_ids:
+            raise FormalSkillValidationError(
+                f"competitor breakdown evidence reference {reference} is not present in supplied transcript"
+            )
+        if reference.startswith("C") and reference not in comment_ids:
+            raise FormalSkillValidationError(
+                f"competitor breakdown evidence reference {reference} is not present in supplied comments"
+            )
+
+
+def _validate_core_breakdown_analysis(input_payload: dict[str, Any], analysis_text: str) -> None:
+    """Require the small cognitive core without scoring prose quality."""
+    matches: dict[str, re.Match[str]] = {}
+    for heading in _CORE_BREAKDOWN_HEADINGS:
+        found = list(re.finditer(rf"(?im)^\s*(?:#{1,6}\s*)?{re.escape(heading)}\s*[:：]?\s*$", analysis_text))
+        if len(found) != 1:
+            raise FormalSkillValidationError(
+                "competitor breakdown analysis must contain exactly one WHAT, HOW and SO WHAT section"
+            )
+        matches[heading] = found[0]
+    ordered = [matches[heading] for heading in _CORE_BREAKDOWN_HEADINGS]
+    if not (ordered[0].start() < ordered[1].start() < ordered[2].start()):
+        raise FormalSkillValidationError("competitor breakdown core sections must be ordered WHAT, HOW, SO WHAT")
+    for index, heading in enumerate(_CORE_BREAKDOWN_HEADINGS):
+        start = matches[heading].end()
+        end = ordered[index + 1].start() if index + 1 < len(ordered) else len(analysis_text)
+        if not analysis_text[start:end].strip():
+            raise FormalSkillValidationError(f"competitor breakdown {heading} section cannot be empty")
+
+    _validate_breakdown_evidence_references(input_payload, analysis_text)
+
+
 def repair_competitor_breakdown_comment_semantics(
     input_payload: dict[str, Any], model_output: dict[str, Any]
 ) -> dict[str, Any]:
@@ -2130,7 +2177,8 @@ def repair_competitor_breakdown_comment_semantics(
     repaired_comment = "\n".join(repaired_comment_lines)
     start = analysis_text.find("五、评论信号")
     end = analysis_text.find("六、", start + len("五、评论信号")) if start >= 0 else -1
-    if start >= 0 and end >= 0:
+    if start >= 0:
+        end = len(analysis_text) if end < 0 else end
         analysis_text = analysis_text[: start + len("五、评论信号")] + repaired_comment + analysis_text[end:]
 
     signals = model_output.get("expansion_signals")
@@ -2218,6 +2266,7 @@ def validate_competitor_breakdown_question_expansion_output(
     ):
         raise FormalSkillValidationError("competitor breakdown boundary observation must be non-empty text")
     analysis_text = output_payload["analysis_text"]
+    _validate_core_breakdown_analysis(input_payload, analysis_text)
     _validate_comment_semantics(input_payload, analysis_text)
     shortfall_section = analysis_text
     if "六、候选复用原则与边界" in analysis_text:
@@ -2285,6 +2334,8 @@ def validate_competitor_breakdown_question_expansion_output(
         signal_id = str(item["signal_id"] or "").strip()
         if not signal_id or signal_id in signal_ids or not str(item["signal_text"] or "").strip():
             raise FormalSkillValidationError("expansion signal needs unique identity and text")
+        for key in ("signal_text", "source_anchor", "reason"):
+            _validate_breakdown_evidence_references(input_payload, str(item[key] or ""))
         signal_ids.add(signal_id)
     for item in typed_leads:
         if not isinstance(item, dict) or set(item) != {"signal_id", "canonical_id", "core_question", "reason"}:
@@ -2294,6 +2345,8 @@ def validate_competitor_breakdown_question_expansion_output(
         canonical_id = str(item["canonical_id"] or "").strip()
         if not canonical_id or len(str(item["core_question"] or "").strip()) < 6 or not str(item["reason"] or "").strip():
             raise FormalSkillValidationError("typed expansion lead needs a type id, question and reason")
+        for key in ("core_question", "reason"):
+            _validate_breakdown_evidence_references(input_payload, str(item[key] or ""))
         if lifecycle == "classify" and canonical_id not in approved_ids:
             raise FormalSkillValidationError(
                 "production typed expansion lead must use an approved canonical id"

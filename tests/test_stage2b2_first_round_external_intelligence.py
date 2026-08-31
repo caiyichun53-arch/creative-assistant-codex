@@ -38,7 +38,11 @@ def _competitor_output(source_id: str = "source-1") -> dict:
     return {
         "source_id": source_id,
         "source_content_type": "person/story",
-        "analysis_text": "这是一份只基于所给口播材料的结构分析。",
+        "analysis_text": (
+            "WHAT\n这是一份只基于所给口播材料的核心对象和命题。\n"
+            "HOW\n仅说明所给材料中的实际推进。\n"
+            "SO WHAT\n无有效复用参考。"
+        ),
         "question_expansions": [],
         "schema_version": "competitor_breakdown.output.raw.v4",
     }

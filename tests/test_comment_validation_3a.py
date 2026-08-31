@@ -12,6 +12,7 @@ class CommentValidation3ATest(unittest.TestCase):
         return {
             "source_id": "comment_validation_fixture",
             "transcript": transcript,
+            "comments": [{"text": "原唱归属争议"}],
             "domain_context": {
                 "description": "音乐、作品和音乐人物的音乐经历",
                 "question_expansion_policy": {
@@ -22,6 +23,13 @@ class CommentValidation3ATest(unittest.TestCase):
         }
 
     def _payload(self, analysis_text: str, *, signals: list[dict] | None = None) -> dict:
+        if not analysis_text.lstrip().startswith("WHAT"):
+            analysis_text = (
+                "WHAT\n核心对象和命题以本次材料为准。\n"
+                "HOW\n只记录材料中实际出现的推进及其作用。\n"
+                "SO WHAT\n无有效复用参考；无法判断的内容保持 unknown。\n"
+                + analysis_text
+            )
         payload = {
             "source_id": "comment_validation_fixture",
             "source_content_type": "人物故事",
@@ -146,7 +154,7 @@ class CommentValidation3ATest(unittest.TestCase):
         analysis = (
             "五、评论信号\n"
             "1. 评论观察：多人讨论现场表现。\n"
-            "2. 观点分歧：C016指出某首歌的原唱是另一位歌手，存在事实争议。\n"
+            "2. 观点分歧：C001指出某首歌的原唱是另一位歌手，存在事实争议。\n"
             "六、候选复用原则与边界\n"
             "无明显短板。"
         )
@@ -159,8 +167,8 @@ class CommentValidation3ATest(unittest.TestCase):
         signals = [{
             "signal_id": "S1",
             "signal_kind": "comment_factual",
-            "signal_text": "C016指出某首歌的原唱是另一位歌手。",
-            "source_anchor": "C016",
+            "signal_text": "C001指出某首歌的原唱是另一位歌手。",
+            "source_anchor": "C001",
             "reason": "评论提出了母内容没有展开的新事实说法。",
         }]
         payload = self._payload(

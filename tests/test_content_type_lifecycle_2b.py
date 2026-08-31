@@ -237,7 +237,7 @@ class ContentTypeLifecycle2BTest(unittest.TestCase):
         }
         base = {
             "source_id": "source_fixture",
-            "analysis_text": "analysis",
+            "analysis_text": "WHAT\n核心对象和命题。\nHOW\n实际推进及其关系。\nSO WHAT\n无有效复用参考。",
             "schema_version": "competitor_breakdown.output.raw.v5",
         }
         with self.assertRaises(FormalSkillValidationError):
