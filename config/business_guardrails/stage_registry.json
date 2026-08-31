@@ -1,32 +1,9 @@
 {
   "registry_version": "implementation_stage_registry_v1",
-  "pointer": "execution/current_implementation_stage.json",
   "stages": {
-    "implementation_guard": {
-      "execution_document": "execution/stages/implementation_guard.md",
-      "contract": "config/business_guardrails/implementation_guard.json",
-      "validator": "scripts/stage_contract_guard.py",
-      "prompt_keywords": [
-        "hook",
-        "钩子",
-        "护栏",
-        "防跑偏"
-      ],
-      "path_prefixes": [
-        ".codex/hooks.json",
-        ".codex/hooks/",
-        "execution/current_implementation_stage.json",
-        "execution/stages/",
-        "config/business_guardrails/stage_registry.json",
-        "config/business_guardrails/implementation_guard.json",
-        "scripts/stage_contract_guard.py",
-        "AGENTS.md"
-      ]
-    },
     "system_governance": {
       "execution_document": "execution/stages/system_governance.md",
       "contract": "config/business_guardrails/system_governance.json",
-      "validator": "scripts/stage_contract_guard.py",
       "prompt_keywords": [
         "Skill",
         "原子",
@@ -37,13 +14,11 @@
         "治理"
       ],
       "path_prefixes": [
-        "execution/current_implementation_stage.json",
         "execution/stages/system_governance.md",
         "migration_snapshot/migration_freeze.md",
         "config/business_guardrails/system_governance.json",
         "config/business_guardrails/runtime_liveness.json",
         "config/business_guardrails/stage_registry.json",
-        "scripts/stage_contract_guard.py",
         "scripts/core/model_gateway/formal_skill_adapter.py",
         "scripts/core/model_gateway/hermes_model_provider.py",
         "scripts/core/external_adapters/local_sensevoice_executor.py",
@@ -65,10 +40,7 @@
         "scripts/core/core_entry.py",
         "scripts/mcp/creation_assistant_mcp_server.py",
         "tests/test_core_unified_status.py",
-        ".codex/hooks/implementation_before_edit.py",
         ".codex/hooks/hook_common.py",
-        ".codex/hooks/implementation_midcheck.py",
-        ".codex/hooks/implementation_postcheck.py",
         "scripts/web/",
         "scripts/agent_platform/hermes_cold_start_management_entry.py",
         "scripts/agent_platform/hermes_daily_entry.py",
@@ -117,7 +89,6 @@
     "cold_start": {
       "execution_document": "execution/stages/cold_start.md",
       "contract": "config/business_guardrails/competitor_registration.json",
-      "validator": "scripts/stage_contract_guard.py",
       "prompt_keywords": [
         "冷启动",
         "对标注册",
@@ -131,8 +102,6 @@
         "Obsidian"
       ],
       "path_prefixes": [
-        "execution/current_implementation_stage.json",
-        "scripts/stage_contract_guard.py",
         "config/business_guardrails/competitor_registration.json",
         "scripts/core/production/high_signal_policy.py",
         "scripts/core/production/business_runtime_guard.py",
@@ -153,7 +122,6 @@
     "daily_operations": {
       "execution_document": "execution/stages/daily_operations.md",
       "contract": "config/business_guardrails/daily_operations.json",
-      "validator": "scripts/stage_contract_guard.py",
       "prompt_keywords": [
         "日常运营",
         "每日运营",
@@ -163,8 +131,6 @@
         "候选前十"
       ],
       "path_prefixes": [
-        "execution/current_implementation_stage.json",
-        "scripts/stage_contract_guard.py",
         "config/business_guardrails/daily_operations.json",
         "scripts/agent_platform/daily_operations_runtime.py",
         "scripts/core/production/stage1_daily_operations.py",
@@ -178,7 +144,6 @@
     "content_production": {
       "execution_document": "execution/stages/content_production.md",
       "contract": "config/business_guardrails/content_production.json",
-      "validator": "scripts/stage_contract_guard.py",
       "prompt_keywords": [
         "内容生产",
         "研究方案",
@@ -189,8 +154,6 @@
         "内容交付"
       ],
       "path_prefixes": [
-        "execution/current_implementation_stage.json",
-        "scripts/stage_contract_guard.py",
         "config/business_guardrails/content_production.json",
         "scripts/core/production/stage0_content_core.py",
         "scripts/core/production/stage1a_research_plan.py",

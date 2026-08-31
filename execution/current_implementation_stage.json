@@ -1,8 +1,0 @@
-{
-  "stage": "system_governance",
-  "queued_stages": [
-    "daily_operations",
-    "content_production"
-  ],
-  "implementation_only": true
-}

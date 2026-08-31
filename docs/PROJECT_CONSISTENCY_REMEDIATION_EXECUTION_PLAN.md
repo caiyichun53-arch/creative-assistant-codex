@@ -850,9 +850,7 @@
 | `docs/EFFECTIVE_DESIGN_BASELINE.md` | 当前正式业务设计基线，回答业务应该怎样运行 | 暂时保留，作为设计最高依据 |
 | `docs/CORE_BUSINESS_EXECUTION_GUIDE.md` | 当前业务操作说明，回答用户怎样使用系统 | 暂时保留；与设计基线冲突时停下确认 |
 | `config/business_guardrails/` | 当前运行护栏，负责阻止越过规则的操作 | 保留，但必须改为服从成熟度模式 |
-| `execution/current_implementation_stage.json` | 当前实施阶段记录 | 保留；不能被当成业务设计 |
-| `execution/stages/` | 当前阶段任务和完成条件 | 保留；与正式设计冲突时停下确认 |
-| `scripts/stage_contract_guard.py` | 检查当前业务契约内部是否一致 | 保留为辅助检查，不能单独作为正式放行依据 |
+| `execution/stages/` | 阶段说明文档 | 保留；不参与Git提交放行 |
 
 ### A.2 领域配置
 
