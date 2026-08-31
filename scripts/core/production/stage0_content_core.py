@@ -173,7 +173,7 @@ CONFIRMATION_NODE = {
     "deep_research": "research_result_confirmation",
     "content_plan": "content_plan_confirmation",
     "formal_draft": "initial_draft_confirmation",
-    "review": "user_final_confirmation",
+    "review": "review",
 }
 NEXT_ARTIFACT_NODE = {
     "formal_topic": "research_plan",
@@ -3377,8 +3377,11 @@ class Stage0ContentProductionCore:
     def _validate_discovery_execution_mode(self, execution_mode: str) -> None:
         if execution_mode not in DISCOVERY_EXECUTION_MODES:
             raise StateTransitionError("discovery execution mode is invalid")
-        if self.data_identity in NON_PRODUCTION_IDENTITIES and execution_mode != "test_isolated":
-            raise DataIdentityError("non-production discovery data must use test_isolated mode")
+        # Data identity selects the storage/runtime boundary.  It must not
+        # decide which business execution mode is being exercised.  TEST may
+        # run the same production_daily business semantics in its own data
+        # store; production remains prohibited from using the isolated test
+        # mode.
         if self.data_identity == "production" and execution_mode == "test_isolated":
             raise DataIdentityError("production discovery data cannot use test_isolated mode")
 

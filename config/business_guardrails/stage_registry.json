@@ -107,6 +107,9 @@
         "tests/test_p1b_daily_candidates_web.py",
         "tests/test_cold_start_orchestrator_2b1.py",
         "tests/test_stage2b1_creation_assistant_mcp.py",
+        "tests/_fresh_test_environment.py",
+        "tests/test_final_content_confirmation_gate.py",
+        "tests/test_full_standard_e2e.py",
         "runtime_skills/experience_candidate_propose/",
         "config/runtime_storage.json"
       ]

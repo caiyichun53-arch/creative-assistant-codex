@@ -644,8 +644,6 @@ class Stage1BDailyDiscoveryService:
             raise DailyDiscoveryValidationError("a reused hotspot batch can only run the hotspot conversion path")
         if execution_mode == "production_daily" and set(requested_source_types) != set(DAILY_REPORT_SOURCE_TYPES):
             raise DailyDiscoveryValidationError("production_daily must run the complete candidate-source set; daily competitor content is tracking-only")
-        if self.core.data_identity != "production" and execution_mode != "test_isolated":
-            raise DataIdentityError("non-production discovery data must use test_isolated mode")
         if self.core.data_identity == "production" and execution_mode == "test_isolated":
             raise DataIdentityError("production discovery data cannot use test_isolated mode")
         if (
