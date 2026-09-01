@@ -8,7 +8,6 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from tests._cold_start_test_model import resolve_task_model
 
 from scripts.core.business_data.domain_labels import DOMAIN_CONFIG_DIR, set_domain_pack_config_dir
 from scripts.core.production.cold_start_onboarding import ColdStartOnboardingService
@@ -34,11 +33,9 @@ class FirstBatchColdStartTest(unittest.TestCase):
         self.core.install_schema()
         self.service = ColdStartOnboardingService(
             core=self.core, config_dir=self.config_dir,
-            task_model_resolver=resolve_task_model,
         )
         self.adapter = ColdStartHumanDecisionAdapter(
             core=self.core, config_dir=self.config_dir,
-            task_model_resolver=resolve_task_model,
         )
         self.core.propose_human_decision_carrier(
             carrier_binding_id="isolated-test-carrier",

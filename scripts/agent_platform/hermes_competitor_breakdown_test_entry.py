@@ -1,8 +1,8 @@
-"""Hermes-owned isolated test for one competitor breakdown with comments.
+"""Prepare one real competitor breakdown as a standard external task.
 
-The entry reads selected material from an explicitly supplied TEST database,
-passes it through the configured Hermes business route, and prints only a test
-summary.  It never reads the formal database or writes formal business data.
+This entry deliberately stops after Core creates the task.  An external
+executor must claim it and submit the structured result through the standard
+boundary; this script never chooses or calls a model.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ import json
 import sqlite3
 import sys
 import unittest
-import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -31,7 +30,7 @@ from scripts.core.model_gateway.formal_skill_adapter import (
 )
 from scripts.core.production.stage1_competitor_registration import (
     _breakdown_domain_context,
-    run_test_only_competitor_breakdown_batch,
+    prepare_competitor_breakdown_external_task,
 )
 from scripts.core.production.stage1b_daily_discovery import Stage1BDailyDiscoveryService
 
@@ -118,7 +117,7 @@ def _observed_types(connection: sqlite3.Connection, domain_label: str) -> list[s
 
 def _select_material(connection: sqlite3.Connection, source_id: str) -> dict[str, Any]:
     rows = connection.execute(
-        "SELECT item.item_ref, item.artifact_json, cold_start.domain_label "
+        "SELECT item.item_ref, item.artifact_json, cold_start.domain_label, registration.registration_id "
         "FROM stage0_competitor_registration_item item "
         "JOIN stage0_competitor_registration registration "
         "ON registration.registration_id=item.registration_id "
@@ -144,6 +143,7 @@ def _select_material(connection: sqlite3.Connection, source_id: str) -> dict[str
         domain_label = str(row[2] or "music_entertainment")
         return {
             "source_id": current_source_id,
+            "registration_id": str(row[3] or ""),
             "title": str(artifact.get("title") or current_source_id),
             "hit_id": str(artifact.get("hit_id") or ""),
             "transcript": transcript,
@@ -561,38 +561,29 @@ def main() -> int:
     else:
         parser.error("TEST material runs cannot use a database inside the formal runtime")
     test_core = Stage0ContentProductionCore.open_read_only(
-        requested_db, data_identity="test"
+        requested_db, data_identity="production"
     )
     try:
         material = _select_material(test_core.conn, str(args.source_id).strip())
+        task = prepare_competitor_breakdown_external_task(
+            test_core,
+            registration_id=material["registration_id"],
+            source_id=material["source_id"],
+        )
     finally:
         test_core.close()
 
-    result = run_test_only_competitor_breakdown_batch(
-        test_id=f"hermes_breakdown_test_{uuid.uuid4().hex[:10]}",
-        materials=[material],
-    )
-    outcome = (result.get("outcomes") or [{}])[0]
-    output = outcome.get("output") if isinstance(outcome.get("output"), dict) else {}
     summary = {
         "formal_business_data_written": False,
         "source_id": material["source_id"],
+        "registration_id": material["registration_id"],
         "title": material["title"],
         "transcript_chars": len(material["transcript"]),
         "comment_count": len(material["comments"]),
         "observed_content_types_passed": material["domain_context"]["observed_content_types"],
-        "status": outcome.get("status"),
-        "source_content_type": output.get("source_content_type"),
-        "source_content_type_id": output.get("source_content_type_id"),
-        "analysis_text": output.get("analysis_text"),
-        "question_expansions": output.get("question_expansions") or [],
-        "expansion_signals": output.get("expansion_signals") or [],
-        "typed_expansion_leads": output.get("typed_expansion_leads") or [],
-        "failure": outcome.get("reason"),
+        "status": "external_task_prepared",
+        "task": task,
     }
-    if outcome.get("status") != "completed":
-        summary["test_correction"] = outcome.get("test_correction")
-        summary["raw_model_output"] = outcome.get("raw_model_output")
     if args.output_file:
         output_path = Path(args.output_file).resolve()
         try:
@@ -607,7 +598,7 @@ def main() -> int:
         else:
             output_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
-    return 0 if outcome.get("status") == "completed" else 1
+    return 0
 
 
 if __name__ == "__main__":

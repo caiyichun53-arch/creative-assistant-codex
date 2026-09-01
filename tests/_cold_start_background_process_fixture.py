@@ -59,7 +59,6 @@ def main() -> int:
     activate_cold_start_background(
         record_path=arguments.executor_record,
         worker_token=arguments.worker_token,
-        run_model="isolated/model-a",
     )
     heartbeat_stop, heartbeat_thread = start_cold_start_heartbeat(
         record_path=arguments.executor_record,
@@ -72,7 +71,6 @@ def main() -> int:
                 "status": "ready",
                 "configuration_id": arguments.configuration_id,
                 "cold_start_id": arguments.cold_start_id,
-                "run_model": "isolated/model-a",
             },
         )
         time.sleep(0.8)

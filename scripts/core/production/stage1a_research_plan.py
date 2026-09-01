@@ -8,25 +8,19 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelGatewayError
 from scripts.core.model_gateway.formal_skill_adapter import (
-    FormalBusinessSkillAdapter,
     FormalSkillContract,
     FormalSkillValidationError,
     prepare_external_skill_task,
     validate_external_skill_output,
 )
-from scripts.core.model_gateway.configured_provider import build_configured_model_provider
-from scripts.core.runtime.liveness import budget_for
-from scripts.core.model_gateway.model_router import DEFAULT_MODEL_ENV_PATH, ModelRouter, ModelRouterError
 from scripts.core.production.stage0_content_core import (
-    CoreModelRunMaterializer,
+    EXTERNAL_INTELLIGENCE_EXECUTION_VERSION,
     InputAssembly,
     Stage0ContentProductionCore,
     StateTransitionError,
@@ -39,7 +33,7 @@ from scripts.core.production.stage1b_daily_discovery import (
 
 RESEARCH_PLAN_PROMPT_VERSION = "stage1a.research_plan.prompt.v9"
 RESEARCH_PLAN_SKILL_VERSION = "stage1a.research_plan.skill.v1.9"
-RESEARCH_PLAN_MODEL_CONFIG_VERSION = "model_routes.v1"
+RESEARCH_PLAN_MODEL_CONFIG_VERSION = EXTERNAL_INTELLIGENCE_EXECUTION_VERSION
 RESEARCH_PLAN_REQUIRED_FIELDS = (
     "research_objective",
     "research_scope",
@@ -134,45 +128,6 @@ def validate_research_plan_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def _dotenv_value(reference: str, path: Path) -> str:
-    if not path.exists():
-        return ""
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith(f"{reference}="):
-            return line.split("=", 1)[1].strip().strip('"').strip("'")
-    return ""
-
-
-def _configured_environment_value(reference: str, *, env_path: Path = DEFAULT_MODEL_ENV_PATH) -> str:
-    process_value = str(os.environ.get(reference) or "").strip()
-    dotenv_value = _dotenv_value(reference, env_path)
-    if process_value and dotenv_value and process_value != dotenv_value:
-        raise ModelRouterError(f"conflicting values for configured environment reference: {reference}")
-    value = process_value or dotenv_value
-    if not value:
-        raise ModelRouterError(f"configured environment reference is unresolved: {reference}")
-    return value
-
-
-def build_research_plan_gateway(core: Stage0ContentProductionCore) -> ModelGateway:
-    """Build the one provider selected by the bound formal route."""
-    if core.data_identity != "production":
-        raise StateTransitionError("production research-plan gateway requires production data identity")
-    router = ModelRouter.from_file()
-    definition = router.routes.get("research_planning")
-    if definition is None or definition.fallback != "none":
-        raise ModelRouterError("research-plan route must be explicitly bound with fallback none")
-    limits = budget_for("model")
-    route = router.resolve_bound_route("research_planning", route_name="stage0.research_plan", parameters={"stream": False})
-    provider = router.resolve_bound_provider(route)
-    adapter = build_configured_model_provider(provider, route, model_limits=limits)
-    return ModelGateway(
-        routes={route.route_name: route},
-        providers={adapter.provider_name: adapter},
-        materializer=CoreModelRunMaterializer(core),
-    )
-
-
 class Stage1AResearchPlanService:
     """Only the controlled formal-topic -> research-plan-awaiting-review path."""
 
@@ -180,11 +135,15 @@ class Stage1AResearchPlanService:
         self,
         *,
         core: Stage0ContentProductionCore,
-        gateway: ModelGateway | None = None,
+        gateway: Any | None = None,
         external_executor: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
     ):
+        if gateway is not None:
+            raise StateTransitionError(
+                "formal research-plan execution must use an external executor; direct model gateways are not supported"
+            )
         self.core = core
-        self.gateway = gateway
+        self.gateway = None
         self.external_executor = external_executor
 
     def submit_formal_topic(

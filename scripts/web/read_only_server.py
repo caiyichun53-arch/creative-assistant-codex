@@ -184,7 +184,6 @@ class ActionWebApplication(ReadOnlyWebApplication):
         actor: str = "local-web-user",
         carrier_binding_id: str = "local-web-carrier",
         config_dir: Path | None = None,
-        task_model_resolver: Any | None = None,
         preflight_environment: dict[str, str] | None = None,
     ) -> None:
         super().__init__(data_identity=data_identity, database_path=database_path)
@@ -195,7 +194,6 @@ class ActionWebApplication(ReadOnlyWebApplication):
         if not self.carrier_binding_id:
             raise ValueError("Web action carrier binding must be explicit")
         self.config_dir = config_dir
-        self.task_model_resolver = task_model_resolver
         self.preflight_environment = preflight_environment
         self._session_ref = "local-web-session"
         self._cold_start_transport: HermesColdStartAction | None = None
@@ -206,7 +204,6 @@ class ActionWebApplication(ReadOnlyWebApplication):
             core=core,
             config_dir=self.config_dir,
             preflight_environment=self.preflight_environment,
-            task_model_resolver=self.task_model_resolver,
         )
 
     def _cold_start_action(self, adapter: ColdStartHumanDecisionAdapter) -> HermesColdStartAction:
@@ -1048,7 +1045,6 @@ def create_action_server(
     actor: str = "local-web-user",
     carrier_binding_id: str = "local-web-carrier",
     config_dir: Path | None = None,
-    task_model_resolver: Any | None = None,
     preflight_environment: dict[str, str] | None = None,
 ) -> ThreadingHTTPServer:
     """Create the Stage 7 Web server with the existing Core action boundary."""
@@ -1059,7 +1055,6 @@ def create_action_server(
         actor=actor,
         carrier_binding_id=carrier_binding_id,
         config_dir=config_dir,
-        task_model_resolver=task_model_resolver,
         preflight_environment=preflight_environment,
     )
     handler = partial(ActionRequestHandler, application=application)

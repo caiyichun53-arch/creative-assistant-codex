@@ -8,7 +8,6 @@ a second handoff.
 from __future__ import annotations
 
 import json
-from tests._cold_start_test_model import resolve_task_model
 import sqlite3
 import tempfile
 import unittest
@@ -86,7 +85,6 @@ class ColdStartOverallIsolation2ndBatchGateTest(unittest.TestCase):
             core=self.core,
             config_dir=self.config_dir,
             execution_registration_service=self.registration_service,
-            task_model_resolver=resolve_task_model,
         )
 
     def tearDown(self) -> None:
@@ -124,7 +122,6 @@ class ColdStartOverallIsolation2ndBatchGateTest(unittest.TestCase):
             core=self.core,
             config_dir=self.config_dir,
             execution_registration_service=self.registration_service,
-            task_model_resolver=resolve_task_model,
         )
 
     def _confirm_once(self) -> dict:

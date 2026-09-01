@@ -13,7 +13,6 @@ from urllib.request import Request, urlopen
 from scripts.core.core_entry import build_status
 from scripts.core.production.stage0_content_core import Stage0ContentProductionCore
 from scripts.web.read_only_server import create_action_server
-from tests._cold_start_test_model import resolve_task_model as resolve_test_model
 from tests.test_core_unified_status import _seed_domain
 
 
@@ -183,7 +182,6 @@ class Stage7WebActionTests(unittest.TestCase):
             actor="stage7-web-user",
             carrier_binding_id="web-test-carrier",
             config_dir=self.config_dir,
-            task_model_resolver=resolve_test_model,
         )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -372,7 +370,6 @@ class Stage7WebActionTests(unittest.TestCase):
                 actor="stage7-web-user",
                 carrier_binding_id="web-test-carrier",
                 config_dir=config_dir,
-                task_model_resolver=resolve_test_model,
             )
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -606,7 +603,6 @@ class Stage7WebActionTests(unittest.TestCase):
                     actor="stage7-web-user",
                     carrier_binding_id="web-test-carrier",
                     config_dir=config_dir,
-                    task_model_resolver=resolve_test_model,
                 )
                 thread = threading.Thread(target=server.serve_forever, daemon=True)
                 thread.start()

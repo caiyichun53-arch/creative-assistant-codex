@@ -344,7 +344,6 @@ class CreationAssistantFormalBusinessCore:
         validation_only: bool = False,
         account_id: str | None = None,
         effective_at: datetime | None = None,
-        task_model_binding: dict[str, Any] | None = None,
         external_executor: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
         runner: Callable[..., dict[str, Any]] | None = None,
         service_factory: Callable[..., Any] | None = None,
@@ -361,7 +360,6 @@ class CreationAssistantFormalBusinessCore:
                 validation_only=validation_only,
                 account_id=account_id,
                 effective_at=effective_at,
-                task_model_binding=task_model_binding,
             )
 
         from scripts.core.production.stage1_daily_operations import (
@@ -375,12 +373,10 @@ class CreationAssistantFormalBusinessCore:
         if external_executor is None:
             service = service_type(
                 core=self.core,
-                task_model_binding=task_model_binding,
             )
         else:
             service = service_type(
                 core=self.core,
-                task_model_binding=task_model_binding,
                 external_executor=external_executor,
             )
         collection_result = service.run(
@@ -570,7 +566,6 @@ class CreationAssistantFormalBusinessCore:
         *,
         configuration_id: str,
         actor: str,
-        task_model_binding: dict[str, Any] | None = None,
         preflight_receipt_id: str | None = None,
     ) -> dict[str, Any]:
         """Start or continue the one Core-owned run for a configuration."""
@@ -578,7 +573,6 @@ class CreationAssistantFormalBusinessCore:
         return self.core.start_configured_cold_start(
             configuration_id=configuration_id,
             actor=actor,
-            task_model_binding=task_model_binding,
             preflight_receipt_id=preflight_receipt_id,
         )
 
@@ -592,14 +586,12 @@ class CreationAssistantFormalBusinessCore:
         *,
         configuration_id: str,
         actor: str,
-        task_model_binding: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Resume the exact configured cold-start run through Core."""
 
         return self.core.resume_stopped_cold_start(
             configuration_id=configuration_id,
             actor=actor,
-            task_model_binding=task_model_binding,
         )
 
     def stop_cold_start(

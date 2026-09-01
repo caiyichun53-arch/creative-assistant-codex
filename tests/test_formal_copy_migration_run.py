@@ -211,15 +211,6 @@ class FormalCopyMigrationRunTests(unittest.TestCase):
                 result = core.start_configured_cold_start(
                     configuration_id=str(configuration["configuration_id"]),
                     actor="formal-copy-test",
-                    task_model_binding={
-                        "route_id": "fixture-route",
-                        "provider_ref": "fixture-provider",
-                        "provider_name": "fixture",
-                        "provider_type": "local",
-                        "model_name": "fixture-model",
-                        "endpoint": "fixture://no-model-call",
-                        "source": "fixture",
-                    },
                 )
                 activation = core.get_current_domain_activation(domain_label=domain)
                 self.assertIsNotNone(activation)

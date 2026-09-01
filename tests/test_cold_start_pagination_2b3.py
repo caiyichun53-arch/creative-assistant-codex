@@ -126,7 +126,6 @@ def _executor(collector: FakePagedCollector, core: FakePageCore | None = None):
         collector=collector,
         transcriber=object(),
         media_materializer=object(),
-        gateway=object(),
     )
 
 

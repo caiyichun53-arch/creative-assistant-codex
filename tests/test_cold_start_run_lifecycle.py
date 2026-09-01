@@ -46,16 +46,6 @@ class ColdStartRunLifecycleTest(unittest.TestCase):
             competitor_account_ids=self.competitor_ids,
             actor="fixture",
         )
-        self.run_model_binding = {
-            "route_id": "business_analysis",
-            "provider_ref": "isolated_test_provider",
-            "provider_name": "hermes",
-            "provider_type": "openai_compatible",
-            "model_name": "isolated/model-a",
-            "endpoint": "https://isolated.invalid/v1",
-            "source": "hermes_current_session",
-            "explicit_override": False,
-        }
         self.connection.execute(
             "INSERT INTO stage0_cold_start_configuration("
             "configuration_id, domain_mode, domain_label, domain_name, "
@@ -89,7 +79,7 @@ class ColdStartRunLifecycleTest(unittest.TestCase):
                 "domain-lifecycle",
                 "owned",
                 json.dumps(list(self.competitor_ids)),
-                json.dumps({"run_model": self.run_model_binding}),
+                json.dumps({}),
                 "cold_start_guard_v14",
                 self.now,
                 "test",
@@ -145,7 +135,6 @@ class ColdStartRunLifecycleTest(unittest.TestCase):
         result = self.core.resume_stopped_cold_start(
             configuration_id="config-lifecycle",
             actor="fixture",
-            task_model_binding=self.run_model_binding,
         )
         self.assertEqual(result["status"], "running")
         self.assertFalse(result["resumed"])
@@ -161,7 +150,6 @@ class ColdStartRunLifecycleTest(unittest.TestCase):
         result = self.core.resume_stopped_cold_start(
             configuration_id="config-lifecycle",
             actor="fixture",
-            task_model_binding=self.run_model_binding,
         )
         self.assertEqual(result["prior_status"], "stopped")
         self.assertEqual(self.run_status(), "running")
@@ -176,7 +164,6 @@ class ColdStartRunLifecycleTest(unittest.TestCase):
         resumed = self.core.resume_stopped_cold_start(
             configuration_id="config-lifecycle",
             actor="fixture",
-            task_model_binding=self.run_model_binding,
         )
         self.assertEqual(resumed["prior_status"], "failed")
         self.assertEqual(self.run_status(), "running")
@@ -191,7 +178,6 @@ class ColdStartRunLifecycleTest(unittest.TestCase):
         self.core.resume_stopped_cold_start(
             configuration_id="config-lifecycle",
             actor="fixture",
-            task_model_binding=self.run_model_binding,
         )
         second = self.core.fail_configured_cold_start(
             configuration_id="config-lifecycle",

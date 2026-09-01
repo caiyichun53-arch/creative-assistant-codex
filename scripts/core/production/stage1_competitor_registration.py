@@ -28,21 +28,14 @@ from scripts.core.business_data.domain_labels import (
     get_domain_pack,
     require_frozen_content_type_registry,
 )
-from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelRunEnvelope
 from scripts.core.model_gateway.formal_skill_adapter import (
-    FormalBusinessSkillAdapter,
     FormalSkillContract,
     FormalSkillValidationError,
     prepare_external_skill_task,
     validate_external_skill_output,
 )
-from scripts.core.model_gateway.configured_provider import build_configured_model_provider
-from scripts.core.runtime.liveness import budget_for
-from scripts.core.model_gateway.model_router import ModelRouter, ModelRouterError
 from scripts.core.production.stage0_content_core import (
     COMPETITOR_REGISTRATION_STEPS,
-    CoreCompetitorRegistrationModelRunMaterializer,
-    CoreDailyHitModelRunMaterializer,
     Stage0ContentProductionCore,
     StateTransitionError,
 )
@@ -57,11 +50,9 @@ from scripts.core.production.high_signal_policy import (
     build_historical_collection_artifact,
     build_high_signal_artifact,
 )
-from scripts.core.production.stage1a_research_plan import _configured_environment_value
 from scripts.core.external_adapters.runtime_config import external_runtime_value
 
 
-COMPETITOR_ANALYSIS_ROUTE = "stage0.competitor_registration_analysis"
 CONTENT_SUBJECT_TYPES = frozenset({
     "person", "work", "event", "concept", "case", "method", "collection", "mixed", "unclear",
 })
@@ -81,30 +72,7 @@ class CompetitorBreakdownFailed(StateTransitionError):
         self.failure_record = dict(failure_record)
 
 
-class TestOnlyCompetitorBreakdownMaterializer:
-    """Keep test envelopes in the returned receipt, never in formal business storage."""
 
-    def __init__(self) -> None:
-        self.envelopes: list[ModelRunEnvelope] = []
-
-    def persist_envelope(self, envelope: ModelRunEnvelope) -> str:
-        self.envelopes.append(envelope)
-        return f"test_envelope_{len(self.envelopes):02d}"
-
-
-def _test_correction_eligible(exc: Exception) -> bool:
-    """Only a complete, rejected test answer may receive one correction request."""
-    if not isinstance(exc, FormalSkillValidationError):
-        return False
-    if not isinstance(exc.raw_model_output, str) or not exc.raw_model_output.strip():
-        return False
-    receipt = exc.model_completion_receipt
-    return isinstance(receipt, dict) and str(receipt.get("finish_reason") or "") in {
-        "stop",
-        # Hermes/Mimo can mark a complete JSON object with this provider-level
-        # reason even though the answer is not a streamed partial response.
-        "complete_visible_json",
-    }
 _TAG_EDGE_PUNCTUATION = "，,。.！!?？:：;；、|/\\()（）[]【】<>《》“”'\"`~·…"
 _COMMON_COLLECTOR_POLICY_PATH = Path(__file__).resolve().parents[3] / "config" / "business_guardrails" / "competitor_registration.json"
 
@@ -304,77 +272,13 @@ def _comments_for_source(values: Any, source_id: str) -> list[dict[str, Any]]:
     return retained
 
 
-def build_production_competitor_registration_gateway(
-    core: Stage0ContentProductionCore,
-    *,
-    stream_responses: bool = False,
-    task_model_binding: dict[str, Any],
-) -> ModelGateway:
-    if core.data_identity != "production":
-        raise StateTransitionError("production competitor registration requires production data identity")
-    router = ModelRouter.from_file()
-    definition = router.routes.get("business_analysis")
-    if definition is None or definition.fallback != "none":
-        raise ModelRouterError("competitor registration requires business_analysis with fallback none")
-    limits = budget_for("model")
-    route = router.resolve_frozen_task_route(
-        task_model_binding,
-        route_name=COMPETITOR_ANALYSIS_ROUTE,
-        # A breakdown is a single structured JSON record.  Keep the response
-        # whole so a long evidence-bound result cannot end as half a JSON
-        # object merely because a streaming connection closed early.
-        parameters={"stream": stream_responses},
-    )
-    provider = router.resolve_bound_provider(route)
-    adapter = build_configured_model_provider(provider, route, model_limits=limits)
-    return ModelGateway(
-        routes={route.route_name: route}, providers={adapter.provider_name: adapter},
-        materializer=CoreCompetitorRegistrationModelRunMaterializer(core),
-    )
-
-
-def build_production_daily_hit_gateway(
-    core: Stage0ContentProductionCore,
-    *,
-    task_model_binding: dict[str, Any] | None = None,
-) -> ModelGateway:
-    if core.data_identity != "production":
-        raise StateTransitionError("production daily-hit breakdown requires production data identity")
-    router = ModelRouter.from_file()
-    definition = router.routes.get("business_analysis")
-    if definition is None or definition.fallback != "none":
-        raise ModelRouterError("daily-hit breakdown requires business_analysis with fallback none")
-    limits = budget_for("model")
-    execution_binding = task_model_binding or router.resolve_current_hermes_execution_binding(
-        route_id="business_analysis",
-    ).as_payload()
-    route = router.resolve_frozen_task_route(
-        execution_binding,
-        route_name=COMPETITOR_ANALYSIS_ROUTE,
-        parameters={"stream": False},
-    )
-    provider = router.resolve_bound_provider(route)
-    adapter = build_configured_model_provider(provider, route, model_limits=limits)
-    return ModelGateway(
-        routes={route.route_name: route},
-        providers={adapter.provider_name: adapter},
-        materializer=CoreDailyHitModelRunMaterializer(core),
-    )
-
-
-def run_test_only_competitor_breakdown_batch(
+def prepare_test_only_competitor_breakdown_batch(
     *,
     test_id: str,
     materials: list[dict[str, Any]],
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Run a fixed, non-writing comparison batch through the formal Skill.
-
-    This is deliberately separate from formal registration: it uses the same
-    route, Skill, validation, and one-call boundary, but keeps every envelope
-    and raw answer only in the returned test receipt.  It never receives Core
-    and therefore cannot write formal business records.
-    """
+    """Prepare test materials as external tasks without executing a model."""
     if not isinstance(test_id, str) or not test_id.strip():
         raise StateTransitionError("test-only competitor breakdown needs a test identifier")
     if not isinstance(materials, list) or not materials:
@@ -410,59 +314,31 @@ def run_test_only_competitor_breakdown_batch(
             ),
         })
 
-    router = ModelRouter.from_file()
-    definition = router.routes.get("business_analysis")
-    if definition is None or definition.fallback != "none":
-        raise ModelRouterError("test-only competitor breakdown requires business_analysis with fallback none")
-    limits = budget_for("model")
-    route = router.resolve_bound_route(
-        "business_analysis",
-        route_name=COMPETITOR_ANALYSIS_ROUTE,
-        # The breakdown uses one short metadata JSON prefix followed by a
-        # delimiter and ordinary analysis text.  Keep the test path on the
-        # same whole-response delivery as formal execution.
-        parameters={"stream": False},
-    )
-    provider_definition = router.resolve_bound_provider(route)
-    adapter = build_configured_model_provider(provider_definition, route, model_limits=limits)
-    test_materializer = TestOnlyCompetitorBreakdownMaterializer()
-    gateway = ModelGateway(
-        routes={route.route_name: route},
-        providers={adapter.provider_name: adapter},
-        materializer=test_materializer,
-    )
-    skill = FormalBusinessSkillAdapter(
-        contract=FormalSkillContract.from_runtime_skill("competitor_breakdown"),
-        gateway=gateway,
-        data_identity="test",
-    )
-
     outcomes: list[dict[str, Any]] = []
     observed_types_by_domain: dict[str, list[str]] = {}
     for material in normalized_materials:
         domain_label = str(material["domain_label"] or "generic")
-        supplied_context = material.get("domain_context")
-        supplied_types = (
-            supplied_context.get("observed_content_types")
-            if isinstance(supplied_context, dict)
-            else []
-        )
+        context = material.get("domain_context")
+        supplied_types = context.get("observed_content_types") if isinstance(context, dict) else []
         observed_types_by_domain.setdefault(domain_label, [])
         for value in supplied_types if isinstance(supplied_types, list) else []:
             content_type = str(value).strip()
             if content_type and content_type not in observed_types_by_domain[domain_label]:
                 observed_types_by_domain[domain_label].append(content_type)
+
+    contract = FormalSkillContract.from_runtime_skill("competitor_breakdown")
     for material in normalized_materials:
         if progress_callback is not None:
             progress_callback({
                 "source_count": len(normalized_materials),
                 "current_position": material["position"],
                 "current_source_id": material["source_id"],
-                "completed": sum(item.get("status") == "completed" for item in outcomes),
-                "failed": sum(item.get("status") == "failed" for item in outcomes),
-                "activity": "request_started",
+                "completed": 0,
+                "failed": 0,
+                "activity": "external_task_prepared",
             })
-        payload = {
+        context = material.get("domain_context") or {}
+        input_payload = {
             "correlation_id": f"{test_id}:{material['position']}:{material['source_id']}",
             "source_id": material["source_id"],
             "transcript": material["transcript"],
@@ -472,121 +348,49 @@ def run_test_only_competitor_breakdown_batch(
             "domain_context": _breakdown_domain_context(
                 material["domain_label"],
                 observed_content_types=observed_types_by_domain.get(material["domain_label"], []),
-                content_type_lifecycle=str(
-                    (material.get("domain_context") or {}).get("content_type_lifecycle")
-                    or "discover"
-                ),
-                content_type_registry=(material.get("domain_context") or {}).get(
-                    "content_type_registry"
-                ),
+                content_type_lifecycle=str(context.get("content_type_lifecycle") or "discover"),
+                content_type_registry=context.get("content_type_registry"),
             ),
             "schema_version": "competitor_breakdown.input.v1",
         }
-        outcome = {
+        task, _ = prepare_external_skill_task(
+            contract,
+            input_payload,
+            constraints={
+                "use_only_supplied_material": True,
+                "preserve_source_identity": True,
+                "cannot_change_business_state": True,
+                "do_not_search": True,
+                "no_fuzzy_evidence_matching": True,
+            },
+            business_context={
+                "origin": "competitor_breakdown_test",
+                "test_id": test_id,
+                "source_id": material["source_id"],
+                "data_identity": "test",
+            },
+        )
+        task["task_identity"] = {
+            "task_type": "competitor_breakdown",
+            "test_id": test_id,
+            "source_id": material["source_id"],
+        }
+        outcomes.append({
             "position": material["position"],
             "hit_id": material["hit_id"],
             "source_id": material["source_id"],
             "title": material["title"],
-        }
-        try:
-            result = skill.run(
-                payload,
-                request_metadata={
-                    "test_only": True,
-                    "test_name": test_id,
-                    "formal_business_data_written": False,
-                    "automatic_retry": False,
-                },
-            )
-            observed_type = str(result.output_payload.get("source_content_type") or "").strip()
-            if observed_type and observed_type not in observed_types_by_domain.setdefault(material["domain_label"], []):
-                observed_types_by_domain[material["domain_label"]].append(observed_type)
-            outcome.update({
-                "status": "completed",
-                "output": result.output_payload,
-                "raw_model_output": result.raw_model_output,
-                "model_run_envelope_version_id": result.model_run_envelope_version_id,
-                "test_correction": {"attempted": False},
-            })
-        except Exception as exc:  # Test batches retain each failure and continue to the next material.
-            if _test_correction_eligible(exc):
-                initial_failure = {
-                    "reason": str(exc),
-                    "raw_model_output": exc.raw_model_output,
-                    "model_run_envelope_version_id": exc.model_run_envelope_version_id,
-                    "model_completion_receipt": exc.model_completion_receipt,
-                }
-                try:
-                    correction = skill.run_test_correction(
-                        payload,
-                        rejected_model_output=exc.raw_model_output,
-                        validation_errors=[str(exc)],
-                        request_metadata={
-                            "test_only": True,
-                            "test_name": test_id,
-                            "formal_business_data_written": False,
-                            "test_single_correction": True,
-                        },
-                    )
-                except Exception as correction_exc:
-                    outcome.update({
-                        "status": "failed",
-                        "reason": str(correction_exc),
-                        "failure_type": type(correction_exc).__name__,
-                        "raw_model_output": getattr(correction_exc, "raw_model_output", None),
-                        "model_run_envelope_version_id": getattr(correction_exc, "model_run_envelope_version_id", None),
-                        "model_completion_receipt": getattr(correction_exc, "model_completion_receipt", None),
-                        "provider_diagnostics": getattr(correction_exc, "diagnostics", None),
-                        "test_correction": {
-                            "attempted": True,
-                            "status": "failed",
-                            "initial_failure": initial_failure,
-                        },
-                    })
-                else:
-                    outcome.update({
-                        "status": "completed",
-                        "output": correction.output_payload,
-                        "raw_model_output": correction.raw_model_output,
-                        "model_run_envelope_version_id": correction.model_run_envelope_version_id,
-                        "test_correction": {
-                            "attempted": True,
-                            "status": "accepted",
-                            "initial_failure": initial_failure,
-                        },
-                    })
-            else:
-                outcome.update({
-                    "status": "failed",
-                    "reason": str(exc),
-                    "failure_type": type(exc).__name__,
-                    "raw_model_output": getattr(exc, "raw_model_output", None),
-                    "model_run_envelope_version_id": getattr(exc, "model_run_envelope_version_id", None),
-                    "model_completion_receipt": getattr(exc, "model_completion_receipt", None),
-                    "provider_diagnostics": getattr(exc, "diagnostics", None),
-                    "test_correction": {"attempted": False},
-                })
-        outcomes.append(outcome)
-        if progress_callback is not None:
-            progress_callback({
-                "source_count": len(normalized_materials),
-                "current_position": material["position"],
-                "current_source_id": material["source_id"],
-                "completed": sum(item.get("status") == "completed" for item in outcomes),
-                "failed": sum(item.get("status") == "failed" for item in outcomes),
-                "activity": "request_finished",
-            })
+            "status": "requires_external_intelligence",
+            "task": task,
+        })
 
     return {
         "kind": "competitor_breakdown_test_batch",
         "test_id": test_id,
         "formal_business_data_written": False,
         "automatic_retry": False,
-        "test_single_correction_enabled": True,
-        "model_delivery": "non_stream_metadata_json_analysis_delimited",
-        "route_timeout_ms": route.timeout_ms,
+        "model_delivery": "external_executor_structured_submit",
         "outcomes": outcomes,
-        "model_envelopes": [envelope.as_payload() for envelope in test_materializer.envelopes],
     }
 
 
@@ -600,7 +404,7 @@ class ConfiguredCompetitorRegistrationExecutor:
         collector: MediaCrawlerCollectorAdapter,
         transcriber: AsrAdapter,
         media_materializer: LocalCompetitorMediaMaterializer,
-        gateway: ModelGateway | None = None,
+        gateway: Any | None = None,
         external_executor: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         max_historical_items: int = FIRST_REGISTRATION_MAX_ITEMS,
         progress_callback: Callable[[str, str], None] | None = None,
@@ -614,7 +418,11 @@ class ConfiguredCompetitorRegistrationExecutor:
         self.collector = collector
         self.transcriber = transcriber
         self.media_materializer = media_materializer
-        self.gateway = gateway
+        if gateway is not None:
+            raise StateTransitionError(
+                "formal competitor execution must use an external executor; direct model gateways are not supported"
+            )
+        self.gateway = None
         self.external_executor = external_executor
         self.max_historical_items = max_historical_items
         self.progress_callback = progress_callback
@@ -1254,56 +1062,6 @@ class ConfiguredCompetitorRegistrationExecutor:
             ) if item["status"] == "completed"
         )
 
-    def _model_json(
-        self,
-        *,
-        registration: dict[str, Any],
-        step_name: str,
-        input_payload: dict[str, Any],
-        attempt_kind: str,
-    ) -> tuple[dict[str, Any], str, str]:
-        if step_name != "breakdown":
-            raise StateTransitionError(
-                "the competitor-registration model is reserved for individual hit breakdowns"
-            )
-        content_type_lifecycle = (
-            "discover" if str(registration.get("status") or "").strip() == "processing" else "classify"
-        )
-        payload = {
-            "correlation_id": f"{registration['registration_id']}:{step_name}",
-            "source_id": str(input_payload["source_id"]),
-            "transcript": str(input_payload["transcript"]),
-            "metrics": dict(input_payload["metrics"]),
-            "comments": list(input_payload["comments"]),
-            "domain_label": str(registration.get("domain_label") or "generic"),
-            "domain_context": _breakdown_domain_context(
-                str(registration.get("domain_label") or "generic"),
-                observed_content_types=self.core.observed_breakdown_content_types(
-                    domain_label=str(registration.get("domain_label") or "generic")
-                ),
-                content_type_lifecycle=content_type_lifecycle,
-            ),
-            "schema_version": "competitor_breakdown.input.v1",
-        }
-        result = FormalBusinessSkillAdapter(
-            contract=FormalSkillContract.from_runtime_skill("competitor_breakdown"),
-            gateway=self.gateway,
-            data_identity=self.core.data_identity,
-        ).run(
-            payload,
-            request_metadata={
-                "automatic_retry": attempt_kind == "post_batch_delivery_retry",
-                "breakdown_attempt_kind": attempt_kind,
-                "competitor_registration_core": {
-                    "registration_id": registration["registration_id"],
-                    "step_name": step_name,
-                    "source_id": str(input_payload["source_id"]),
-                    "data_identity": self.core.data_identity,
-                },
-            },
-        )
-        return result.output_payload, result.model_run_envelope_version_id, result.raw_model_output
-
     def _breakdown_failure_record(self, exc: Exception) -> dict[str, Any]:
         raw_output = exc.raw_model_output if isinstance(exc, FormalSkillValidationError) else None
         record = {
@@ -1414,17 +1172,7 @@ class ConfiguredCompetitorRegistrationExecutor:
     ) -> dict[str, Any]:
         source_id = str(material.get("source_id") or "")
         transcript_text = Path(str(material["transcript_ref"])).read_text(encoding="utf-8")
-        payload = {
-            "source_id": source_id,
-            "transcript": transcript_text,
-            "metrics": material["metrics"],
-            "comments": material["comments"],
-        }
-        # A historical isolated test constructs this worker with ``__new__``
-        # and patches the legacy model helper.  Keep that test-only shape
-        # working while every normal constructed worker uses the external
-        # boundary when its gateway is explicitly absent.
-        if hasattr(self, "gateway") and self.gateway is None:
+        if self.gateway is None:
             content_type_lifecycle = (
                 "discover" if str(registration.get("status") or "").strip() == "processing" else "classify"
             )
@@ -1495,20 +1243,9 @@ class ConfiguredCompetitorRegistrationExecutor:
                 "raw_model_output": json.dumps(artifact, ensure_ascii=False, sort_keys=True),
                 "deep_breakdown": artifact,
             }
-        value, model_run_id, raw_model_output = self._model_json(
-            registration=registration,
-            step_name="breakdown",
-            input_payload=payload,
-            attempt_kind=attempt_kind,
+        raise StateTransitionError(
+            "formal competitor breakdown has no direct model execution path"
         )
-        self._validate_core_breakdown_artifact(artifact=value, source_id=source_id)
-        return {
-            "artifact_kind": "deep_breakdown",
-            "source_id": source_id,
-            "model_run_id": model_run_id,
-            "raw_model_output": raw_model_output,
-            "deep_breakdown": value,
-        }
 
     def prepare_breakdown_replacement_candidate(
         self,
@@ -1828,13 +1565,12 @@ def build_configured_competitor_registration_executor(
     core: Stage0ContentProductionCore,
     *,
     progress_callback: Callable[[str, str], None] | None = None,
-    task_model_binding: dict[str, Any] | None = None,
     stream_breakdowns: bool = False,
     external_executor: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     on_material_change: Callable[[str], None] | None = None,
 ) -> ConfiguredCompetitorRegistrationExecutor:
     """Bind collection/material preparation to the external intelligence boundary."""
-    del task_model_binding, stream_breakdowns
+    del stream_breakdowns
     archive_root = require_runtime_path(Path(
         os.environ.get("COMPETITOR_REGISTRATION_ARCHIVE_ROOT")
         or runtime_path(

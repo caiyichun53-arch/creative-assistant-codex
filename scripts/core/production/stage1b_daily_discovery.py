@@ -25,15 +25,6 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.core.model_gateway.goal07_model_gateway import (
-    ModelGateway,
-    ModelGatewayError,
-    ModelRequest,
-    ModelRoute,
-)
-from scripts.core.model_gateway.configured_provider import build_configured_model_provider
-from scripts.core.runtime.liveness import budget_for
-from scripts.core.model_gateway.model_router import DEFAULT_MODEL_ENV_PATH, ModelRouter, ModelRouterError
 from scripts.core.model_gateway.formal_skill_adapter import (
     FormalSkillContract,
     HOTSPOT_TO_OPPORTUNITY_CONTRACT_PATH,
@@ -46,10 +37,8 @@ from scripts.core.model_gateway.formal_skill_adapter import (
 )
 from scripts.core.production.business_runtime_guard import enforce_atomic_skill_runtime_guard
 from scripts.core.production.stage0_content_core import (
-    CoreDiscoveryModelRunMaterializer,
     DataIdentityError,
     FORMAL_DB_PATH,
-    ModelGatewayRequiredError,
     Stage0ContentProductionCore,
     StateTransitionError,
 )
@@ -428,52 +417,6 @@ def daily_discovery_prompt(input_payload: dict[str, Any]) -> str:
     )
 
 
-def _dotenv_value(reference: str, path: Path) -> str:
-    if not path.exists():
-        return ""
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith(f"{reference}="):
-            return line.split("=", 1)[1].strip().strip('"').strip("'")
-    return ""
-
-
-def _configured_environment_value(reference: str, *, env_path: Path = DEFAULT_MODEL_ENV_PATH) -> str:
-    process_value = str(os.environ.get(reference) or "").strip()
-    dotenv_value = _dotenv_value(reference, env_path)
-    if process_value and dotenv_value and process_value != dotenv_value:
-        raise ModelRouterError(f"conflicting values for configured environment reference: {reference}")
-    value = process_value or dotenv_value
-    if not value:
-        raise ModelRouterError(f"configured environment reference is unresolved: {reference}")
-    return value
-
-
-def build_production_daily_discovery_gateway(
-    core: Stage0ContentProductionCore,
-    *,
-    task_model_binding: dict[str, Any] | None = None,
-) -> ModelGateway:
-    """Build the explicitly configured source_to_topic route."""
-    if core.data_identity != "production":
-        raise StateTransitionError("production daily-discovery gateway requires production data identity")
-    router = ModelRouter.from_file()
-    definition = router.routes.get("business_analysis")
-    if definition is None or definition.fallback != "none" or "topic_screening" not in definition.allowed_task_types:
-        raise ModelRouterError("source_to_topic requires an explicit business topic_screening route with fallback none")
-    limits = budget_for("model")
-    execution_binding = task_model_binding or router.resolve_current_hermes_execution_binding(
-        route_id="business_analysis",
-    ).as_payload()
-    route = router.resolve_frozen_task_route(
-        execution_binding,
-        route_name="business.source_to_topic",
-        parameters={"stream": False},
-    )
-    provider = router.resolve_bound_provider(route)
-    adapter = build_configured_model_provider(provider, route, model_limits=limits)
-    return ModelGateway(routes={route.route_name: route}, providers={adapter.provider_name: adapter}, materializer=CoreDiscoveryModelRunMaterializer(core))
-
-
 def build_production_source_acquirer(
     core: Stage0ContentProductionCore,
     *,
@@ -520,40 +463,22 @@ class Stage1BDailyDiscoveryService:
         self,
         *,
         core: Stage0ContentProductionCore,
-        gateway: ModelGateway | None,
+        gateway: Any | None = None,
         source_acquirer: DailyDiscoverySourceAcquirer | None = None,
         source_to_topic_contract: FormalSkillContract | None = None,
         hotspot_to_opportunity_contract: FormalSkillContract | None = None,
-        model_route: ModelRoute | None = None,
+        model_route: Any | None = None,
         external_executor: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
     ):
-        if getattr(core, "data_identity", "") == "production" and gateway is not None:
+        if gateway is not None or model_route is not None:
             raise StateTransitionError(
-                "formal discovery cannot receive a Core model gateway"
+                "formal discovery must use an external executor; direct model gateways and routes are not supported"
             )
         self.core = core
-        self.gateway = gateway
         self.external_executor = external_executor
         self.source_acquirer = source_acquirer
         self.source_to_topic_contract = source_to_topic_contract or FormalSkillContract.from_runtime_skill("source_to_topic")
         self.hotspot_to_opportunity_contract = hotspot_to_opportunity_contract or FormalSkillContract.from_yaml(HOTSPOT_TO_OPPORTUNITY_CONTRACT_PATH)
-        gateway_route = (
-            gateway.routes.get(self.source_to_topic_contract.route_name)
-            if gateway is not None
-            else None
-        )
-        if model_route is None:
-            model_route = gateway_route
-        elif gateway_route is not None and model_route != gateway_route:
-            raise ModelRouterError("source_to_topic route does not match its gateway route")
-        if gateway is not None and model_route is None:
-            raise ModelRouterError("source_to_topic requires an explicit route on its gateway")
-        self.model_route = model_route
-
-    def _source_to_topic_route(self) -> ModelRoute:
-        if self.model_route is None:
-            raise ModelRouterError("source_to_topic requires an explicit gateway route")
-        return self.model_route
 
     def _feed_unregistered_account_observation(
         self,
@@ -952,31 +877,6 @@ class Stage1BDailyDiscoveryService:
                             "summary": summary,
                             "task": exc.task,
                         }
-                    except (ModelGatewayError, ModelGatewayRequiredError) as exc:
-                        self.core.record_discovery_source_failure(
-                            run_id=run["run_id"], source_version_id=source_result["source_version_id"],
-                            model_run_id=getattr(exc, "model_run_envelope_version_id", None),
-                            failure_stage="model_execution", reason=str(exc), raw_model_output=None,
-                            idempotency_key=f"{idempotency_key}:{domain_label}:failure:{index}",
-                        )
-                        filtered["model_gateway_failed"] = filtered.get("model_gateway_failed", 0) + 1
-                        summary["technical_failures"] += 1
-                        summary["failure_details"].append({
-                            "stage": "candidate_discovery",
-                            "operation": "source_to_topic",
-                            "source_type": source["source_type"],
-                            "source_object_id": source["source_object_id"],
-                            "failure_stage": "model_execution",
-                            "reason": str(exc),
-                        })
-                        if source["source_type"] in source_evidence:
-                            source_evidence[source["source_type"]]["status"] = "failed"
-                            source_evidence[source["source_type"]]["reason"] = "model_gateway_failed"
-                        lifecycle_status, failure_reason = "failed", (
-                            f"source_to_topic failed for source_type={source['source_type']}; "
-                            "batch stopped without retry"
-                        )
-                        break
                     except (json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
                         failed_model_run_id = (
                             model_result.envelope_version_id if model_result is not None
@@ -1450,7 +1350,7 @@ class Stage1BDailyDiscoveryService:
                     "summary": summary,
                     "task": exc.task,
                 }
-            except (ModelGatewayError, json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
+            except (json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
                 audit_entry.update({"status": "judgement_failed", "reason_code": "hotspot_judgement_failed", "detail": {"reason": str(exc)}})
                 failed_model_run_id = getattr(exc, "model_run_envelope_version_id", None)
                 raw_model_output = getattr(exc, "raw_model_output", None)

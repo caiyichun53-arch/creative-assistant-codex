@@ -285,7 +285,6 @@ def launch_cold_start_background(
                         "cold_start_id": run_id,
                         "configuration_id": configuration,
                         "pid": int(process.pid),
-                        "run_model": str(receipt.get("run_model") or ""),
                         "worker_token": worker_token,
                         "log_path": str(log_path),
                         "executor_record": str(executor_record),
@@ -504,7 +503,6 @@ def main(argv: list[str] | None = None) -> int:
         activate_cold_start_background(
             record_path=arguments.executor_record,
             worker_token=arguments.worker_token,
-            run_model="",
         )
         heartbeat_stop, heartbeat_thread = start_cold_start_heartbeat(
             record_path=arguments.executor_record,
@@ -517,7 +515,6 @@ def main(argv: list[str] | None = None) -> int:
                 "status": "ready",
                 "cold_start_id": arguments.cold_start_id,
                 "configuration_id": arguments.configuration_id,
-                "run_model": "",
                 "pid": os.getpid(),
                 "ready_at": datetime.now(timezone.utc).isoformat(),
             },

@@ -35,7 +35,6 @@ from scripts.core.business_data.domain_boundaries import (
     require_frozen_production_boundary,
 )
 from scripts.core.business_data.run_domain_search import TAG_CANDIDATE_LIKE_FLOOR
-from scripts.core.model_gateway.configured_provider import build_configured_model_provider
 from scripts.core.model_gateway.goal07_model_gateway import (
     ModelGateway,
     ModelGatewayError,
@@ -44,11 +43,8 @@ from scripts.core.model_gateway.goal07_model_gateway import (
     ModelRunEnvelope,
 )
 from scripts.core.model_gateway.model_router import (
-    HermesTaskModelBinding,
     ModelRouter,
-    ModelRouterError,
 )
-from scripts.core.runtime.liveness import budget_for
 from scripts.core.production.high_signal_policy import (
     FIRST_REGISTRATION_COLLECTION_POLICY_VERSION,
     FIRST_REGISTRATION_MAX_ITEMS,
@@ -791,6 +787,12 @@ class Stage0ContentProductionCore:
         self.data_identity = data_identity
         self.domain_config_dir = (domain_config_dir or DOMAIN_CONFIG_DIR).resolve()
         self.conn.row_factory = sqlite3.Row
+
+    def _reject_formal_direct_model_execution(self, operation: str) -> None:
+        if self.data_identity == "production":
+            raise StateTransitionError(
+                f"formal business operation {operation} must use the external executor"
+            )
 
     @classmethod
     def _validate_database_path(
@@ -2556,6 +2558,7 @@ class Stage0ContentProductionCore:
 
     def prepare_atomic_skill_binding(self, *, task_id: str, node_version_id: str) -> dict[str, Any]:
         """Return Core-owned receipt metadata; the atomic Skill alone creates the model request."""
+        self._reject_formal_direct_model_execution("prepare_atomic_skill_binding")
         version = self._version(node_version_id)
         task = self._task(task_id)
         if version["task_id"] != task_id or version["node"] not in MODEL_BINDINGS:
@@ -2752,6 +2755,7 @@ class Stage0ContentProductionCore:
         idempotency_key: str,
         artifact_payload: dict[str, Any] | None = None,
     ) -> dict[str, str]:
+        self._reject_formal_direct_model_execution("complete_node_from_model")
         return self._complete_node_from_execution(
             task_id=task_id, node_version_id=node_version_id, model_run_id=model_run_id,
             output_ref=output_ref, validation_status=validation_status, actor=actor,
@@ -3266,6 +3270,7 @@ class Stage0ContentProductionCore:
         return model_run_id
 
     def _persist_experience_candidate_gateway_envelope(self, envelope: ModelRunEnvelope, binding: dict[str, Any]) -> str:
+        self._reject_formal_direct_model_execution("experience_candidate_model_gateway")
         if binding.get("data_identity") != self.data_identity:
             raise DataIdentityError("experience candidate model run identity does not match Core identity")
         candidate_id = str(binding.get("experience_candidate_id") or "")
@@ -3293,6 +3298,7 @@ class Stage0ContentProductionCore:
         return model_run_id
 
     def _persist_gateway_envelope(self, envelope: ModelRunEnvelope, binding: dict[str, Any]) -> str:
+        self._reject_formal_direct_model_execution("content_model_gateway")
         if binding.get("data_identity") != self.data_identity:
             raise DataIdentityError("ModelGateway data identity does not match Core identity")
         task_id, node_version_id = str(binding.get("task_id") or ""), str(binding.get("node_version_id") or "")
@@ -9008,75 +9014,14 @@ class Stage0ContentProductionCore:
         ).fetchall()
         return [self.get_cold_start_configuration(configuration_id=row["configuration_id"]) for row in rows]
 
-    def get_cold_start_run_model_binding(
-        self, *, cold_start_id: str
-    ) -> dict[str, Any]:
-        """Return the credential-free model binding for the current execution."""
-        row = self.conn.execute(
-            "SELECT input_snapshot_json FROM stage0_cold_start_run_contract "
-            "WHERE cold_start_id=? AND data_identity=?",
-            (str(cold_start_id or "").strip(), self.data_identity),
-        ).fetchone()
-        if row is None:
-            raise StateTransitionError("cold-start run has no execution model binding")
-        try:
-            snapshot = json.loads(str(row["input_snapshot_json"]))
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise StateTransitionError("cold-start run contract is not valid JSON") from exc
-        binding = snapshot.get("run_model") if isinstance(snapshot, dict) else None
-        required = ("route_id", "provider_ref", "provider_name", "provider_type", "model_name", "endpoint", "source")
-        if not isinstance(binding, dict) or any(
-            not str(binding.get(key) or "").strip() for key in required
-        ):
-            raise StateTransitionError("cold-start run has no complete execution model binding")
-        return dict(binding)
-
-    def _replace_cold_start_run_model_binding(
-        self,
-        *,
-        cold_start_id: str,
-        task_model_binding: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Store the model binding for the next execution of an existing run."""
-        try:
-            normalized = HermesTaskModelBinding.from_payload(task_model_binding).as_payload()
-        except Exception as exc:
-            raise StateTransitionError(
-                f"cold-start resume requires a complete current model binding: {exc}"
-            ) from exc
-        row = self.conn.execute(
-            "SELECT input_snapshot_json FROM stage0_cold_start_run_contract "
-            "WHERE cold_start_id=? AND data_identity=?",
-            (str(cold_start_id or "").strip(), self.data_identity),
-        ).fetchone()
-        if row is None:
-            raise StateTransitionError("cold-start run has no run contract to update")
-        try:
-            snapshot = json.loads(str(row["input_snapshot_json"]))
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise StateTransitionError("cold-start run contract is not valid JSON") from exc
-        if not isinstance(snapshot, dict):
-            raise StateTransitionError("cold-start run contract snapshot must be an object")
-        snapshot["run_model"] = dict(normalized)
-        self.conn.execute(
-            "UPDATE stage0_cold_start_run_contract SET input_snapshot_json=? "
-            "WHERE cold_start_id=? AND data_identity=?",
-            (_canonical(snapshot), str(cold_start_id or "").strip(), self.data_identity),
-        )
-        return normalized
-
     def start_configured_cold_start(
         self,
         *,
         configuration_id: str,
         actor: str,
         preflight_receipt_id: str | None = None,
-        task_model_binding: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create or continue exactly one run for one confirmed configuration."""
-        # Kept in the compatibility signature only.  A Business Run does not
-        # carry or resolve a provider/model binding.
-        del task_model_binding
         configuration = self.get_cold_start_configuration(configuration_id=configuration_id)
         cold_start_id = str(configuration.get("cold_start_id") or f"cold_start_{configuration_id}")
         competitor_snapshot = []
@@ -9180,8 +9125,6 @@ class Stage0ContentProductionCore:
         return {
             **result,
             "configuration_id": configuration_id,
-            "run_model": "",
-            "run_model_binding": {},
         }
 
     def pause_configured_cold_start(
@@ -9294,10 +9237,8 @@ class Stage0ContentProductionCore:
         *,
         configuration_id: str,
         actor: str | None = None,
-        task_model_binding: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Reactivate the same run without changing its business identity."""
-        del task_model_binding
         configuration = self.get_cold_start_configuration(
             configuration_id=configuration_id
         )
@@ -9335,8 +9276,6 @@ class Stage0ContentProductionCore:
                 "prior_status": prior_status,
                 "resumed": True,
                 "created_new_run": False,
-                "run_model": "",
-                "run_model_binding": {},
             }
             self.conn.execute(
                 "UPDATE stage0_cold_start SET status='running', "
@@ -11998,6 +11937,7 @@ class Stage0ContentProductionCore:
     def _persist_competitor_registration_gateway_envelope(
         self, envelope: ModelRunEnvelope, binding: dict[str, Any]
     ) -> str:
+        self._reject_formal_direct_model_execution("competitor_registration_model_gateway")
         if binding.get("data_identity") != self.data_identity:
             raise DataIdentityError("competitor-registration model result belongs to another data identity")
         registration_id = str(binding.get("registration_id") or "")
@@ -12040,6 +11980,7 @@ class Stage0ContentProductionCore:
     def _persist_daily_hit_gateway_envelope(
         self, envelope: ModelRunEnvelope, binding: dict[str, Any]
     ) -> str:
+        self._reject_formal_direct_model_execution("daily_hit_model_gateway")
         if binding.get("data_identity") != self.data_identity:
             raise DataIdentityError("daily-hit model result belongs to another data identity")
         hit_id = str(binding.get("hit_id") or "")
@@ -15012,6 +14953,7 @@ class Stage0ContentProductionCore:
         )
 
     def persist_discovery_model_envelope(self, envelope: ModelRunEnvelope, binding: dict[str, Any]) -> str:
+        self._reject_formal_direct_model_execution("discovery_model_gateway")
         if binding.get("data_identity") != self.data_identity:
             raise DataIdentityError("ModelGateway discovery identity does not match Core identity")
         run_id = str(binding.get("run_id") or "")

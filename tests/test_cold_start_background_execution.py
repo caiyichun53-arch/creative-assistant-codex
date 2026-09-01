@@ -28,7 +28,6 @@ from scripts.core.business_data.domain_labels import (
 )
 from scripts.core.production.cold_start_onboarding import ColdStartOnboardingService
 from scripts.core.production.stage0_content_core import Stage0ContentProductionCore
-from tests._cold_start_test_model import resolve_task_model
 
 
 class ColdStartBackgroundExecutionTest(unittest.TestCase):
@@ -75,14 +74,12 @@ class ColdStartBackgroundExecutionTest(unittest.TestCase):
         service = ColdStartOnboardingService(
             core=self.core,
             config_dir=self.config_dir,
-            task_model_resolver=resolve_task_model,
             background_execution_launcher=launcher,
         )
         payload = self.configuration(domain)
         preview = service.preview(payload)
         return service.confirm(
             payload,
-            trusted_internal_context={"task_model_name": "isolated/model-a"},
         )
 
     def test_failure_notification_uses_formal_breakdown_reason_and_counts(self) -> None:
@@ -262,7 +259,6 @@ class ColdStartBackgroundExecutionTest(unittest.TestCase):
                 "started": True,
                 "cold_start_id": values["cold_start_id"],
                 "configuration_id": values["configuration_id"],
-                "run_model": "",
                 "pid": 12345,
             }
 
@@ -273,7 +269,6 @@ class ColdStartBackgroundExecutionTest(unittest.TestCase):
         cold_start_id = str(created["cold_start_id"])
         self.assertTrue(created["automatic_start"])
         self.assertEqual(launches[0]["cold_start_id"], cold_start_id)
-        self.assertEqual(created["run_model"], "")
         self.assertEqual(
             self.connection.execute("SELECT COUNT(*) FROM stage0_cold_start").fetchone()[0],
             1,

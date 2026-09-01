@@ -12,16 +12,12 @@ import json
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
-from scripts.core.model_gateway.goal07_model_gateway import ModelGateway
 from scripts.core.model_gateway.formal_skill_adapter import (
     FormalSkillContract,
     FormalSkillValidationError,
     prepare_external_skill_task,
     validate_external_skill_output,
 )
-from scripts.core.model_gateway.configured_provider import build_configured_model_provider
-from scripts.core.runtime.liveness import budget_for
-from scripts.core.model_gateway.model_router import ModelRouter, ModelRouterError
 from scripts.core.external_adapters.anysearch_executor import (
     AnySearchExecutionError,
     AnySearchExecutor,
@@ -29,13 +25,12 @@ from scripts.core.external_adapters.anysearch_executor import (
 )
 from scripts.core.production.stage0_content_core import (
     ARTIFACT_NODES,
-    CoreModelRunMaterializer,
+    EXTERNAL_INTELLIGENCE_EXECUTION_VERSION,
     InputAssembly,
     Stage0ContentProductionCore,
     StateTransitionError,
 )
 from scripts.core.business_data.domain_labels import get_content_workflow_mode
-from scripts.core.production.stage1a_research_plan import _configured_environment_value
 from scripts.core.production.stage1b_daily_discovery import ExternalIntelligenceRequired
 from scripts.core.production.stage1d_audio_production import AudioProductionExecutor
 from scripts.core.production.experience_candidate_proposal import (
@@ -319,46 +314,6 @@ def _validate_document(
     return payload
 
 
-def build_production_content_pipeline_gateway(core: Stage0ContentProductionCore) -> ModelGateway:
-    """Build only the explicit business and writing routes; no fallback or silent provider switch is permitted."""
-    if core.data_identity != "production":
-        raise StateTransitionError("production content-pipeline gateway requires production data identity")
-    router = ModelRouter.from_file()
-    contracts = [
-        FormalSkillContract.from_runtime_skill(CONTENT_SKILL_BY_NODE[node])
-        for node in sorted(POST_PLAN_NODES)
-    ]
-    route_ids = {contract.route_id for contract in contracts}
-    definitions = [router.routes.get(route_id) for route_id in route_ids]
-    if any(
-        definition is None
-        or definition.provider_ref != "active_provider"
-        or definition.fallback != "none"
-        for definition in definitions
-    ):
-        raise ModelRouterError("every post-plan route must be explicitly configured with fallback none")
-    limits = budget_for("model")
-    routes = {}
-    for contract in contracts:
-        route_parameters = {"stream": False}
-        if contract.formal_skill_id == "content_deep_research":
-            route_parameters["max_tokens"] = 12000
-        route = router.resolve_bound_route(
-            contract.route_id, route_name=contract.route_name, parameters=route_parameters
-        )
-        routes[route.route_name] = route
-    provider_refs = {route.provider_ref for route in routes.values()}
-    if len(provider_refs) != 1:
-        raise ModelRouterError("post-plan routes must use one active model service until multi-provider materialization is implemented")
-    provider = router.resolve_bound_provider(next(iter(routes.values())))
-    adapter = build_configured_model_provider(
-        provider,
-        next(iter(routes.values())),
-        model_limits=limits,
-    )
-    return ModelGateway(routes=routes, providers={adapter.provider_name: adapter}, materializer=CoreModelRunMaterializer(core))
-
-
 class Stage1CContentPipelineService:
     """Research dossier -> plan -> draft -> review, with Core-enforced human gates."""
 
@@ -366,13 +321,14 @@ class Stage1CContentPipelineService:
         self,
         *,
         core: Stage0ContentProductionCore,
-        gateway: ModelGateway | None = None,
+        gateway: Any | None = None,
         external_executor: Any | None = None,
     ):
+        if gateway is not None:
+            raise StateTransitionError(
+                "formal content-pipeline execution must use an external executor; direct model gateways are not supported"
+            )
         self.core = core
-        # Keep the old constructor argument as compatibility only.  All
-        # post-plan intelligent work now crosses the external-task boundary.
-        del gateway
         self.gateway = None
         self.external_executor = external_executor
 
@@ -454,7 +410,7 @@ class Stage1CContentPipelineService:
             omitted_materials=(),
             prompt_version=f"stage1c.{node}.prompt.v3.1" if node == "deep_research" else f"stage1c.{node}.prompt.v1",
             skill_version=f"stage1c.{node}.skill.v3.1" if node == "deep_research" else f"stage1c.{node}.skill.v1",
-            model_config_version="model_routes.v1",
+            model_config_version=EXTERNAL_INTELLIGENCE_EXECUTION_VERSION,
             considered_validation_candidates=considered_validation_candidates,
         )
         assembly_result = self.core.create_input_assembly(assembly, idempotency_key=f"{idempotency_key}:assembly")

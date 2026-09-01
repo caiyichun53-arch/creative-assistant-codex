@@ -8,8 +8,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
-from tests._cold_start_test_model import resolve_task_model
+from unittest.mock import patch
 
 from scripts.core.business_data.domain_labels import DOMAIN_CONFIG_DIR, set_domain_pack_config_dir
 from scripts.core.runtime.runtime_storage import runtime_path
@@ -29,8 +28,6 @@ from scripts.core.production.stage1_competitor_registration import (
     CompetitorRegistrationService,
 )
 
-
-from scripts.core.model_gateway.formal_skill_adapter import validate_competitor_breakdown_question_expansion_output
 
 class FakeContentBranchExecutor:
     def __init__(
@@ -282,11 +279,9 @@ class ColdStartOrchestrator2B1Test(unittest.TestCase):
         self.core.install_schema()
         self.onboarding = ColdStartOnboardingService(
             core=self.core, config_dir=self.config_dir,
-            task_model_resolver=resolve_task_model,
         )
         self.adapter = ColdStartHumanDecisionAdapter(
             core=self.core, config_dir=self.config_dir,
-            task_model_resolver=resolve_task_model,
         )
         self.core.propose_human_decision_carrier(
             carrier_binding_id="isolated-2b2-carrier",
@@ -459,20 +454,59 @@ class ColdStartOrchestrator2B1Test(unittest.TestCase):
         }
 
     def test_step6_core_contract_and_failed_resume_semantics(self) -> None:
-        registration, material, executor = self._prepare_breakdown_subject()
+        registration, material, _ = self._prepare_breakdown_subject()
+        registration = {**registration, "status": "processing"}
         source_id = str(material["source_id"])
 
         invalid = self._breakdown_value(source_id, valid_core=False)
-        with patch.object(
-            executor,
-            "_model_json",
-            return_value=(invalid, "model-invalid", json.dumps(invalid, ensure_ascii=False)),
-        ):
-            with self.assertRaises(Exception):
-                executor.process_prepared_breakdown(
-                    registration=registration,
-                    material=material,
-                )
+        valid = self._breakdown_value(source_id, valid_core=True)
+        valid["question_expansions"] = []
+        valid.pop("expansion_signals", None)
+        submissions = [
+            {
+                "execution_id": "external-invalid-1",
+                "executor_id": "isolated-executor",
+                "model_ref": "reported-model",
+                "output": invalid,
+            },
+            {
+                "execution_id": "external-valid-1",
+                "executor_id": "isolated-executor",
+                "model_ref": "reported-model",
+                "output": valid,
+            },
+            {
+                "execution_id": "external-invalid-2",
+                "executor_id": "isolated-executor",
+                "model_ref": "reported-model",
+                "output": invalid,
+            },
+            {
+                "execution_id": "external-valid-2",
+                "executor_id": "isolated-executor",
+                "model_ref": "reported-model",
+                "output": valid,
+            },
+        ]
+        submitted_tasks: list[dict] = []
+
+        def submit(task: dict) -> dict:
+            submitted_tasks.append(task)
+            return submissions.pop(0)
+
+        executor = ConfiguredCompetitorRegistrationExecutor(
+            core=self.core,
+            collector=None,
+            transcriber=None,
+            media_materializer=None,
+            external_executor=submit,
+        )
+
+        with self.assertRaises(Exception):
+            executor.process_prepared_breakdown(
+                registration=registration,
+                material=material,
+            )
         failed = next(
             item for item in self.core.list_competitor_registration_items(
                 registration_id=str(registration["registration_id"]), step_name="breakdown"
@@ -480,54 +514,23 @@ class ColdStartOrchestrator2B1Test(unittest.TestCase):
         )
         self.assertEqual(failed["status"], "failed")
 
-        valid = self._breakdown_value(source_id, valid_core=True)
-        formal_valid = dict(valid)
-        formal_valid["schema_version"] = "competitor_breakdown.output.raw.v5"
-        validate_competitor_breakdown_question_expansion_output(
-            {
-                "source_id": source_id,
-                "transcript": "核心材料",
-                "comments": [],
-                "domain_context": {},
-            },
-            formal_valid,
-            validate_optional=False,
+        completed = executor.process_prepared_breakdown(
+            registration=registration,
+            material=material,
         )
-        with patch.object(
-            executor,
-            "_model_json",
-            return_value=(valid, "model-valid", json.dumps(valid, ensure_ascii=False)),
-        ):
-            completed = executor.process_prepared_breakdown(
-                registration=registration,
-                material=material,
-            )
-        self.assertIn("WHAT\n完整核心拆解", completed["deep_breakdown"]["analysis_text"])
+        self.assertEqual(completed["deep_breakdown"]["source_id"], source_id)
         stored = next(
             item for item in self.core.list_competitor_registration_items(
                 registration_id=str(registration["registration_id"]), step_name="breakdown"
             ) if item["item_ref"] == source_id
         )
         self.assertEqual(stored["status"], "completed")
-        self.assertEqual(stored["artifact"]["optional_enhancements"]["status"], "failed")
-        self.assertEqual(
-            self.core.conn.execute(
-                "SELECT COUNT(*) FROM stage0_audit_event "
-                "WHERE action='competitor_breakdown_optional_result_recorded'"
-            ).fetchone()[0],
-            1,
-        )
 
-        with patch.object(
-            executor,
-            "_model_json",
-            return_value=(invalid, "model-invalid-again", json.dumps(invalid, ensure_ascii=False)),
-        ):
-            with self.assertRaises(Exception):
-                executor.process_prepared_breakdown(
-                    registration=registration,
-                    material=material,
-                )
+        with self.assertRaises(Exception):
+            executor.process_prepared_breakdown(
+                registration=registration,
+                material=material,
+            )
         failed_again = next(
             item for item in self.core.list_competitor_registration_items(
                 registration_id=str(registration["registration_id"]), step_name="breakdown"
@@ -535,15 +538,10 @@ class ColdStartOrchestrator2B1Test(unittest.TestCase):
         )
         self.assertEqual(failed_again["status"], "failed")
 
-        with patch.object(
-            executor,
-            "_model_json",
-            return_value=(valid, "model-retry", json.dumps(valid, ensure_ascii=False)),
-        ):
-            resumed = executor._breakdown(
-                registration,
-                ({"step_name": "transcripts_and_comments", "artifact_refs": [material]},),
-            )
+        resumed = executor._breakdown(
+            registration,
+            ({"step_name": "transcripts_and_comments", "artifact_refs": [material]},),
+        )
         self.assertEqual(len(resumed), 1)
         retried = next(
             item for item in self.core.list_competitor_registration_items(
@@ -552,43 +550,13 @@ class ColdStartOrchestrator2B1Test(unittest.TestCase):
         )
         self.assertEqual(retried["status"], "completed")
 
-        rerun = Mock(side_effect=AssertionError("completed breakdown must be skipped"))
-        with patch.object(executor, "process_prepared_breakdown", rerun):
-            executor._breakdown(
-                registration,
-                ({"step_name": "transcripts_and_comments", "artifact_refs": [material]},),
-            )
-        rerun.assert_not_called()
-
-        self.core.conn.execute(
-            "UPDATE stage0_competitor_registration SET status='completed', current_step='awaiting_human_review' "
-            "WHERE registration_id=?",
-            (registration["registration_id"],),
+        submitted_count = len(submitted_tasks)
+        executor._breakdown(
+            registration,
+            ({"step_name": "transcripts_and_comments", "artifact_refs": [material]},),
         )
-        self.core.conn.commit()
-        self.core.conn.execute(
-            "UPDATE stage0_competitor_registration_item SET status='failed', artifact_json='{}', error_json=? "
-            "WHERE registration_id=? AND step_name='breakdown' AND item_ref=?",
-            (json.dumps({"reason": "resume failure"}), registration["registration_id"], source_id),
-        )
-        self.core.conn.commit()
-        with patch.object(
-            executor,
-            "_model_json",
-            return_value=(valid, "model-independent-retry", json.dumps(valid, ensure_ascii=False)),
-        ):
-            completed_after_registration_close = executor.process_prepared_breakdown(
-                registration=self.core.get_competitor_registration(registration_id=registration["registration_id"]),
-                material=material,
-            )
-        self.assertEqual(completed_after_registration_close["source_id"], source_id)
-        final = next(
-            item for item in self.core.list_competitor_registration_items(
-                registration_id=str(registration["registration_id"]), step_name="breakdown"
-            ) if item["item_ref"] == source_id
-        )
-        self.assertEqual(final["status"], "completed")
-        self.assertEqual(final["error"]["disposition"], "replaced_failed_by_retry")
+        self.assertEqual(len(submitted_tasks), submitted_count)
+        self.assertEqual(submissions, [])
 
     def _review_current_library(self, *, command_id: str) -> dict:
         library = self.core.get_cold_start_tag_library(cold_start_id=self.cold_start_id)

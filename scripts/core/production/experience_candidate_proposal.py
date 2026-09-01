@@ -7,21 +7,14 @@ import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelGatewayError
-from scripts.core.model_gateway.goal07_skill_runner import SkillContractError
 from scripts.core.model_gateway.formal_skill_adapter import (
-    FormalBusinessSkillAdapter,
     FormalSkillContract,
     FormalSkillValidationError,
     prepare_external_skill_task,
     validate_external_skill_output,
 )
-from scripts.core.model_gateway.configured_provider import build_configured_model_provider
-from scripts.core.model_gateway.model_router import ModelRouter, ModelRouterError
-from scripts.core.production.stage0_content_core import CoreExperienceCandidateModelRunMaterializer, Stage0ContentProductionCore, StateTransitionError
-from scripts.core.production.stage1a_research_plan import _configured_environment_value
+from scripts.core.production.stage0_content_core import Stage0ContentProductionCore, StateTransitionError
 from scripts.core.production.stage1b_daily_discovery import ExternalIntelligenceRequired
-from scripts.core.runtime.liveness import budget_for
 
 
 class ExperienceCandidateValidationError(StateTransitionError):
@@ -30,23 +23,6 @@ class ExperienceCandidateValidationError(StateTransitionError):
 
 EXPERIENCE_LAYERS = frozenset({"structure", "section_method", "local_detail"})
 EXPERIENCE_POSITIONS = frozenset({"whole_content", "opening", "body", "transition", "ending", "sentence"})
-
-
-def build_production_experience_candidate_gateway(core: Stage0ContentProductionCore) -> ModelGateway:
-    if core.data_identity != "production":
-        raise StateTransitionError("experience candidate gateway requires production data")
-    router = ModelRouter.from_file()
-    definition = router.routes.get("business_analysis")
-    if definition is None or definition.fallback != "none":
-        raise ModelRouterError("experience candidate requires an explicit business-analysis route with fallback none")
-    limits = budget_for("model")
-    route = router.resolve_bound_route("business_analysis", route_name="stage0.experience_candidate_propose", parameters={"stream": False})
-    provider = router.resolve_bound_provider(route)
-    adapter = build_configured_model_provider(provider, route, model_limits=limits)
-    return ModelGateway(
-        routes={route.route_name: route}, providers={adapter.provider_name: adapter},
-        materializer=CoreExperienceCandidateModelRunMaterializer(core),
-    )
 
 
 def _existing_experience_summaries(
@@ -239,14 +215,14 @@ class ExperienceCandidateProposalService:
         self,
         *,
         core: Stage0ContentProductionCore,
-        gateway: ModelGateway | None = None,
+        gateway: Any | None = None,
         external_executor: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
     ):
+        if gateway is not None:
+            raise StateTransitionError(
+                "formal experience-candidate execution must use an external executor; direct model gateways are not supported"
+            )
         self.core = core
-        # Keep the old constructor argument as transport compatibility only.
-        # Experience proposals are always completed by an external executor;
-        # this service must never retain a model gateway for that path.
-        del gateway
         self.gateway = None
         self.external_executor = external_executor
 

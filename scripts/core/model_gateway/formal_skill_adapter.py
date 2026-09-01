@@ -395,6 +395,10 @@ class FormalBusinessSkillAdapter:
         gateway: ModelGateway,
         data_identity: str | None = None,
     ):
+        if data_identity == "production":
+            raise FormalSkillValidationError(
+                "formal business model execution must use an external executor"
+            )
         contract.validate_contract()
         self.contract, self.gateway = contract, gateway
         self.data_identity = data_identity

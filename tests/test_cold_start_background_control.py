@@ -36,7 +36,6 @@ from scripts.core.production.stage0_content_core import (
     Stage0ContentProductionCore,
     StateTransitionError,
 )
-from tests._cold_start_test_model import resolve_task_model
 
 
 class ColdStartBackgroundControlTest(unittest.TestCase):
@@ -117,7 +116,6 @@ class ColdStartBackgroundControlTest(unittest.TestCase):
         return ColdStartOnboardingService(
             core=self.core,
             config_dir=self.config_dir,
-            task_model_resolver=resolve_task_model,
             background_execution_launcher=launcher or self.launcher,
             background_execution_inspector=self.inspector,
             background_execution_stopper=self.stopper,
@@ -129,7 +127,6 @@ class ColdStartBackgroundControlTest(unittest.TestCase):
         preview = service.preview(payload)
         result = service.confirm(
             payload,
-            trusted_internal_context={"task_model_name": "isolated/model-a"},
         )
         self.run_ids.append(str(result["cold_start_id"]))
         return service, result
@@ -202,10 +199,8 @@ class ColdStartBackgroundControlTest(unittest.TestCase):
         resumed = service.resume_current_cold_start(
             actor="隔离用户",
             cold_start_id=cold_start_id,
-            trusted_internal_context={"task_model_name": "isolated/model-b"},
         )
         self.assertEqual(resumed["cold_start_id"], cold_start_id)
-        self.assertEqual(resumed["run_model"], "")
         self.assertNotEqual(int(resumed["execution"]["pid"]), original_pid)
         self.assertEqual(resumed["status"], "running")
         self.assertEqual(
@@ -221,7 +216,6 @@ class ColdStartBackgroundControlTest(unittest.TestCase):
         resumed = service.resume_current_cold_start(
             actor="隔离用户",
             cold_start_id=cold_start_id,
-            trusted_internal_context={"task_model_name": "isolated/model-b"},
         )
         self.assertEqual(resumed["status"], "running")
         self.assertFalse(resumed["resumed"])
@@ -264,11 +258,9 @@ class ColdStartBackgroundControlTest(unittest.TestCase):
         resumed = service.resume_current_cold_start(
             actor="隔离用户",
             cold_start_id=cold_start_id,
-            trusted_internal_context={"task_model_name": "isolated/model-b"},
         )
         self.assertEqual(resumed["cold_start_id"], cold_start_id)
         self.assertEqual(resumed["status"], "running")
-        self.assertEqual(resumed["run_model"], "")
         self.assertEqual(
             self.connection.execute("SELECT COUNT(*) FROM stage0_cold_start").fetchone()[0],
             1,
@@ -285,9 +277,7 @@ class ColdStartBackgroundControlTest(unittest.TestCase):
         first_resume = service.resume_current_cold_start(
             actor="隔离用户",
             cold_start_id=cold_start_id,
-            trusted_internal_context={"task_model_name": "isolated/model-b"},
         )
-        self.assertEqual(first_resume["run_model"], "")
         service.stop_current_cold_start(
             actor="隔离用户",
             reason="第二次恢复前停止",
@@ -296,10 +286,8 @@ class ColdStartBackgroundControlTest(unittest.TestCase):
         second_resume = service.resume_current_cold_start(
             actor="隔离用户",
             cold_start_id=cold_start_id,
-            trusted_internal_context={"task_model_name": "isolated/model-c"},
         )
         self.assertEqual(second_resume["cold_start_id"], cold_start_id)
-        self.assertEqual(second_resume["run_model"], "")
         self.assertEqual(
             self.connection.execute(
                 "SELECT COUNT(*) FROM stage0_cold_start WHERE cold_start_id=?",
@@ -481,7 +469,6 @@ class ColdStartBackgroundControlTest(unittest.TestCase):
             activate_cold_start_background(
                 record_path=record_path,
                 worker_token=worker_token,
-                run_model="isolated/model-a",
             )
 
         self.assertEqual(read_executor_record(record_path), stopped)
@@ -501,7 +488,6 @@ class ColdStartBackgroundControlTest(unittest.TestCase):
         activate_cold_start_background(
             record_path=record_path,
             worker_token=worker_token,
-            run_model="isolated/model-a",
         )
         refresh_entered = threading.Event()
         release_refresh = threading.Event()
@@ -571,7 +557,6 @@ class ColdStartBackgroundControlTest(unittest.TestCase):
         activate_cold_start_background(
             record_path=record_path,
             worker_token=worker_token,
-            run_model="isolated/model-a",
         )
         calls: list[dict[str, object]] = []
         callback_started = threading.Event()

@@ -85,7 +85,6 @@ class ColdStartOnboardingService:
         config_dir: Path | None = None,
         preflight_environment: dict[str, str] | None = None,
         execution_registration_service: Any | None = None,
-        task_model_resolver: Any | None = None,
         background_execution_launcher: Any | None = None,
         background_execution_inspector: Any | None = None,
         background_execution_stopper: Any | None = None,
@@ -102,7 +101,6 @@ class ColdStartOnboardingService:
         # isolated caller may inject only the single-account external-boundary
         # service so the same orchestration can run without side effects.
         self.execution_registration_service = execution_registration_service
-        self.task_model_resolver = task_model_resolver
         self.background_execution_launcher = background_execution_launcher
         self.background_execution_inspector = background_execution_inspector
         self.background_execution_stopper = background_execution_stopper
@@ -457,11 +455,9 @@ class ColdStartOnboardingService:
         configuration_id: str,
         actor: str,
         trusted_internal_context: dict[str, Any] | None = None,
-        task_model_binding: dict[str, Any] | None = None,
         notification_target: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create one run, then detach production execution from this call."""
-        del task_model_binding
         configuration = self.core.get_cold_start_configuration(
             configuration_id=configuration_id
         )
@@ -486,8 +482,6 @@ class ColdStartOnboardingService:
                         str(row["registration_id"]) for row in registrations
                     ],
                     "status": str(run["status"]),
-                    "run_model": "",
-                    "run_model_binding": {},
                     "execution": {
                         "status": "background_already_started",
                         "started": False,
@@ -1234,8 +1228,6 @@ class ColdStartOnboardingService:
             "cold_start_id": cold_start_id,
             "current_stage": current_stage,
             "latest_update_at": latest_update_at,
-            "run_model": "",
-            "run_model_source": "external_executor",
             "current_action": current_action,
             "latest_failure": latest_failure,
             "executor": executor_status,
@@ -1403,8 +1395,6 @@ class ColdStartOnboardingService:
                 "status": str(rollback.get("status") or resume_prior_status),
                 "resumed": False,
                 "created_new_run": False,
-                "run_model": "",
-                "run_model_binding": {},
                 "execution": {
                     "status": "background_launch_failed",
                     "started": False,
@@ -1418,8 +1408,6 @@ class ColdStartOnboardingService:
             "resumed": True,
             "created_new_run": False,
             "resume_source": "current_user_unfinished_cold_start",
-            "run_model": "",
-            "run_model_binding": {},
             "execution": execution,
         }
 

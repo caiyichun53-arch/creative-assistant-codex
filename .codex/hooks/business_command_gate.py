@@ -13,7 +13,6 @@ from hook_common import read_input, record_event, root, tool_text, write_json  #
 # business or test route, where its input, result handling, and retention
 # boundary are fixed.
 DIRECT_MODEL_MARKERS = (
-    "run_test_only_competitor_breakdown_batch",
     "FormalBusinessSkillAdapter",
     "ModelGateway",
     "ModelRequest(",

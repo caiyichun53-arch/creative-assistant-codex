@@ -657,6 +657,10 @@ def build_candidates(
 ) -> dict[str, Any]:
     if not str(cold_start_id or "").strip():
         raise self.StateTransitionError("domain-boundary candidates require a current run")
+    if self.data_identity == "production" and proposal_generator is not None:
+        raise self.StateTransitionError(
+            "formal domain-boundary proposals must be produced by an external executor"
+        )
     existing = _latest(self, cold_start_id=cold_start_id)
     if existing is not None and str(existing["status"]) in {"awaiting_human_decision", "frozen"}:
         return _view(self, existing)

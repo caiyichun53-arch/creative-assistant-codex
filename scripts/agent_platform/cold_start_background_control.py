@@ -275,7 +275,6 @@ def inspect_cold_start_background(
         "state": state,
         "pid": int(record.get("pid") or 0) or None,
         "worker_token": str(record.get("worker_token") or ""),
-        "run_model": str(record.get("run_model") or ""),
         "started_at": record.get("started_at"),
         "heartbeat_at": record.get("heartbeat_at"),
         "record_path": str(path),
@@ -344,7 +343,6 @@ def activate_cold_start_background(
     *,
     record_path: Path,
     worker_token: str,
-    run_model: str,
 ) -> dict[str, Any]:
     with _executor_record_lock(record_path):
         record = read_executor_record(record_path)
@@ -362,7 +360,6 @@ def activate_cold_start_background(
             "state": "running",
             "pid": os.getpid(),
             "process_create_time": process.create_time(),
-            "run_model": str(run_model or ""),
             "started_at": _now(),
             "heartbeat_at": _now(),
         }

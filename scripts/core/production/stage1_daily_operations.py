@@ -70,12 +70,10 @@ class ProductionDailyOperationsService:
         *,
         core: Stage0ContentProductionCore,
         collector: MediaCrawlerCollectorAdapter | None = None,
-        task_model_binding: dict[str, Any] | None = None,
         external_executor: Any | None = None,
     ) -> None:
         if core.data_identity != "production":
             raise StateTransitionError("production daily operations require the production data identity")
-        del task_model_binding
         self.core = core
         self.collector = collector
         self.external_executor = external_executor

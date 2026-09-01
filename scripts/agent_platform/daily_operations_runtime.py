@@ -73,7 +73,6 @@ class DailyOperationsCoordinator:
         validation_only: bool = False,
         account_id: str | None = None,
         effective_at: datetime | None = None,
-        task_model_binding: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Keep the legacy callable while delegating aggregation to Core."""
 
@@ -90,7 +89,6 @@ class DailyOperationsCoordinator:
                 validation_only=validation_only,
                 account_id=account_id,
                 effective_at=effective_at,
-                task_model_binding=task_model_binding,
                 external_executor=self.external_executor,
                 service_factory=ProductionDailyOperationsService,
             )
@@ -108,7 +106,6 @@ class DailyOperationsCoordinator:
         validation_only: bool,
         account_id: str | None,
         effective_at: datetime | None,
-        task_model_binding: dict[str, Any] | None,
     ) -> dict[str, Any]:
         with blocking_process_mutex(DAILY_EXECUTION_SLOT_NAME):
             core = Stage0ContentProductionCore.open(
@@ -148,7 +145,6 @@ class DailyOperationsCoordinator:
                             validation_only=validation_only,
                             account_id=account_id,
                             effective_at=effective_at,
-                            task_model_binding=task_model_binding,
                         )
                     else:
                         result = business.execute_daily(
@@ -164,7 +160,6 @@ class DailyOperationsCoordinator:
                             validation_only=validation_only,
                             account_id=account_id,
                             effective_at=effective_at,
-                            task_model_binding=task_model_binding,
                             external_executor=self.external_executor,
                             runner=self.runner,
                         )
@@ -216,7 +211,6 @@ class DailyOperationsCoordinator:
         account_id: str | None = None,
         business_date: str | None = None,
         effective_at: datetime | None = None,
-        task_model_binding: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         # Reject the retired automatic entry before any formal runtime or
         # database connection is opened.  Test identities remain isolated
@@ -262,7 +256,6 @@ class DailyOperationsCoordinator:
                 validation_only=validation_only,
                 account_id=account_id,
                 effective_at=effective_at,
-                task_model_binding=task_model_binding,
             )
             for domain_label in requested
         ]

@@ -16,14 +16,10 @@ from scripts.core.production.stage1_competitor_registration import (
     configured_first_registration_item_limit,
 )
 from scripts.core.production.stage1_daily_operations import ProductionDailyOperationsService
-from scripts.core.production.stage1_competitor_registration import build_production_daily_hit_gateway
 from scripts.core.production.stage1b_daily_discovery import (
     Stage1BDailyDiscoveryService,
-    build_production_daily_discovery_gateway,
 )
-from scripts.core.model_gateway.goal07_model_gateway import ModelRoute
-from scripts.core.model_gateway.model_router import ModelRouterError
-from scripts.core.production.stage0_content_core import Stage0ContentProductionCore
+from scripts.core.production.stage0_content_core import Stage0ContentProductionCore, StateTransitionError
 
 
 def _seed_current_activation(
@@ -342,160 +338,28 @@ class DailyStoppedBoundaryTests(unittest.TestCase):
             )
         self.assertEqual(result["status"], "failed")
 
-    def test_execution_binding_is_shared_with_daily_service(self) -> None:
-        core = SimpleNamespace(data_identity="production", close=lambda: None)
-        service = SimpleNamespace(
-            run=lambda **_kwargs: {"status": "stopped", "upstream_failures": []},
-        )
-        binding = {
-            "route_id": "business_analysis",
-            "provider_ref": "mimo_main",
-            "provider_name": "hermes",
-            "provider_type": "mimo",
-            "model_name": "model-from-hermes",
-            "endpoint": "https://mimo.example/v1",
-            "source": "hermes_current_session",
-            "explicit_override": False,
-        }
-        with (
-            patch(
-                "scripts.agent_platform.daily_operations_runtime.Stage0ContentProductionCore.open",
-                return_value=core,
-            ),
-            patch(
-                "scripts.agent_platform.daily_operations_runtime.ProductionDailyOperationsService",
-                return_value=service,
-            ) as service_factory,
-        ):
-            result = DailyOperationsCoordinator(
-                db_path=Path("unused.sqlite3"),
-                data_identity="production",
-            )._run_production(
-                domain_label="music_entertainment",
-                business_date="2026-08-28",
-                daily_run_id="daily-1",
-                resume=False,
-                attempt_ref="attempt-1",
-                task_model_binding=binding,
-            )
-        self.assertEqual(result["status"], "stopped")
-        service_factory.assert_called_once_with(
-            core=core,
-            task_model_binding=binding,
+    def test_daily_execution_has_no_model_binding_argument(self) -> None:
+        import inspect
+
+        self.assertNotIn(
+            "task_model_binding",
+            inspect.signature(DailyOperationsCoordinator._run_production).parameters,
         )
 
-    def test_breakdown_and_source_to_topic_gateways_use_same_frozen_binding(self) -> None:
-        router = SimpleNamespace()
-        router.routes = {
-            "business_analysis": SimpleNamespace(
-                fallback="none",
-                allowed_task_types=("benchmark_analysis", "topic_screening"),
-            )
-        }
-        binding = {
-            "route_id": "business_analysis",
-            "provider_ref": "mimo_main",
-            "provider_name": "hermes",
-            "provider_type": "mimo",
-            "model_name": "model-from-hermes",
-            "endpoint": "https://mimo.example/v1",
-            "source": "hermes_current_session",
-            "explicit_override": False,
-        }
-        seen: list[dict] = []
-        route = ModelRoute(
-            route_name="unused",
-            provider_name="hermes",
-            model_name="model-from-hermes",
-            config_version="hermes_task_binding.v1",
-            config_hash="hash",
-            route_id="business_analysis",
-            provider_ref="mimo_main",
-        )
-        provider = SimpleNamespace(provider_name="hermes")
-        router.resolve_frozen_task_route = lambda received, **_kwargs: (
-            seen.append(received) or route
-        )
-        router.resolve_bound_provider = lambda _route: SimpleNamespace(
-            provider_ref="mimo_main",
-            provider_name="hermes",
-        )
-        core = SimpleNamespace(data_identity="production")
-        with (
-            patch(
-                "scripts.core.production.stage1_competitor_registration.ModelRouter.from_file",
-                return_value=router,
-            ),
-            patch(
-                "scripts.core.production.stage1_competitor_registration.build_configured_model_provider",
-                return_value=provider,
-            ),
-            patch(
-                "scripts.core.production.stage1b_daily_discovery.ModelRouter.from_file",
-                return_value=router,
-            ),
-            patch(
-                "scripts.core.production.stage1b_daily_discovery.build_configured_model_provider",
-                return_value=provider,
-            ),
-        ):
-            build_production_daily_hit_gateway(core, task_model_binding=binding)
-            build_production_daily_discovery_gateway(core, task_model_binding=binding)
-        self.assertEqual(seen, [binding, binding])
-
-    def test_source_to_topic_uses_the_gateway_route_when_no_route_is_injected(self) -> None:
-        route = ModelRoute(
-            route_name="business.source_to_topic",
-            provider_name="hermes",
-            model_name="model-from-hermes",
-            config_version="hermes_task_binding.v1",
-            config_hash="hash",
-            route_id="business_analysis",
-            provider_ref="mimo_main",
-        )
-        gateway = SimpleNamespace(routes={route.route_name: route})
-        service = Stage1BDailyDiscoveryService(
-            core=SimpleNamespace(data_identity="test"),
-            gateway=gateway,
-        )
-        self.assertEqual(service.model_route, route)
-
-    def test_source_to_topic_rejects_a_route_different_from_the_gateway(self) -> None:
-        gateway_route = ModelRoute(
-            route_name="business.source_to_topic",
-            provider_name="hermes",
-            model_name="model-from-hermes",
-            config_version="hermes_task_binding.v1",
-            config_hash="hash",
-            route_id="business_analysis",
-            provider_ref="mimo_main",
-        )
-        stale_route = ModelRoute(
-            route_name="business.source_to_topic",
-            provider_name="hermes",
-            model_name="stale-model",
-            config_version="model_routes.v1",
-            config_hash="stale-hash",
-            route_id="business_analysis",
-            provider_ref="relay_main",
-        )
-        with self.assertRaisesRegex(ModelRouterError, "does not match"):
+    def test_formal_discovery_rejects_direct_model_gateway_or_route(self) -> None:
+        with self.assertRaisesRegex(StateTransitionError, "external executor"):
             Stage1BDailyDiscoveryService(
                 core=SimpleNamespace(data_identity="test"),
-                gateway=SimpleNamespace(routes={gateway_route.route_name: gateway_route}),
-                model_route=stale_route,
+                gateway=SimpleNamespace(),
+            )
+        with self.assertRaisesRegex(StateTransitionError, "external executor"):
+            Stage1BDailyDiscoveryService(
+                core=SimpleNamespace(data_identity="test"),
+                gateway=None,
+                model_route=SimpleNamespace(),
             )
 
     def test_unexpected_discovery_failure_is_finalized_as_failed(self) -> None:
-        route = ModelRoute(
-            route_name="business.source_to_topic",
-            provider_name="hermes",
-            model_name="model-from-hermes",
-            config_version="hermes_task_binding.v1",
-            config_hash="hash",
-            route_id="business_analysis",
-            provider_ref="mimo_main",
-        )
         source = {
             "source_type": "historical_high_signal",
             "source_object_id": "source-1",
@@ -547,7 +411,7 @@ class DailyStoppedBoundaryTests(unittest.TestCase):
         core = Core()
         service = Stage1BDailyDiscoveryService(
             core=core,
-            gateway=SimpleNamespace(routes={route.route_name: route}),
+            gateway=None,
         )
         with patch.object(service, "_assembly_payload", return_value={}):
             result = service.run_daily_discovery(

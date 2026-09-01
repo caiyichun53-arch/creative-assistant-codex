@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 from scripts.core.external_adapters.goal_phase4_external_adapters import ExternalAdapterRunResult
 from scripts.core.external_adapters.local_mediacrawler_executor import LocalMediaCrawlerExecutor
-from tests._cold_start_test_model import resolve_task_model
 from scripts.core.production.cold_start_onboarding import ColdStartOnboardingService
 from scripts.core.production.live_music_cold_start_preflight import (
     LiveColdStartPreflight,
@@ -138,7 +137,6 @@ class ColdStartLifecycleBoundaryTest(unittest.TestCase):
             core=self.core,
             config_dir=self.config_dir,
             execution_registration_service=_UnavailableRegistrationService(),
-            task_model_resolver=resolve_task_model,
         )
 
     def tearDown(self) -> None:
@@ -358,7 +356,6 @@ class ColdStartLifecycleBoundaryTest(unittest.TestCase):
             collector=collector,
             transcriber=object(),
             media_materializer=object(),
-            gateway=object(),
         )
         registration = {
             "registration_id": "new-cold-start-registration",

@@ -260,7 +260,7 @@ class Stage2B2SecondRoundContentExternalIntelligenceTests(unittest.TestCase):
                 raise AssertionError("old model gateway must not be called")
 
         core = _PipelineCore()
-        service = Stage1CContentPipelineService(core=core, gateway=ExplodingGateway())
+        service = Stage1CContentPipelineService(core=core, gateway=None)
         result = service.generate(
             task_id="content-task-1",
             actor="test-user",
