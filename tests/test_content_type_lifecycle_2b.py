@@ -4,17 +4,23 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from scripts.core.business_data.domain_labels import get_content_type_registry, project_content_type
 from scripts.core.model_gateway.formal_skill_adapter import (
+    FormalSkillContract,
     FormalSkillValidationError,
     validate_competitor_breakdown_question_expansion_output,
+    validate_external_skill_output,
 )
 from scripts.core.production.stage0_content_core import Stage0ContentProductionCore, StateTransitionError
-from scripts.core.production.stage1_competitor_registration import _breakdown_domain_context
+from scripts.core.production.stage1_competitor_registration import (
+    _breakdown_domain_context,
+    submit_competitor_breakdown_external_result,
+)
 
 
 FROZEN_REGISTRY = {
@@ -117,6 +123,35 @@ class ContentTypeLifecycle2BTest(unittest.TestCase):
                 content_type_lifecycle="classify",
                 external_probe=external_probe,
             )
+
+    @staticmethod
+    def _external_input(lifecycle: str) -> dict[str, object]:
+        return {
+            "correlation_id": "external-receipt-test",
+            "source_id": "source-1",
+            "transcript": "一段用于外部结果接收边界验证的口播材料。",
+            "metrics": {},
+            "comments": [],
+            "domain_label": "music_entertainment",
+            "domain_context": {
+                "content_type_lifecycle": lifecycle,
+                "content_type_registry": FROZEN_REGISTRY,
+            },
+            "schema_version": "competitor_breakdown.input.v1",
+        }
+
+    @staticmethod
+    def _external_output(source_type: str, *, source_id: str = "source-1") -> dict[str, object]:
+        return {
+            "source_id": source_id,
+            "source_content_type": source_type,
+            "analysis_text": (
+                "WHAT\n核心对象和内容命题以输入材料为准。\n"
+                "HOW\n只说明材料中实际出现的推进动作。\n"
+                "SO WHAT\n无有效复用参考。"
+            ),
+            "schema_version": "competitor_breakdown.output.raw.v5",
+        }
 
     def test_formal_music_registry_is_frozen_version_one_and_has_only_four_ids(self) -> None:
         registry = get_content_type_registry("music_entertainment")
@@ -250,6 +285,79 @@ class ContentTypeLifecycle2BTest(unittest.TestCase):
                 {"source_id": "source_fixture", "domain_context": context},
                 {**base, "source_content_type": "person_music_story", "source_content_type_id": "work_context_story"},
             )
+
+    def test_external_receipt_enforces_classify_type_without_optional_validation(self) -> None:
+        contract = FormalSkillContract.from_runtime_skill("competitor_breakdown")
+        for source_type in ("music_collection_curation", "NO_MATCH", "OUT_OF_SCOPE"):
+            with self.subTest(source_type=source_type):
+                validated = validate_external_skill_output(
+                    contract,
+                    self._external_input("classify"),
+                    self._external_output(source_type),
+                )
+                self.assertEqual(validated["source_content_type"], source_type)
+
+        with self.assertRaises(FormalSkillValidationError):
+            validate_external_skill_output(
+                contract,
+                self._external_input("classify"),
+                self._external_output("作品背景说明"),
+            )
+
+        validated = validate_external_skill_output(
+            contract,
+            self._external_input("discover"),
+            self._external_output("作品背景说明"),
+        )
+        self.assertEqual(validated["source_content_type"], "作品背景说明")
+
+    def test_invalid_classify_type_is_rejected_before_breakdown_artifact_save(self) -> None:
+        source_id = "source-external-receipt"
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "source.txt"
+            transcript.write_text("用于外部结果接收测试的口播材料。", encoding="utf-8")
+            core = Mock()
+            core.data_identity = "test"
+            core.conn = Mock()
+            core.get_competitor_registration.return_value = {
+                "registration_id": "registration-external-receipt",
+                "status": "completed",
+                "domain_label": "music_entertainment",
+            }
+            core.list_competitor_registration_items.return_value = [{
+                "item_ref": source_id,
+                "status": "completed",
+                "artifact": {
+                    "source_id": source_id,
+                    "transcript_ref": str(transcript),
+                    "metrics": {},
+                    "comments": [],
+                },
+            }]
+            core.observed_breakdown_content_types.return_value = []
+            core.record_external_competitor_execution.return_value = "model-run-external-receipt"
+
+            with patch(
+                "scripts.core.production.stage1_competitor_registration.require_frozen_content_type_registry",
+                return_value=FROZEN_REGISTRY,
+            ):
+                with self.assertRaises(FormalSkillValidationError):
+                    submit_competitor_breakdown_external_result(
+                        core,
+                        registration_id="registration-external-receipt",
+                        source_id=source_id,
+                        execution_id="execution-external-receipt",
+                        executor_id="executor-test",
+                        model_ref="test-model",
+                        submitted_at="2026-08-18T00:00:00+08:00",
+                        output=self._external_output("作品背景说明", source_id=source_id),
+                    )
+
+        core.record_competitor_breakdown_attempt.assert_not_called()
+        core.record_competitor_registration_item.assert_not_called()
+        core.record_independent_competitor_breakdown.assert_not_called()
+        core.register_breakdown_question_expansions.assert_not_called()
+        core.record_competitor_breakdown_optional_result.assert_not_called()
 
 
 if __name__ == "__main__":

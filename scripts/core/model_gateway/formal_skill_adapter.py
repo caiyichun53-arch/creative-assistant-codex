@@ -2282,23 +2282,8 @@ def validate_competitor_breakdown_question_expansion_output(
         raise FormalSkillValidationError(
             "拆解短板必须相对于本篇承诺和当前内容类型，不能把外部表现或系列延续性当成本篇缺点"
         )
-    if not validate_optional:
-        return
-
-    expansions = output_payload.get("question_expansions", [])
-    if not isinstance(expansions, list) or len(expansions) > 3:
-        raise FormalSkillValidationError("competitor breakdown question expansions must contain at most three items")
     context = input_payload.get("domain_context")
     context = context if isinstance(context, dict) else {}
-    has_domain_boundary = any(
-        str(context.get(key) or "").strip()
-        for key in ("description", "allowed_scope")
-    ) or any(
-        isinstance(context.get(key), list) and any(str(item).strip() for item in context.get(key, []))
-        for key in ("excluded_terms", "risk_block_terms")
-    )
-    signals = output_payload.get("expansion_signals", [])
-    typed_leads = output_payload.get("typed_expansion_leads", [])
     lifecycle = str(context.get("content_type_lifecycle") or "discover").strip().casefold()
     registry = context.get("content_type_registry")
     registry = registry if isinstance(registry, dict) else {}
@@ -2323,6 +2308,23 @@ def validate_competitor_breakdown_question_expansion_output(
             raise FormalSkillValidationError(
                 "production source_content_type_id must match source_content_type"
             )
+    if not validate_optional:
+        return
+
+    expansions = output_payload.get("question_expansions", [])
+    if not isinstance(expansions, list) or len(expansions) > 3:
+        raise FormalSkillValidationError("competitor breakdown question expansions must contain at most three items")
+    has_domain_boundary = any(
+        str(context.get(key) or "").strip()
+        for key in ("description", "allowed_scope")
+    ) or any(
+        isinstance(context.get(key), list) and any(str(item).strip() for item in context.get(key, []))
+        for key in ("excluded_terms", "risk_block_terms")
+    )
+    signals = output_payload.get("expansion_signals", [])
+    typed_leads = output_payload.get("typed_expansion_leads", [])
+    if lifecycle == "classify":
+        source_type = str(output_payload.get("source_content_type") or "").strip()
         if source_type in {"NO_MATCH", "OUT_OF_SCOPE"} and (signals or typed_leads):
             raise FormalSkillValidationError(
                 "an out-of-scope source cannot emit production typed expansion leads"
