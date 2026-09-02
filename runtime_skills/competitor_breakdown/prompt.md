@@ -199,4 +199,4 @@ SOURCE_CONTENT_TYPE: <一个短类型值>
 
 二、正式生产只能消费 domain_context.content_type_registry 中 status 为 FROZEN 的人工批准类型。observed_content_types、历史 keyword mapping、本文示例和模型记忆都不是生产白名单。若注册表不是 FROZEN，调用应被系统阻断，不能退回自由命名。
 
-三、四个批准类型的判断优先级是：核心对象、核心内容承诺、主要交付、推进结构，最后才是 canonical_id。不能因为文中主要出现某个人物就归为人物故事；作品创作背景归 work_context_story；具体音乐节目或音乐文化事件归 music_event_context；多个对象有主题筛选和组织逻辑才归 music_collection_curation。音乐赏析、听感、乐理、编曲或演唱技术分析不属于这四类。
+三、正式类型的判断优先级是：核心对象、核心内容承诺、主要交付、推进结构，最后才是 canonical_id。必须依据当前 domain_context.content_type_registry 中各正式类型的定义和边界进行判断；人物名称、关键词或本文示例不能替代判断，也不能假设当前 domain 只能使用某一组固定类型。

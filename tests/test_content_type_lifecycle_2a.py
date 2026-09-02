@@ -307,6 +307,14 @@ class ContentTypeLifecycle2ATest(unittest.TestCase):
         self.assertIn("question_expansions", contract.output_schema["properties"])
         for field in ("question_expansions", "expansion_signals", "typed_expansion_leads"):
             self.assertNotIn(field, contract.model_output_schema["properties"])
+        self.assertIn("domain_context.content_type_registry", contract.prompt_template)
+        for canonical_id in (
+            "music_collection_curation",
+            "person_music_story",
+            "work_context_story",
+            "music_event_context",
+        ):
+            self.assertNotIn(canonical_id, contract.prompt_template)
 
     def test_legacy_question_expansion_path_remains_readable(self) -> None:
         result = self.core.register_breakdown_question_expansions(
