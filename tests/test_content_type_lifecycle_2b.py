@@ -311,6 +311,75 @@ class ContentTypeLifecycle2BTest(unittest.TestCase):
         )
         self.assertEqual(validated["source_content_type"], "作品背景说明")
 
+        for field in ("question_expansions", "expansion_signals", "typed_expansion_leads"):
+            with self.subTest(field=field):
+                with self.assertRaises(FormalSkillValidationError):
+                    validate_external_skill_output(
+                        contract,
+                        self._external_input("classify"),
+                        {**self._external_output("person_music_story"), field: []},
+                    )
+
+    def test_v5_without_expansion_fields_saves_completed_breakdown_and_reports_not_present(self) -> None:
+        source_id = "source-without-expansion"
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "source.txt"
+            transcript.write_text("用于无拓展输出保存测试的口播材料。", encoding="utf-8")
+            self.connection.execute(
+                "INSERT INTO stage0_competitor_registration_item "
+                "(registration_id, step_name, item_ref, status, artifact_json, error_json, attempt_count, data_identity, updated_at) "
+                "VALUES (?, 'transcripts_and_comments', ?, 'completed', ?, '{}', 1, 'test', ?)",
+                (
+                    "registration_fixture",
+                    source_id,
+                    json.dumps({
+                        "source_id": source_id,
+                        "transcript_ref": str(transcript),
+                        "metrics": {},
+                        "comments": [],
+                    }),
+                    "2026-08-18T00:00:00+08:00",
+                ),
+            )
+            self.connection.commit()
+            with patch(
+                "scripts.core.business_data.domain_labels.get_content_type_registry",
+                return_value=FROZEN_REGISTRY,
+            ):
+                result = submit_competitor_breakdown_external_result(
+                    self.core,
+                    registration_id="registration_fixture",
+                    source_id=source_id,
+                    execution_id="execution-without-expansion",
+                    executor_id="executor-test",
+                    model_ref="test-model",
+                    submitted_at="2026-08-18T00:00:00+08:00",
+                    output=self._external_output("person_music_story", source_id=source_id),
+                )
+
+        self.assertEqual(result["status"], "completed")
+        row = self.connection.execute(
+            "SELECT status, artifact_json FROM stage0_competitor_registration_item "
+            "WHERE registration_id=? AND step_name='breakdown' AND item_ref=?",
+            ("registration_fixture", source_id),
+        ).fetchone()
+        self.assertEqual(row[0], "completed")
+        artifact = json.loads(row[1])
+        deep_breakdown = artifact["deep_breakdown"]
+        self.assertNotIn("question_expansions", deep_breakdown)
+        self.assertNotIn("expansion_signals", deep_breakdown)
+        self.assertNotIn("typed_expansion_leads", deep_breakdown)
+        self.assertEqual(
+            artifact["optional_enhancements"]["result"],
+            {"status": "not_present", "created": [], "count": 0},
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM stage1_question_expansion_source"
+            ).fetchone()[0],
+            0,
+        )
+
     def test_invalid_classify_type_is_rejected_before_breakdown_artifact_save(self) -> None:
         source_id = "source-external-receipt"
         with tempfile.TemporaryDirectory() as directory:

@@ -224,20 +224,16 @@ class CompetitorBreakdownDelimitedOutputTest(unittest.TestCase):
         self.assertEqual(result.output_payload["source_id"], "real-sample-1")
         self.assertEqual(result.output_payload["analysis_text"].rstrip("\r\n"), body.rstrip("\r\n"))
 
-    def test_adapter_maps_optional_text_blocks_without_repeated_labels(self) -> None:
+    def test_adapter_rejects_expansion_text_blocks_for_v5(self) -> None:
         body = _core_analysis()
         gateway = _FakeGateway(_response("case/explanation", body, include_blocks=True))
         contract = FormalSkillContract.from_runtime_skill("competitor_breakdown")
         adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
-        with patch(
-            "scripts.core.production.business_runtime_guard.enforce_atomic_skill_runtime_guard"
-        ):
-            result = adapter.run(_input("real-sample-blocks"))
-
-        self.assertEqual(result.output_payload["question_expansions"][0]["core_question"],
-                         "这个问题包含中文引号“观察”和英文双引号 \"quoted\"。")
-        self.assertEqual(result.output_payload["expansion_signals"][0]["signal_kind"], "observation")
-        self.assertEqual(result.output_payload["typed_expansion_leads"][0]["signal_id"], "S1")
+        with self.assertRaises(FormalSkillValidationError):
+            with patch(
+                "scripts.core.production.business_runtime_guard.enforce_atomic_skill_runtime_guard"
+            ):
+                adapter.run(_input("real-sample-blocks"))
 
     def test_adapter_maps_boundary_observation_without_changing_formal_object(self) -> None:
         body = _core_analysis()

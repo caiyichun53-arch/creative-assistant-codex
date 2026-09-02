@@ -9,10 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.core.business_data.domain_labels import project_content_type
-from scripts.core.model_gateway.formal_skill_adapter import (
-    FormalSkillContract,
-    validate_competitor_breakdown_question_expansion_output,
-)
+from scripts.core.model_gateway.formal_skill_adapter import FormalSkillContract
 from scripts.core.production.stage0_content_core import Stage0ContentProductionCore
 from scripts.core.production.stage1_competitor_registration import _breakdown_domain_context
 from scripts.core.production.stage0_content_core import StateTransitionError
@@ -304,48 +301,12 @@ class ContentTypeLifecycle2ATest(unittest.TestCase):
         self.assertEqual(result["status"], "matched")
         self.assertEqual(result["canonical_id"], "work_context_story")
 
-    def test_v5_signal_and_typed_lead_shape_is_valid_without_keyword_gate(self) -> None:
-        validate_competitor_breakdown_question_expansion_output(
-            {
-                "source_id": "source_fixture",
-                "domain_context": {
-                    "description": "音乐、作品和音乐人物的音乐经历",
-                    "content_type_lifecycle": "classify",
-                    "content_type_registry": FIXTURE_REGISTRY,
-                },
-            },
-            {
-                "source_id": "source_fixture",
-                "source_content_type": "work_context_story",
-                "source_content_type_id": "work_context_story",
-                "analysis_text": (
-                    "WHAT\n本条材料的核心对象和命题。\n"
-                    "HOW\n材料实际推进了一个待核实的问题。\n"
-                    "SO WHAT\n无有效复用参考。\n"
-                    "五、评论信号\n评论者提出一个待核实的问题。\n"
-                    "六、候选复用原则与边界\n无明显短板。"
-                ),
-                "expansion_signals": [{
-                    "signal_id": "signal_01",
-                    "signal_kind": "comment_question",
-                    "signal_text": "评论提出待核实问题。",
-                    "source_anchor": "comment",
-                    "reason": "评论补充了母内容没有展开的增量。",
-                }],
-                "typed_expansion_leads": [{
-                    "signal_id": "signal_01",
-                    "canonical_id": "work_context_story",
-                    "core_question": "作品背景关系是什么？",
-                    "reason": "信号可以投影到作品背景故事。",
-                }],
-                "schema_version": "competitor_breakdown.output.raw.v5",
-            },
-        )
-
-    def test_runtime_skill_contract_accepts_v5_optional_signal_fields(self) -> None:
+    def test_runtime_skill_contract_exposes_only_v5_core_output_fields(self) -> None:
         contract = FormalSkillContract.from_runtime_skill("competitor_breakdown")
         self.assertEqual(contract.output_schema["properties"]["schema_version"]["enum"][-1], "competitor_breakdown.output.raw.v5")
-        self.assertIn("typed_expansion_leads", contract.model_output_schema["properties"])
+        self.assertIn("question_expansions", contract.output_schema["properties"])
+        for field in ("question_expansions", "expansion_signals", "typed_expansion_leads"):
+            self.assertNotIn(field, contract.model_output_schema["properties"])
 
     def test_legacy_question_expansion_path_remains_readable(self) -> None:
         result = self.core.register_breakdown_question_expansions(

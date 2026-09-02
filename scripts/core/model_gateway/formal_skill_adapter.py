@@ -378,6 +378,14 @@ def validate_external_skill_output(
     prepared = prepared if prepared is not None else preprocess_formal_skill_input(contract.formal_skill_id, input_payload)
     validate_payload(output_payload, contract.output_schema)
     if contract.formal_skill_id in COMPETITOR_BREAKDOWN_SKILL_IDS:
+        if output_payload.get("schema_version") == "competitor_breakdown.output.raw.v5":
+            retired_fields = {
+                "question_expansions", "expansion_signals", "typed_expansion_leads",
+            } & set(output_payload)
+            if retired_fields:
+                raise FormalSkillValidationError(
+                    "current competitor breakdown v5 cannot emit expansion fields"
+                )
         validate_competitor_breakdown_question_expansion_output(
             input_payload, output_payload, validate_optional=False
         )

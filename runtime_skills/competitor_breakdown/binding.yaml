@@ -12,10 +12,7 @@ input_map:
 output_map:
   source_id: {source: input, key: source_id}
   analysis_text: {source: model_output, key: analysis_text}
-  question_expansions: {source: model_output, key: question_expansions, required: false}
   source_content_type: {source: model_output, key: source_content_type}
-  expansion_signals: {source: model_output, key: expansion_signals, required: false}
-  typed_expansion_leads: {source: model_output, key: typed_expansion_leads, required: false}
   boundary_observation: {source: model_output, key: boundary_observation, required: false}
   schema_version: {source: literal, value: competitor_breakdown.output.raw.v5}
 model_input_schema:
@@ -35,8 +32,5 @@ model_output_schema:
   required: [source_content_type]
   properties:
     source_content_type: {type: string}
-    question_expansions: {type: array}
-    expansion_signals: {type: array}
-    typed_expansion_leads: {type: array}
     boundary_observation: {type: string}
   additional_properties: false
