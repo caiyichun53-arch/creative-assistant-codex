@@ -382,6 +382,7 @@ def prepare_test_only_competitor_breakdown_batch(
             "title": material["title"],
             "status": "requires_external_intelligence",
             "task": task,
+            "validation_input": input_payload,
         })
 
     return {

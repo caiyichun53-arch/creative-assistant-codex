@@ -3,6 +3,7 @@ required: [source_id, source_content_type, analysis_text, schema_version]
 properties:
   source_id: {type: string}
   source_content_type: {type: string}
+  matched_source_content_type: {type: string}
   analysis_text: {type: string}
   question_expansions: {type: array}
   expansion_signals: {type: array}

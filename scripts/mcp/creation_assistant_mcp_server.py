@@ -16,6 +16,10 @@ from scripts.core.core_entry import build_status
 from scripts.core.formal_business_entrypoints import (
     CreationAssistantFormalBusinessCore,
 )
+from scripts.core.model_gateway.formal_skill_adapter import (
+    FormalSkillContract,
+    validate_external_skill_output,
+)
 from scripts.core.production.stage0_content_core import Stage0ContentProductionCore
 from scripts.core.production.domain_boundary_lifecycle import (
     prepare_cold_start_domain_boundary_external_task,
@@ -24,8 +28,11 @@ from scripts.core.production.experience_candidate_proposal import (
     ExperienceCandidateProposalService,
 )
 from scripts.core.production.stage1_competitor_registration import (
-    prepare_competitor_breakdown_external_task,
+    prepare_test_only_competitor_breakdown_batch,
     submit_competitor_breakdown_external_result,
+)
+from scripts.agent_platform.hermes_competitor_breakdown_test_entry import (
+    read_formal_competitor_breakdown_material,
 )
 from scripts.core.production.stage1a_research_plan import Stage1AResearchPlanService
 from scripts.core.production.stage1_daily_operations import (
@@ -112,6 +119,70 @@ class CreationAssistantMcpApplication:
             },
         })
         return status
+
+    def competitor_breakdown_validation(
+        self,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        allowed = {"operation", "platform", "platform_item_id", "model_result"}
+        unexpected = sorted(set(arguments) - allowed)
+        if unexpected:
+            raise CreationAssistantMcpError(
+                f"competitor breakdown validation received unsupported arguments: {', '.join(unexpected)}"
+            )
+        operation = _required_text(arguments, "operation").casefold()
+        if operation not in {"prepare", "validate"}:
+            raise CreationAssistantMcpError(
+                "competitor breakdown validation operation must be prepare or validate"
+            )
+        platform = _required_text(arguments, "platform")
+        platform_item_id = _required_text(arguments, "platform_item_id")
+        model_result: dict[str, Any] | None = None
+        if operation == "validate":
+            model_result = _required_object(arguments, "model_result")
+            if model_result.get("schema_version") != "competitor_breakdown.output.raw.v5":
+                raise CreationAssistantMcpError(
+                    "competitor breakdown validation requires the current v5 result"
+                )
+        elif "model_result" in arguments:
+            raise CreationAssistantMcpError(
+                "prepare operation does not accept model_result"
+            )
+        try:
+            material = read_formal_competitor_breakdown_material(
+                platform=platform,
+                platform_item_id=platform_item_id,
+            )
+            batch = prepare_test_only_competitor_breakdown_batch(
+                test_id="competitor-breakdown-validation",
+                materials=[material],
+            )
+            outcome = batch["outcomes"][0]
+            task = dict(outcome["task"])
+            validation_input = dict(outcome["validation_input"])
+        except Exception as exc:
+            raise CreationAssistantMcpError(str(exc)) from exc
+
+        task.pop("task_identity", None)
+        task.pop("business_context", None)
+        if operation == "prepare":
+            return {
+                "status": "ready",
+                "task": task,
+                "formal_business_data_written": False,
+            }
+        assert model_result is not None
+        validated = validate_external_skill_output(
+            FormalSkillContract.from_runtime_skill("competitor_breakdown"),
+            validation_input,
+            model_result,
+        )
+        return {
+            "status": "valid",
+            "task_type": "competitor_breakdown",
+            "validated_output": validated,
+            "formal_business_data_written": False,
+        }
 
     @staticmethod
     def _task_request(arguments: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -390,6 +461,8 @@ class CreationAssistantMcpApplication:
         arguments = arguments or {}
         if name == "creation_assistant_status":
             return self.status()
+        if name == "creation_assistant_competitor_breakdown_validation":
+            return self.competitor_breakdown_validation(arguments)
         if name == "creation_assistant_get_external_task":
             return self.get_external_task(arguments)
         if name == "creation_assistant_submit_external_result":
@@ -427,6 +500,20 @@ def _legacy_source_identifier_schema() -> dict[str, Any]:
     }
 
 
+def _competitor_breakdown_validation_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "operation": {"type": "string", "enum": ["prepare", "validate"]},
+            "platform": {"type": "string"},
+            "platform_item_id": {"type": "string"},
+            "model_result": {"type": "object"},
+        },
+        "required": ["operation", "platform", "platform_item_id"],
+        "additionalProperties": False,
+    }
+
+
 def tool_definitions() -> list[dict[str, Any]]:
     identifiers = _identifier_schema()
     return [
@@ -434,6 +521,11 @@ def tool_definitions() -> list[dict[str, Any]]:
             "name": "creation_assistant_status",
             "description": "Read basic facts from the connected Creation Assistant Core.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "name": "creation_assistant_competitor_breakdown_validation",
+            "description": "Prepare or validate one competitor breakdown by platform item identity without persisting business data.",
+            "inputSchema": _competitor_breakdown_validation_schema(),
         },
         {
             "name": "creation_assistant_get_external_task",

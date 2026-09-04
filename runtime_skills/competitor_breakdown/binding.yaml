@@ -6,24 +6,22 @@ input_map:
   transcript: {source: input, key: transcript}
   numbered_transcript: {source: preprocessed, key: numbered_transcript}
   metrics: {source: input, key: metrics}
-  numbered_comments: {source: preprocessed, key: numbered_comments}
   domain_label: {source: input, key: domain_label}
   domain_context: {source: preprocessed, key: domain_context}
 output_map:
   source_id: {source: input, key: source_id}
   analysis_text: {source: model_output, key: analysis_text}
   source_content_type: {source: model_output, key: source_content_type}
-  boundary_observation: {source: model_output, key: boundary_observation, required: false}
+  matched_source_content_type: {source: model_output, key: matched_source_content_type, required: false}
   schema_version: {source: literal, value: competitor_breakdown.output.raw.v5}
 model_input_schema:
   type: object
-  required: [source_id, transcript, numbered_transcript, metrics, numbered_comments, domain_label, domain_context]
+  required: [source_id, transcript, numbered_transcript, metrics, domain_label, domain_context]
   properties:
     source_id: {type: string}
     transcript: {type: string}
     numbered_transcript: {type: string}
     metrics: {type: object}
-    numbered_comments: {type: string}
     domain_label: {type: string}
     domain_context: {type: string}
   additional_properties: false
@@ -32,5 +30,5 @@ model_output_schema:
   required: [source_content_type]
   properties:
     source_content_type: {type: string}
-    boundary_observation: {type: string}
+    matched_source_content_type: {type: string}
   additional_properties: false

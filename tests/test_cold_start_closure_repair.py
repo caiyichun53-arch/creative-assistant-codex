@@ -46,8 +46,15 @@ class BreakdownTransportRepairTest(unittest.TestCase):
         return {
             "source_id": "source-1",
             "source_content_type": "case/explanation",
-            "analysis_text": "WHAT\n材料对象和命题以输入为准。\nHOW\n材料中实际推进形成一个可核实观察。\nSO WHAT\n无有效复用参考。",
+            "analysis_text": "材料对象和命题以输入为准；材料中实际推进形成一个可核实观察。",
             "schema_version": "competitor_breakdown.output.raw.v5",
+            "matched_source_content_type": "NO_MATCH",
+        }
+
+    @staticmethod
+    def legacy_expansion_output() -> dict:
+        return {
+            **BreakdownTransportRepairTest.output(),
             "expansion_signals": [{
                 "signal_id": "signal-1",
                 "signal_kind": "source_observation",
@@ -63,7 +70,7 @@ class BreakdownTransportRepairTest(unittest.TestCase):
             }],
         }
 
-    def test_discovery_signal_does_not_require_preexisting_boundary(self) -> None:
+    def test_v5_analysis_does_not_require_a_domain_boundary(self) -> None:
         validate_competitor_breakdown_question_expansion_output(
             {
                 "source_id": "source-1",
@@ -74,26 +81,22 @@ class BreakdownTransportRepairTest(unittest.TestCase):
             self.output(),
         )
 
-    def test_production_classification_still_requires_frozen_boundary(self) -> None:
-        with self.assertRaisesRegex(
-            FormalSkillValidationError,
-            "current domain boundary",
-        ):
-            validate_competitor_breakdown_question_expansion_output(
-                {
-                    "source_id": "source-1",
-                    "transcript": "原文只陈述当前现象。",
-                    "comments": [],
-                    "domain_context": {
-                        "content_type_lifecycle": "classify",
-                        "content_type_registry": {
-                            "status": "frozen",
-                            "types": [{"canonical_id": "case/explanation"}],
-                        },
+    def test_v5_classification_does_not_apply_domain_boundary_rules(self) -> None:
+        validate_competitor_breakdown_question_expansion_output(
+            {
+                "source_id": "source-1",
+                "transcript": "原文只陈述当前现象。",
+                "comments": [],
+                "domain_context": {
+                    "content_type_lifecycle": "classify",
+                    "content_type_registry": {
+                        "status": "frozen",
+                        "types": [{"canonical_id": "case/explanation"}],
                     },
                 },
-                self.output(),
-            )
+            },
+            self.output(),
+        )
 
 
 class DiscoverySignalPersistenceBoundaryTest(unittest.TestCase):
@@ -110,7 +113,7 @@ class DiscoverySignalPersistenceBoundaryTest(unittest.TestCase):
         self.core.close()
 
     def test_discovery_signals_are_observed_without_formal_candidate_write(self) -> None:
-        breakdown = BreakdownTransportRepairTest.output()
+        breakdown = BreakdownTransportRepairTest.legacy_expansion_output()
         with patch(
             "scripts.core.production.stage0_content_core.project_content_type",
             return_value={

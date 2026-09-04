@@ -125,7 +125,10 @@ class ContentTypeLifecycle2BTest(unittest.TestCase):
             )
 
     @staticmethod
-    def _external_input(lifecycle: str) -> dict[str, object]:
+    def _external_input(lifecycle: str, *, with_formal_types: bool = True) -> dict[str, object]:
+        domain_context: dict[str, object] = {"content_type_lifecycle": lifecycle}
+        if with_formal_types:
+            domain_context["content_type_registry"] = FROZEN_REGISTRY
         return {
             "correlation_id": "external-receipt-test",
             "source_id": "source-1",
@@ -133,16 +136,18 @@ class ContentTypeLifecycle2BTest(unittest.TestCase):
             "metrics": {},
             "comments": [],
             "domain_label": "music_entertainment",
-            "domain_context": {
-                "content_type_lifecycle": lifecycle,
-                "content_type_registry": FROZEN_REGISTRY,
-            },
+            "domain_context": domain_context,
             "schema_version": "competitor_breakdown.input.v1",
         }
 
     @staticmethod
-    def _external_output(source_type: str, *, source_id: str = "source-1") -> dict[str, object]:
-        return {
+    def _external_output(
+        source_type: str,
+        *,
+        source_id: str = "source-1",
+        matched_type: str | None = None,
+    ) -> dict[str, object]:
+        output = {
             "source_id": source_id,
             "source_content_type": source_type,
             "analysis_text": (
@@ -152,6 +157,16 @@ class ContentTypeLifecycle2BTest(unittest.TestCase):
             ),
             "schema_version": "competitor_breakdown.output.raw.v5",
         }
+        if matched_type is None and source_type in {
+            "music_collection_curation",
+            "person_music_story",
+            "work_context_story",
+            "music_event_context",
+        }:
+            matched_type = source_type
+        if matched_type is not None:
+            output["matched_source_content_type"] = matched_type
+        return output
 
     def test_formal_music_registry_is_frozen_version_one_and_has_only_four_ids(self) -> None:
         registry = get_content_type_registry("music_entertainment")
@@ -264,7 +279,7 @@ class ContentTypeLifecycle2BTest(unittest.TestCase):
         self.assertEqual(result["no_match"][0]["status"], "OUT_OF_SCOPE")
         self.assertEqual(result["count"], 0)
 
-    def test_model_output_cannot_use_a_new_type_or_mismatch_the_id(self) -> None:
+    def test_model_output_keeps_observed_type_separate_from_formal_match(self) -> None:
         context = {
             "description": "music",
             "content_type_lifecycle": "classify",
@@ -275,38 +290,42 @@ class ContentTypeLifecycle2BTest(unittest.TestCase):
             "analysis_text": "WHAT\n核心对象和命题。\nHOW\n实际推进及其关系。\nSO WHAT\n无有效复用参考。",
             "schema_version": "competitor_breakdown.output.raw.v5",
         }
+        validate_competitor_breakdown_question_expansion_output(
+            {"source_id": "source_fixture", "domain_context": context},
+            {
+                **base,
+                "source_content_type": "音乐技术分析",
+                "matched_source_content_type": "NO_MATCH",
+            },
+        )
         with self.assertRaises(FormalSkillValidationError):
             validate_competitor_breakdown_question_expansion_output(
                 {"source_id": "source_fixture", "domain_context": context},
-                {**base, "source_content_type": "fifth_type"},
-            )
-        with self.assertRaises(FormalSkillValidationError):
-            validate_competitor_breakdown_question_expansion_output(
-                {"source_id": "source_fixture", "domain_context": context},
-                {**base, "source_content_type": "person_music_story", "source_content_type_id": "work_context_story"},
+                {
+                    **base,
+                    "source_content_type": "音乐技术分析",
+                    "matched_source_content_type": "not_in_registry",
+                },
             )
 
-    def test_external_receipt_enforces_classify_type_without_optional_validation(self) -> None:
+    def test_external_receipt_checks_observed_and_formal_types_without_optional_validation(self) -> None:
         contract = FormalSkillContract.from_runtime_skill("competitor_breakdown")
-        for source_type in ("music_collection_curation", "NO_MATCH", "OUT_OF_SCOPE"):
-            with self.subTest(source_type=source_type):
+        for source_type, matched_type in (
+            ("music_collection_curation", "music_collection_curation"),
+            ("作品背景说明", "work_context_story"),
+            ("作品背景说明", "NO_MATCH"),
+        ):
+            with self.subTest(source_type=source_type, matched_type=matched_type):
                 validated = validate_external_skill_output(
                     contract,
                     self._external_input("classify"),
-                    self._external_output(source_type),
+                    self._external_output(source_type, matched_type=matched_type),
                 )
                 self.assertEqual(validated["source_content_type"], source_type)
 
-        with self.assertRaises(FormalSkillValidationError):
-            validate_external_skill_output(
-                contract,
-                self._external_input("classify"),
-                self._external_output("作品背景说明"),
-            )
-
         validated = validate_external_skill_output(
             contract,
-            self._external_input("discover"),
+            self._external_input("discover", with_formal_types=False),
             self._external_output("作品背景说明"),
         )
         self.assertEqual(validated["source_content_type"], "作品背景说明")

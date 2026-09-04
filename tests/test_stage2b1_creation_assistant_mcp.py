@@ -7,9 +7,17 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
+from scripts.core.business_data.domain_labels import require_frozen_content_type_registry
+from scripts.core.model_gateway.formal_skill_adapter import FormalSkillValidationError
 from scripts.core.production.stage0_content_core import Stage0ContentProductionCore
+from scripts.core.production.stage0_content_core import StateTransitionError
 from scripts.core.production.stage1b_daily_discovery import Stage1BDailyDiscoveryService
+from scripts.mcp.creation_assistant_mcp_server import (
+    CreationAssistantMcpApplication,
+    CreationAssistantMcpError,
+)
 from tests.test_stage2a_external_intelligence_boundary import _valid_source_to_topic_output
 
 
@@ -217,6 +225,161 @@ class CreationAssistantMcpStage2B1Tests(unittest.TestCase):
         self.assertEqual(submitted["status"], "accepted")
         self.assertEqual(submitted["task_type"], "source_to_topic")
 
+    def test_competitor_breakdown_validation_uses_natural_identity_without_persistence(self) -> None:
+        registry = require_frozen_content_type_registry("music_entertainment")
+        material = {
+            "source_id": "source-test",
+            "title": "测试内容",
+            "transcript": "这是验证当前内容分析边界的测试原文。",
+            "metrics": {"views": 7},
+            "comments": [],
+            "domain_label": "music_entertainment",
+            "domain_context": {
+                "content_type_lifecycle": "classify",
+                "content_type_registry": registry,
+                "observed_content_types": [],
+            },
+        }
+        output_payload = {
+            "source_id": "source-test",
+            "source_content_type": "作品背景说明",
+            "matched_source_content_type": registry["types"][0]["canonical_id"],
+            "analysis_text": (
+                "内容围绕材料中的对象和命题展开，先交付必要背景，再说明实际推进动作及其关系；"
+                "有限参考只保留当前材料能够支持的做法。"
+            ),
+            "schema_version": "competitor_breakdown.output.raw.v5",
+        }
+        core = Stage0ContentProductionCore.open(self.db_path, data_identity="test")
+        app = CreationAssistantMcpApplication(core)
+        try:
+            with patch(
+                "scripts.mcp.creation_assistant_mcp_server.read_formal_competitor_breakdown_material",
+                return_value=material,
+            ) as read_material:
+                result = app.call_tool(
+                    "creation_assistant_competitor_breakdown_validation",
+                    {
+                        "operation": "prepare",
+                        "platform": "douyin",
+                        "platform_item_id": "source-test",
+                    },
+                )
+                self.assertEqual(result["status"], "ready")
+                self.assertFalse(result["formal_business_data_written"])
+                self.assertNotIn("task_identity", result["task"])
+                self.assertNotIn("business_context", result["task"])
+                read_material.assert_called_once_with(
+                    platform="douyin",
+                    platform_item_id="source-test",
+                )
+                self.assertEqual(result["task"]["input"]["source_id"], "source-test")
+                self.assertEqual(
+                    result["task"]["skill"]["source_reference"],
+                    "runtime_skills/competitor_breakdown",
+                )
+
+            before_changes = core.conn.total_changes
+            with patch(
+                "scripts.mcp.creation_assistant_mcp_server.read_formal_competitor_breakdown_material",
+                return_value=material,
+            ) as read_material:
+                result = app.call_tool(
+                    "creation_assistant_competitor_breakdown_validation",
+                    {
+                        "operation": "validate",
+                        "platform": "douyin",
+                        "platform_item_id": "source-test",
+                        "model_result": output_payload,
+                    },
+                )
+                self.assertEqual(result["status"], "valid")
+                self.assertFalse(result["formal_business_data_written"])
+                self.assertEqual(result["validated_output"], output_payload)
+                read_material.assert_called_once_with(
+                    platform="douyin",
+                    platform_item_id="source-test",
+                )
+
+                for invalid_output in (
+                    {
+                        **output_payload,
+                        "analysis_text": "",
+                    },
+                    {
+                        **output_payload,
+                        "matched_source_content_type": "not_in_current_registry",
+                    },
+                    {**output_payload, "question_expansions": []},
+                ):
+                    with self.assertRaises(FormalSkillValidationError):
+                        app.call_tool(
+                            "creation_assistant_competitor_breakdown_validation",
+                            {
+                                "operation": "validate",
+                                "platform": "douyin",
+                                "platform_item_id": "source-test",
+                                "model_result": invalid_output,
+                            },
+                        )
+                self.assertEqual(core.conn.total_changes, before_changes)
+
+            for invalid_arguments in (
+                {
+                    "operation": "prepare",
+                    "platform": "douyin",
+                    "platform_item_id": "source-test",
+                    "registration_id": "internal-only",
+                },
+                {"operation": "prepare", "platform": "douyin"},
+                {
+                    "operation": "validate",
+                    "platform": "douyin",
+                    "platform_item_id": "source-test",
+                },
+            ):
+                with self.assertRaises(CreationAssistantMcpError):
+                    app.call_tool(
+                        "creation_assistant_competitor_breakdown_validation",
+                        invalid_arguments,
+                    )
+
+            with patch(
+                "scripts.mcp.creation_assistant_mcp_server.read_formal_competitor_breakdown_material",
+                side_effect=StateTransitionError("没有找到具备完整口播文案的正式竞品材料"),
+            ):
+                with self.assertRaisesRegex(
+                    CreationAssistantMcpError,
+                    "没有找到具备完整口播文案",
+                ):
+                    app.call_tool(
+                        "creation_assistant_competitor_breakdown_validation",
+                        {
+                            "operation": "prepare",
+                            "platform": "douyin",
+                            "platform_item_id": "missing-source",
+                        },
+                    )
+
+            with patch(
+                "scripts.mcp.creation_assistant_mcp_server.read_formal_competitor_breakdown_material",
+                side_effect=StateTransitionError("平台作品对应多个正式竞品材料上下文，无法安全选择"),
+            ):
+                with self.assertRaisesRegex(
+                    CreationAssistantMcpError,
+                    "多个正式竞品材料",
+                ):
+                    app.call_tool(
+                        "creation_assistant_competitor_breakdown_validation",
+                        {
+                            "operation": "prepare",
+                            "platform": "douyin",
+                            "platform_item_id": "ambiguous-source",
+                        },
+                    )
+        finally:
+            app.close()
+
     def test_real_stdio_mcp_flow_uses_one_core_skill_and_structured_submission(self) -> None:
         tools = self.client.request("tools/list")
         tool_names = {tool["name"] for tool in tools["result"]["tools"]}
@@ -224,10 +387,24 @@ class CreationAssistantMcpStage2B1Tests(unittest.TestCase):
             tool_names,
             {
                 "creation_assistant_status",
+                "creation_assistant_competitor_breakdown_validation",
                 "creation_assistant_get_external_task",
                 "creation_assistant_submit_external_result",
                 "creation_assistant_get_external_result",
             },
+        )
+        validation_tool = next(
+            tool
+            for tool in tools["result"]["tools"]
+            if tool["name"] == "creation_assistant_competitor_breakdown_validation"
+        )
+        self.assertEqual(
+            set(validation_tool["inputSchema"]["properties"]),
+            {"operation", "platform", "platform_item_id", "model_result"},
+        )
+        self.assertEqual(
+            validation_tool["inputSchema"]["required"],
+            ["operation", "platform", "platform_item_id"],
         )
 
         status = self._call_tool("creation_assistant_status", {})

@@ -59,17 +59,9 @@ class CommentValidation3ATest(unittest.TestCase):
     def test_comment_question_is_allowed(self):
         self.assertTrue(self._validates("五、评论信号\n评论中有人追问某歌手为什么没有被提到。\n六、候选复用原则与边界\n无明显短板。"))
 
-    def test_comment_fact_lead_is_preserved_as_unresolved_signal(self):
-        signals = [{
-            "signal_id": "S1",
-            "signal_kind": "comment_fact",
-            "signal_text": "评论中有人称某歌手此前可能已有说唱创作经历，待核实",
-            "source_anchor": "comment",
-            "reason": "评论提出了母内容没有展开的新事实说法，待核实。",
-        }]
+    def test_comment_fact_is_preserved_as_an_unresolved_observation(self):
         self.assertTrue(self._validates(
             "五、评论信号\n评论中有人称某歌手此前可能已有说唱创作经历，待核实。\n六、候选复用原则与边界\n无明显短板。",
-            signals=signals,
         ))
 
     def test_comment_causal_effect_is_rejected(self):

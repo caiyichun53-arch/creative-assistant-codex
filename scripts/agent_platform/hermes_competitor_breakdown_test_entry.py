@@ -22,14 +22,19 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from scripts.core.production.stage0_content_core import (
     Stage0ContentProductionCore,
     canonicalize_competitor_content_type,
+    StateTransitionError,
 )
-from scripts.core.runtime.runtime_storage import runtime_root_for_identity
+from scripts.core.runtime.runtime_storage import (
+    database_path_for_identity,
+    runtime_root_for_identity,
+)
 from scripts.core.model_gateway.formal_skill_adapter import (
     FormalSkillValidationError,
     validate_competitor_breakdown_question_expansion_output,
 )
 from scripts.core.production.stage1_competitor_registration import (
     _breakdown_domain_context,
+    _parse_account_source,
     prepare_competitor_breakdown_external_task,
 )
 from scripts.core.production.stage1b_daily_discovery import Stage1BDailyDiscoveryService
@@ -115,9 +120,18 @@ def _observed_types(connection: sqlite3.Connection, domain_label: str) -> list[s
     return sorted(values, key=str.casefold)
 
 
-def _select_material(connection: sqlite3.Connection, source_id: str) -> dict[str, Any]:
+def _select_material(
+    connection: sqlite3.Connection,
+    source_id: str,
+    *,
+    platform: str = "douyin",
+) -> dict[str, Any]:
+    platform_value = str(platform or "").strip().casefold()
+    if not platform_value:
+        raise StateTransitionError("formal competitor material requires a platform")
     rows = connection.execute(
-        "SELECT item.item_ref, item.artifact_json, cold_start.domain_label, registration.registration_id "
+        "SELECT item.item_ref, item.artifact_json, cold_start.domain_label, "
+        "registration.registration_id, account.external_account_ref "
         "FROM stage0_competitor_registration_item item "
         "JOIN stage0_competitor_registration registration "
         "ON registration.registration_id=item.registration_id "
@@ -125,27 +139,40 @@ def _select_material(connection: sqlite3.Connection, source_id: str) -> dict[str
         "JOIN stage0_cold_start cold_start "
         "ON cold_start.cold_start_id=registration.cold_start_id "
         "AND cold_start.data_identity=registration.data_identity "
+        "JOIN stage0_content_account account "
+        "ON account.content_account_id=registration.competitor_account_id "
+        "AND account.data_identity=registration.data_identity "
         "WHERE item.step_name='transcripts_and_comments' AND item.status='completed' "
-        "AND cold_start.domain_label='music_entertainment' AND item.data_identity='production' "
-        "ORDER BY item.updated_at DESC, item.item_ref DESC"
+        "AND item.item_ref=? AND item.data_identity='production' "
+        "ORDER BY item.updated_at DESC, item.registration_id DESC"
+        ,
+        (source_id,),
     ).fetchall()
+    candidates: list[dict[str, Any]] = []
     for row in rows:
         current_source_id = str(row[0] or "").strip()
-        if not current_source_id or current_source_id != source_id:
+        if not current_source_id:
+            continue
+        try:
+            row_platform, _ = _parse_account_source(str(row[4] or ""))
+        except StateTransitionError:
+            continue
+        if row_platform != platform_value:
             continue
         artifact = _parse_json(row[1])
         transcript = _transcript_from_artifact(artifact)
         comments = artifact.get("comments") if isinstance(artifact.get("comments"), list) else []
         comments = [item for item in comments if isinstance(item, dict) and str(item.get("text") or "").strip()]
-        if not transcript or not comments:
+        if not transcript:
             continue
         metrics = artifact.get("metrics") if isinstance(artifact.get("metrics"), dict) else {}
         domain_label = str(row[2] or "music_entertainment")
-        return {
+        candidates.append({
             "source_id": current_source_id,
             "registration_id": str(row[3] or ""),
             "title": str(artifact.get("title") or current_source_id),
             "hit_id": str(artifact.get("hit_id") or ""),
+            "platform": row_platform,
             "transcript": transcript,
             "metrics": metrics,
             "comments": comments,
@@ -155,8 +182,37 @@ def _select_material(connection: sqlite3.Connection, source_id: str) -> dict[str
                 observed_content_types=_observed_types(connection, domain_label),
                 content_type_lifecycle="classify",
             ),
-        }
-    raise RuntimeError("没有找到同时具备完整口播文案和评论的音乐爆款材料")
+        })
+    if not candidates:
+        raise StateTransitionError(
+            "没有找到具备完整口播文案的正式竞品材料"
+        )
+    if len(candidates) > 1:
+        raise StateTransitionError(
+            "平台作品对应多个正式竞品材料上下文，无法安全选择"
+        )
+    return candidates[0]
+
+
+def read_formal_competitor_breakdown_material(
+    *,
+    platform: str,
+    platform_item_id: str,
+    database_path: Path | None = None,
+) -> dict[str, Any]:
+    """Read one formal sample through the existing read-only Core path."""
+    formal_core = Stage0ContentProductionCore.open_read_only(
+        database_path or database_path_for_identity("production"),
+        data_identity="production",
+    )
+    try:
+        return _select_material(
+            formal_core.conn,
+            str(platform_item_id).strip(),
+            platform=platform,
+        )
+    finally:
+        formal_core.close()
 
 
 def _markdown_summary(summary: dict[str, Any]) -> str:

@@ -9,6 +9,7 @@ from scripts.core.model_gateway.formal_skill_adapter import (
     FormalSkillContract,
     FormalSkillValidationError,
     parse_competitor_breakdown_delimited_output,
+    prepare_external_skill_task,
     validate_competitor_breakdown_question_expansion_output,
 )
 
@@ -50,14 +51,16 @@ def _response(
     source_type: str,
     analysis_text: str,
     *,
+    matched_type: str | None = None,
     include_blocks: bool = False,
     boundary_observation: str | None = None,
 ) -> str:
     lines = [
         f"SOURCE_CONTENT_TYPE: {source_type}",
-        "---ANALYSIS---",
-        analysis_text,
     ]
+    if matched_type is not None:
+        lines.append(f"MATCHED_SOURCE_CONTENT_TYPE: {matched_type}")
+    lines.extend(["---ANALYSIS---", analysis_text])
     if include_blocks:
         lines.extend(
             [
@@ -79,20 +82,18 @@ def _response(
 
 def _core_analysis() -> str:
     return (
-        "WHAT\n核心对象和内容命题以本次输入材料为准。\n"
-        "HOW\n只说明材料中实际出现的推进动作及其前后关系。\n"
-        "SO WHAT\n无有效复用参考；其余判断以材料不足为准。"
+        "这条内容围绕输入材料中的核心对象和命题展开，"
+        "只说明材料中实际出现的推进动作及其前后关系；"
+        "没有足够材料支持的参考保持克制。"
     )
 
 
 class CompetitorBreakdownDelimitedOutputTest(unittest.TestCase):
     def test_long_prose_and_text_blocks_are_structurally_safe(self) -> None:
         analysis = (
-            "一、内容类型\n正文包含中文引号“张三”和英文双引号 \"quoted\"，"
-            "以及反斜杠 \\.\n"
-            "二、推进与兑现\n- 第一段\n- 第二段\n"
-            "六、候选复用原则与边界\n无明显短板。\n"
-        ) * 55
+            "正文包含中文引号“张三”和英文双引号 \"quoted\"，"
+            "以及反斜杠 \\.；内容按材料顺序完成交付。\n"
+        ) * 85
         self.assertGreaterEqual(len(analysis), 4000)
         self.assertLessEqual(len(analysis), 6000)
         parsed = parse_competitor_breakdown_delimited_output(
@@ -143,6 +144,13 @@ class CompetitorBreakdownDelimitedOutputTest(unittest.TestCase):
             parse_competitor_breakdown_delimited_output(
                 "SOURCE_CONTENT_TYPE: case/explanation\n---ANALYSIS---\n"
             )
+
+    def test_observed_and_matched_content_types_are_separate(self) -> None:
+        parsed = parse_competitor_breakdown_delimited_output(
+            _response("作品背景说明", "内容分析正文", matched_type="work_context_story")
+        )
+        self.assertEqual(parsed["source_content_type"], "作品背景说明")
+        self.assertEqual(parsed["matched_source_content_type"], "work_context_story")
 
     def test_blocks_need_only_their_real_machine_relationships(self) -> None:
         raw = (
@@ -198,12 +206,12 @@ class CompetitorBreakdownDelimitedOutputTest(unittest.TestCase):
         self.assertIn("QUESTION:", parsed["question_expansions"][0]["core_question"])
 
     def test_adapter_preserves_formal_object_and_sends_no_response_format(self) -> None:
-        body = _core_analysis()
+        body = "内容围绕一个对象展开，先交付背景，再说明它在本条内容中的意义。"
         gateway = _FakeGateway(_response("case/explanation", body))
         contract = FormalSkillContract.from_runtime_skill("competitor_breakdown")
         self.assertIsNone(contract.model_response_format)
         self.assertEqual(contract.model_output_schema["required"], ["source_content_type"])
-        self.assertNotIn("source_content_type_id", contract.model_output_schema["properties"])
+        self.assertIn("matched_source_content_type", contract.model_output_schema["properties"])
         self.assertNotIn("analysis_text", contract.model_output_schema["properties"])
         adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
         with patch(
@@ -235,8 +243,8 @@ class CompetitorBreakdownDelimitedOutputTest(unittest.TestCase):
             ):
                 adapter.run(_input("real-sample-blocks"))
 
-    def test_adapter_maps_boundary_observation_without_changing_formal_object(self) -> None:
-        body = _core_analysis()
+    def test_adapter_rejects_boundary_observation_for_v5(self) -> None:
+        body = "内容围绕一个对象展开，先交付背景，再说明它在本条内容中的意义。"
         gateway = _FakeGateway(
             _response(
                 "case/explanation",
@@ -246,17 +254,27 @@ class CompetitorBreakdownDelimitedOutputTest(unittest.TestCase):
         )
         contract = FormalSkillContract.from_runtime_skill("competitor_breakdown")
         adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
-        with patch(
-            "scripts.core.production.business_runtime_guard.enforce_atomic_skill_runtime_guard"
-        ):
-            result = adapter.run(_input("real-sample-boundary"))
-        self.assertEqual(
-            result.output_payload["boundary_observation"],
-            "本条对可生产的问题性质提供了新的具体边界观察。",
-        )
-        self.assertEqual(result.output_payload["analysis_text"].rstrip(), body)
+        with self.assertRaises(FormalSkillValidationError):
+            with patch(
+                "scripts.core.production.business_runtime_guard.enforce_atomic_skill_runtime_guard"
+            ):
+                adapter.run(_input("real-sample-boundary"))
 
-    def test_five_failure_sample_inputs_use_the_same_new_boundary(self) -> None:
+    def test_analysis_does_not_require_named_sections(self) -> None:
+        base = {
+            "source_id": "free-form-analysis",
+            "source_content_type": "作品背景说明",
+            "schema_version": "competitor_breakdown.output.raw.v5",
+        }
+        validate_competitor_breakdown_question_expansion_output(
+            _input("free-form-analysis"),
+            {
+                **base,
+                "analysis_text": "内容先交付背景，再把背景与作品本身联系起来；有限参考是先建立关系再解释意义。",
+            },
+        )
+
+    def test_five_sample_inputs_keep_analysis_as_plain_text(self) -> None:
         sample_ids = [
             "7642904416114330915",
             "7642925833614675251",
@@ -267,32 +285,14 @@ class CompetitorBreakdownDelimitedOutputTest(unittest.TestCase):
         for source_id in sample_ids:
             with self.subTest(source_id=source_id):
                 analysis = (
-                    f"样本 {source_id} 的完整分析，包含中文引号“观察”与英文引号\"引用\"。\n"
-                    "一、内容类型\n二、推进与兑现\n三、核心交付与增量\n"
-                    "四、关键内容动作与类型特有机制\n五、评论信号\n"
-                    "六、候选复用原则与边界\n无明显短板。"
+                    f"样本 {source_id} 的完整分析，包含中文引号“观察”与英文引号\"引用\"，"
+                    "并说明承诺、推进、交付和有限参考。"
                 )
                 parsed = parse_competitor_breakdown_delimited_output(
                     _response("case/explanation", analysis)
                 )
                 self.assertEqual(parsed["analysis_text"].rstrip("\r\n"), analysis.rstrip("\r\n"))
                 self.assertEqual(parsed["source_content_type"], "case/explanation")
-
-    def test_core_sections_are_required_but_legacy_six_sections_are_not(self) -> None:
-        base = {
-            "source_id": "core-contract",
-            "source_content_type": "case/explanation",
-            "schema_version": "competitor_breakdown.output.raw.v5",
-        }
-        with self.assertRaises(FormalSkillValidationError):
-            validate_competitor_breakdown_question_expansion_output(
-                _input("core-contract"),
-                {**base, "analysis_text": "一、内容类型\n二、推进与兑现\n六、候选复用原则与边界\n无。"},
-            )
-        validate_competitor_breakdown_question_expansion_output(
-            _input("core-contract"),
-            {**base, "analysis_text": _core_analysis()},
-        )
 
     def test_simple_analysis_can_omit_optional_sections_and_use_unknown(self) -> None:
         validate_competitor_breakdown_question_expansion_output(
@@ -301,16 +301,15 @@ class CompetitorBreakdownDelimitedOutputTest(unittest.TestCase):
                 "source_id": "simple-core",
                 "source_content_type": "case/explanation",
                 "analysis_text": (
-                    "WHAT\n材料只支持识别一个简单对象和命题。\n"
-                    "HOW\n材料只显示一次直接交付，没有可可靠拆出的情绪或转折。\n"
-                    "SO WHAT\nunknown；无有效复用参考。"
+                    "材料只支持识别一个简单对象和命题；只显示一次直接交付，"
+                    "没有可可靠拆出的额外结构；有限参考为 unknown。"
                 ),
                 "schema_version": "competitor_breakdown.output.raw.v5",
             },
         )
 
     def test_explicit_evidence_reference_must_exist_in_supplied_material(self) -> None:
-        valid = _core_analysis() + "\nHOW补充：这一观察依据 P001。"
+        valid = _core_analysis() + "\n补充说明：这一观察依据 P001。"
         validate_competitor_breakdown_question_expansion_output(
             _input("evidence-contract"),
             {
@@ -326,10 +325,47 @@ class CompetitorBreakdownDelimitedOutputTest(unittest.TestCase):
                 {
                     "source_id": "evidence-contract",
                     "source_content_type": "case/explanation",
-                    "analysis_text": _core_analysis() + "\nHOW补充：这一观察依据 P999。",
+                    "analysis_text": _core_analysis() + "\n补充说明：这一观察依据 P999。",
                     "schema_version": "competitor_breakdown.output.raw.v5",
                 },
             )
+
+    def test_model_input_exposes_type_reference_without_domain_governance(self) -> None:
+        contract = FormalSkillContract.from_runtime_skill("competitor_breakdown")
+        task, _ = prepare_external_skill_task(
+            contract,
+            {
+                **_input("type-reference"),
+                "domain_context": {
+                    "description": "不得把领域边界交给模型",
+                    "allowed_scope": "不得把允许范围交给模型",
+                    "excluded_terms": ["excluded"],
+                    "content_type_lifecycle": "classify",
+                    "content_type_registry": {
+                        "status": "FROZEN",
+                        "types": [{
+                            "canonical_id": "work_context_story",
+                            "name": "作品背景故事",
+                            "core_subject": "作品及其背景",
+                            "content_promise": "增加作品理解",
+                            "required_delivery": "背景关系",
+                            "scope_boundary": "不作为领域边界输入",
+                        }],
+                    },
+                    "observed_content_types": ["背景说明"],
+                },
+            },
+            constraints={"use_only_supplied_material": True},
+        )
+        rendered = task["skill"]["rendered_instructions"]
+        self.assertIn("work_context_story", rendered)
+        self.assertIn("背景说明", rendered)
+        self.assertNotIn("numbered_comments", task["input"])
+        self.assertNotIn("把评论粘贴在这里", rendered)
+        self.assertNotIn("content_type_lifecycle", rendered)
+        self.assertNotIn("FROZEN", rendered)
+        self.assertNotIn("excluded_terms", rendered)
+        self.assertNotIn("不得把领域边界交给模型", rendered)
 
 
 if __name__ == "__main__":

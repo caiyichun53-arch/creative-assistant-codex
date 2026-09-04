@@ -307,7 +307,18 @@ class ContentTypeLifecycle2ATest(unittest.TestCase):
         self.assertIn("question_expansions", contract.output_schema["properties"])
         for field in ("question_expansions", "expansion_signals", "typed_expansion_leads"):
             self.assertNotIn(field, contract.model_output_schema["properties"])
-        self.assertIn("domain_context.content_type_registry", contract.prompt_template)
+        self.assertIn("内容类型参考", contract.prompt_template)
+        for forbidden in (
+            "domain_context.content_type_registry",
+            "content_type_lifecycle",
+            "FROZEN",
+            "领域边界",
+            "BOUNDARY",
+            "WHAT",
+            "HOW",
+            "SO WHAT",
+        ):
+            self.assertNotIn(forbidden, contract.prompt_template)
         for canonical_id in (
             "music_collection_curation",
             "person_music_story",
@@ -315,6 +326,13 @@ class ContentTypeLifecycle2ATest(unittest.TestCase):
             "music_event_context",
         ):
             self.assertNotIn(canonical_id, contract.prompt_template)
+
+    def test_prompt_requires_positive_formal_type_matching_by_main_delivery(self) -> None:
+        contract = FormalSkillContract.from_runtime_skill("competitor_breakdown")
+        self.assertIn("核心对象、主要内容交付和主要推进方式", contract.prompt_template)
+        self.assertIn("只有现有正式类型都不能合理覆盖主要内容时，才填入 `NO_MATCH`", contract.prompt_template)
+        self.assertIn("不以对象数量、段落数量或是否列举多个对象等表面形式决定", contract.prompt_template)
+        self.assertIn("不得硬塞”是指不能改变 `SOURCE_CONTENT_TYPE`", contract.prompt_template)
 
     def test_legacy_question_expansion_path_remains_readable(self) -> None:
         result = self.core.register_breakdown_question_expansions(

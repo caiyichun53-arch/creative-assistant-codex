@@ -453,7 +453,6 @@ class FormalBusinessSkillAdapter:
             if self.contract.formal_skill_id == "competitor_breakdown":
                 model_output = parse_competitor_breakdown_delimited_output(model_run.output_text)
                 model_output = normalize_formal_skill_model_output(self.contract.formal_skill_id, model_output)
-                model_output = repair_competitor_breakdown_comment_semantics(input_payload, model_output)
                 validate_payload(
                     {key: value for key, value in model_output.items() if key != "analysis_text"},
                     self.contract.model_output_schema,
@@ -482,7 +481,9 @@ class FormalBusinessSkillAdapter:
                 if output.get("schema_version") == "competitor_breakdown.output.raw.v4":
                     validate_competitor_breakdown_question_expansion_output(input_payload, output, validate_optional=False)
                 else:
-                    validate_competitor_breakdown_question_expansion_output(input_payload, output)
+                    validate_competitor_breakdown_question_expansion_output(
+                        input_payload, output, validate_optional=False
+                    )
             if self.contract.formal_skill_id == "source_to_topic":
                 validate_source_to_topic_output_semantics(input_payload, output)
         except FormalSkillValidationError as exc:
@@ -543,7 +544,7 @@ class FormalBusinessSkillAdapter:
         if self.contract.route_name not in self.gateway.routes:
             raise FormalSkillValidationError("approved model route is unavailable")
         correction_format = (
-            "只输出 SOURCE_CONTENT_TYPE 机器头、固定区块标题和完整 analysis 正文。\n"
+            "只输出 SOURCE_CONTENT_TYPE、MATCHED_SOURCE_CONTENT_TYPE 机器头和完整 analysis 正文。\n"
             if self.contract.formal_skill_id == "competitor_breakdown"
             else "只根据原始编号材料和下面的明确错误，提交一份完整修正后的 JSON。\n"
         )
@@ -586,7 +587,6 @@ class FormalBusinessSkillAdapter:
             if self.contract.formal_skill_id == "competitor_breakdown":
                 model_output = parse_competitor_breakdown_delimited_output(model_run.output_text)
                 model_output = normalize_formal_skill_model_output(self.contract.formal_skill_id, model_output)
-                model_output = repair_competitor_breakdown_comment_semantics(input_payload, model_output)
                 validate_payload(
                     {key: value for key, value in model_output.items() if key != "analysis_text"},
                     self.contract.model_output_schema,
@@ -612,10 +612,9 @@ class FormalBusinessSkillAdapter:
                     }
             validate_payload(output, self.contract.output_schema)
             if self.contract.formal_skill_id == "competitor_breakdown":
-                if output.get("schema_version") == "competitor_breakdown.output.raw.v4":
-                    validate_competitor_breakdown_question_expansion_output(input_payload, output)
-                else:
-                    validate_competitor_breakdown_question_expansion_output(input_payload, output)
+                validate_competitor_breakdown_question_expansion_output(
+                    input_payload, output, validate_optional=False
+                )
             if self.contract.formal_skill_id == "source_to_topic":
                 validate_source_to_topic_output_semantics(input_payload, output)
         except FormalSkillValidationError as exc:
@@ -664,10 +663,8 @@ def apply_binding(binding_map: dict[str, Any], input_payload: dict[str, Any], mo
 def preprocess_formal_skill_input(formal_skill_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     if formal_skill_id in COMPETITOR_BREAKDOWN_SKILL_IDS:
         transcript_catalog = _build_numbered_transcript_catalog(str(payload.get("transcript") or ""))
-        comment_catalog = _build_numbered_comment_catalog(list(payload.get("comments") or []))
         supplied_context = payload.get("domain_context")
         supplied_context = supplied_context if isinstance(supplied_context, dict) else {}
-        domain_label = str(payload.get("domain_label") or supplied_context.get("label") or "generic").strip() or "generic"
         observed_content_types = supplied_context.get("observed_content_types")
         subject_labels = {
             "person": "人物", "work": "作品", "event": "事件", "concept": "概念",
@@ -686,17 +683,27 @@ def preprocess_formal_skill_input(formal_skill_id: str, payload: dict[str, Any])
             if subject in subject_labels and expression in expression_labels:
                 return f"{subject_labels[subject]}{expression_labels[expression]}"
             return text
-        domain_context = dict(supplied_context)
-        domain_context["label"] = domain_label
-        domain_context["observed_content_types"] = [
-            readable_type(item) for item in observed_content_types if readable_type(item)
-        ] if isinstance(observed_content_types, list) else []
+        registry = supplied_context.get("content_type_registry")
+        registry_types = registry.get("types") if isinstance(registry, dict) else []
+        formal_content_types = []
+        for item in registry_types if isinstance(registry_types, list) else []:
+            if not isinstance(item, dict) or not str(item.get("canonical_id") or "").strip():
+                continue
+            formal_content_types.append({
+                key: item[key]
+                for key in ("canonical_id", "name", "core_subject", "content_promise", "required_delivery")
+                if item.get(key) not in (None, "")
+            })
+        content_type_context = {
+            "formal_content_types": formal_content_types,
+            "observed_content_types": [
+                readable_type(item) for item in observed_content_types if readable_type(item)
+            ] if isinstance(observed_content_types, list) else [],
+        }
         prepared = {
             "transcript_catalog": transcript_catalog,
-            "comment_catalog": comment_catalog,
             "numbered_transcript": _render_numbered_catalog(transcript_catalog),
-            "numbered_comments": _render_numbered_catalog(comment_catalog),
-            "domain_context": json.dumps(domain_context, ensure_ascii=False, separators=(",", ":")),
+            "domain_context": json.dumps(content_type_context, ensure_ascii=False, separators=(",", ":")),
         }
         return prepared
     if formal_skill_id != "source_to_topic":
@@ -706,24 +713,20 @@ def preprocess_formal_skill_input(formal_skill_id: str, payload: dict[str, Any])
 
 
 def _bind_competitor_breakdown_source(prompt: str, model_input: dict[str, Any]) -> str:
-    """Put the supplied transcript and comments into the prompt's input slots.
+    """Put the supplied transcript into the prompt's input slot.
 
     The prompt owns the analysis rules.  The formal entry only injects the
-    current, numbered source catalogs so the model can select stable evidence
-    IDs without inventing or rewriting quotations.
+    current, numbered transcript so the model can use stable evidence IDs
+    without inventing or rewriting quotations.
     """
     transcript = str(model_input.get("numbered_transcript") or model_input.get("transcript") or "").strip()
     if not transcript:
         raise FormalSkillValidationError("爆款拆解必须有口播原文")
-    comments = str(model_input.get("numbered_comments") or "").strip() or "（本条没有评论材料。）"
     transcript_placeholder = "把文案粘贴在这里。"
-    comments_placeholder = "把评论粘贴在这里。"
     if transcript_placeholder not in prompt:
-        raise FormalSkillValidationError("爆款拆解提示词缺少原文输入位置")
-    if comments_placeholder not in prompt:
-        raise FormalSkillValidationError("爆款拆解提示词缺少评论输入位置")
+            raise FormalSkillValidationError("内容拆解提示词缺少原文输入位置")
     rendered = prompt.replace(transcript_placeholder, transcript, 1)
-    return rendered.replace(comments_placeholder, comments, 1)
+    return rendered
 def _build_numbered_transcript_catalog(transcript: str) -> list[dict[str, str]]:
     """Split one transcript into stable, complete, numbered paragraphs once."""
     pieces = [piece.strip() for piece in re.split(r"\n+", transcript) if piece.strip()]
@@ -1074,9 +1077,9 @@ def normalize_formal_skill_model_output(
     """
     if formal_skill_id == "competitor_breakdown" and "analysis_text" in model_output:
         # The current runtime Skill returns one complete prose breakdown plus
-        # the bounded expansion list. Do not run the retired structured-label
-        # normalizer over this raw envelope; it would add legacy fields and
-        # make the strict two-field model contract fail.
+        # the two content-type transport values. Do not run the retired
+        # structured-label normalizer over this raw envelope; it would add
+        # legacy fields and make the compact model contract fail.
         normalized = dict(model_output)
         # Some configured providers still echo the retired structural
         # `content_type_evidence` transport field.  It is not part of the
@@ -1637,6 +1640,18 @@ def parse_competitor_breakdown_delimited_output(output_text: str) -> dict[str, A
     index += 1
     while index < len(lines) and not lines[index].strip():
         index += 1
+    matched_source_content_type: str | None = None
+    matched_prefix = "MATCHED_SOURCE_CONTENT_TYPE:"
+    if index < len(lines) and lines[index].rstrip("\r\n").startswith(matched_prefix):
+        matched_source_content_type = lines[index].rstrip("\r\n")[len(matched_prefix):].strip()
+        if not matched_source_content_type:
+            raise FormalSkillValidationError(
+                "competitor breakdown matched source content type is empty",
+                raw_model_output=output_text,
+            )
+        index += 1
+        while index < len(lines) and not lines[index].strip():
+            index += 1
     if index >= len(lines) or lines[index].rstrip("\r\n") != COMPETITOR_BREAKDOWN_ANALYSIS_DELIMITER:
         raise FormalSkillValidationError(
             "competitor breakdown output must contain ---ANALYSIS--- after SOURCE_CONTENT_TYPE",
@@ -1800,6 +1815,8 @@ def parse_competitor_breakdown_delimited_output(output_text: str) -> dict[str, A
         "source_content_type": source_content_type,
         "analysis_text": analysis_text,
     }
+    if matched_source_content_type is not None:
+        result["matched_source_content_type"] = matched_source_content_type
     if question_expansions:
         result["question_expansions"] = question_expansions
     if expansion_signals:
@@ -2036,8 +2053,7 @@ def _extract_attributed_author_claims(transcript: str) -> list[str]:
 
 
 def _validate_comment_semantics(input_payload: dict[str, Any], analysis_text: str) -> None:
-    """Keep comment observations, fact leads and analysis claims separate."""
-    transcript_claims = _extract_attributed_author_claims(str(input_payload.get("transcript") or ""))
+    """Keep legacy comment observations separate from confirmed source facts."""
     comment_section = _comment_section_text(analysis_text)
     comment_sentences = _comment_semantic_sentences(comment_section)
 
@@ -2051,33 +2067,40 @@ def _validate_comment_semantics(input_payload: dict[str, Any], analysis_text: st
                 "评论新增事实没有标记为待核实线索，不能把评论说法直接写成已确认事实"
             )
 
-    if transcript_claims:
-        comment_boundary = _comment_section_text(analysis_text)
-        non_comment_text = str(analysis_text or "").replace(comment_boundary, "", 1)
-        attributed_markers = _AUTHOR_ATTRIBUTION_MARKERS + ("原文认为", "作者认为", "文案认为", "口播认为")
-        for sentence in _semantic_sentences(non_comment_text):
-            normalised = _normalise_claim_text(sentence)
-            if not normalised or any(marker in sentence for marker in attributed_markers):
-                continue
-            if any(claim in normalised for claim in transcript_claims):
-                raise FormalSkillValidationError(
-                    "作者观点被改写成未标明来源的客观事实；需要保留原文/作者的观点身份"
-                )
+def _validate_author_viewpoint_semantics(input_payload: dict[str, Any], analysis_text: str) -> None:
+    """Keep an author's attributed viewpoint distinct from analysis."""
+    transcript_claims = _extract_attributed_author_claims(str(input_payload.get("transcript") or ""))
+    if not transcript_claims:
+        return
+    attributed_markers = _AUTHOR_ATTRIBUTION_MARKERS + ("原文认为", "作者认为", "文案认为", "口播认为")
+    for sentence in _semantic_sentences(str(analysis_text or "")):
+        normalised = _normalise_claim_text(sentence)
+        if not normalised or any(marker in sentence for marker in attributed_markers):
+            continue
+        if any(claim in normalised for claim in transcript_claims):
+            raise FormalSkillValidationError(
+                "作者观点被改写成未标明来源的客观事实；需要保留原文/作者的观点身份"
+            )
 
 
-_CORE_BREAKDOWN_HEADINGS = ("WHAT", "HOW", "SO WHAT")
 _BREAKDOWN_EVIDENCE_REFERENCE_RE = re.compile(r"(?<![A-Za-z0-9_])([PC]\d{3})(?![A-Za-z0-9_])")
 
 
-def _validate_breakdown_evidence_references(input_payload: dict[str, Any], text: str) -> None:
+def _validate_breakdown_evidence_references(
+    input_payload: dict[str, Any], text: str, *, include_comments: bool = True
+) -> None:
     transcript_ids = {
         item["id"]
         for item in _build_numbered_transcript_catalog(str(input_payload.get("transcript") or ""))
     }
-    comment_ids = {
-        item["id"]
-        for item in _build_numbered_comment_catalog(list(input_payload.get("comments") or []))
-    }
+    comment_ids = (
+        {
+            item["id"]
+            for item in _build_numbered_comment_catalog(list(input_payload.get("comments") or []))
+        }
+        if include_comments
+        else set()
+    )
     for reference in _BREAKDOWN_EVIDENCE_REFERENCE_RE.findall(str(text or "")):
         if reference.startswith("P") and reference not in transcript_ids:
             raise FormalSkillValidationError(
@@ -2087,28 +2110,6 @@ def _validate_breakdown_evidence_references(input_payload: dict[str, Any], text:
             raise FormalSkillValidationError(
                 f"competitor breakdown evidence reference {reference} is not present in supplied comments"
             )
-
-
-def _validate_core_breakdown_analysis(input_payload: dict[str, Any], analysis_text: str) -> None:
-    """Require the small cognitive core without scoring prose quality."""
-    matches: dict[str, re.Match[str]] = {}
-    for heading in _CORE_BREAKDOWN_HEADINGS:
-        found = list(re.finditer(rf"(?im)^\s*(?:#{1,6}\s*)?{re.escape(heading)}\s*[:：]?\s*$", analysis_text))
-        if len(found) != 1:
-            raise FormalSkillValidationError(
-                "competitor breakdown analysis must contain exactly one WHAT, HOW and SO WHAT section"
-            )
-        matches[heading] = found[0]
-    ordered = [matches[heading] for heading in _CORE_BREAKDOWN_HEADINGS]
-    if not (ordered[0].start() < ordered[1].start() < ordered[2].start()):
-        raise FormalSkillValidationError("competitor breakdown core sections must be ordered WHAT, HOW, SO WHAT")
-    for index, heading in enumerate(_CORE_BREAKDOWN_HEADINGS):
-        start = matches[heading].end()
-        end = ordered[index + 1].start() if index + 1 < len(ordered) else len(analysis_text)
-        if not analysis_text[start:end].strip():
-            raise FormalSkillValidationError(f"competitor breakdown {heading} section cannot be empty")
-
-    _validate_breakdown_evidence_references(input_payload, analysis_text)
 
 
 def repair_competitor_breakdown_comment_semantics(
@@ -2256,7 +2257,7 @@ def validate_competitor_breakdown_question_expansion_output(
         "source_id", "source_content_type", "analysis_text", "schema_version",
     }
     optional_fields = {
-        "source_content_type_id", "question_expansions",
+        "source_content_type_id", "matched_source_content_type", "question_expansions",
         "expansion_signals", "typed_expansion_leads", "boundary_observation",
     }
     if not base_fields.issubset(output_payload) or set(output_payload) - base_fields - optional_fields:
@@ -2268,8 +2269,14 @@ def validate_competitor_breakdown_question_expansion_output(
         raise FormalSkillValidationError("competitor breakdown output has an unsupported version")
     if schema_version == "competitor_breakdown.output.raw.v4" and set(output_payload) != base_fields | {"question_expansions"}:
         raise FormalSkillValidationError("legacy competitor breakdown output cannot contain lifecycle fields")
+    if schema_version == "competitor_breakdown.output.raw.v5":
+        retired_fields = {
+            "question_expansions", "expansion_signals", "typed_expansion_leads", "boundary_observation",
+        } & set(output_payload)
+        if retired_fields:
+            raise FormalSkillValidationError("current competitor breakdown v5 cannot emit retired fields")
     if not isinstance(output_payload["source_content_type"], str) or not output_payload["source_content_type"].strip():
-        raise FormalSkillValidationError("爆款拆解必须先识别本条材料的内容类型")
+        raise FormalSkillValidationError("内容拆解必须先识别本条材料的内容类型")
     if not isinstance(output_payload["analysis_text"], str) or not output_payload["analysis_text"].strip():
         raise FormalSkillValidationError("competitor breakdown analysis is empty")
     if "boundary_observation" in output_payload and (
@@ -2278,47 +2285,50 @@ def validate_competitor_breakdown_question_expansion_output(
     ):
         raise FormalSkillValidationError("competitor breakdown boundary observation must be non-empty text")
     analysis_text = output_payload["analysis_text"]
-    _validate_core_breakdown_analysis(input_payload, analysis_text)
-    _validate_comment_semantics(input_payload, analysis_text)
-    shortfall_section = analysis_text
-    if "六、候选复用原则与边界" in analysis_text:
-        shortfall_section = analysis_text.split("六、候选复用原则与边界", 1)[1]
-    if "无明显短板" not in shortfall_section and re.search(
+    _validate_breakdown_evidence_references(
+        input_payload,
+        analysis_text,
+        include_comments=schema_version != "competitor_breakdown.output.raw.v5",
+    )
+    _validate_author_viewpoint_semantics(input_payload, analysis_text)
+    if schema_version == "competitor_breakdown.output.raw.v4":
+        _validate_comment_semantics(input_payload, analysis_text)
+    if "无明显短板" not in analysis_text and re.search(
         r"(?:短板|缺点).{0,40}(?:点赞|评论数量|系列|继续|账号能力)",
-        shortfall_section,
+        analysis_text,
     ):
         raise FormalSkillValidationError(
             "拆解短板必须相对于本篇承诺和当前内容类型，不能把外部表现或系列延续性当成本篇缺点"
         )
     context = input_payload.get("domain_context")
     context = context if isinstance(context, dict) else {}
-    lifecycle = str(context.get("content_type_lifecycle") or "discover").strip().casefold()
     registry = context.get("content_type_registry")
     registry = registry if isinstance(registry, dict) else {}
-    registry_status = str(registry.get("status") or "").strip().casefold()
     approved_ids = {
         str(item.get("canonical_id") or "").strip()
         for item in (registry.get("types") or [])
         if isinstance(item, dict) and str(item.get("canonical_id") or "").strip()
     }
-    if lifecycle == "classify":
-        if registry_status != "frozen" or not approved_ids:
+    if schema_version == "competitor_breakdown.output.raw.v5":
+        matched_type = str(output_payload.get("matched_source_content_type") or "").strip()
+        if approved_ids:
+            if not matched_type:
+                raise FormalSkillValidationError(
+                    "competitor breakdown must report whether the observed type matches a supplied formal type"
+                )
+            if matched_type != "NO_MATCH" and matched_type not in approved_ids:
+                raise FormalSkillValidationError(
+                    "competitor breakdown matched source content type must use a supplied formal type id or NO_MATCH"
+                )
+        elif matched_type and matched_type != "NO_MATCH":
             raise FormalSkillValidationError(
-                "production classification requires a non-empty FROZEN content type registry"
-            )
-        source_type = str(output_payload.get("source_content_type") or "").strip()
-        source_type_id = str(output_payload.get("source_content_type_id") or "").strip()
-        if source_type not in approved_ids and source_type not in {"NO_MATCH", "OUT_OF_SCOPE"}:
-            raise FormalSkillValidationError(
-                "production source_content_type must be an approved canonical id or NO_MATCH/OUT_OF_SCOPE"
-            )
-        if source_type_id and source_type_id != source_type:
-            raise FormalSkillValidationError(
-                "production source_content_type_id must match source_content_type"
+                "competitor breakdown matched source content type needs a supplied formal type"
             )
     if not validate_optional:
         return
 
+    # The remaining expansion checks are retained only for legacy v4 records.
+    lifecycle = str(context.get("content_type_lifecycle") or "discover").strip().casefold()
     expansions = output_payload.get("question_expansions", [])
     if not isinstance(expansions, list) or len(expansions) > 3:
         raise FormalSkillValidationError("competitor breakdown question expansions must contain at most three items")
@@ -2331,12 +2341,6 @@ def validate_competitor_breakdown_question_expansion_output(
     )
     signals = output_payload.get("expansion_signals", [])
     typed_leads = output_payload.get("typed_expansion_leads", [])
-    if lifecycle == "classify":
-        source_type = str(output_payload.get("source_content_type") or "").strip()
-        if source_type in {"NO_MATCH", "OUT_OF_SCOPE"} and (signals or typed_leads):
-            raise FormalSkillValidationError(
-                "an out-of-scope source cannot emit production typed expansion leads"
-            )
     if not isinstance(signals, list) or not isinstance(typed_leads, list):
         raise FormalSkillValidationError("expansion signals and typed leads must be arrays")
     if len(typed_leads) > 3:
