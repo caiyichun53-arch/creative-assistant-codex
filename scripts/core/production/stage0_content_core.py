@@ -35,16 +35,6 @@ from scripts.core.business_data.domain_boundaries import (
     require_frozen_production_boundary,
 )
 from scripts.core.business_data.run_domain_search import TAG_CANDIDATE_LIKE_FLOOR
-from scripts.core.model_gateway.goal07_model_gateway import (
-    ModelGateway,
-    ModelGatewayError,
-    ModelRequest,
-    ModelRoute,
-    ModelRunEnvelope,
-)
-from scripts.core.model_gateway.model_router import (
-    ModelRouter,
-)
 from scripts.core.production.high_signal_policy import (
     FIRST_REGISTRATION_COLLECTION_POLICY_VERSION,
     FIRST_REGISTRATION_MAX_ITEMS,
@@ -114,14 +104,6 @@ COMPETITOR_TRACKING_ACTIVATION_STEPS = (
     "transcripts_and_comments",
     "breakdown",
 )
-CANDIDATE_SCORE_WEIGHTS = {
-    "demand_strength": 22,
-    "information_increment": 22,
-    "expression_pull": 18,
-    "distinct_angle": 16,
-    "question_focus": 12,
-    "timeliness": 10,
-}
 DAILY_PRIORITY_REPORT_LIMIT = 10
 EXPERIENCE_CANDIDATE_BATCH_SIZE = 8
 EXPERIENCE_CANDIDATE_MIN_SOURCES = 3
@@ -216,11 +198,7 @@ class StaleResultError(Stage0CoreError):
     pass
 
 
-class ModelGatewayRequiredError(Stage0CoreError):
-    pass
-
-
-class ModelBindingUnavailableError(Stage0CoreError):
+class ExecutionResultRequiredError(Stage0CoreError):
     pass
 
 
@@ -705,72 +683,6 @@ def require_legacy_test_identity(data_identity: str) -> str:
     return data_identity
 
 
-class CoreModelRunMaterializer:
-    """ModelGateway materializer that persists envelopes through Stage 0 Core."""
-
-    def __init__(self, core: "Stage0ContentProductionCore") -> None:
-        self._core = core
-
-    def persist_envelope(self, envelope: ModelRunEnvelope) -> str:
-        metadata = dict(envelope.metadata or {})
-        binding = metadata.get("stage0_core")
-        if not isinstance(binding, dict):
-            raise ModelGatewayRequiredError("ModelGateway request lacks Stage 0 Core binding")
-        return self._core._persist_gateway_envelope(envelope, binding)
-
-
-class CoreDiscoveryModelRunMaterializer:
-    """ModelGateway materializer for Stage 1B candidates; never creates a production task."""
-
-    def __init__(self, core: "Stage0ContentProductionCore") -> None:
-        self._core = core
-
-    def persist_envelope(self, envelope: ModelRunEnvelope) -> str:
-        binding = dict((envelope.metadata or {}).get("stage1b_core") or {})
-        if not binding:
-            raise ModelGatewayRequiredError("ModelGateway request lacks Stage 1B Core binding")
-        return self._core.persist_discovery_model_envelope(envelope, binding)
-
-
-class CoreExperienceCandidateModelRunMaterializer:
-    """Persist one source-frozen experience-candidate model call without publishing experience."""
-
-    def __init__(self, core: "Stage0ContentProductionCore") -> None:
-        self._core = core
-
-    def persist_envelope(self, envelope: ModelRunEnvelope) -> str:
-        binding = dict((envelope.metadata or {}).get("experience_candidate_core") or {})
-        if not binding:
-            raise ModelGatewayRequiredError("ModelGateway request lacks experience-candidate Core binding")
-        return self._core._persist_experience_candidate_gateway_envelope(envelope, binding)
-
-
-class CoreCompetitorRegistrationModelRunMaterializer:
-    """Persist model calls used by competitor breakdown and tag extraction."""
-
-    def __init__(self, core: "Stage0ContentProductionCore") -> None:
-        self._core = core
-
-    def persist_envelope(self, envelope: ModelRunEnvelope) -> str:
-        binding = dict((envelope.metadata or {}).get("competitor_registration_core") or {})
-        if not binding:
-            raise ModelGatewayRequiredError("ModelGateway request lacks competitor-registration Core binding")
-        return self._core._persist_competitor_registration_gateway_envelope(envelope, binding)
-
-
-class CoreDailyHitModelRunMaterializer:
-    """Persist one daily-hit breakdown without pretending it is a registration step."""
-
-    def __init__(self, core: "Stage0ContentProductionCore") -> None:
-        self._core = core
-
-    def persist_envelope(self, envelope: ModelRunEnvelope) -> str:
-        binding = dict((envelope.metadata or {}).get("daily_hit_core") or {})
-        if not binding:
-            raise ModelGatewayRequiredError("ModelGateway request lacks daily-hit Core binding")
-        return self._core._persist_daily_hit_gateway_envelope(envelope, binding)
-
-
 class Stage0ContentProductionCore:
     """The sole formal Core API for Stage 0's first vertical production chain."""
 
@@ -788,11 +700,6 @@ class Stage0ContentProductionCore:
         self.domain_config_dir = (domain_config_dir or DOMAIN_CONFIG_DIR).resolve()
         self.conn.row_factory = sqlite3.Row
 
-    def _reject_formal_direct_model_execution(self, operation: str) -> None:
-        if self.data_identity == "production":
-            raise StateTransitionError(
-                f"formal business operation {operation} must use the external executor"
-            )
 
     @classmethod
     def _validate_database_path(
@@ -1735,27 +1642,6 @@ class Stage0ContentProductionCore:
                 created_at TEXT NOT NULL,
                 UNIQUE(run_id, source_version_id)
             );
-            CREATE TABLE IF NOT EXISTS stage1b_candidate_assessment (
-                assessment_id TEXT PRIMARY KEY,
-                candidate_version_id TEXT NOT NULL REFERENCES stage1b_candidate_version(candidate_version_id),
-                dimension_scores_json TEXT NOT NULL,
-                dimension_reasons_json TEXT NOT NULL,
-                total_score REAL NOT NULL,
-                assessed_by TEXT NOT NULL,
-                data_identity TEXT NOT NULL,
-                assessed_at TEXT NOT NULL,
-                UNIQUE(candidate_version_id)
-            );
-            CREATE TABLE IF NOT EXISTS stage1b_candidate_assessment_revision (
-                assessment_revision_id TEXT PRIMARY KEY,
-                candidate_version_id TEXT NOT NULL REFERENCES stage1b_candidate_version(candidate_version_id),
-                dimension_scores_json TEXT NOT NULL,
-                dimension_reasons_json TEXT NOT NULL,
-                total_score REAL NOT NULL,
-                assessed_by TEXT NOT NULL,
-                data_identity TEXT NOT NULL,
-                assessed_at TEXT NOT NULL
-            );
             CREATE TABLE IF NOT EXISTS stage1b_candidate_support (
                 support_id TEXT PRIMARY KEY,
                 candidate_version_id TEXT NOT NULL REFERENCES stage1b_candidate_version(candidate_version_id),
@@ -1868,6 +1754,7 @@ class Stage0ContentProductionCore:
             """
         )
         competitor_schema = Path(__file__).resolve().parents[1] / "business_data" / "competitor_accounts_schema.sqlite.sql"
+        self.install_candidate_priority_schema()
         self.conn.executescript(competitor_schema.read_text(encoding="utf-8"))
         self._migrate_cold_start_reuse_constraint()
         self._migrate_daily_batch_dates()
@@ -2556,33 +2443,6 @@ class Stage0ContentProductionCore:
             self._audit(task_id, "node_request_created", {**result, "node": node})
         return result
 
-    def prepare_atomic_skill_binding(self, *, task_id: str, node_version_id: str) -> dict[str, Any]:
-        """Return Core-owned receipt metadata; the atomic Skill alone creates the model request."""
-        self._reject_formal_direct_model_execution("prepare_atomic_skill_binding")
-        version = self._version(node_version_id)
-        task = self._task(task_id)
-        if version["task_id"] != task_id or version["node"] not in MODEL_BINDINGS:
-            raise StateTransitionError("node version is not a model-backed version of this task")
-        self._assert_current_node(task, version["node"], "processing", node_version_id)
-        enforce_atomic_skill_runtime_guard(
-            entrypoint="stage0_content_core.prepare_atomic_skill_binding",
-            operation=FORMAL_SKILL_BY_NODE[version["node"]],
-            data_identity=self.data_identity,
-        )
-        assembly = self._assembly(version["input_assembly_id"])
-        payload = json.loads(assembly["payload_json"])
-        return {
-            "stage0_core": {
-                "task_id": task_id,
-                "node": version["node"],
-                "node_version_id": node_version_id,
-                "input_assembly_id": version["input_assembly_id"],
-                "task_revision": int(task["task_revision"]),
-                "prompt_version": payload["prompt_version"],
-                "skill_version": payload["skill_version"],
-                "data_identity": self.data_identity,
-            }
-        }
 
     def _validate_content_experience_usage(
         self,
@@ -2742,27 +2602,6 @@ class Stage0ContentProductionCore:
             "rationale": rationale,
         }
 
-    def complete_node_from_model(
-        self,
-        *,
-        task_id: str,
-        node_version_id: str,
-        model_run_id: str,
-        output_ref: str,
-        validation_status: str,
-        actor: str,
-        expected_task_revision: int,
-        idempotency_key: str,
-        artifact_payload: dict[str, Any] | None = None,
-    ) -> dict[str, str]:
-        self._reject_formal_direct_model_execution("complete_node_from_model")
-        return self._complete_node_from_execution(
-            task_id=task_id, node_version_id=node_version_id, model_run_id=model_run_id,
-            output_ref=output_ref, validation_status=validation_status, actor=actor,
-            expected_task_revision=expected_task_revision, idempotency_key=idempotency_key,
-            artifact_payload=artifact_payload, expected_via_model_gateway=1,
-            command_name="complete_node_from_model",
-        )
 
     def complete_node_from_external_result(
         self,
@@ -2785,7 +2624,7 @@ class Stage0ContentProductionCore:
             task_id=task_id, node_version_id=node_version_id, model_run_id=model_run_id,
             output_ref=output_ref, validation_status=validation_status, actor=actor,
             expected_task_revision=expected_task_revision, idempotency_key=idempotency_key,
-            artifact_payload=artifact_payload, expected_via_model_gateway=0,
+            artifact_payload=artifact_payload,
             command_name="complete_node_from_external_result",
             experience_usage=experience_usage,
             validation_usage=validation_usage,
@@ -2803,7 +2642,6 @@ class Stage0ContentProductionCore:
         expected_task_revision: int,
         idempotency_key: str,
         artifact_payload: dict[str, Any] | None,
-        expected_via_model_gateway: int,
         command_name: str,
         experience_usage: Mapping[str, Any] | None = None,
         validation_usage: Mapping[str, Any] | None = None,
@@ -2817,9 +2655,9 @@ class Stage0ContentProductionCore:
         run = self._model_run(model_run_id)
         self._assert_current_node(task, request_version["node"], "processing", node_version_id)
         if run["task_id"] != task_id or run["node_version_id"] != node_version_id or run["status"] != "succeeded":
-            raise ModelGatewayRequiredError("execution result is not the successful current run")
-        if int(run["via_model_gateway"]) != expected_via_model_gateway or run["data_identity"] != self.data_identity:
-            raise ModelGatewayRequiredError("execution result does not match the expected execution boundary")
+            raise ExecutionResultRequiredError("execution result is not the successful current run")
+        if int(run["via_model_gateway"]) != 0 or run["data_identity"] != self.data_identity:
+            raise ExecutionResultRequiredError("execution result does not match the expected execution boundary")
         request = {
             "task_id": task_id,
             "node_version_id": node_version_id,
@@ -2901,7 +2739,7 @@ class Stage0ContentProductionCore:
             self._set_task(task_id, node=request_version["node"], version_id=output_version_id, status="awaiting_human_review", revision=revision)
             result = {"node_version_id": output_version_id, "task_revision": str(revision)}
             self._receipt(command_name, idempotency_key, request, result)
-            self._audit(task_id, "external_output_awaiting_human_review" if expected_via_model_gateway == 0 else "model_output_awaiting_human_review", {**result, "model_run_id": model_run_id})
+            self._audit(task_id, "external_output_awaiting_human_review", {**result, "model_run_id": model_run_id})
         return result
 
     def record_external_node_execution(
@@ -3269,70 +3107,6 @@ class Stage0ContentProductionCore:
             })
         return model_run_id
 
-    def _persist_experience_candidate_gateway_envelope(self, envelope: ModelRunEnvelope, binding: dict[str, Any]) -> str:
-        self._reject_formal_direct_model_execution("experience_candidate_model_gateway")
-        if binding.get("data_identity") != self.data_identity:
-            raise DataIdentityError("experience candidate model run identity does not match Core identity")
-        candidate_id = str(binding.get("experience_candidate_id") or "")
-        candidate = self.conn.execute(
-            "SELECT status FROM stage0_experience_candidate WHERE experience_candidate_id=? AND data_identity=?",
-            (candidate_id, self.data_identity),
-        ).fetchone()
-        if candidate is None or str(candidate["status"]) != "preparing":
-            raise ModelGatewayRequiredError("experience candidate model run does not belong to an open candidate")
-        model_run_id = _id("experience_candidate_model_run")
-        with self.conn:
-            self.conn.execute(
-                "INSERT INTO stage0_experience_candidate_model_run VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    model_run_id, candidate_id, envelope.status, envelope.route_name, envelope.provider_name,
-                    envelope.model_name, envelope.input_hash, envelope.output_hash,
-                    _canonical(envelope.as_payload()), self.data_identity, _now(),
-                ),
-            )
-            self._audit(None, "experience_candidate_model_run_recorded", {
-                "experience_candidate_id": candidate_id,
-                "experience_candidate_model_run_id": model_run_id,
-                "status": envelope.status,
-            })
-        return model_run_id
-
-    def _persist_gateway_envelope(self, envelope: ModelRunEnvelope, binding: dict[str, Any]) -> str:
-        self._reject_formal_direct_model_execution("content_model_gateway")
-        if binding.get("data_identity") != self.data_identity:
-            raise DataIdentityError("ModelGateway data identity does not match Core identity")
-        task_id, node_version_id = str(binding.get("task_id") or ""), str(binding.get("node_version_id") or "")
-        task, version = self._task(task_id), self._version(node_version_id)
-        if int(binding.get("task_revision", -1)) != int(task["task_revision"]):
-            raise StaleResultError("ModelGateway envelope belongs to a stale task revision")
-        self._assert_current_node(task, version["node"], "processing", node_version_id)
-        if version["node"] != binding.get("node") or version["input_assembly_id"] != binding.get("input_assembly_id"):
-            raise ModelGatewayRequiredError("ModelGateway envelope does not match the active node input")
-        assembly = self._assembly(version["input_assembly_id"])
-        model_run_id = _id("model_run")
-        with self.conn:
-            self.conn.execute(
-                """
-                INSERT INTO stage0_model_run(
-                    model_run_id, task_id, node, node_version_id, input_assembly_id, status, request_id,
-                    prompt_version, skill_version, route_id, route_version, provider_ref, provider_name,
-                    model_name, input_integrity_hash, output_hash, output_version_id, validation_status,
-                    error_json, retry_status, usage_json, cost_json, duration_ms, data_identity, created_at,
-                    via_model_gateway
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    model_run_id, task_id, version["node"], node_version_id, version["input_assembly_id"],
-                    envelope.status, envelope.correlation_id, binding["prompt_version"], binding["skill_version"],
-                    envelope.route_id or envelope.route_name, envelope.config_version, envelope.provider_ref,
-                    envelope.provider_name, envelope.model_name, assembly["integrity_hash"], envelope.output_hash,
-                    None, "not_validated", _canonical(envelope.error or {}), "not_retried",
-                    _canonical({"prompt_tokens": envelope.usage.prompt_tokens, "completion_tokens": envelope.usage.completion_tokens, "total_tokens": envelope.usage.total_tokens}),
-                    _canonical(envelope.cost), envelope.duration_ms, self.data_identity, _now(), 1,
-                ),
-            )
-            self._audit(task_id, "model_gateway_envelope_recorded", {"model_run_id": model_run_id, "node": version["node"], "status": envelope.status})
-        return model_run_id
 
     def _task(self, task_id: str) -> sqlite3.Row:
         row = self.conn.execute("SELECT * FROM stage0_content_task WHERE task_id=?", (task_id,)).fetchone()
@@ -3371,7 +3145,7 @@ class Stage0ContentProductionCore:
     def _model_run(self, model_run_id: str) -> sqlite3.Row:
         row = self.conn.execute("SELECT * FROM stage0_model_run WHERE model_run_id=?", (model_run_id,)).fetchone()
         if row is None:
-            raise ModelGatewayRequiredError("model run does not exist")
+            raise ExecutionResultRequiredError("model run does not exist")
         return row
 
     def _discovery_run(self, run_id: str) -> sqlite3.Row:
@@ -3422,7 +3196,7 @@ class Stage0ContentProductionCore:
     def _discovery_model_run(self, model_run_id: str) -> sqlite3.Row:
         row = self.conn.execute("SELECT * FROM stage1b_model_run WHERE model_run_id=?", (model_run_id,)).fetchone()
         if row is None or row["data_identity"] != self.data_identity:
-            raise ModelGatewayRequiredError("discovery model run does not exist in this data identity")
+            raise ExecutionResultRequiredError("discovery model run does not exist in this data identity")
         return row
 
     def _discovery_candidate(self, candidate_version_id: str) -> sqlite3.Row:
@@ -3480,19 +3254,6 @@ class Stage0ContentProductionCore:
                 different_angle.append(str(row["candidate_version_id"]))
         return {"same_angle": same_angle, "different_angle": different_angle}
 
-    def _resolve_discovery_model_route(self):
-        router = ModelRouter.from_file()
-        definition = router.routes.get("business_analysis")
-        if definition is None or definition.fallback != "none" or "topic_screening" not in definition.allowed_task_types:
-            raise ModelBindingUnavailableError("daily discovery requires the explicit business topic_screening route")
-        try:
-            return router.resolve_bound_route(
-                "business_analysis",
-                route_name="business.source_to_topic",
-                parameters={"stream": False},
-            )
-        except Exception as exc:
-            raise ModelBindingUnavailableError("daily discovery has no explicit resolved model binding") from exc
 
     def _assert_discovery_source_provenance(
         self,
@@ -3709,7 +3470,7 @@ class Stage0ContentProductionCore:
             or model_run["task_id"] != task_id
             or model_run["node_version_id"] != node_version_id
         ):
-            raise ModelGatewayRequiredError("model run does not belong to the active node request")
+            raise ExecutionResultRequiredError("model run does not belong to the active node request")
         failure = {
             "failure_stage": failure_stage,
             "reason": reason,
@@ -7095,8 +6856,7 @@ class Stage0ContentProductionCore:
                     "stage1b_candidate_decision",
                     "stage1b_candidate_support",
                     "stage1b_candidate_relation",
-                    "stage1b_candidate_assessment_revision",
-                    "stage1b_candidate_assessment",
+                    "stage1b_candidate_priority",
                     "stage1b_candidate_pool_state",
                     "stage1b_daily_snapshot",
                     "stage1b_candidate_version",
@@ -8272,22 +8032,13 @@ class Stage0ContentProductionCore:
         results: list[dict[str, Any]] = []
         for row in rows:
             assessment = self.conn.execute(
-                "SELECT total_score, dimension_scores_json, dimension_reasons_json, "
-                "assessed_by, assessed_at "
-                "FROM stage1b_candidate_assessment_revision "
-                "WHERE candidate_version_id=? AND data_identity=? "
-                "ORDER BY assessed_at DESC, assessment_revision_id DESC LIMIT 1",
+                "SELECT * FROM stage1b_candidate_priority WHERE candidate_version_id=? AND data_identity=? "
+                "ORDER BY assessed_at DESC,run_id DESC LIMIT 1",
                 (row["candidate_version_id"], self.data_identity),
             ).fetchone()
-            if assessment is None:
-                assessment = self.conn.execute(
-                    "SELECT total_score, dimension_scores_json, dimension_reasons_json, "
-                    "assessed_by, assessed_at "
-                    "FROM stage1b_candidate_assessment "
-                    "WHERE candidate_version_id=? AND data_identity=? "
-                    "ORDER BY assessed_at DESC, assessment_id DESC LIMIT 1",
-                    (row["candidate_version_id"], self.data_identity),
-                ).fetchone()
+            from scripts.core.production.candidate_priority import assessment_is_current
+            if not assessment_is_current(self, assessment):
+                assessment = None
             pool_state = self.conn.execute(
                 "SELECT pool_status, reason, effective_at "
                 "FROM stage1b_candidate_pool_state "
@@ -8325,8 +8076,10 @@ class Stage0ContentProductionCore:
                     "assessment": (
                         {
                             "total_score": assessment["total_score"],
-                            "dimension_scores": self._knowledge_json(assessment["dimension_scores_json"]),
-                            "dimension_reasons": self._knowledge_json(assessment["dimension_reasons_json"]),
+                            "reason": assessment["reason"],
+                            "limitations": assessment["limitations"],
+                            "evidence_refs": self._knowledge_json(assessment["evidence_refs_json"]),
+                            "model_ref": assessment["model_ref"],
                             "assessed_by": str(assessment["assessed_by"] or ""),
                             "assessed_at": str(assessment["assessed_at"] or ""),
                         }
@@ -11189,52 +10942,9 @@ class Stage0ContentProductionCore:
         }
 
     def _hard_delete_domain_tag(self, *, tag_id: str) -> None:
-        """Permanently remove one tag and every tag-owned search record."""
+        """Reject the retired deletion of retained tags and search records."""
         raise StateTransitionError(
             "hard deletion of retained business tags and search records is retired"
-        )
-        libraries = self.conn.execute(
-            "SELECT cold_start_id, candidate_set_json, tag_ids_json "
-            "FROM stage0_cold_start_tag_library WHERE data_identity=?",
-            (self.data_identity,),
-        ).fetchall()
-        for library in libraries:
-            original_ids = [str(value) for value in json.loads(library["tag_ids_json"])]
-            if tag_id not in original_ids:
-                continue
-            candidate_set = json.loads(library["candidate_set_json"])
-            for key in ("retained", "filtered"):
-                candidate_set[key] = [
-                    item
-                    for item in candidate_set.get(key, [])
-                    if not isinstance(item, dict)
-                    or str(item.get("tag_id") or "") != tag_id
-                ]
-            self.conn.execute(
-                "UPDATE stage0_cold_start_tag_library SET candidate_set_json=?, tag_ids_json=? "
-                "WHERE cold_start_id=? AND data_identity=?",
-                (
-                    _canonical(candidate_set),
-                    _canonical([value for value in original_ids if value != tag_id]),
-                    library["cold_start_id"],
-                    self.data_identity,
-                ),
-            )
-        self.conn.execute(
-            "DELETE FROM discovered_external_videos WHERE tag_id=?",
-            (tag_id,),
-        )
-        self.conn.execute(
-            "DELETE FROM domain_search_page_observation WHERE tag_id=?",
-            (tag_id,),
-        )
-        self.conn.execute(
-            "DELETE FROM domain_search_cursor WHERE tag_id=?",
-            (tag_id,),
-        )
-        self.conn.execute(
-            "DELETE FROM domain_search_tags WHERE tag_id=?",
-            (tag_id,),
         )
 
     def _remove_cold_start_tag_records(self, *, cold_start_id: str, tag_id: str) -> None:
@@ -11934,88 +11644,6 @@ class Stage0ContentProductionCore:
             self._audit(None, "competitor_registration_tag_candidate_decided", {**result, "actor": actor.strip()})
         return result
 
-    def _persist_competitor_registration_gateway_envelope(
-        self, envelope: ModelRunEnvelope, binding: dict[str, Any]
-    ) -> str:
-        self._reject_formal_direct_model_execution("competitor_registration_model_gateway")
-        if binding.get("data_identity") != self.data_identity:
-            raise DataIdentityError("competitor-registration model result belongs to another data identity")
-        registration_id = str(binding.get("registration_id") or "")
-        step_name = str(binding.get("step_name") or "")
-        if step_name != "breakdown":
-            raise ModelGatewayRequiredError(
-                "competitor-registration model runs are allowed only for individual hit breakdowns"
-            )
-        registration = self.get_competitor_registration(registration_id=registration_id)
-        prepared_breakdown_steps = {"transcripts_and_comments", "breakdown"}
-        active_registration = (
-            registration["status"] == "processing"
-            and registration["current_step"] in prepared_breakdown_steps
-        )
-        closed_registration_material = self.conn.execute(
-            "SELECT 1 FROM stage0_competitor_registration_item WHERE registration_id=? "
-            "AND step_name='transcripts_and_comments' AND item_ref=? AND status='completed' AND data_identity=?",
-            (registration_id, str(binding.get("source_id") or ""), self.data_identity),
-        ).fetchone() is not None
-        if not active_registration and not closed_registration_material:
-            raise StaleResultError("competitor-breakdown model result lacks a completed source material")
-        model_run_id = _id("competitor_registration_model_run")
-        with self.conn:
-            self.conn.execute(
-                "INSERT INTO stage0_competitor_registration_model_run VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    model_run_id, registration_id, step_name, envelope.status, envelope.route_name,
-                    envelope.provider_name, envelope.model_name, envelope.input_hash, envelope.output_hash,
-                    _canonical(envelope.error or {}),
-                    _canonical({
-                        "prompt_tokens": envelope.usage.prompt_tokens,
-                        "completion_tokens": envelope.usage.completion_tokens,
-                        "total_tokens": envelope.usage.total_tokens,
-                    }),
-                    _canonical(envelope.cost), envelope.duration_ms, self.data_identity, _now(),
-                ),
-            )
-        return model_run_id
-
-    def _persist_daily_hit_gateway_envelope(
-        self, envelope: ModelRunEnvelope, binding: dict[str, Any]
-    ) -> str:
-        self._reject_formal_direct_model_execution("daily_hit_model_gateway")
-        if binding.get("data_identity") != self.data_identity:
-            raise DataIdentityError("daily-hit model result belongs to another data identity")
-        hit_id = str(binding.get("hit_id") or "")
-        hit = self.conn.execute(
-            "SELECT preparation_status FROM hits WHERE hit_id=?",
-            (hit_id,),
-        ).fetchone()
-        if hit is None or hit["preparation_status"] != "completed":
-            raise StaleResultError("daily-hit model result lacks a completed prepared hit")
-        model_run_id = _id("daily_hit_model_run")
-        with self.conn:
-            self.conn.execute(
-                "INSERT INTO stage0_daily_hit_model_run VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    model_run_id,
-                    hit_id,
-                    envelope.status,
-                    envelope.route_name,
-                    envelope.provider_name,
-                    envelope.model_name,
-                    envelope.input_hash,
-                    envelope.output_hash,
-                    _canonical(envelope.error or {}),
-                    _canonical({
-                        "prompt_tokens": envelope.usage.prompt_tokens,
-                        "completion_tokens": envelope.usage.completion_tokens,
-                        "total_tokens": envelope.usage.total_tokens,
-                    }),
-                    _canonical(envelope.cost),
-                    envelope.duration_ms,
-                    self.data_identity,
-                    _now(),
-                ),
-            )
-        return model_run_id
 
     def complete_daily_hit_material(
         self,
@@ -14567,8 +14195,6 @@ class Stage0ContentProductionCore:
         prompt_version: str,
         skill_version: str,
         idempotency_key: str,
-        model_route: ModelRoute | None = None,
-        external_execution: bool = False,
     ) -> dict[str, str]:
         run, source = self._discovery_run(run_id), self._discovery_source(source_version_id)
         if run["status"] != "processing" or source["run_id"] != run_id:
@@ -14576,31 +14202,11 @@ class Stage0ContentProductionCore:
         filter_row = self.conn.execute("SELECT outcome FROM stage1b_filter_result WHERE source_version_id=?", (source_version_id,)).fetchone()
         if filter_row is None or filter_row["outcome"] != "eligible":
             raise StateTransitionError("LLM input may only be assembled for deterministically eligible sources")
-        if self.data_identity == "production" and not external_execution:
-            raise StateTransitionError(
-                "formal discovery input must use the external intelligence boundary"
-            )
-        if external_execution and model_route is not None:
-            raise StateTransitionError("external intelligence assembly cannot contain a model route")
-        route = None if external_execution else (model_route or self._resolve_discovery_model_route())
         stored_payload = dict(payload)
-        if external_execution:
-            stored_payload["execution_boundary"] = "external_intelligence"
-            model_config_version = EXTERNAL_INTELLIGENCE_EXECUTION_VERSION
-            model_config_hash = _hash({"execution_boundary": "external_intelligence", "version": model_config_version})
-        else:
-            assert route is not None
-            stored_payload["model_binding"] = {
-                "route_id": route.route_id,
-                "provider_name": route.provider_name,
-                "provider_ref": route.provider_ref,
-                "model_name": route.model_name,
-                "config_version": route.config_version,
-                "config_hash": route.config_hash,
-            }
-            model_config_version = route.config_version
-            model_config_hash = route.config_hash
-        request = {"run_id": run_id, "source_version_id": source_version_id, "payload": stored_payload, "prompt_version": prompt_version, "skill_version": skill_version, "model_config_version": model_config_version, "external_execution": external_execution}
+        stored_payload["execution_boundary"] = "external_intelligence"
+        model_config_version = EXTERNAL_INTELLIGENCE_EXECUTION_VERSION
+        model_config_hash = _hash({"execution_boundary": "external_intelligence", "version": model_config_version})
+        request = {"run_id": run_id, "source_version_id": source_version_id, "payload": stored_payload, "prompt_version": prompt_version, "skill_version": skill_version, "model_config_version": model_config_version, "external_execution": True}
         replay = self._replay("stage1b_create_discovery_input", idempotency_key, request)
         if replay:
             return replay
@@ -14852,165 +14458,14 @@ class Stage0ContentProductionCore:
                 "stage1b_external_intelligence_result_recorded",
                 {
                     "model_run_id": model_run_id,
+                    "source_version_id": source_version_id,
+                    "output": output_payload,
                     "execution_id": execution_id,
                     "executor_id": executor_id,
                     "model_ref": model_ref,
                     "submitted_at": submitted_at,
                 },
             )
-        return model_run_id
-
-    def pending_hotspot_judgement(self, *, run_id: str) -> dict[str, Any]:
-        """Return one frozen hotspot judgement that an authorized user may resubmit once."""
-        run = self._discovery_run(run_id)
-        context = self._discovery_context(run_id)
-        allowed_modes = {"real_daily_validation"} if self.data_identity == "production" else {"test_isolated"}
-        if run["status"] != "processing" or context["execution_mode"] not in allowed_modes:
-            raise StateTransitionError("only a processing real daily hotspot run can resubmit its judgement")
-        rows = self.conn.execute(
-            "SELECT source.source_version_id, source.domain_label, source.payload_json, "
-            "assembly.assembly_id, assembly.payload_json AS assembly_payload_json "
-            "FROM stage1b_source_version source "
-            "JOIN stage1b_input_assembly assembly ON assembly.source_version_id=source.source_version_id "
-            "WHERE source.run_id=? AND source.source_type='hotspot' "
-            "ORDER BY source.created_at, source.source_version_id",
-            (run_id,),
-        ).fetchall()
-        if len(rows) != 1:
-            raise StateTransitionError("resubmission requires exactly one frozen hotspot judgement input")
-        row = rows[0]
-        source_version_id = str(row["source_version_id"])
-        for table in ("stage1b_model_run", "stage1b_candidate_version", "stage1b_candidate_absence", "stage1b_source_failure"):
-            if self.conn.execute(
-                f"SELECT 1 FROM {table} WHERE run_id=? AND source_version_id=?",
-                (run_id, source_version_id),
-            ).fetchone():
-                raise StateTransitionError("a hotspot judgement with a recorded outcome cannot be resubmitted")
-        input_payload = json.loads(str(row["assembly_payload_json"]))
-        input_payload.pop("model_binding", None)
-        return {
-            "run_id": run_id,
-            "source_version_id": source_version_id,
-            "domain_label": str(row["domain_label"]),
-            "source_payload": json.loads(str(row["payload_json"])),
-            "assembly_id": str(row["assembly_id"]),
-            "input_payload": input_payload,
-        }
-
-    def prepare_discovery_model_request(
-        self,
-        *,
-        run_id: str,
-        source_version_id: str,
-        assembly_id: str,
-        prompt: str,
-        skill_name: str = "source_to_topic",
-        skill_version: str | None = None,
-        skill_hash: str | None = None,
-        binding_name: str | None = None,
-        binding_version: str | None = None,
-        binding_hash: str | None = None,
-        model_input_payload: dict[str, Any] | None = None,
-        model_route: ModelRoute | None = None,
-        response_format: dict[str, Any] | None = None,
-    ) -> ModelRequest:
-        run, source = self._discovery_run(run_id), self._discovery_source(source_version_id)
-        assembly = self._discovery_assembly(assembly_id)
-        if run["status"] != "processing" or source["run_id"] != run_id or assembly["run_id"] != run_id or assembly["source_version_id"] != source_version_id:
-            raise StateTransitionError("discovery model request has stale or mismatched input")
-        if self.data_identity == "production":
-            raise ModelGatewayRequiredError(
-                "formal discovery model requests must be submitted by an external executor"
-            )
-        route = model_route or self._resolve_discovery_model_route()
-        payload = json.loads(assembly["payload_json"])
-        expected_binding = {
-            "route_id": route.route_id,
-            "provider_name": route.provider_name,
-            "provider_ref": route.provider_ref,
-            "model_name": route.model_name,
-            "config_version": route.config_version,
-            "config_hash": route.config_hash,
-        }
-        if payload.get("model_binding") != expected_binding or assembly["model_config_version"] != route.config_version:
-            raise StaleResultError("discovery input assembly no longer matches the explicit model binding")
-        binding_name = binding_name or route.route_name
-        binding_version = binding_version or route.config_version
-        binding_hash = binding_hash or route.config_hash
-        return ModelRequest(
-            route_name=route.route_name,
-            prompt=prompt,
-            input_payload=model_input_payload or payload,
-            correlation_id=run_id,
-            skill_name=skill_name,
-            skill_version=skill_version or assembly["skill_version"],
-            skill_hash=skill_hash,
-            binding_name=binding_name,
-            binding_version=binding_version,
-            binding_hash=binding_hash,
-            response_format=dict(response_format) if response_format else None,
-            metadata={"stage1b_core": {"run_id": run_id, "source_version_id": source_version_id, "input_assembly_id": assembly_id, "data_identity": self.data_identity, "prompt_version": assembly["prompt_version"], "skill_version": skill_version or assembly["skill_version"], "expected_binding": {**expected_binding, "binding_name": binding_name, "binding_version": binding_version, "binding_hash": binding_hash}}},
-        )
-
-    def persist_discovery_model_envelope(self, envelope: ModelRunEnvelope, binding: dict[str, Any]) -> str:
-        self._reject_formal_direct_model_execution("discovery_model_gateway")
-        if binding.get("data_identity") != self.data_identity:
-            raise DataIdentityError("ModelGateway discovery identity does not match Core identity")
-        run_id = str(binding.get("run_id") or "")
-        source_version_id = str(binding.get("source_version_id") or "")
-        assembly_id = str(binding.get("input_assembly_id") or "")
-        run, source, assembly = self._discovery_run(run_id), self._discovery_source(source_version_id), self._discovery_assembly(assembly_id)
-        if run["status"] != "processing" or source["run_id"] != run_id or assembly["run_id"] != run_id or assembly["source_version_id"] != source_version_id:
-            raise StaleResultError("discovery ModelGateway envelope belongs to stale input")
-        expected_request_binding = dict(binding.get("expected_binding") or {})
-        expected_model_binding = {
-            key: expected_request_binding.get(key)
-            for key in (
-                "route_id",
-                "provider_name",
-                "provider_ref",
-                "model_name",
-                "config_version",
-                "config_hash",
-            )
-        }
-        stored_payload = json.loads(assembly["payload_json"])
-        stored_model_binding = stored_payload.get("model_binding")
-        if (
-            not isinstance(stored_model_binding, dict)
-            or stored_model_binding != expected_model_binding
-            or any(not str(value or "").strip() for value in expected_model_binding.values())
-            or str(assembly["model_config_version"] or "") != str(expected_model_binding["config_version"] or "")
-        ):
-            raise ModelGatewayRequiredError("discovery ModelGateway request lacks the frozen explicit binding")
-        expected_binding_name = str(expected_request_binding.get("binding_name") or "")
-        expected_binding_version = str(expected_request_binding.get("binding_version") or "")
-        expected_binding_hash = str(expected_request_binding.get("binding_hash") or "")
-        if (
-            envelope.route_name != "business.source_to_topic"
-            or envelope.route_id != expected_model_binding["route_id"]
-            or envelope.provider_name != expected_model_binding["provider_name"]
-            or envelope.provider_ref != expected_model_binding["provider_ref"]
-            or envelope.model_name != expected_model_binding["model_name"]
-            or envelope.config_version != expected_model_binding["config_version"]
-            or envelope.config_hash != expected_model_binding["config_hash"]
-            or envelope.binding_name != expected_binding_name
-            or envelope.binding_version != expected_binding_version
-            or envelope.binding_hash != expected_binding_hash
-        ):
-            raise ModelGatewayRequiredError("discovery ModelGateway envelope does not match source_to_topic binding")
-        model_run_id = _id("discovery_model_run")
-        with self.conn:
-            self.conn.execute(
-                "INSERT INTO stage1b_model_run VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (model_run_id, run_id, source_version_id, assembly_id, envelope.status, envelope.correlation_id,
-                 binding["prompt_version"], binding["skill_version"], envelope.route_id or envelope.route_name,
-                 envelope.config_version, envelope.provider_ref, envelope.provider_name, envelope.model_name,
-                 assembly["integrity_hash"], envelope.output_hash, "not_validated", _canonical(envelope.error or {}),
-                 "not_retried", _canonical({"prompt_tokens": envelope.usage.prompt_tokens, "completion_tokens": envelope.usage.completion_tokens, "total_tokens": envelope.usage.total_tokens}),
-                 _canonical(envelope.cost), envelope.duration_ms, self.data_identity, _now(), 1),
-            )
-            self._audit(run_id, "stage1b_model_gateway_envelope_recorded", {"model_run_id": model_run_id, "status": envelope.status})
         return model_run_id
 
     def record_discovery_model_validation_failure(
@@ -15042,7 +14497,7 @@ class Stage0ContentProductionCore:
         if model_run_id is not None:
             model_run = self._discovery_model_run(model_run_id)
             if model_run["run_id"] != run_id or model_run["source_version_id"] != source_version_id:
-                raise ModelGatewayRequiredError("source failure model run does not belong to the source")
+                raise ExecutionResultRequiredError("source failure model run does not belong to the source")
         request = {
             "run_id": run_id,
             "source_version_id": source_version_id,
@@ -15086,7 +14541,7 @@ class Stage0ContentProductionCore:
         if model_run_id is not None:
             model_run = self._discovery_model_run(model_run_id)
             if model_run["run_id"] != run_id or model_run["source_version_id"] != source_version_id:
-                raise ModelGatewayRequiredError("candidate absence model run does not belong to the source")
+                raise ExecutionResultRequiredError("candidate absence model run does not belong to the source")
         request = {"run_id": run_id, "source_version_id": source_version_id, "model_run_id": model_run_id, "reason_code": reason_code, "detail": detail}
         replay = self._replay("stage1b_record_candidate_absence", idempotency_key, request)
         if replay:
@@ -15118,27 +14573,22 @@ class Stage0ContentProductionCore:
         model_run_id: str,
         candidate_id: str,
         payload: dict[str, Any],
-        candidate_domain_label: str | None = None,
-        allow_multiple_from_model_run: bool = False,
         idempotency_key: str,
     ) -> dict[str, str]:
         run, source, model_run = self._discovery_run(run_id), self._discovery_source(source_version_id), self._discovery_model_run(model_run_id)
         if run["status"] != "processing" or source["run_id"] != run_id or model_run["run_id"] != run_id or model_run["source_version_id"] != source_version_id:
             raise StateTransitionError("candidate does not belong to the active source run")
-        if model_run["status"] != "succeeded" or (
-            model_run["validation_status"] != "not_validated"
-            and not (allow_multiple_from_model_run and model_run["validation_status"] == "passed")
-        ):
-            raise ModelGatewayRequiredError("candidate requires one successful unconsumed intelligent execution")
+        if model_run["status"] != "succeeded" or model_run["validation_status"] != "not_validated":
+            raise ExecutionResultRequiredError("candidate requires one successful unconsumed intelligent execution")
         forbidden_fields = {"score", "rank", "weight", "recommendation_score", "quality_rank"}
         if forbidden_fields & set(payload):
             raise StateTransitionError("discovery candidates must not contain business-ranking fields")
         if self.conn.execute("SELECT 1 FROM stage1b_candidate_absence WHERE run_id=? AND source_version_id=?", (run_id, source_version_id)).fetchone():
             raise StateTransitionError("a source recorded as zero-candidate cannot create a candidate")
-        domain_label = candidate_domain_label or str(source["domain_label"])
+        domain_label = str(source["domain_label"])
         if domain_label not in formal_domain_labels():
             raise StateTransitionError("candidate domain is not a formal domain")
-        request = {"run_id": run_id, "source_version_id": source_version_id, "model_run_id": model_run_id, "candidate_id": candidate_id, "payload": payload, "candidate_domain_label": domain_label, "allow_multiple_from_model_run": allow_multiple_from_model_run}
+        request = {"run_id": run_id, "source_version_id": source_version_id, "model_run_id": model_run_id, "candidate_id": candidate_id, "payload": payload}
         replay = self._replay("stage1b_create_discovery_candidate", idempotency_key, request)
         if replay:
             return replay
@@ -15189,23 +14639,34 @@ class Stage0ContentProductionCore:
         replay = self._replay("stage1b_complete_discovery_run", idempotency_key, request)
         if replay:
             return replay
+        from scripts.core.production.candidate_priority import ranked
+        domain_rankings = {}
+        if lifecycle_status in {"completed", "completed_with_failures"}:
+            pending = self.conn.execute(
+                "SELECT a.assembly_id,a.source_version_id FROM stage1b_input_assembly a "
+                "WHERE a.run_id=? AND NOT EXISTS (SELECT 1 FROM stage1b_candidate_support s WHERE s.source_version_id=a.source_version_id) "
+                "AND NOT EXISTS (SELECT 1 FROM stage1b_candidate_absence n WHERE n.source_version_id=a.source_version_id) "
+                "AND NOT EXISTS (SELECT 1 FROM stage1b_source_failure f WHERE f.source_version_id=a.source_version_id) "
+                "ORDER BY a.created_at,a.assembly_id LIMIT 1", (run_id,),
+            ).fetchone()
+            if pending is not None:
+                from scripts.core.production.stage1b_daily_discovery import Stage1BDailyDiscoveryService
+                task = Stage1BDailyDiscoveryService(core=self).prepare_source_to_topic_external_task(
+                    run_id=run_id, source_version_id=pending["source_version_id"], assembly_id=pending["assembly_id"],
+                )
+                with self.conn:
+                    self._audit(run_id, "candidate_priority_awaiting_agent", {**request, "idempotency_key": idempotency_key})
+                return {"run_id": run_id, "status": "requires_external_intelligence", "task": task}
+            for domain_label in domains:
+                rows, task = ranked(self, run_id=run_id, domain_label=domain_label)
+                if rows is None:
+                    with self.conn:
+                        self._audit(run_id, "candidate_priority_awaiting_agent", {**request, "idempotency_key": idempotency_key})
+                    return {"run_id": run_id, "status": "requires_external_intelligence", "task": task}
+                domain_rankings[domain_label] = rows[:DAILY_PRIORITY_REPORT_LIMIT]
         with self.conn:
             for domain_label in domains:
-                rows = self.conn.execute(
-                    "SELECT candidate.candidate_version_id FROM stage1b_candidate_version candidate "
-                    "JOIN stage1b_candidate_pool_state pool ON pool.pool_state_id=(SELECT newest.pool_state_id FROM stage1b_candidate_pool_state newest WHERE newest.candidate_version_id=candidate.candidate_version_id AND newest.data_identity=? ORDER BY newest.effective_at DESC, newest.pool_state_id DESC LIMIT 1) "
-                    "LEFT JOIN stage1b_candidate_assessment_revision assessment ON assessment.assessment_revision_id=(SELECT newest.assessment_revision_id FROM stage1b_candidate_assessment_revision newest WHERE newest.candidate_version_id=candidate.candidate_version_id AND newest.data_identity=? ORDER BY newest.assessed_at DESC, newest.assessment_revision_id DESC LIMIT 1) "
-                    "WHERE candidate.domain_label=? AND candidate.data_identity=? AND candidate.status='awaiting_user_decision' AND pool.pool_status='current' "
-                    "AND NOT EXISTS (SELECT 1 FROM stage1b_candidate_decision decision WHERE decision.candidate_version_id=candidate.candidate_version_id) "
-                    "ORDER BY assessment.total_score IS NULL, assessment.total_score DESC, candidate.created_at, candidate.candidate_version_id LIMIT ?",
-                    (
-                        self.data_identity,
-                        self.data_identity,
-                        domain_label,
-                        self.data_identity,
-                        DAILY_PRIORITY_REPORT_LIMIT,
-                    ),
-                ).fetchall()
+                rows = domain_rankings.get(domain_label, [])
                 if rows:
                     for position, row in enumerate(rows, start=1):
                         snapshot_id = _id("snapshot")
@@ -15227,37 +14688,46 @@ class Stage0ContentProductionCore:
             self._audit(run_id, "stage1b_daily_snapshot_finalized", {**result, "failure_reason": failure_reason})
         return result
 
-    def record_candidate_assessment(
-        self,
-        *,
-        candidate_version_id: str,
-        dimension_scores: dict[str, int | float],
-        dimension_reasons: dict[str, str],
-        assessed_by: str,
-    ) -> dict[str, Any]:
-        """Persist the six visible candidate dimensions; ranking is computed, never invented by a model field."""
-        candidate = self._discovery_candidate(candidate_version_id)
-        if candidate["status"] != "awaiting_user_decision" or not assessed_by.strip():
-            raise StateTransitionError("only an undecided candidate may receive a scored assessment")
-        if self._candidate_pool_state(candidate_version_id)["pool_status"] != "current":
-            raise StateTransitionError("only a current-pool candidate may be scored; reactivate it with new same-angle material first")
-        if set(dimension_scores) != set(CANDIDATE_SCORE_WEIGHTS) or set(dimension_reasons) != set(CANDIDATE_SCORE_WEIGHTS):
-            raise StateTransitionError("candidate assessment requires all six agreed dimensions and reasons")
-        normalized_scores: dict[str, float] = {}
-        for key, value in dimension_scores.items():
-            score = float(value)
-            if score < 0 or score > 5:
-                raise StateTransitionError("candidate dimension scores must stay between 0 and 5")
-            normalized_scores[key] = score
-            if not str(dimension_reasons[key]).strip():
-                raise StateTransitionError("candidate assessment requires a reason for every dimension")
-        total = sum(normalized_scores[key] * CANDIDATE_SCORE_WEIGHTS[key] / 5 for key in CANDIDATE_SCORE_WEIGHTS)
-        with self.conn:
-            self.conn.execute(
-                "INSERT INTO stage1b_candidate_assessment_revision VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (_id("candidate_assessment"), candidate_version_id, _canonical(normalized_scores), _canonical(dimension_reasons), total, assessed_by.strip(), self.data_identity, _now()),
-            )
-        return {"candidate_version_id": candidate_version_id, "total_score": total, "dimension_scores": normalized_scores}
+    def install_candidate_priority_schema(self) -> None:
+        """Retire superseded scores while preserving candidates, support and decisions."""
+        from scripts.core.production.candidate_priority import install_schema
+        install_schema(self)
+
+    def pending_daily_candidate_priority(self, *, daily_run_id: str) -> dict[str, Any] | None:
+        discovery = self.daily_candidate_discovery_run(daily_run_id=daily_run_id)
+        if discovery is None or discovery["lifecycle_status"] not in {"processing", "completed", "completed_with_failures"}:
+            return None
+        event = self.conn.execute(
+            "SELECT payload_json FROM stage0_audit_event WHERE task_id=? AND action='candidate_priority_daily_handoff' "
+            "AND data_identity=? ORDER BY created_at DESC,audit_id DESC LIMIT 1",
+            (discovery["run_id"], self.data_identity),
+        ).fetchone()
+        return json.loads(event["payload_json"]) if event else None
+
+    def continue_candidate_priority_run(self, *, run_id: str) -> dict[str, Any] | None:
+        if self._discovery_run(run_id)["status"] != "processing":
+            return None
+        event = self.conn.execute(
+            "SELECT payload_json FROM stage0_audit_event WHERE task_id=? AND action='candidate_priority_awaiting_agent' "
+            "AND data_identity=? ORDER BY created_at DESC,audit_id DESC LIMIT 1", (run_id,self.data_identity),
+        ).fetchone()
+        if event is None:
+            return None
+        request = json.loads(event["payload_json"])
+        request["domains"] = tuple(request["domains"])
+        return self.complete_discovery_run(**request)
+
+    def prepare_candidate_priority_external_task(self, *, run_id: str, domain_label: str) -> dict[str, Any]:
+        from scripts.core.production.candidate_priority import prepare
+        return prepare(self, run_id=run_id, domain_label=domain_label)
+
+    def get_candidate_priority_report(self, *, run_id: str, domain_label: str) -> dict[str, Any]:
+        from scripts.core.production.candidate_priority import report
+        return report(self, run_id=run_id, domain_label=domain_label)
+
+    def submit_candidate_priority_external_result(self, **arguments: Any) -> dict[str, Any]:
+        from scripts.core.production.candidate_priority import submit
+        return submit(self, **arguments)
 
     def record_candidate_relation(
         self,
@@ -15454,8 +14924,8 @@ class Stage0ContentProductionCore:
         rows = self.conn.execute(
             "SELECT snapshot.display_position, candidate.candidate_version_id, candidate.candidate_id, candidate.payload_json, candidate.status AS candidate_status, "
             "(SELECT decision.decision FROM stage1b_candidate_decision decision WHERE decision.candidate_version_id=candidate.candidate_version_id AND decision.data_identity=? ORDER BY decision.created_at DESC, decision.decision_id DESC LIMIT 1) AS user_decision, "
-            "source.source_type, source.source_time, source.expires_at, source.payload_json AS source_payload_json, assessment.total_score, assessment.dimension_scores_json, assessment.dimension_reasons_json "
-            "FROM stage1b_daily_snapshot snapshot LEFT JOIN stage1b_candidate_version candidate ON candidate.candidate_version_id=snapshot.candidate_version_id LEFT JOIN stage1b_source_version source ON source.source_version_id=candidate.source_version_id LEFT JOIN stage1b_candidate_assessment_revision assessment ON assessment.assessment_revision_id=(SELECT newest.assessment_revision_id FROM stage1b_candidate_assessment_revision newest WHERE newest.candidate_version_id=candidate.candidate_version_id AND newest.data_identity=? ORDER BY newest.assessed_at DESC, newest.assessment_revision_id DESC LIMIT 1) WHERE snapshot.run_id=? AND snapshot.domain_label=? ORDER BY snapshot.display_position, snapshot.snapshot_id",
+            "source.source_type, source.source_time, source.expires_at, source.payload_json AS source_payload_json, assessment.total_score, assessment.reason, assessment.limitations, assessment.evidence_refs_json, assessment.assessed_by, assessment.model_ref "
+            "FROM stage1b_daily_snapshot snapshot LEFT JOIN stage1b_candidate_version candidate ON candidate.candidate_version_id=snapshot.candidate_version_id LEFT JOIN stage1b_source_version source ON source.source_version_id=candidate.source_version_id LEFT JOIN stage1b_candidate_priority assessment ON assessment.candidate_version_id=candidate.candidate_version_id AND assessment.run_id=snapshot.run_id AND assessment.data_identity=? WHERE snapshot.run_id=? AND snapshot.domain_label=? AND (candidate.candidate_version_id IS NULL OR assessment.candidate_version_id IS NOT NULL) ORDER BY snapshot.display_position, snapshot.snapshot_id",
             (self.data_identity, self.data_identity, run_id, domain_label),
         ).fetchall()
         result: list[dict[str, Any]] = []
@@ -15509,7 +14979,7 @@ class Stage0ContentProductionCore:
                 "timeliness_limits": row["expires_at"] or "not_time_limited",
                 "user_confirmation_required": True,
             }
-            result.append({"display_position": row["display_position"], "candidate_version_id": row["candidate_version_id"], "candidate_id": row["candidate_id"], "candidate": candidate_payload, "status": row["candidate_status"], "user_decision": row["user_decision"], "score": {"total": row["total_score"], "dimensions": json.loads(row["dimension_scores_json"]) if row["dimension_scores_json"] else None, "reasons": json.loads(row["dimension_reasons_json"]) if row["dimension_reasons_json"] else None}, "source_type": row["source_type"], "source_time": row["source_time"], "expires_at": row["expires_at"], "source": source_payload, "support_materials": support_materials, "related_candidates": [{"candidate_version_id": relation["related_candidate_version_id"], "kind": relation["relation_kind"], "reason": relation["relation_reason"]} for relation in relation_rows], "stage1a_handoff_packet": stage1a_handoff_packet, "execution_mode": context["execution_mode"], "lifecycle_status": context["lifecycle_status"], "formal_candidate_pool": context["execution_mode"] == "production_daily" and context["lifecycle_status"] == "completed"})
+            result.append({"display_position": row["display_position"], "candidate_version_id": row["candidate_version_id"], "candidate_id": row["candidate_id"], "candidate": candidate_payload, "status": row["candidate_status"], "user_decision": row["user_decision"], "score": {"total": row["total_score"], "reason": row["reason"], "limitations": row["limitations"], "evidence_refs": json.loads(row["evidence_refs_json"]), "assessed_by": row["assessed_by"], "model_ref": row["model_ref"]}, "source_type": row["source_type"], "source_time": row["source_time"], "expires_at": row["expires_at"], "source": source_payload, "support_materials": support_materials, "related_candidates": [{"candidate_version_id": relation["related_candidate_version_id"], "kind": relation["relation_kind"], "reason": relation["relation_reason"]} for relation in relation_rows], "stage1a_handoff_packet": stage1a_handoff_packet, "execution_mode": context["execution_mode"], "lifecycle_status": context["lifecycle_status"], "formal_candidate_pool": context["execution_mode"] == "production_daily" and context["lifecycle_status"] == "completed"})
         return result
 
     def record_discovery_decision(
@@ -15560,17 +15030,22 @@ class Stage0ContentProductionCore:
         if actor_kind != "user" or not actor.strip() or not reason.strip():
             raise StateTransitionError("candidate selection requires an explicit user and reason")
         candidate = self._discovery_candidate(candidate_version_id)
-        run = self._discovery_run(candidate["run_id"])
-        context = self._discovery_context(candidate["run_id"])
-        if context["execution_mode"] != "production_daily" or context["lifecycle_status"] not in {"completed", "completed_with_failures"}:
-            raise StateTransitionError("only a completed production_daily candidate may enter Stage 1A")
-        if run["status"] != "completed" or candidate["status"] != "awaiting_user_decision":
-            raise StateTransitionError("only a completed awaiting-user-decision candidate may be selected")
         latest_run = self._latest_completed_production_daily_discovery_run(
             domain_label=str(candidate["domain_label"])
         )
-        if latest_run is None or str(latest_run["run_id"]) != str(run["run_id"]):
-            raise StateTransitionError("historical or non-current candidate cannot be selected")
+        if latest_run is None or candidate["status"] != "awaiting_user_decision":
+            raise StateTransitionError("only a current assessed awaiting-user-decision candidate may be selected")
+        run = self._discovery_run(latest_run["run_id"])
+        context = self._discovery_context(run["run_id"])
+        if context["execution_mode"] != "production_daily" or context["lifecycle_status"] not in {"completed", "completed_with_failures"}:
+            raise StateTransitionError("only a completed production_daily candidate may enter Stage 1A")
+        from scripts.core.production.candidate_priority import assessment_is_current
+        assessment = self.conn.execute(
+            "SELECT * FROM stage1b_candidate_priority WHERE candidate_version_id=? AND run_id=? AND data_identity=?",
+            (candidate_version_id, run["run_id"], self.data_identity),
+        ).fetchone()
+        if self._candidate_pool_state(candidate_version_id)["pool_status"] != "current" or not assessment_is_current(self, assessment):
+            raise StateTransitionError("candidate needs assessment of its current supporting materials before selection")
         if self.conn.execute("SELECT 1 FROM stage1b_candidate_decision WHERE candidate_version_id=?", (candidate_version_id,)).fetchone():
             raise StateTransitionError("candidate already has a user decision")
         payload = json.loads(candidate["payload_json"])
@@ -17116,7 +16591,6 @@ class Stage0ContentProductionCore:
         }
 
 
-
     def load_real_discovery_sources(
         self,
         *,
@@ -17199,7 +16673,12 @@ class Stage0ContentProductionCore:
         ).fetchall() if competitor_ready else []
         for row in historical_rows:
             raw_hash = _hash(json.loads(row["raw_json"]))
-            result.append({"source_type": "historical_high_signal", "source_object_id": row["hit_id"], "source_object_version": row["promoted_at"], "source_time": row["publish_time"], "payload": {"source_id": row["hit_id"], "title": row["title"], "url": row["url"], "account_name": row["account_name"], "source_time": row["publish_time"], "signal_basis": row["hit_channel"], "signal_confidence": row["judgment_confidence"], "hit_origin": "daily_new_hit" if row["first_contact_category"] == "formal_new" else "cold_start_historical", "formal_source": {"table": "hits", "object_id": row["hit_id"], "object_version": row["promoted_at"], "raw_metadata_hash": raw_hash}}})
+            transcript = self.conn.execute(
+                "SELECT cleaned_transcript_text, raw_transcript_text FROM hit_transcripts "
+                "WHERE hit_id=? ORDER BY version DESC LIMIT 1", (row["hit_id"],)
+            ).fetchone() if "hit_transcripts" in tables else None
+            transcript_text = (transcript["cleaned_transcript_text"] or transcript["raw_transcript_text"] or "") if transcript else ""
+            result.append({"source_type": "historical_high_signal", "source_object_id": row["hit_id"], "source_object_version": row["promoted_at"], "source_time": row["publish_time"], "payload": {"source_id": row["hit_id"], "title": row["title"], "url": row["url"], "account_name": row["account_name"], "source_time": row["publish_time"], "transcript": transcript_text, "signal_basis": row["hit_channel"], "signal_confidence": row["judgment_confidence"], "hit_origin": "daily_new_hit" if row["first_contact_category"] == "formal_new" else "cold_start_historical", "formal_source": {"table": "hits", "object_id": row["hit_id"], "object_version": row["promoted_at"], "raw_metadata_hash": raw_hash}}})
         tag_rows = self.conn.execute(
             "SELECT video.*, tag.tag FROM discovered_external_videos video "
             "JOIN domain_search_tags tag ON tag.tag_id=video.tag_id WHERE video.domain_label=? "

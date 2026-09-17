@@ -271,7 +271,7 @@ class DailyStoppedBoundaryTests(unittest.TestCase):
         self.assertEqual(result["candidate_count"], 0)
 
     def test_candidate_stop_is_not_relabelled_as_failure(self) -> None:
-        core = SimpleNamespace(data_identity="production", close=lambda: None)
+        core = SimpleNamespace(data_identity="production", close=lambda: None, pending_daily_candidate_priority=lambda **_: None)
         service = SimpleNamespace(
             run=lambda **_kwargs: {"status": "completed", "upstream_failures": []},
             run_candidate_discovery=lambda **_kwargs: {
@@ -304,7 +304,7 @@ class DailyStoppedBoundaryTests(unittest.TestCase):
         self.assertEqual(result["candidate_status"], "stopped")
 
     def test_real_collection_failure_wins_over_candidate_stop(self) -> None:
-        core = SimpleNamespace(data_identity="production", close=lambda: None)
+        core = SimpleNamespace(data_identity="production", close=lambda: None, pending_daily_candidate_priority=lambda **_: None)
         service = SimpleNamespace(
             run=lambda **_kwargs: {
                 "status": "completed_with_failures",

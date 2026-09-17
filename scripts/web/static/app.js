@@ -157,7 +157,9 @@
           '<span class="experience-status">' + escapeHtml(dailyCandidateStatus(item)) + '</span></div>' +
           '<p><strong>\u95ee\u9898\u6458\u8981\uff1a</strong>' + escapeHtml(summary) + '</p>' +
           '<p><strong>\u6765\u6e90\u7c7b\u578b\uff1a</strong>' + escapeHtml(item.source_type || "") + '</p>' +
-          '<p><strong>\u8bc4\u5206\uff1a</strong>' + escapeHtml(score) + '</p>' +
+          '<p><strong>制作优先级：</strong>' + escapeHtml(score) + '（Agent 判断）</p>' +
+          '<p><strong>评分理由：</strong>' + escapeHtml(item.score && item.score.reason || '') + '</p>' +
+          '<p><strong>判断限制：</strong>' + escapeHtml(item.score && item.score.limitations || '') + '</p>' +
           '<details><summary>\u67e5\u770b\u6765\u6e90\u548c\u8bc1\u636e\u6458\u8981</summary><pre class="summary">' + escapeHtml(readableValue(item.source || {})) + '</pre></details>' +
           controls +
           '</article>';

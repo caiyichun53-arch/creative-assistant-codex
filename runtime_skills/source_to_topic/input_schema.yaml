@@ -1,21 +1,21 @@
 type: object
 required:
-  - request_id
-  - correlation_id
-  - source_id
-  - source_content
-  - source_evidence_items
-  - domain_label
-  - relation_summary
-  - source_kind
-  - event_cluster_summary
-  - deterministic_prefilter
-  - material_packet
-  - duplicate_cooling_status
-  - domain_rule_summary
-  - experience_cards
-  - user_direction
-  - schema_version
+- request_id
+- correlation_id
+- source_id
+- source_content
+- source_evidence_items
+- domain_label
+- relation_summary
+- source_kind
+- event_cluster_summary
+- deterministic_prefilter
+- material_packet
+- duplicate_cooling_status
+- domain_rule_summary
+- experience_cards
+- user_direction
+- schema_version
 properties:
   request_id:
     type: string
@@ -37,30 +37,24 @@ properties:
       minLength: 1
   domain_label:
     type: string
-    enum:
-      - fan_kepu_social_life
-      - music_entertainment
-      - third_domain_neutral
-      - cross_domain
-      - unknown
   relation_summary:
     type: string
   source_kind:
     type: string
     enum:
-      - hotspot_event_cluster
-      - benchmark_daily
-      - benchmark_historical
-      - tag_search
-      - question_expansion
-      - user_direction
+    - hotspot_event_cluster
+    - benchmark_daily
+    - benchmark_historical
+    - tag_search
+    - question_expansion
+    - user_direction
   event_cluster_summary:
     type: object
     required:
-      - cluster_id
-      - representative_source
-      - merged_sources
-      - dedupe_reason
+    - cluster_id
+    - representative_source
+    - merged_sources
+    - dedupe_reason
     properties:
       cluster_id:
         type: string
@@ -78,10 +72,10 @@ properties:
   deterministic_prefilter:
     type: object
     required:
-      - passed
-      - reasons
-      - risk_flags
-      - domain_precheck
+    - passed
+    - reasons
+    - risk_flags
+    - domain_precheck
     properties:
       passed:
         type: boolean
@@ -99,15 +93,15 @@ properties:
   material_packet:
     type: object
     required:
-      - fact_summary
-      - key_source_refs
-      - audience_relation
-      - domain_fit
-      - possible_questions
-      - uncertainty
-      - material_gaps
-      - risks
-      - stop_reason
+    - fact_summary
+    - key_source_refs
+    - audience_relation
+    - domain_fit
+    - possible_questions
+    - uncertainty
+    - material_gaps
+    - risks
+    - stop_reason
     properties:
       fact_summary:
         type: string
@@ -144,21 +138,21 @@ properties:
   duplicate_cooling_status:
     type: object
     required:
-      - duplicate_status
-      - cooling_status
-      - related_refs
+    - duplicate_status
+    - cooling_status
+    - related_refs
     properties:
       duplicate_status:
         type: string
         enum:
-          - clear
-          - possible_duplicate
-          - duplicate
+        - clear
+        - possible_duplicate
+        - duplicate
       cooling_status:
         type: string
         enum:
-          - clear
-          - cooling
+        - clear
+        - cooling
       related_refs:
         type: array
         maxItems: 8
@@ -173,15 +167,15 @@ properties:
     items:
       type: object
       required:
-        - experience_id
-        - summary
-        - experience_layer
-        - use_positions
-        - trigger_signals
-        - applicable_when
-        - method
-        - usage_boundary
-        - not_applicable_when
+      - experience_id
+      - summary
+      - experience_layer
+      - use_positions
+      - trigger_signals
+      - applicable_when
+      - method
+      - usage_boundary
+      - not_applicable_when
       properties:
         experience_id:
           type: string
@@ -189,25 +183,34 @@ properties:
           type: string
         experience_layer:
           type: string
-          enum: [structure, section_method, local_detail]
+          enum:
+          - structure
+          - section_method
+          - local_detail
         use_positions:
           type: array
-          items: {type: string}
+          items:
+            type: string
         trigger_signals:
           type: array
-          items: {type: string}
+          items:
+            type: string
         applicable_when:
           type: array
-          items: {type: string}
+          items:
+            type: string
         method:
           type: array
-          items: {type: string}
+          items:
+            type: string
         usage_boundary:
           type: array
-          items: {type: string}
+          items:
+            type: string
         not_applicable_when:
           type: array
-          items: {type: string}
+          items:
+            type: string
       additional_properties: false
   user_direction:
     type: string

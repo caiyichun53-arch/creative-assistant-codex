@@ -1,0 +1,45 @@
+type: object
+required:
+- schema_version
+- events
+properties:
+  schema_version:
+    type: string
+    enum:
+    - hotspot_report.output.v1
+  events:
+    type: array
+    items:
+      type: object
+      required:
+      - title
+      - member_ids
+      - merge_reason
+      - decision
+      - rule_ids
+      - reason
+      - uncertain
+      properties:
+        title:
+          type: string
+        member_ids:
+          type: array
+          items:
+            type: string
+        merge_reason:
+          type: string
+        decision:
+          type: string
+          enum:
+          - keep
+          - exclude
+        rule_ids:
+          type: array
+          items:
+            type: string
+        reason:
+          type: string
+        uncertain:
+          type: boolean
+      additional_properties: false
+additional_properties: false

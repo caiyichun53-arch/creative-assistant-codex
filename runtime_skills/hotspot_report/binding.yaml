@@ -1,0 +1,76 @@
+schema_version: formal_skill_binding.v1
+binding_name: hotspot_report_snapshot_to_event_decisions
+binding_version: 1.0.0
+model_response_format:
+  type: json_object
+model_input_schema:
+  type: object
+  required:
+  - snapshot
+  - preferences
+  properties:
+    snapshot:
+      type: object
+    preferences:
+      type: object
+  additional_properties: false
+model_output_schema:
+  type: object
+  required:
+  - schema_version
+  - events
+  properties:
+    schema_version:
+      type: string
+      enum:
+      - hotspot_report.output.v1
+    events:
+      type: array
+      items:
+        type: object
+        required:
+        - title
+        - member_ids
+        - merge_reason
+        - decision
+        - rule_ids
+        - reason
+        - uncertain
+        properties:
+          title:
+            type: string
+          member_ids:
+            type: array
+            items:
+              type: string
+          merge_reason:
+            type: string
+          decision:
+            type: string
+            enum:
+            - keep
+            - exclude
+          rule_ids:
+            type: array
+            items:
+              type: string
+          reason:
+            type: string
+          uncertain:
+            type: boolean
+        additional_properties: false
+  additional_properties: false
+input_map:
+  snapshot:
+    source: input
+    key: snapshot
+  preferences:
+    source: input
+    key: preferences
+output_map:
+  schema_version:
+    source: model_output
+    key: schema_version
+  events:
+    source: model_output
+    key: events

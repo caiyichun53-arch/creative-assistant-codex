@@ -60,9 +60,7 @@
     "implement_runtime_liveness_policy",
     "prove_automatic_build_and_runtime_blocking"
   ],
-  "temporarily_blocked_unconverted_model_operations": [
-    "hotspot_to_opportunity"
-  ],
+  "temporarily_blocked_unconverted_model_operations": [],
   "registered_atomic_model_operations": [
     "research_plan",
     "content_deep_research",

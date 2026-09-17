@@ -1,0 +1,24 @@
+type: object
+required:
+- run_id
+- domain_label
+- discovery_date
+- candidates
+- input_fingerprint
+- domain_rules
+properties:
+  run_id:
+    type: string
+  domain_label:
+    type: string
+  discovery_date:
+    type: string
+  candidates:
+    type: array
+    items:
+      type: object
+  input_fingerprint:
+    type: string
+  domain_rules:
+    type: object
+additional_properties: false

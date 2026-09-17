@@ -20,7 +20,6 @@
         "config/business_guardrails/runtime_liveness.json",
         "config/business_guardrails/stage_registry.json",
         "scripts/core/model_gateway/formal_skill_adapter.py",
-        "scripts/core/model_gateway/hermes_model_provider.py",
         "scripts/core/external_adapters/local_sensevoice_executor.py",
         "scripts/core/external_adapters/local_mediacrawler_executor.py",
         "scripts/core/external_adapters/local_voxcpm2_executor.py",

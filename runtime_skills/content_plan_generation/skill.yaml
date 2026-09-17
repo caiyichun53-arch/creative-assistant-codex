@@ -3,7 +3,6 @@ formal_skill_id: content_plan_generation
 skill_version: 1.0.0
 responsibility: Produce only a content plan from the frozen approved research result.
 non_responsibilities: [collection, external_search, formal_data_write, business_state_transition, human_confirmation, other_skill_invocation]
-runner: FormalBusinessSkillAdapter
 route_name: stage0.content_plan
 route_id: writing_generation
 input_schema: input_schema.yaml

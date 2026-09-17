@@ -51,6 +51,7 @@ SERVER_NAME = "creation-assistant"
 SERVER_VERSION = "stage2b-1"
 MCP_PROTOCOL_VERSION = "2024-11-05"
 SUPPORTED_EXTERNAL_TASK_TYPES = (
+    "candidate_priority",
     "source_to_topic",
     "competitor_breakdown",
     "research_plan",
@@ -240,6 +241,11 @@ class CreationAssistantMcpApplication:
                 source_version_id=self._identity_text(identity, "source_version_id"),
                 assembly_id=self._identity_text(identity, "assembly_id"),
             )
+        elif task_type == "candidate_priority":
+            task = self.core.prepare_candidate_priority_external_task(
+                run_id=self._identity_text(identity, "run_id"),
+                domain_label=self._identity_text(identity, "domain_label"),
+            )
         elif task_type == "competitor_breakdown":
             if "hit_id" in identity:
                 if "registration_id" in identity or "source_id" in identity:
@@ -309,6 +315,15 @@ class CreationAssistantMcpApplication:
         output = _required_object(arguments, "output")
         model_ref = str(arguments.get("model_ref") or "").strip() or None
         submitted_at = str(arguments.get("submitted_at") or "").strip() or None
+        if task_type == "candidate_priority":
+            result = self.core.submit_candidate_priority_external_result(
+                run_id=self._identity_text(identity, "run_id"),
+                domain_label=self._identity_text(identity, "domain_label"),
+                output=output, execution_id=execution_id, executor_id=executor_id, model_ref=model_ref,
+            )
+            return {"status": "accepted", "task_type": task_type, "result": result,
+                    "continuation": self.core.continue_candidate_priority_run(run_id=self._identity_text(identity, "run_id")),
+                    "business_state_changed_by": "Creation Assistant Core"}
         if task_type == "source_to_topic":
             receipt, output_payload = self.discovery.submit_source_to_topic_external_result(
                 run_id=self._identity_text(identity, "run_id"),
@@ -325,6 +340,7 @@ class CreationAssistantMcpApplication:
                 "task_type": task_type,
                 "model_run_id": receipt.model_run_id,
                 "validated_output": output_payload,
+                "continuation": self.core.continue_candidate_priority_run(run_id=self._identity_text(identity, "run_id")),
                 "business_state_changed_by": "Creation Assistant Core",
             }
         if task_type == "competitor_breakdown":
@@ -442,6 +458,11 @@ class CreationAssistantMcpApplication:
     def get_external_result(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if "task_type" in arguments or "task_identity" in arguments:
             task_type, identity = self._task_request(arguments)
+            if task_type == "candidate_priority":
+                return self.core.get_candidate_priority_report(
+                    run_id=self._identity_text(identity, "run_id"),
+                    domain_label=self._identity_text(identity, "domain_label"),
+                )
             if task_type != "source_to_topic":
                 raise CreationAssistantMcpError(
                     "persisted external-result lookup is not defined for this task type"
@@ -461,6 +482,8 @@ class CreationAssistantMcpApplication:
         arguments = arguments or {}
         if name == "creation_assistant_status":
             return self.status()
+        if name == "creation_assistant_hotspot_report":
+            return self.business.hotspot_report(arguments)
         if name == "creation_assistant_competitor_breakdown_validation":
             return self.competitor_breakdown_validation(arguments)
         if name == "creation_assistant_get_external_task":
@@ -526,6 +549,19 @@ def tool_definitions() -> list[dict[str, Any]]:
             "name": "creation_assistant_competitor_breakdown_validation",
             "description": "Prepare or validate one competitor breakdown by platform item identity without persisting business data.",
             "inputSchema": _competitor_breakdown_validation_schema(),
+        },
+        {
+            "name": "creation_assistant_hotspot_report",
+            "description": "综合热点榜：collect 获取当前数据和热点筛选 Skill；prepare 重放原快照；当前 Agent 判断全部事件后用 render 提交 snapshot、output 及用户要求的 top_n。返回偏好排除与排名靠后两份独立清单。无模型调用、候选生成或正式业务写入。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "operation": {"type": "string", "enum": ["collect", "prepare", "render"]},
+                    "snapshot": {"type": "object"}, "output": {"type": "object"},
+                    "top_n": {"type": "integer", "minimum": 1},
+                },
+                "required": ["operation"], "additionalProperties": False,
+            },
         },
         {
             "name": "creation_assistant_get_external_task",

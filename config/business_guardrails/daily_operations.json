@@ -83,19 +83,13 @@
     "candidate_reactivation_on_new_same_angle_support": true
   },
   "ranking": {
-    "weights": {
-      "demand_strength": 22,
-      "information_increment": 22,
-      "expression_pull": 18,
-      "distinct_angle": 16,
-      "question_focus": 12,
-      "timeliness": 10
-    },
     "daily_report_limit": 10,
     "daily_report_is_priority_view_only": true,
     "daily_processing_limit_forbidden": true,
     "daily_selection_limit_forbidden": true,
-    "zero_candidates_allowed": true
+    "zero_candidates_allowed": true,
+    "assessment_skill": "candidate_priority",
+    "score_meaning": "agent_judged_production_priority_0_100"
   },
   "human_boundaries": {
     "candidate_selection_is_formal_topic_confirmation": true,

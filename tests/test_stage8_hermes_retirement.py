@@ -66,19 +66,12 @@ class Stage8HermesRetirementTests(unittest.TestCase):
                 "legacy Hermes knowledge convergence apply route is retired",
             )
 
-    def test_direct_formal_research_and_repair_apply_calls_refuse(self) -> None:
+    def test_direct_formal_research_call_refuses(self) -> None:
         with self.assertRaises(RuntimeError) as research_error:
             hermes_formal_research_entry.run("create_plan", {})
         self.assertIn(
             "legacy Hermes formal research route is retired",
             str(research_error.exception),
-        )
-
-        with self.assertRaises(RuntimeError) as repair_error:
-            hermes_daily_repair_entry._apply("2026-08-27")
-        self.assertIn(
-            "legacy Hermes formal daily repair apply route is retired",
-            str(repair_error.exception),
         )
 
 

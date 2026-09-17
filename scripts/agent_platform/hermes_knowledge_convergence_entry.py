@@ -1,9 +1,4 @@
-"""Hermes-owned knowledge convergence and cleanup entry.
-
-This entry is intentionally narrow: it audits the formal production data and,
-only when explicitly requested with ``--action apply``, invokes the Core's
-convergence operation and rebuilds the read-only knowledge mirror.
-"""
+"""Read-only knowledge audit; the retired apply operation is rejected."""
 
 from __future__ import annotations
 
@@ -14,9 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from scripts.core.formal_business_entrypoints import CreationAssistantFormalBusinessCore
 from scripts.core.production.stage0_content_core import FORMAL_DB_PATH, Stage0ContentProductionCore
-from scripts.core.production.stage4_knowledge_mirror import ObsidianKnowledgeMirrorService
 
 
 VAULT_ROOT = Path(r"I:\Obsidian\创作助手\经验库")
@@ -278,29 +271,15 @@ def main() -> int:
             "the legacy Hermes knowledge convergence apply route is retired; "
             "use the Creation Assistant Core formal entry"
         )
-    core = (
-        Stage0ContentProductionCore.open_read_only(FORMAL_DB_PATH, data_identity="production")
-        if args.action in {"audit", "verify"}
-        else Stage0ContentProductionCore.open(FORMAL_DB_PATH, data_identity="production")
-    )
+    core = Stage0ContentProductionCore.open_read_only(FORMAL_DB_PATH, data_identity="production")
     try:
         if args.action == "audit":
             sys.stdout.buffer.write(
                 (json.dumps(audit(core, include_samples=args.show_samples, include_schema=args.show_schema), ensure_ascii=False, indent=2, default=str) + "\n").encode("utf-8")
             )
             return 0
-        if args.action == "verify":
-            sys.stdout.buffer.write(
-                (json.dumps(verify(core), ensure_ascii=False, indent=2, default=str) + "\n").encode("utf-8")
-            )
-            return 0
-        result = CreationAssistantFormalBusinessCore(
-            core=core
-        ).apply_knowledge_convergence(actor=args.actor)
-        mirror = ObsidianKnowledgeMirrorService(core=core)
-        result["mirror"] = mirror.export(vault_directory=VAULT_ROOT, actor=args.actor)
         sys.stdout.buffer.write(
-            (json.dumps(result, ensure_ascii=False, indent=2, default=str) + "\n").encode("utf-8")
+            (json.dumps(verify(core), ensure_ascii=False, indent=2, default=str) + "\n").encode("utf-8")
         )
         return 0
     finally:

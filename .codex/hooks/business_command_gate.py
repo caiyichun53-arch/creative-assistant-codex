@@ -9,9 +9,8 @@ from hook_common import read_input, record_event, root, tool_text, write_json  #
 
 
 # These are implementation-only names.  They must never appear in a terminal
-# command: a business model operation has to enter through its registered
-# business or test route, where its input, result handling, and retention
-# boundary are fixed.
+# command: model execution belongs to the connected Agent. The project
+# provides tasks and receives results through MCP, including during tests.
 DIRECT_MODEL_MARKERS = (
     "FormalBusinessSkillAdapter",
     "ModelGateway",
@@ -21,9 +20,8 @@ DIRECT_MODEL_MARKERS = (
     "build_configured_competitor_registration_executor",
 )
 
-# Project execution belongs to Hermes.  Directly launching the underlying
-# business service remains blocked; the registered Hermes carrier is the
-# allowed project entry and must not be caught by this hook.
+# Directly launching the underlying business service remains blocked.
+# The connected Agent uses the registered Core/MCP entry.
 DIRECT_SERVICE_RUN_PATTERNS = (
     "python scripts/agent_platform/cold_start_config_server.py",
     "python scripts\\agent_platform\\cold_start_config_server.py",
@@ -32,7 +30,7 @@ DIRECT_SERVICE_RUN_PATTERNS = (
 )
 
 # A formal database write is valid only when it is performed by the registered
-# Hermes/Core business route. Block raw SQLite writes and known one-off script
+# Core business route. Block raw SQLite writes and known one-off script
 # shapes before they can reach the database.
 FORMAL_DATABASE_REFERENCES = (
     "production_activation.sqlite3",
@@ -73,9 +71,9 @@ def main() -> int:
             record_event(project, "PreToolUse", gate="business_command", outcome="passed")
             return 0
         reason = (
-            "Direct project execution from Codex is blocked. "
-            "Ask Hermes to run the registered project entry so the input, result "
-            "receipt, and formal-write boundary stay fixed."
+            "Direct model execution or bypassing the Core business entry is blocked. "
+            "The connected Agent executes model work and uses the registered "
+            "Core/MCP entry for business input and formal results; tests are not an exception."
         )
         record_event(
             project,

@@ -16,5 +16,5 @@ properties:
       boundary: {type: array, items: {type: string}}
       not_applicable_when: {type: array, items: {type: string}}
     additional_properties: false
-  source_ids: {type: array, items: {type: string}, minItems: 3, maxItems: 8, uniqueItems: true}
+  source_ids: {type: array, items: {type: string}, minItems: 0, maxItems: 8, uniqueItems: true, description: "For no_proposal return []; for proposal cite at least three supplied source IDs. Core validates the decision-specific requirement."}
 additional_properties: false

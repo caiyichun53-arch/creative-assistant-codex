@@ -62,6 +62,12 @@ class CreationAssistantFormalBusinessCore:
 
     core: Stage0ContentProductionCore
 
+    def hotspot_report(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Collect/prepare/render an informational report without formal state changes."""
+        from scripts.core.production.hotspot_report import execute
+
+        return execute(arguments)
+
     @staticmethod
     def assert_action_allowed(*, data_identity: str) -> None:
         """Apply the Core-owned migration boundary before a mutable open."""
@@ -278,6 +284,9 @@ class CreationAssistantFormalBusinessCore:
                 "daily_run_status": lifecycle,
                 "action": "awaiting_user_resume",
             }
+        if lifecycle == "running" and not created_here and self.core.pending_daily_candidate_priority(daily_run_id=str(daily_run["daily_run_id"])) is not None:
+            return {"execute": True, "daily_run": daily_run, "prior_daily_lifecycle": lifecycle,
+                    "resume_reconciliation": None, "action": "continuing_candidate_priority"}
         if lifecycle == "running" and not created_here:
             daily_run = self.core.finish_daily_run(
                 daily_run_id=str(daily_run["daily_run_id"]),
@@ -379,21 +388,25 @@ class CreationAssistantFormalBusinessCore:
                 core=self.core,
                 external_executor=external_executor,
             )
-        collection_result = service.run(
-            domain_label=domain_label,
-            discovery_date=business_date,
-            actor=(
-                "daily_operations_user_resume"
-                if resume
-                else "daily_operations_automatic_worker"
-            ),
-            attempt_ref=attempt_ref,
-            daily_run_id=daily_run_id,
-            resume=resume,
-            validation_only=validation_only,
-            account_id=account_id,
-            effective_at=effective_at,
-        )
+        handoff = self.core.pending_daily_candidate_priority(daily_run_id=str(daily_run_id)) if daily_run_id and not validation_only else None
+        if handoff is not None:
+            collection_result = handoff["collection_result"]
+        else:
+            collection_result = service.run(
+                domain_label=domain_label,
+                discovery_date=business_date,
+                actor=(
+                    "daily_operations_user_resume"
+                    if resume
+                    else "daily_operations_automatic_worker"
+                ),
+                attempt_ref=attempt_ref,
+                daily_run_id=daily_run_id,
+                resume=resume,
+                validation_only=validation_only,
+                account_id=account_id,
+                effective_at=effective_at,
+            )
         if validation_only:
             candidate_result = {
                 "run_id": None,
@@ -427,6 +440,15 @@ class CreationAssistantFormalBusinessCore:
             )
         collection_status = str(collection_result.get("status") or "failed")
         candidate_status = str(candidate_result.get("status") or "failed")
+        if candidate_status == "requires_external_intelligence":
+            if (candidate_result.get("task") or {}).get("task_type") in {"source_to_topic", "candidate_priority"} and handoff is None:
+                with self.core.conn:
+                    self.core._audit(candidate_result["run_id"], "candidate_priority_daily_handoff",
+                                     {"daily_run_id": daily_run_id, "collection_result": collection_result})
+            return {**candidate_result, "domain_label": domain_label, "business_date": business_date,
+                    "daily_run_id": daily_run_id, "candidate_run_id": candidate_result.get("run_id"),
+                    "collection_status": collection_status, "collection": collection_result.get("collection") or [],
+                    "upstream_failures": collection_result.get("upstream_failures") or []}
         failure_details: list[dict[str, Any]] = []
         if collection_status != "completed":
             failure_details.append({

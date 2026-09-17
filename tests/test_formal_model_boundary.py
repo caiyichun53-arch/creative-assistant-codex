@@ -102,10 +102,6 @@ class FormalModelBoundaryTests(unittest.TestCase):
                 "_run_source_to_topic_skill",
             ),
             (
-                "scripts/core/production/stage1b_daily_discovery.py",
-                "_run_hotspot_to_opportunity_skill",
-            ),
-            (
                 "scripts/core/production/stage1a_research_plan.py",
                 "generate_research_plan",
             ),
@@ -122,15 +118,21 @@ class FormalModelBoundaryTests(unittest.TestCase):
                 f"{relative_path}:{function_name} calls {sorted(called & _FORBIDDEN_CALLS)}",
             )
 
-    def test_production_discovery_model_request_is_closed_before_route_resolution(self) -> None:
-        source, tree = _tree("scripts/core/production/stage0_content_core.py")
-        assembly_function = _function(tree, "create_discovery_input_assembly")
-        request_function = _function(tree, "prepare_discovery_model_request")
-        assembly_text = ast.get_source_segment(source, assembly_function) or ""
-        request_text = ast.get_source_segment(source, request_function) or ""
-        self.assertIn('self.data_identity == "production" and not external_execution', assembly_text)
-        self.assertIn('self.data_identity == "production":', request_text)
-        self.assertIn("formal discovery model requests must be submitted by an external executor", request_text)
+
+    def test_direct_model_paths_are_removed_for_tests_and_production(self) -> None:
+        import importlib.util
+        import inspect
+        from scripts.core.production.stage0_content_core import Stage0ContentProductionCore
+        from scripts.core.model_gateway import formal_skill_adapter
+        for name in ("model_router", "configured_provider", "hermes_model_provider", "codex_app_server_provider", "goal07_model_gateway"):
+            self.assertIsNone(importlib.util.find_spec("scripts.core.model_gateway." + name))
+        self.assertFalse((ROOT / "config" / "model_routes.yaml").exists())
+        self.assertFalse(hasattr(formal_skill_adapter, "FormalBusinessSkillAdapter"))
+        for name in ("prepare_discovery_model_request", "persist_discovery_model_envelope", "_resolve_discovery_model_route", "prepare_atomic_skill_binding", "complete_node_from_model"):
+            self.assertFalse(hasattr(Stage0ContentProductionCore, name), name)
+        parameters = inspect.signature(Stage0ContentProductionCore.create_discovery_input_assembly).parameters
+        self.assertNotIn("model_route", parameters)
+        self.assertNotIn("external_execution", parameters)
 
 
 if __name__ == "__main__":

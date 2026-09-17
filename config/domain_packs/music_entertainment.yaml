@@ -231,10 +231,10 @@ person_name_concept_allowlist:
 - 经典老歌
 production_boundary_registry:
   status: FROZEN
-  version: '1'
+  version: '2'
   in_boundary_principles:
   - boundary_id: music-core-content-in-1
-    principle: 围绕音乐作品、歌手或音乐人、音乐创作与演唱、音乐人物经历、歌曲故事、作品解读、音乐现象、音乐审美与观点、榜单盘点与比较、现场演出，以及其他与音乐本身具有实质关联的内容。
+    principle: 围绕音乐作品、歌手或音乐人、音乐创作与演唱、音乐人物经历、歌曲故事、作品解读、音乐现象、符合排除边界的音乐发现、榜单盘点与比较、现场演出，以及其他与音乐本身具有实质关联的内容。
     rationale: 这些内容的主要价值直接来自音乐、音乐作品或音乐人物本身。
     origin: explicit_human_decision
     evidence_refs: []
@@ -246,6 +246,12 @@ production_boundary_registry:
     evidence_refs: []
     merged_from: []
   out_boundary_principles:
+  - boundary_id: music-professional-analysis-out
+    principle: 排除专业乐评、听感或作品优劣分析、乐理、编曲、唱法、气息、咬字等演唱技术分析；不能改成“为什么好听、为什么难唱”绕过排除。允许的故事、发现、盘点和合集仍须有具体内容，不能只给现象或彩蛋名字。
+    rationale: 用户最新明确排除专业乐评和技术分析；音乐规则不推广到其他领域。
+    origin: explicit_human_decision
+    evidence_refs: []
+    merged_from: []
   - boundary_id: music-noncore-content-out-1
     principle: 以明星私生活、娱乐八卦、综艺新闻、饭圈争议、未经证实的传闻或纯热点搬运为主体的内容，不进入正式生产。
     rationale: 这些内容的主要价值来自泛娱乐事件，而不是音乐本身。

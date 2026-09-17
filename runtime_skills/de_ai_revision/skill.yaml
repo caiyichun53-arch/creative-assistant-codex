@@ -3,7 +3,6 @@ formal_skill_id: de_ai_revision
 skill_version: 1.0.0
 responsibility: Revise only the frozen optimized draft to remove artificial expression while preserving supported meaning.
 non_responsibilities: [collection, external_search, formal_data_write, business_state_transition, human_confirmation, other_skill_invocation]
-runner: FormalBusinessSkillAdapter
 route_name: stage0.de_ai_revision
 route_id: writing_generation
 input_schema: input_schema.yaml

@@ -1,0 +1,37 @@
+type: object
+required:
+- schema_version
+- input_fingerprint
+- assessments
+properties:
+  schema_version:
+    type: string
+    enum:
+    - candidate_priority.output.v1
+  input_fingerprint:
+    type: string
+  assessments:
+    type: array
+    items:
+      type: object
+      required:
+      - candidate_version_id
+      - score
+      - reason
+      - evidence_refs
+      - limitations
+      properties:
+        candidate_version_id:
+          type: string
+        score:
+          type: integer
+        reason:
+          type: string
+        evidence_refs:
+          type: array
+          items:
+            type: string
+        limitations:
+          type: string
+      additional_properties: false
+additional_properties: false

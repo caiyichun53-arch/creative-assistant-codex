@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelRequest, ModelRunResult
 from scripts.core.persistence.goal01_store import content_hash
 
 
@@ -72,82 +71,6 @@ class PortableSkillSpec:
             return self.prompt_template.format(**input_payload)
         except KeyError as exc:
             raise SkillContractError(f"prompt references missing input key: {exc}") from exc
-
-
-@dataclass(frozen=True)
-class HostBindingSpec:
-    binding_name: str
-    binding_version: str
-    input_map: dict[str, str]
-    static_inputs: dict[str, Any] | None = None
-    metadata: dict[str, Any] | None = None
-
-    def as_payload(self) -> dict[str, Any]:
-        return {
-            "binding_name": self.binding_name,
-            "binding_version": self.binding_version,
-            "input_map": self.input_map,
-            "static_inputs": self.static_inputs or {},
-            "metadata": self.metadata or {},
-        }
-
-    @property
-    def binding_hash(self) -> str:
-        return content_hash(self.as_payload(), "goal07.host_binding.v1")
-
-    def bind(self, host_payload: dict[str, Any]) -> dict[str, Any]:
-        _assert_required("binding_name", self.binding_name)
-        _assert_required("binding_version", self.binding_version)
-        if not self.input_map:
-            raise SkillContractError("input_map is required")
-        _assert_no_forbidden_tokens(self.as_payload())
-        bound = dict(self.static_inputs or {})
-        missing: list[str] = []
-        for portable_key, host_key in self.input_map.items():
-            if host_key not in host_payload:
-                missing.append(host_key)
-                continue
-            bound[portable_key] = host_payload[host_key]
-        if missing:
-            raise SkillContractError(f"missing host payload keys: {missing}")
-        _assert_no_forbidden_tokens(bound)
-        return bound
-
-
-@dataclass(frozen=True)
-class SkillRunResult:
-    output_text: str
-    model_run: ModelRunResult
-
-
-class PortableSkillRunner:
-    def __init__(self, gateway: ModelGateway):
-        self.gateway = gateway
-
-    def run(
-        self,
-        *,
-        skill: PortableSkillSpec,
-        input_payload: dict[str, Any],
-        binding: HostBindingSpec | None = None,
-        correlation_id: str | None = None,
-    ) -> SkillRunResult:
-        prompt = skill.render_prompt(input_payload)
-        model_run = self.gateway.complete(
-            ModelRequest(
-                route_name=skill.route_name,
-                prompt=prompt,
-                input_payload=input_payload,
-                correlation_id=correlation_id,
-                skill_name=skill.skill_name,
-                skill_version=skill.skill_version,
-                skill_hash=skill.skill_hash,
-                binding_name=binding.binding_name if binding else None,
-                binding_version=binding.binding_version if binding else None,
-                binding_hash=binding.binding_hash if binding else None,
-            )
-        )
-        return SkillRunResult(output_text=model_run.output_text, model_run=model_run)
 
 
 def _assert_required(field_name: str, value: str) -> None:

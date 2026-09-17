@@ -1,6 +1,6 @@
 schema_version: formal_skill_binding.v1
 binding_name: source_to_topic_public_input_to_topic_generation
-binding_version: 1.1.0
+binding_version: 2.0.0
 route_name: business.source_to_topic
 route_id: business_analysis
 model_response_format:
@@ -8,19 +8,19 @@ model_response_format:
 model_input_schema:
   type: object
   required:
-    - fixture_id
-    - source_content
-    - source_evidence_refs
-    - domain_label
-    - relation_summary
-    - source_kind
-    - event_cluster_summary
-    - deterministic_prefilter
-    - material_packet
-    - duplicate_cooling_status
-    - domain_rule_summary
-    - experience_cards
-    - user_direction
+  - fixture_id
+  - source_content
+  - source_evidence_refs
+  - domain_label
+  - relation_summary
+  - source_kind
+  - event_cluster_summary
+  - deterministic_prefilter
+  - material_packet
+  - duplicate_cooling_status
+  - domain_rule_summary
+  - experience_cards
+  - user_direction
   properties:
     fixture_id: string
     source_content: string
@@ -46,31 +46,34 @@ model_input_schema:
 model_output_schema:
   type: object
   required:
-    - topic_status
-    - candidate_topic
-    - topic_angle
-    - core_question
-    - audience_relation
-    - content_increment
-    - supporting_evidence
-    - source_constraints
-    - no_result_reason
-    - confidence
-    - angle_discovery
-    - candidate_selection
-    - risks
-    - material_gaps
-    - user_review_required
-    - user_review_reasons
-    - execution_review
-    - experience_usage
-    - topic_shape
-    - delivery_contract
-    - schema_version
+  - topic_status
+  - candidate_topic
+  - topic_angle
+  - core_question
+  - audience_relation
+  - content_increment
+  - supporting_evidence
+  - source_constraints
+  - no_result_reason
+  - confidence
+  - angle_discovery
+  - candidate_selection
+  - risks
+  - material_gaps
+  - user_review_required
+  - user_review_reasons
+  - execution_review
+  - experience_usage
+  - topic_shape
+  - delivery_contract
+  - schema_version
+  - material_understanding
   properties:
     topic_status:
       type: string
-      enum: [generated, generated_good_candidate, valid_but_weak, needs_review, no_result]
+      enum:
+      - generated
+      - no_result
     candidate_topic:
       type: string
     topic_angle:
@@ -95,14 +98,57 @@ model_output_schema:
         type: string
     no_result_reason:
       type: string
-      enum: [none, empty_source, insufficient_source_evidence, unsupported_source]
+      enum:
+      - none
+      - empty_source
+      - insufficient_source_evidence
+      - unsupported_source
     confidence:
       type: string
-      enum: [high, medium, low, none]
+      enum:
+      - high
+      - medium
+      - low
+      - none
     angle_discovery:
-      type: object
+      type: array
+      items:
+        type: object
+        required:
+        - direction
+        - reason
+        properties:
+          direction:
+            type: string
+          reason:
+            type: string
+        additional_properties: false
     candidate_selection:
       type: object
+      required:
+      - selected_direction
+      - why_selected
+      - rejected_directions
+      properties:
+        selected_direction:
+          type: string
+        why_selected:
+          type: string
+        rejected_directions:
+          type: array
+          maxItems: 7
+          items:
+            type: object
+            required:
+            - direction
+            - reason
+            properties:
+              direction:
+                type: string
+              reason:
+                type: string
+            additional_properties: false
+      additional_properties: false
     risks:
       type: array
       maxItems: 8
@@ -122,11 +168,53 @@ model_output_schema:
         type: string
     execution_review:
       type: object
+      required:
+      - used_traceable_material
+      - did_not_invent_facts
+      - respected_domain_boundary
+      - respected_risk_boundary
+      - did_not_force_candidate
+      - no_score_rank_weight
+      properties:
+        used_traceable_material:
+          type: boolean
+        did_not_invent_facts:
+          type: boolean
+        respected_domain_boundary:
+          type: boolean
+        respected_risk_boundary:
+          type: boolean
+        did_not_force_candidate:
+          type: boolean
+        no_score_rank_weight:
+          type: boolean
+      additional_properties: false
     experience_usage:
       type: object
+      required:
+      - used_experience_ids
+      - unused_experience_ids
+      - rationale
+      properties:
+        used_experience_ids:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+        unused_experience_ids:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+        rationale:
+          type: string
+      additional_properties: false
     topic_shape:
       type: object
-      required: [core_subject, scope_boundary, one_piece_line]
+      required:
+      - core_subject
+      - scope_boundary
+      - one_piece_line
       properties:
         core_subject:
           type: string
@@ -137,14 +225,63 @@ model_output_schema:
       additional_properties: false
     delivery_contract:
       type: object
-      required: [user_gets]
+      required:
+      - user_gets
       properties:
         user_gets:
           type: string
       additional_properties: false
     schema_version:
       type: string
-      const: source_to_topic.output.v2
+      const: source_to_topic.output.v3
+    material_understanding:
+      type: object
+      required:
+      - input_kind
+      - search_status
+      - reason
+      - summary
+      - domain_fit
+      - sources
+      properties:
+        input_kind:
+          type: string
+          enum:
+          - clue
+          - formed_topic
+        search_status:
+          type: string
+          enum:
+          - searched
+          - not_needed
+          - unavailable
+        reason:
+          type: string
+          minLength: 1
+        summary:
+          type: string
+        domain_fit:
+          type: string
+        sources:
+          type: array
+          items:
+            type: object
+            required:
+            - url
+            - title
+            - findings
+            properties:
+              url:
+                type: string
+                minLength: 1
+              title:
+                type: string
+                minLength: 1
+              findings:
+                type: string
+                minLength: 1
+            additional_properties: false
+      additional_properties: false
   additional_properties: false
 input_map:
   fixture_id:
@@ -250,3 +387,6 @@ output_map:
   schema_version:
     source: model_output
     key: schema_version
+  material_understanding:
+    source: model_output
+    key: material_understanding

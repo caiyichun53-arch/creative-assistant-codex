@@ -1,17 +1,15 @@
-﻿schema_version: formal_skill_manifest.v1
+schema_version: formal_skill_manifest.v1
 formal_skill_id: source_to_topic
-skill_version: 1.2.0
+skill_version: 2.0.0
 source_contract: SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml
-responsibility: Discover good topic angles from supplied, pre-frozen source material and return one auditable candidate or a no-conversion reason.
+responsibility: Agent understands clues using supplied materials and web reading,
+  forms a domain-appropriate topic or explains no result; Core owns persistence.
 non_responsibilities:
-  - research
-  - controlled_search
-  - material_packet_building
-  - creation
-  - database_query
-  - file_read_write
-  - feishu_messaging
-runner: FormalBusinessSkillAdapter
+- formal_research
+- creation
+- database_query
+- file_read_write
+- formal_human_decision
 route_name: business.source_to_topic
 route_id: business_analysis
 input_schema: input_schema.yaml
@@ -24,5 +22,5 @@ standalone_boundaries:
   writes_files_at_runtime: false
   calls_other_skills: false
   calls_core_api: false
-  accesses_external_url: false
+  accesses_external_url: true
   uses_chat_memory: false

@@ -71,7 +71,10 @@ class _StdioMcpClient:
 
     def close(self) -> None:
         if self.process.poll() is None:
-            self.process.kill()
+            # EOF lets the MCP server close Core. On Windows, killing the
+            # virtualenv launcher can leave its Python child holding SQLite.
+            if self.process.stdin is not None:
+                self.process.stdin.close()
             self.process.wait()
         for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
             if stream is not None:
@@ -106,6 +109,7 @@ class CreationAssistantMcpStage2B1Tests(unittest.TestCase):
         core: Stage0ContentProductionCore,
         suffix: str,
         run_id: str | None = None,
+        material_payload: dict | None = None,
     ) -> dict[str, str]:
         run = (
             {"run_id": run_id}
@@ -137,6 +141,7 @@ class CreationAssistantMcpStage2B1Tests(unittest.TestCase):
                 "core_question": "一个足够长的来源问题",
                 "url": "",
                 "account_name": "用户保存方向",
+                **(material_payload or {}),
                 "formal_source": {
                     "table": "stage1_saved_user_direction_source",
                     "object_id": direction["direction_id"],
@@ -176,10 +181,9 @@ class CreationAssistantMcpStage2B1Tests(unittest.TestCase):
             run_id=run["run_id"],
             source_version_id=source_version["source_version_id"],
             payload=assembly_payload,
-            prompt_version="source_to_topic.prompt.v2",
-            skill_version="source_to_topic.skill.v1.2.0",
+            prompt_version="source_to_topic.prompt.v3",
+            skill_version="source_to_topic.skill.v2.0.0",
             idempotency_key=f"stage2b1-assembly:{suffix}",
-            external_execution=True,
         )
         return {
             "run_id": run["run_id"],
@@ -387,6 +391,7 @@ class CreationAssistantMcpStage2B1Tests(unittest.TestCase):
             tool_names,
             {
                 "creation_assistant_status",
+                "creation_assistant_hotspot_report",
                 "creation_assistant_competitor_breakdown_validation",
                 "creation_assistant_get_external_task",
                 "creation_assistant_submit_external_result",
@@ -414,6 +419,7 @@ class CreationAssistantMcpStage2B1Tests(unittest.TestCase):
         self.assertEqual(
             status["external_task_boundary"]["task_types"],
             [
+                "candidate_priority",
                 "source_to_topic",
                 "competitor_breakdown",
                 "research_plan",
@@ -456,7 +462,8 @@ class CreationAssistantMcpStage2B1Tests(unittest.TestCase):
         persisted = self._call_tool("creation_assistant_get_external_result", self.identifiers)
         self.assertEqual(persisted["result"]["executor_id"], "Hermes")
         self.assertEqual(persisted["result"]["via_model_gateway"], False)
-        self.assertEqual(persisted["candidate_count"], 0)
+        self.assertEqual(persisted["candidate_count"], 1)
+        self.assertEqual(persisted["result"]["validation_status"], "passed")
 
     def test_invalid_structured_submission_is_rejected_by_core(self) -> None:
         task = self._call_tool("creation_assistant_get_external_task", self.identifiers)["task"]

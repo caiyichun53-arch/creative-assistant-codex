@@ -27,10 +27,8 @@ if str(ROOT) not in sys.path:
 
 from scripts.core.model_gateway.formal_skill_adapter import (
     FormalSkillContract,
-    HOTSPOT_TO_OPPORTUNITY_CONTRACT_PATH,
     FormalSkillValidationError,
     apply_binding,
-    parse_model_json,
     preprocess_formal_skill_input,
     validate_payload,
     validate_source_to_topic_output_semantics,
@@ -57,7 +55,7 @@ from scripts.core.business_data.domain_labels import (
     get_domain_pack,
     hotspot_global_risk_block_terms,
 )
-from scripts.core.business_data.domain_boundaries import require_frozen_production_boundary
+from scripts.core.business_data.domain_boundaries import require_frozen_production_boundary, topic_domain_rules
 from scripts.core.external_adapters import LocalMediaCrawlerExecutor, LocalTrendRadarExecutor
 
 
@@ -78,18 +76,11 @@ DAILY_REPORT_SOURCE_TYPES = (
 )
 DAILY_SOURCE_VALIDITY_HOURS = 72
 SOURCE_READ_LIMIT = 6
-DISCOVERY_PROMPT_VERSION = "source_to_topic.prompt.v2"
-DISCOVERY_SKILL_VERSION = "source_to_topic.skill.v1.2.0"
+DISCOVERY_PROMPT_VERSION = "source_to_topic.prompt.v3"
+DISCOVERY_SKILL_VERSION = "source_to_topic.skill.v2.0.0"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 DOMAIN_PACK_DIR = REPOSITORY_ROOT / "config" / "domain_packs"
 ORIGINALITY_RELATIONSHIPS = frozenset({"same_topic_original_reconstruction", "problem_expansion", "independent_research"})
-HOTSPOT_DOMAIN_BRIDGE_TYPES = frozenset({
-    "direct_object", "mechanism", "audience_impact", "cultural_mapping", "downstream_effect",
-})
-HOTSPOT_DOMAIN_FITS = frozenset({"core", "adjacent"})
-HOTSPOT_PRIMARY_LENSES = frozenset({
-    "原因解释", "普通人关系", "反向视角", "局部细节", "背景补充", "后续推演",
-})
 SETTINGS_PATH = ROOT / "config" / "external_collection.yaml"
 
 
@@ -130,291 +121,6 @@ def _parse_time(value: str) -> datetime:
 
 def _normalize_title(value: str) -> str:
     return re.sub(r"\s+", "", value).casefold()
-
-
-def _required_text(payload: dict[str, Any], key: str) -> str:
-    value = payload.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise DailyDiscoveryValidationError(f"candidate {key} must be non-empty text")
-    return value.strip()
-
-
-def _required_natural_chinese(payload: dict[str, Any], key: str) -> str:
-    value = _required_text(payload, key)
-    han_count = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", value))
-    if han_count < 4:
-        raise DailyDiscoveryValidationError(f"candidate {key} must be natural Chinese for user display")
-    return value
-
-
-_WEAK_INFORMATION_INCREMENT_MARKERS = (
-    "暂无具体增量",
-    "无具体事实",
-    "未提供具体",
-    "当前输入材料未提供",
-    "源材料仅为问题线索",
-    "无法提供具体解释",
-    "需进一步研究",
-    "需要研究并解释",
-    "答案需要通过制作前研究",
-    "需正式研究",
-)
-
-
-def _angle_item(angle_discovery: dict[str, Any], key: str) -> dict[str, Any]:
-    value = angle_discovery.get(key)
-    return value if isinstance(value, dict) else {}
-
-
-def _angle_found(angle_discovery: dict[str, Any], key: str) -> bool:
-    return _angle_item(angle_discovery, key).get("found") is True
-
-
-def _information_increment_score(
-    judgement: dict[str, Any], angle_discovery: dict[str, Any]
-) -> tuple[int, str]:
-    content_increment = str(judgement.get("content_increment") or "").strip()
-    angle = _angle_item(angle_discovery, "content_increment_angle")
-    angle_text = " ".join(str(angle.get(key) or "") for key in ("direction", "reason"))
-    evidence_text = f"{content_increment} {angle_text}".strip()
-    if not content_increment:
-        return 0, "没有内容增量说明，不能为信息增量加分"
-    if not _angle_found(angle_discovery, "content_increment_angle"):
-        return 1, "已明确标记为没有当前材料支持的具体增量，只保留最低分"
-    if any(marker in evidence_text for marker in _WEAK_INFORMATION_INCREMENT_MARKERS):
-        return 2, "角度存在，但当前材料明确说明具体事实或解释仍需研究，不能按已有增量高分处理"
-    return 4, "当前材料已给出可复用的事实、机制、比较或解释方向"
-
-
-def _candidate_assessment_from_judgement(
-    judgement: dict[str, Any], *, expires_at: str | None, supporting_material_count: int = 0
-) -> tuple[dict[str, int], dict[str, str]]:
-    """Turn the frozen source-to-topic judgement into visible, bounded ranking evidence; it never selects a topic."""
-    angle_discovery = judgement.get("angle_discovery") if isinstance(judgement.get("angle_discovery"), dict) else {}
-    audience_found = _angle_found(angle_discovery, "audience_relevance_angle")
-    distinct = _angle_item(angle_discovery, "distinct_angle")
-    problem_found = _angle_found(angle_discovery, "problem_angle")
-    tension_found = _angle_found(angle_discovery, "tension_angle")
-    information_increment_score, information_increment_reason = _information_increment_score(
-        judgement, angle_discovery
-    )
-    audience_relation = str(judgement.get("audience_relation") or "").strip()
-    topic_angle = str(judgement.get("topic_angle") or "").strip()
-    core_question = str(judgement.get("core_question") or "").strip()
-
-    # These fields are already required or effectively guaranteed by the
-    # qualification/candidate contract. A present field is a middle baseline,
-    # not proof of strong demand or focus.
-    demand_score = 3 if audience_relation and audience_found else 2 if audience_relation else 0
-    question_score = 3 if core_question and problem_found else 2 if core_question else 0
-    expression_score = 0 if not topic_angle else 4 if tension_found else 2
-    expression_score = min(5, expression_score + min(2, supporting_material_count))
-    scores = {
-        "demand_strength": demand_score,
-        "information_increment": information_increment_score,
-        "expression_pull": expression_score,
-        "distinct_angle": 4 if _angle_found(angle_discovery, "distinct_angle") else 2,
-        "question_focus": question_score,
-        "timeliness": 5 if expires_at else 2,
-    }
-    reasons = {
-        "demand_strength": (
-            f"{audience_relation or 'no audience relation supplied'}; "
-            f"audience-relevance angle found={audience_found}; presence is treated as a baseline, not strong demand"
-        ),
-        "information_increment": (
-            f"{str(judgement.get('content_increment') or 'no information increment supplied')}; "
-            f"{information_increment_reason}"
-        ),
-        "expression_pull": (
-            f"{topic_angle or 'no topic angle supplied'}; "
-            f"tension angle found={tension_found}; same-angle supporting materials: {supporting_material_count}"
-        ),
-        "distinct_angle": str(distinct.get("reason") or judgement.get("topic_angle") or "no distinct-angle evidence supplied"),
-        "question_focus": (
-            f"{core_question or 'no core question supplied'}; "
-            f"problem angle found={problem_found}; a passed candidate gets only a focus baseline"
-        ),
-        "timeliness": "source has an explicit validity window" if expires_at else "no explicit time window; only a low default weight is allowed",
-    }
-    return scores, reasons
-
-
-def validate_candidate_judgement(payload: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(payload, dict):
-        raise DailyDiscoveryValidationError("candidate judgement must be an object")
-    forbidden_fields = {"score", "rank", "weight", "recommendation_score", "quality_rank"}
-    if forbidden_fields & set(payload):
-        raise DailyDiscoveryValidationError("candidate judgement must not contain business-ranking fields")
-    outcome = _required_text(payload, "outcome")
-    if outcome == "no_candidate":
-        if set(payload) != {"outcome", "reason"}:
-            raise DailyDiscoveryValidationError("zero-candidate output may contain only outcome and reason")
-        return {"outcome": outcome, "reason": _required_text(payload, "reason")}
-    if outcome != "candidate":
-        raise DailyDiscoveryValidationError("candidate outcome is unsupported")
-    normalized = {
-        key: _required_natural_chinese(payload, key)
-        for key in ("title", "core_question", "why_attention", "new_angle", "material_readiness", "risk_limits")
-    }
-    relation = _required_text(payload, "originality_relation")
-    if relation not in ORIGINALITY_RELATIONSHIPS:
-        raise DailyDiscoveryValidationError("candidate originality_relation is unsupported")
-    normalized["originality_relation"] = relation
-    normalized["outcome"] = outcome
-    return normalized
-
-
-def validate_hotspot_opportunity_judgement(
-    payload: dict[str, Any], *, enabled_domains: tuple[str, ...]
-) -> dict[str, Any]:
-    """Validate one event's zero-or-many domain opportunities without ranking them."""
-    if not isinstance(payload, dict):
-        raise DailyDiscoveryValidationError("hotspot opportunity judgement must be an object")
-    if set(payload) != {"outcome", "candidates", "reason"}:
-        raise DailyDiscoveryValidationError("hotspot opportunity output has unsupported fields")
-    if {"score", "rank", "weight", "recommendation_score", "quality_rank"} & set(payload):
-        raise DailyDiscoveryValidationError("hotspot opportunity output must not contain ranking fields")
-    outcome = _required_text(payload, "outcome")
-    reason = _required_natural_chinese(payload, "reason")
-    candidates = payload["candidates"]
-    if not isinstance(candidates, list):
-        raise DailyDiscoveryValidationError("hotspot opportunity candidates must be an array")
-    if outcome == "no_candidate":
-        if candidates:
-            raise DailyDiscoveryValidationError("zero-candidate outcome must not include candidates")
-        return {"outcome": outcome, "candidates": [], "reason": reason}
-    if outcome != "candidates" or not candidates or len(candidates) > 10:
-        raise DailyDiscoveryValidationError("hotspot opportunity outcome is invalid")
-    required = {
-        "domain_label", "theme_conflict", "domain_bridge", "audience_problem",
-        "domain_fit", "fit_reason", "primary_lens", "candidate_topic", "core_question",
-        "audience_relation", "content_increment", "topic_angle", "verification_gap",
-        "trendradar_material_refs", "timeliness", "risks", "user_review_reason",
-    }
-    normalized: list[dict[str, Any]] = []
-    seen_domains: set[str] = set()
-    for item in candidates:
-        if not isinstance(item, dict) or set(item) != required:
-            raise DailyDiscoveryValidationError("hotspot candidate fields are invalid")
-        domain_label = _required_text(item, "domain_label")
-        if domain_label not in enabled_domains:
-            raise DailyDiscoveryValidationError("hotspot candidate uses a domain not enabled for this run")
-        if domain_label in seen_domains:
-            raise DailyDiscoveryValidationError("hotspot event can create at most one candidate per domain")
-        domain_bridge = item["domain_bridge"]
-        if not isinstance(domain_bridge, dict) or set(domain_bridge) != {"type", "reason"}:
-            raise DailyDiscoveryValidationError("hotspot candidate domain_bridge is invalid")
-        bridge_type = _required_text(domain_bridge, "type")
-        if bridge_type not in HOTSPOT_DOMAIN_BRIDGE_TYPES:
-            raise DailyDiscoveryValidationError("hotspot candidate has an unsupported domain bridge type")
-        domain_fit = _required_text(item, "domain_fit")
-        if domain_fit not in HOTSPOT_DOMAIN_FITS:
-            raise DailyDiscoveryValidationError("hotspot candidate has an unsupported domain fit")
-        primary_lens = _required_natural_chinese(item, "primary_lens")
-        if primary_lens not in HOTSPOT_PRIMARY_LENSES:
-            raise DailyDiscoveryValidationError("hotspot candidate has an unsupported primary lens")
-        candidate = {
-            key: _required_natural_chinese(item, key)
-            for key in required - {
-                "domain_label", "domain_bridge", "domain_fit", "primary_lens",
-                "trendradar_material_refs", "risks",
-            }
-        }
-        bridge_reason = _required_natural_chinese(domain_bridge, "reason")
-        refs, risks = item["trendradar_material_refs"], item["risks"]
-        # This is format repair only: a single supplied reference or risk keeps
-        # exactly the same meaning, but is normalized into the contract's list
-        # shape before semantic validation.  It must never invent or remove one.
-        if isinstance(refs, str) and refs.strip():
-            refs = [refs]
-        if isinstance(risks, str) and risks.strip():
-            risks = [risks]
-        if not isinstance(refs, list) or not refs or not all(isinstance(ref, str) and ref.strip() for ref in refs):
-            raise DailyDiscoveryValidationError("hotspot candidate must cite TrendRadar material")
-        if not isinstance(risks, list) or not all(isinstance(risk, str) and risk.strip() for risk in risks):
-            raise DailyDiscoveryValidationError("hotspot candidate risks must be a string array")
-        seen_domains.add(domain_label)
-        normalized.append({
-            "domain_label": domain_label,
-            **candidate,
-            "domain_bridge": {"type": bridge_type, "reason": bridge_reason},
-            "domain_fit": domain_fit,
-            "primary_lens": primary_lens,
-            "trendradar_material_refs": [ref.strip() for ref in refs],
-            "risks": [risk.strip() for risk in risks],
-        })
-    return {"outcome": outcome, "candidates": normalized, "reason": reason}
-
-
-def parse_candidate_judgement_output(output_text: str) -> dict[str, Any]:
-    """Parse one JSON object, tolerating only a single exact JSON code fence."""
-    text = output_text.strip()
-    fenced = re.fullmatch(r"```(?:json)?\s*(\{.*\})\s*```", text, flags=re.IGNORECASE | re.DOTALL)
-    if fenced:
-        text = fenced.group(1)
-    return validate_candidate_judgement(json.loads(text))
-
-
-def candidate_rejection(domain_label: str, judgement: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
-    """Apply deterministic post-model domain and material gates before candidate storage."""
-    if judgement.get("topic_status") not in {"generated", "generated_good_candidate", "valid_but_weak", "needs_review"}:
-        return None
-    policy = get_discovery_policy(domain_label)
-    candidate_text = "\n".join(
-        str(judgement.get(key) or "")
-        for key in ("candidate_topic", "core_question", "audience_relation", "content_increment", "topic_angle")
-    ).casefold()
-    exclude_terms = tuple(str(term) for term in policy.get("exclude_terms", []))
-    matched_terms = sorted({term for term in exclude_terms if term.casefold() in candidate_text})
-    if matched_terms:
-        return "candidate_outside_domain_policy", {"matched_terms": matched_terms}
-    material_readiness = "；".join(str(item) for item in judgement.get("material_gaps", []))
-    insufficient_markers = ("材料严重不足", "事实无法确认", "无法确认事实", "无法核实事实")
-    matched_markers = [marker for marker in insufficient_markers if marker in material_readiness]
-    if matched_markers:
-        return "candidate_material_insufficient", {"matched_markers": matched_markers}
-    return None
-
-
-def hotspot_candidate_rejection(domain_label: str, candidate: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
-    """Apply a domain boundary after a hotspot has been understood, never from its raw title."""
-    policy = get_discovery_policy(domain_label)
-    candidate_text = "\n".join(
-        str(value or "")
-        for value in (
-            candidate.get("theme_conflict"),
-            candidate.get("audience_problem"),
-            candidate.get("fit_reason"),
-            candidate.get("candidate_topic"),
-            candidate.get("core_question"),
-            candidate.get("audience_relation"),
-            candidate.get("content_increment"),
-            candidate.get("topic_angle"),
-            (candidate.get("domain_bridge") or {}).get("reason") if isinstance(candidate.get("domain_bridge"), dict) else "",
-        )
-    ).casefold()
-    exclude_terms = tuple(str(term) for term in policy.get("exclude_terms", []))
-    matched_terms = sorted({term for term in exclude_terms if term.casefold() in candidate_text})
-    if matched_terms:
-        return "candidate_outside_domain_policy", {"matched_terms": matched_terms}
-    return None
-
-
-def daily_discovery_prompt(input_payload: dict[str, Any]) -> str:
-    return (
-        "你只能根据一条已通过确定性筛选的受控来源，作有限的候选判断。不得搜索、抓取、下载、转写、分析视频，"
-        "也不得声称受控输入之外的事实。来源仅是发现线索，绝不是研究证据；不得创建正式选题。"
-        "只返回一个裸 JSON 对象，不要使用 Markdown 代码块或附加说明。若不足以形成候选，只返回 outcome=no_candidate 和非空中文 reason。"
-        "若形成候选，必须返回 outcome=candidate 以及 title、core_question、why_attention、new_angle、"
-        "material_readiness、risk_limits、originality_relation。面向用户的 title（标题）、core_question（核心问题）、"
-        "why_attention（价值）和 risk_limits（风险）必须是自然中文；原始来源标题可保留原语言。"
-        "必须遵守受控输入中的 domain_policy；若来源或拟议角度属于其排除类型，必须返回 no_candidate，"
-        "不得通过改写成社会公平、公众情绪或警示价值来包装。若材料严重不足或事实无法确认，也必须返回 no_candidate。"
-        "originality_relation 只能是 same_topic_original_reconstruction、problem_expansion、independent_research。"
-        "不得返回 score、rank、weight、recommendation_score 或 quality_rank。必须说明不确定性和材料缺口。\n\n"
-        f"受控输入：{_canonical(input_payload)}"
-    )
 
 
 def build_production_source_acquirer(
@@ -466,7 +172,6 @@ class Stage1BDailyDiscoveryService:
         gateway: Any | None = None,
         source_acquirer: DailyDiscoverySourceAcquirer | None = None,
         source_to_topic_contract: FormalSkillContract | None = None,
-        hotspot_to_opportunity_contract: FormalSkillContract | None = None,
         model_route: Any | None = None,
         external_executor: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
     ):
@@ -478,7 +183,6 @@ class Stage1BDailyDiscoveryService:
         self.external_executor = external_executor
         self.source_acquirer = source_acquirer
         self.source_to_topic_contract = source_to_topic_contract or FormalSkillContract.from_runtime_skill("source_to_topic")
-        self.hotspot_to_opportunity_contract = hotspot_to_opportunity_contract or FormalSkillContract.from_yaml(HOTSPOT_TO_OPPORTUNITY_CONTRACT_PATH)
 
     def _feed_unregistered_account_observation(
         self,
@@ -663,21 +367,7 @@ class Stage1BDailyDiscoveryService:
                     summary["technical_failures"] += 1
             elif "hotspot" not in requested_source_types:
                 summary["acquisition"] = {"status": "not_selected", "reason": "hotspot is outside this source-specific run", "tag_search": {}}
-            hotspot_summary = self._process_hotspots_once(
-                run_id=run["run_id"],
-                requested_domains=requested_domains,
-                requested_source_types=requested_source_types,
-                daily_since=daily_since,
-                hotspot_discovery_run_id=hotspot_discovery_run_id,
-                now=now,
-                execution_mode=execution_mode,
-                idempotency_key=idempotency_key,
-                deadline_monotonic=deadline,
-            )
-            summary["hotspot_audit"] = hotspot_summary["hotspot_audit"]
-            if hotspot_summary["technical_failure"] is not None:
-                summary["technical_failures"] += 1
-                lifecycle_status, failure_reason = "failed", hotspot_summary["technical_failure"]
+            summary["hotspot_audit"] = {"status": "domain_source_to_topic" if "hotspot" in requested_source_types else "not_selected", "reason": "领域热点独立进入公共选题流程；音乐停用；不依赖综合榜单或人工挑选榜单。"}
             if hotspot_discovery_run_id is not None and execution_mode == "production_daily":
                 summary["acquisition"].setdefault("hotspot", {})["raw_batch_status"] = (
                     "retained_after_conversion; automatic cleanup is disabled"
@@ -701,7 +391,7 @@ class Stage1BDailyDiscoveryService:
                     if source_type in requested_source_types
                 }
                 if "hotspot" in requested_source_types:
-                    source_evidence["hotspot"] = hotspot_summary["source_evidence"][domain_label]
+                    source_evidence["hotspot"] = {"status": "not_available", "reason": "disabled_for_music" if domain_label == "music_entertainment" else "no_source_available", "source_refs": []}
                 summary["source_readiness"][domain_label] = self.core.discovery_source_readiness(
                     domain_label=domain_label,
                     daily_since=daily_since,
@@ -715,7 +405,8 @@ class Stage1BDailyDiscoveryService:
                         hotspot_discovery_run_id=hotspot_discovery_run_id,
                         resume_source_object_ids=resume_source_object_ids,
                     )
-                    if source["source_type"] in requested_source_types and source["source_type"] != "hotspot"
+                    if source["source_type"] in requested_source_types
+                    and not (source["source_type"] == "hotspot" and domain_label == "music_entertainment")
                 ]
                 limited_sources: list[dict[str, Any]] = []
                 for source in loaded_sources:
@@ -772,9 +463,9 @@ class Stage1BDailyDiscoveryService:
                     )
                     yield from (source for source in refreshed if source["source_type"] == "tag_discovery")
 
-                filtered: dict[str, int] = dict(hotspot_summary["filtered"][domain_label])
-                candidate_count = hotspot_summary["candidate_counts"][domain_label]
-                sources_read = hotspot_summary["sources_read"][domain_label]
+                filtered: dict[str, int] = {}
+                candidate_count = 0
+                sources_read = 0
                 for index, source in enumerate(ordered_sources()):
                     sources_read += 1
                     if deadline is not None and time.monotonic() >= deadline:
@@ -844,7 +535,6 @@ class Stage1BDailyDiscoveryService:
                         run_id=run["run_id"], source_version_id=source_result["source_version_id"], payload=assembly_payload,
                         prompt_version=DISCOVERY_PROMPT_VERSION, skill_version=DISCOVERY_SKILL_VERSION,
                         idempotency_key=f"{idempotency_key}:{domain_label}:assembly:{index}",
-                        external_execution=True,
                     )
                     model_result = None
                     try:
@@ -854,29 +544,9 @@ class Stage1BDailyDiscoveryService:
                             assembly_id=assembly["assembly_id"],
                             input_payload=assembly_payload,
                         )
-                    except ExternalIntelligenceRequired as exc:
-                        summary["external_intelligence_required"] = {
-                            "task_type": exc.task.get("task_type"),
-                            "business_context": exc.task.get("business_context"),
-                        }
-                        summary["failure_details"].append({
-                            "stage": "candidate_discovery",
-                            "operation": "source_to_topic",
-                            "status": "requires_external_intelligence",
-                            "reason": str(exc),
-                        })
-                        return {
-                            "run_id": run["run_id"],
-                            "discovery_date": discovery_date,
-                            "status": "requires_external_intelligence",
-                            "execution_mode": execution_mode,
-                            "source_types": list(requested_source_types),
-                            "failure_reason": None,
-                            "technical_failures": 0,
-                            "failure_details": list(summary["failure_details"]),
-                            "summary": summary,
-                            "task": exc.task,
-                        }
+                    except ExternalIntelligenceRequired:
+                        # Finish assembling this batch; Core returns pending source tasks before priority.
+                        continue
                     except (json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
                         failed_model_run_id = (
                             model_result.envelope_version_id if model_result is not None
@@ -912,97 +582,18 @@ class Stage1BDailyDiscoveryService:
                             "batch stopped without retry"
                         )
                         break
-                    if judgement["topic_status"] == "no_result":
-                        self.core.record_discovery_no_candidate(
-                            run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
-                            reason_code="model_returned_no_candidate",
-                            detail={
-                                "reason": judgement["no_result_reason"],
-                                "material_gaps": judgement.get("material_gaps", []),
-                                "source_constraints": judgement.get("source_constraints", []),
-                            },
-                            idempotency_key=f"{idempotency_key}:{domain_label}:absence:{index}",
-                        )
-                        filtered["model_returned_no_candidate"] = filtered.get("model_returned_no_candidate", 0) + 1
-                        if source["source_type"] in source_evidence:
-                            source_evidence[source["source_type"]]["status"] = "no_candidate"
-                            source_evidence[source["source_type"]]["reason"] = "model_returned_no_candidate"
-                        continue
-                    rejection = candidate_rejection(domain_label, judgement)
-                    if rejection is not None:
-                        reason_code, detail = rejection
-                        self.core.record_discovery_no_candidate(
-                            run_id=run["run_id"], source_version_id=source_result["source_version_id"],
-                            model_run_id=model_result.envelope_version_id, reason_code=reason_code, detail=detail,
-                            idempotency_key=f"{idempotency_key}:{domain_label}:absence:{index}",
-                        )
-                        filtered[reason_code] = filtered.get(reason_code, 0) + 1
-                        if source["source_type"] in source_evidence:
-                            source_evidence[source["source_type"]]["status"] = "no_candidate"
-                            source_evidence[source["source_type"]]["reason"] = reason_code
-                        continue
-                    candidate_payload = {
-                        **judgement,
-                        "title": judgement["candidate_topic"],
-                        "why_attention": judgement["audience_relation"],
-                        "new_angle": f"{judgement['topic_angle']}；{judgement['content_increment']}",
-                        "material_readiness": "；".join(judgement.get("material_gaps", [])) or "来源转选题 Skill 未列出材料缺口；正式研究仍需独立补证。",
-                        "risk_limits": "；".join(judgement.get("risks", [])) or "来源仅作发现线索，不作为正式研究证据。",
-                        "originality_relation": "problem_expansion",
-                        "hit_origin": source["payload"].get("hit_origin"),
-                        "parent_source_ref": source["payload"].get("parent_source_ref"),
-                        "normalized_title": _normalize_title(judgement["candidate_topic"]),
-                        "normalized_source_title": _normalize_title(str(source["payload"]["title"])),
-                        "domain": domain_label,
-                        "qualification_material_refs": source["payload"].get("qualification_material_refs", []),
-                        "qualification_checks": source["payload"].get("qualification_checks", {}),
-                        "source_reference": {"source_version_id": source_result["source_version_id"], "source_type": source["source_type"], "source_object_id": source["source_object_id"], "source_object_version": source["source_object_version"], "source_time": source["source_time"], "url": source["payload"].get("url", "")},
-                    }
-                    related = self.core.find_related_discovery_candidates(
-                        domain_label=domain_label, core_question=judgement["core_question"], topic_angle=judgement["topic_angle"],
+                    persisted = self.commit_source_topic_result(
+                        run_id=run["run_id"], source_version_id=source_result["source_version_id"],
+                        model_run_id=model_result.envelope_version_id, judgement=judgement,
                     )
-                    if related["same_angle"]:
-                        target_candidate = related["same_angle"][0]
-                        support = self.core.record_candidate_support(
-                            candidate_version_id=target_candidate, source_version_id=source_result["source_version_id"],
-                            relation_reason="the same source-to-topic judgement produced the same core question and angle",
-                        )
-                        support_count = self.core.count_candidate_support_materials(
-                            candidate_version_id=support["candidate_version_id"]
-                        )
-                        scores, reasons = _candidate_assessment_from_judgement(
-                            judgement,
-                            expires_at=self._expires_at(source, now=now),
-                            supporting_material_count=support_count,
-                        )
-                        self.core.record_candidate_assessment(
-                            candidate_version_id=support["candidate_version_id"],
-                            dimension_scores=scores,
-                            dimension_reasons=reasons,
-                            assessed_by="source_to_topic_same_angle_material_reassessment",
-                        )
+                    if persisted["status"] == "no_candidate":
+                        filtered["model_returned_no_candidate"] = filtered.get("model_returned_no_candidate", 0) + 1
+                        if source["source_type"] in source_evidence and source_evidence[source["source_type"]]["status"] != "has_candidate":
+                            source_evidence[source["source_type"]].update(status="no_candidate", reason="model_returned_no_candidate")
                     else:
-                        created = self.core.create_discovery_candidate(
-                            run_id=run["run_id"], source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
-                            candidate_id=f"candidate_{_stable_id({domain_label: source_result['source_version_id'], 'title': candidate_payload['normalized_title']})}",
-                            payload=candidate_payload, idempotency_key=f"{idempotency_key}:{domain_label}:candidate:{index}",
-                        )
-                        for related_candidate in related["different_angle"]:
-                            self.core.record_candidate_relation(
-                                candidate_version_id=created["candidate_version_id"], related_candidate_version_id=related_candidate,
-                                relation_kind="same_topic_different_angle", relation_reason="the same core question has a different frozen topic angle",
-                            )
-                        scores, reasons = _candidate_assessment_from_judgement(
-                            judgement, expires_at=self._expires_at(source, now=now)
-                        )
-                        self.core.record_candidate_assessment(
-                            candidate_version_id=created["candidate_version_id"], dimension_scores=scores,
-                            dimension_reasons=reasons, assessed_by="source_to_topic_frozen_judgement",
-                        )
-                        candidate_count += 1
-                    if source["source_type"] in source_evidence:
-                        source_evidence[source["source_type"]]["status"] = "has_candidate"
-                        source_evidence[source["source_type"]]["reason"] = "candidate_created"
+                        candidate_count += int(persisted["status"] == "created")
+                        if source["source_type"] in source_evidence:
+                            source_evidence[source["source_type"]].update(status="has_candidate", reason="candidate_created")
                 summary["domains"][domain_label] = {"sources_read": sources_read, "candidates": candidate_count}
                 summary["source_readiness"][domain_label] = self.core.discovery_source_readiness(
                     domain_label=domain_label,
@@ -1031,6 +622,9 @@ class Stage1BDailyDiscoveryService:
             run_id=run["run_id"], domains=requested_domains, lifecycle_status=lifecycle_status,
             failure_reason=failure_reason, idempotency_key=f"{idempotency_key}:snapshot",
         )
+        if finalization["status"] == "requires_external_intelligence":
+            return {**finalization, "discovery_date": discovery_date, "summary": summary,
+                    "execution_mode": execution_mode, "source_types": list(requested_source_types)}
         result = {
             "run_id": run["run_id"],
             "discovery_date": discovery_date,
@@ -1185,359 +779,6 @@ class Stage1BDailyDiscoveryService:
         }
 
 
-    def _process_hotspots_once(
-        self,
-        *,
-        run_id: str,
-        requested_domains: tuple[str, ...],
-        requested_source_types: tuple[str, ...],
-        daily_since: str,
-        hotspot_discovery_run_id: str | None,
-        now: datetime,
-        execution_mode: str,
-        idempotency_key: str,
-        deadline_monotonic: float | None,
-    ) -> dict[str, Any]:
-        empty_evidence = {"status": "not_available", "reason": "hotspot_not_selected", "source_refs": []}
-        result = {
-            "candidate_counts": {domain: 0 for domain in requested_domains},
-            "sources_read": {domain: 0 for domain in requested_domains},
-            "filtered": {domain: {} for domain in requested_domains},
-            "source_evidence": {domain: dict(empty_evidence) for domain in requested_domains},
-            "hotspot_audit": {"events": [], "hard_excluded": 0, "selected_for_detail": 0, "not_selected_after_top_ten": 0},
-            "technical_failure": None,
-        }
-        if "hotspot" not in requested_source_types:
-            return result
-        sources = self.core.load_hotspot_event_clusters(
-            daily_since=daily_since,
-            per_source_limit=None,
-            hotspot_discovery_run_id=hotspot_discovery_run_id,
-        )
-        if not sources:
-            for domain in requested_domains:
-                result["source_evidence"][domain] = {"status": "no_candidate", "reason": "no_hotspot_event", "source_refs": []}
-            return result
-        storage_domain = requested_domains[0]
-        eligible_sources: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
-        for index, source in enumerate(sources):
-            cluster = dict(source["payload"].get("hotspot_event_cluster") or {})
-            audit_entry = {
-                "event_id": cluster.get("cluster_id", source["source_object_id"]),
-                "title": source["payload"].get("title", ""),
-                "url": source["payload"].get("url", ""),
-                "merged_sources": [
-                    {"platform": item.get("channel", ""), "rank": item.get("rank"), "title": item.get("title", ""), "url": item.get("url", "")}
-                    for item in cluster.get("merged_sources", [])
-                ],
-                "selection_signal": dict(cluster.get("selection_signal") or {}),
-                "status": "hard_screening",
-                "reason_code": "",
-                "detail": {},
-            }
-            result["hotspot_audit"]["events"].append(audit_entry)
-            outcome, reason_code, detail = self._deterministic_filter(
-                domain_label=storage_domain, source=source, now=now
-            )
-            if (
-                outcome == "excluded"
-                and reason_code == "source_already_processed"
-                and execution_mode == "real_daily_validation"
-                and hotspot_discovery_run_id is not None
-            ):
-                # A user-authorized validation rerun deliberately reuses a
-                # frozen hotspot batch after rules change.  It must reassess
-                # the event rather than silently inherit an earlier result.
-                outcome, reason_code, detail = "eligible", "eligible", {
-                    "normalized_source_title": _normalize_title(str(source["payload"].get("title") or "")),
-                    "reassessment": "explicit_real_daily_validation_reuse",
-                }
-            if outcome != "eligible":
-                audit_entry.update({"status": "hard_excluded", "reason_code": reason_code, "detail": detail})
-                result["hotspot_audit"]["hard_excluded"] += 1
-                source_result = self.core.record_discovery_source(
-                    run_id=run_id,
-                    domain_label=storage_domain,
-                    source_type="hotspot",
-                    source_object_id=source["source_object_id"],
-                    source_object_version=source["source_object_version"],
-                    source_time=source["source_time"],
-                    expires_at=self._expires_at(source, now=now),
-                    payload=source["payload"],
-                    idempotency_key=f"{idempotency_key}:hotspot:source:{index}",
-                )
-                self.core.record_discovery_filter(
-                    source_version_id=source_result["source_version_id"], outcome=outcome,
-                    reason_code=reason_code, detail=detail,
-                    idempotency_key=f"{idempotency_key}:hotspot:filter:{index}",
-                )
-                for domain in requested_domains:
-                    result["sources_read"][domain] += 1
-                    result["filtered"][domain][reason_code] = result["filtered"][domain].get(reason_code, 0) + 1
-                    result["source_evidence"][domain] = {"status": "no_candidate", "reason": reason_code, "source_refs": []}
-                continue
-            audit_entry.update({"status": "hard_passed", "reason_code": "eligible"})
-            eligible_sources.append((index, source, audit_entry))
-
-        for selected_index, (index, source, audit_entry) in enumerate(eligible_sources):
-            audit_entry.update({"status": "selected_for_detail", "reason_code": "hotspot_signal_priority"})
-            result["hotspot_audit"]["selected_for_detail"] += 1
-            detail_result: dict[str, Any] = {"status": "not_required"}
-            read_detail = getattr(self.source_acquirer, "read_hotspot_event_detail", None)
-            if callable(read_detail):
-                source, detail_result = read_detail(source=source, deadline_monotonic=deadline_monotonic)
-            if detail_result.get("status") not in {"completed", "not_required"}:
-                outcome, reason_code, detail = "excluded", "hotspot_detail_unavailable", {
-                    "reason": str(detail_result.get("reason") or "original_link_content_unavailable")
-                }
-                audit_entry.update({"status": "detail_unavailable", "reason_code": reason_code, "detail": detail})
-            source_result = self.core.record_discovery_source(
-                run_id=run_id,
-                domain_label=storage_domain,
-                source_type="hotspot",
-                source_object_id=source["source_object_id"],
-                source_object_version=source["source_object_version"],
-                source_time=source["source_time"],
-                expires_at=self._expires_at(source, now=now),
-                payload=source["payload"],
-                idempotency_key=f"{idempotency_key}:hotspot:source:{index}",
-            )
-            self.core.record_discovery_filter(
-                source_version_id=source_result["source_version_id"], outcome=outcome,
-                reason_code=reason_code, detail=detail,
-                idempotency_key=f"{idempotency_key}:hotspot:filter:{index}",
-            )
-            for domain in requested_domains:
-                result["sources_read"][domain] += 1
-            if outcome != "eligible":
-                for domain in requested_domains:
-                    result["filtered"][domain][reason_code] = result["filtered"][domain].get(reason_code, 0) + 1
-                    result["source_evidence"][domain] = {"status": "no_candidate", "reason": reason_code, "source_refs": []}
-                continue
-            input_payload = self._hotspot_opportunity_input(source=source, enabled_domains=requested_domains)
-            assembly = self.core.create_discovery_input_assembly(
-                run_id=run_id, source_version_id=source_result["source_version_id"], payload=input_payload,
-                prompt_version="hotspot_to_opportunity.v1", skill_version="hotspot_to_opportunity.v1",
-                idempotency_key=f"{idempotency_key}:hotspot:assembly:{index}",
-                external_execution=True,
-            )
-            try:
-                model_result, judgement = self._run_hotspot_to_opportunity_skill(
-                    run_id=run_id, source_version_id=source_result["source_version_id"],
-                    assembly_id=assembly["assembly_id"], input_payload=input_payload,
-                    enabled_domains=requested_domains,
-                )
-            except ExternalIntelligenceRequired as exc:
-                summary["external_intelligence_required"] = {
-                    "task_type": exc.task.get("task_type"),
-                    "business_context": exc.task.get("business_context"),
-                }
-                summary["failure_details"].append({
-                    "stage": "candidate_discovery",
-                    "operation": "hotspot_to_opportunity",
-                    "status": "requires_external_intelligence",
-                    "reason": str(exc),
-                })
-                return {
-                    "run_id": run_id,
-                    "discovery_date": discovery_date,
-                    "status": "requires_external_intelligence",
-                    "execution_mode": execution_mode,
-                    "source_types": list(requested_source_types),
-                    "failure_reason": None,
-                    "technical_failures": 0,
-                    "failure_details": list(summary["failure_details"]),
-                    "summary": summary,
-                    "task": exc.task,
-                }
-            except (json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
-                audit_entry.update({"status": "judgement_failed", "reason_code": "hotspot_judgement_failed", "detail": {"reason": str(exc)}})
-                failed_model_run_id = getattr(exc, "model_run_envelope_version_id", None)
-                raw_model_output = getattr(exc, "raw_model_output", None)
-                if failed_model_run_id is not None:
-                    self.core.record_discovery_model_validation_failure(
-                        model_run_id=failed_model_run_id, reason=str(exc), raw_model_output=raw_model_output,
-                    )
-                self.core.record_discovery_source_failure(
-                    run_id=run_id, source_version_id=source_result["source_version_id"], model_run_id=failed_model_run_id,
-                    failure_stage="model_output_validation" if failed_model_run_id else "model_execution",
-                    reason=str(exc), raw_model_output=raw_model_output,
-                    idempotency_key=f"{idempotency_key}:hotspot:failure:{index}",
-                )
-                for domain in requested_domains:
-                    result["filtered"][domain]["hotspot_judgement_failed"] = result["filtered"][domain].get("hotspot_judgement_failed", 0) + 1
-                    result["source_evidence"][domain] = {"status": "failed", "reason": "hotspot_judgement_failed", "source_refs": []}
-                result["technical_failure"] = "hotspot model judgement failed; batch stopped without retry"
-                break
-            if judgement["outcome"] == "no_candidate":
-                audit_entry.update({"status": "not_converted", "reason_code": "hotspot_not_converted", "detail": {"reason": judgement["reason"]}})
-                self.core.record_discovery_no_candidate(
-                    run_id=run_id, source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
-                    reason_code="hotspot_not_converted", detail={"reason": judgement["reason"]},
-                    idempotency_key=f"{idempotency_key}:hotspot:absence:{index}",
-                )
-                for domain in requested_domains:
-                    result["filtered"][domain]["hotspot_not_converted"] = result["filtered"][domain].get("hotspot_not_converted", 0) + 1
-                    result["source_evidence"][domain] = {"status": "no_candidate", "reason": "hotspot_not_converted", "source_refs": []}
-                continue
-            accepted_candidates: list[dict[str, Any]] = []
-            rejected_candidates: list[dict[str, Any]] = []
-            for candidate in judgement["candidates"]:
-                rejection = hotspot_candidate_rejection(candidate["domain_label"], candidate)
-                if rejection is None:
-                    accepted_candidates.append(candidate)
-                    continue
-                reason_code, detail = rejection
-                rejected_candidates.append({"domain_label": candidate["domain_label"], "reason_code": reason_code, "detail": detail})
-                result["filtered"][candidate["domain_label"]][reason_code] = (
-                    result["filtered"][candidate["domain_label"]].get(reason_code, 0) + 1
-                )
-                result["source_evidence"][candidate["domain_label"]] = {
-                    "status": "no_candidate", "reason": reason_code, "source_refs": []
-                }
-            if not accepted_candidates:
-                reason_code = rejected_candidates[0]["reason_code"]
-                detail = rejected_candidates[0]["detail"]
-                audit_entry.update({"status": "not_converted", "reason_code": reason_code, "detail": detail})
-                self.core.record_discovery_no_candidate(
-                    run_id=run_id, source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
-                    reason_code=reason_code, detail=detail,
-                    idempotency_key=f"{idempotency_key}:hotspot:absence:{index}",
-                )
-                continue
-            for candidate_index, candidate in enumerate(accepted_candidates):
-                domain = candidate["domain_label"]
-                payload = {
-                    "title": candidate["candidate_topic"], "why_attention": candidate["audience_relation"],
-                    "new_angle": f"{candidate['topic_angle']}；{candidate['content_increment']}",
-                    "material_readiness": "热点仅提供发现材料；正式研究仍需独立核验。",
-                    "risk_limits": "；".join(candidate["risks"]) or "热点材料仅用于发现，不得替代正式研究证据。",
-                    "originality_relation": "problem_expansion", "normalized_title": _normalize_title(candidate["candidate_topic"]),
-                    "normalized_source_title": _normalize_title(str(source["payload"]["title"])), "domain": domain,
-                    "source_reference": {"source_version_id": source_result["source_version_id"], "source_type": "hotspot", "source_object_id": source["source_object_id"], "source_object_version": source["source_object_version"], "source_time": source["source_time"], "url": source["payload"].get("url", "")},
-                    **candidate,
-                }
-                self.core.create_discovery_candidate(
-                    run_id=run_id, source_version_id=source_result["source_version_id"], model_run_id=model_result.envelope_version_id,
-                    candidate_id=f"candidate_{_stable_id({domain: source_result['source_version_id'], 'title': payload['normalized_title']})}",
-                    payload=payload, candidate_domain_label=domain, allow_multiple_from_model_run=True,
-                    idempotency_key=f"{idempotency_key}:hotspot:candidate:{index}:{candidate_index}",
-                )
-                result["candidate_counts"][domain] += 1
-                result["source_evidence"][domain] = {"status": "has_candidate", "reason": "candidate_created", "source_refs": [{"source_type": "hotspot", "source_object_id": source["source_object_id"], "source_object_version": source["source_object_version"]}]}
-            audit_entry.update({
-                "status": "judged",
-                "reason_code": "candidate_created",
-                "detail": {"candidate_count": len(accepted_candidates), "rejected_candidates": rejected_candidates},
-            })
-        return result
-
-    def _prepare_hotspot_to_opportunity_task(
-        self,
-        *,
-        run_id: str,
-        source_version_id: str,
-        assembly_id: str,
-        input_payload: dict[str, Any],
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        contract = self.hotspot_to_opportunity_contract
-        enforce_atomic_skill_runtime_guard(
-            entrypoint="stage1b_daily_discovery.hotspot_to_opportunity",
-            operation=contract.formal_skill_id,
-            data_identity=self.core.data_identity,
-        )
-        contract.validate_contract(require_model_route=False)
-        validate_payload(input_payload, contract.input_schema)
-        preprocessed = preprocess_formal_skill_input(contract.formal_skill_id, input_payload)
-        model_input = apply_binding(contract.input_map, input_payload, {}, preprocessed)
-        validate_payload(model_input, contract.model_input_schema)
-        task = self.core.prepare_discovery_external_task(
-            run_id=run_id,
-            source_version_id=source_version_id,
-            assembly_id=assembly_id,
-            skill={
-                "formal_skill_id": contract.formal_skill_id,
-                "version": contract.version,
-                "source_reference": "HOTSPOT_TO_OPPORTUNITY_BUSINESS_CONTRACT.yaml",
-                "content": contract.prompt_template,
-                "rendered_instructions": contract.portable_skill().render_prompt(model_input),
-                "input_schema": contract.model_input_schema,
-                "output_schema": contract.model_output_schema,
-                "skill_hash": contract.skill_hash,
-                "binding": {
-                    "name": contract.binding_name,
-                    "version": contract.binding_version,
-                    "hash": contract.binding_hash,
-                },
-            },
-            input_payload=model_input,
-            constraints={
-                "use_only_supplied_material": True,
-                "do_not_search": True,
-                "preserve_source_identity": True,
-                "respect_domain_boundary": True,
-                "respect_risk_boundary": True,
-                "do_not_force_candidate": True,
-                "no_score_rank_weight": True,
-                "cannot_change_business_state": True,
-            },
-            output_requirements={
-                "submission": "structured_fields",
-                "schema": contract.model_output_schema,
-                "formal_output_schema": contract.output_schema,
-                "response_format": "structured_fields",
-            },
-        )
-        return task, preprocessed
-
-    def _accept_hotspot_to_opportunity_external_result(
-        self,
-        *,
-        run_id: str,
-        source_version_id: str,
-        assembly_id: str,
-        input_payload: dict[str, Any],
-        preprocessed: dict[str, Any],
-        enabled_domains: tuple[str, ...],
-        submission: Mapping[str, Any],
-    ) -> tuple[ExternalIntelligenceReceipt, dict[str, Any]]:
-        if not isinstance(submission, Mapping):
-            raise FormalSkillValidationError("external intelligent result must be a structured submission")
-        external_output = submission.get("output")
-        if not isinstance(external_output, dict):
-            raise FormalSkillValidationError("external intelligent result must provide structured output fields")
-        execution_id = str(submission.get("execution_id") or "").strip()
-        executor_id = str(submission.get("executor_id") or "").strip()
-        if not execution_id or not executor_id:
-            raise FormalSkillValidationError("external intelligent result requires execution and executor identity")
-        model_run_id = self.core.record_discovery_external_execution(
-            run_id=run_id,
-            source_version_id=source_version_id,
-            assembly_id=assembly_id,
-            execution_id=execution_id,
-            executor_id=executor_id,
-            model_ref=str(submission.get("model_ref") or "").strip() or None,
-            submitted_at=str(submission.get("submitted_at") or "").strip() or None,
-            output_payload=external_output,
-        )
-        contract = self.hotspot_to_opportunity_contract
-        try:
-            model_output = dict(external_output)
-            validate_payload(model_output, contract.model_output_schema)
-            output_payload = apply_binding(contract.output_map, input_payload, model_output, preprocessed)
-            validate_payload(output_payload, contract.output_schema)
-            judgement = validate_hotspot_opportunity_judgement(
-                output_payload, enabled_domains=enabled_domains
-            )
-        except (json.JSONDecodeError, DailyDiscoveryValidationError, FormalSkillValidationError) as exc:
-            self.core.record_discovery_model_validation_failure(
-                model_run_id=model_run_id, reason=str(exc), raw_model_output=None,
-            )
-            raise FormalSkillValidationError(
-                str(exc), model_run_envelope_version_id=model_run_id,
-            ) from exc
-        return ExternalIntelligenceReceipt(model_run_id), judgement
-
     def _prepare_source_to_topic_task(
         self,
         *,
@@ -1547,6 +788,9 @@ class Stage1BDailyDiscoveryService:
         input_payload: dict[str, Any],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         contract = self.source_to_topic_contract
+        assembly = self.core._discovery_assembly(assembly_id)
+        if assembly["skill_version"] != DISCOVERY_SKILL_VERSION or assembly["prompt_version"] != DISCOVERY_PROMPT_VERSION:
+            raise FormalSkillValidationError("旧选题输入不能配合当前流程执行；请通过 Core 按当前规则重新装配来源材料")
         data_identity = getattr(self.core, "data_identity", "test")
         enforce_atomic_skill_runtime_guard(
             entrypoint="stage1b_daily_discovery.source_to_topic",
@@ -1559,7 +803,7 @@ class Stage1BDailyDiscoveryService:
                 else None
             ),
         )
-        contract.validate_contract(require_model_route=False)
+        contract.validate_contract()
         validate_payload(input_payload, contract.input_schema)
         preprocessed = preprocess_formal_skill_input(contract.formal_skill_id, input_payload)
         model_input = apply_binding(contract.input_map, input_payload, {}, preprocessed)
@@ -1602,6 +846,7 @@ class Stage1BDailyDiscoveryService:
                 "response_format": contract.model_response_format,
             },
         )
+        task["task_identity"] = {"run_id": run_id, "source_version_id": source_version_id, "assembly_id": assembly_id}
         return task, preprocessed
 
     def prepare_source_to_topic_external_task(
@@ -1679,6 +924,59 @@ class Stage1BDailyDiscoveryService:
             ) from exc
         return ExternalIntelligenceReceipt(model_run_id), output_payload
 
+    def commit_source_topic_result(self, *, run_id: str, source_version_id: str, model_run_id: str, judgement: dict[str, Any]) -> dict[str, Any]:
+        """Persist the one validated source result through the same Core path for daily and MCP."""
+        row = self.core._discovery_source(source_version_id)
+        source = {**dict(row), "payload": json.loads(row["payload_json"])}
+        domain_label = str(row["domain_label"])
+        if judgement["topic_status"] == "no_result":
+            self.core.record_discovery_no_candidate(
+                run_id=run_id, source_version_id=source_version_id, model_run_id=model_run_id,
+                reason_code="model_returned_no_candidate",
+                detail={"reason": judgement["no_result_reason"], "material_gaps": judgement["material_gaps"], "source_constraints": judgement["source_constraints"], "material_understanding": judgement["material_understanding"]},
+                idempotency_key=f"source-topic:{model_run_id}:absence",
+            )
+            return {"status": "no_candidate"}
+        candidate_payload = {
+            **judgement,
+            "title": judgement["candidate_topic"],
+            "why_attention": judgement["audience_relation"],
+            "new_angle": f"{judgement['topic_angle']}；{judgement['content_increment']}",
+            "material_readiness": "；".join(judgement.get("material_gaps", [])) or "来源转选题 Skill 未列出材料缺口；正式研究仍需独立补证。",
+            "risk_limits": "；".join(judgement.get("risks", [])) or "来源仅作发现线索，不作为正式研究证据。",
+            "originality_relation": "problem_expansion",
+            "hit_origin": source["payload"].get("hit_origin"),
+            "parent_source_ref": source["payload"].get("parent_source_ref"),
+            "normalized_title": _normalize_title(judgement["candidate_topic"]),
+            "normalized_source_title": _normalize_title(str(source["payload"]["title"])),
+            "domain": domain_label,
+            "qualification_material_refs": source["payload"].get("qualification_material_refs", []),
+            "qualification_checks": source["payload"].get("qualification_checks", {}),
+            "source_reference": {"source_version_id": source_version_id, "source_type": source["source_type"], "source_object_id": source["source_object_id"], "source_object_version": source["source_object_version"], "source_time": source["source_time"], "url": source["payload"].get("url", "")},
+        }
+        related = self.core.find_related_discovery_candidates(
+            domain_label=domain_label, core_question=judgement["core_question"], topic_angle=judgement["topic_angle"],
+        )
+        if related["same_angle"]:
+            target_candidate = related["same_angle"][0]
+            support = self.core.record_candidate_support(
+                candidate_version_id=target_candidate, source_version_id=source_version_id,
+                relation_reason="the same source-to-topic judgement produced the same core question and angle",
+            )
+        else:
+            created = self.core.create_discovery_candidate(
+                run_id=run_id, source_version_id=source_version_id, model_run_id=model_run_id,
+                candidate_id=f"candidate_{_stable_id({domain_label: source_version_id, 'title': candidate_payload['normalized_title']})}",
+                payload=candidate_payload, idempotency_key=f"source-topic:{model_run_id}:candidate",
+            )
+            for related_candidate in related["different_angle"]:
+                self.core.record_candidate_relation(
+                    candidate_version_id=created["candidate_version_id"], related_candidate_version_id=related_candidate,
+                    relation_kind="same_topic_different_angle", relation_reason="the same core question has a different frozen topic angle",
+                )
+            return {"status": "created", **created}
+        return {"status": "supported", "candidate_version_id": target_candidate}
+
     def submit_source_to_topic_external_result(
         self,
         *,
@@ -1704,7 +1002,7 @@ class Stage1BDailyDiscoveryService:
             assembly_id=assembly_id,
             input_payload=input_payload,
         )
-        return Stage1BDailyDiscoveryService._accept_source_to_topic_external_result(
+        receipt, judgement = Stage1BDailyDiscoveryService._accept_source_to_topic_external_result(
             self,
             run_id=run_id,
             source_version_id=source_version_id,
@@ -1719,6 +1017,8 @@ class Stage1BDailyDiscoveryService:
                 "output": output,
             },
         )
+        self.commit_source_topic_result(run_id=run_id, source_version_id=source_version_id, model_run_id=receipt.model_run_id, judgement=judgement)
+        return receipt, judgement
 
     def _run_source_to_topic_skill(
         self,
@@ -1748,55 +1048,6 @@ class Stage1BDailyDiscoveryService:
             submission=submission,
         )
 
-    def _run_hotspot_to_opportunity_skill(
-        self,
-        *,
-        run_id: str,
-        source_version_id: str,
-        assembly_id: str,
-        input_payload: dict[str, Any],
-        enabled_domains: tuple[str, ...],
-    ):
-        task, preprocessed = self._prepare_hotspot_to_opportunity_task(
-            run_id=run_id,
-            source_version_id=source_version_id,
-            assembly_id=assembly_id,
-            input_payload=input_payload,
-        )
-        if self.external_executor is None:
-            raise ExternalIntelligenceRequired(task)
-        return self._accept_hotspot_to_opportunity_external_result(
-            run_id=run_id,
-            source_version_id=source_version_id,
-            assembly_id=assembly_id,
-            input_payload=input_payload,
-            preprocessed=preprocessed,
-            enabled_domains=enabled_domains,
-            submission=self.external_executor(task),
-        )
-
-    @staticmethod
-    def _hotspot_opportunity_input(
-        *, source: dict[str, Any], enabled_domains: tuple[str, ...]
-    ) -> dict[str, Any]:
-        cluster = source["payload"].get("hotspot_event_cluster")
-        if not isinstance(cluster, dict):
-            raise DailyDiscoveryValidationError("hotspot opportunity requires a complete event cluster")
-        return {
-            "event_material": cluster,
-            "enabled_domains": [
-                {
-                    "domain_label": domain_label,
-                    "direction_card": {
-                        key: value
-                        for key, value in get_domain_pack(domain_label).items()
-                        if key != "discovery"
-                    },
-                }
-                for domain_label in enabled_domains
-            ],
-        }
-
     def _deterministic_filter(
         self,
         *,
@@ -1812,6 +1063,8 @@ class Stage1BDailyDiscoveryService:
             return "excluded", "source_not_qualified", {}
         if domain_label not in formal_domain_labels():
             return "excluded", "domain_mismatch", {}
+        if source["source_type"] == "hotspot" and domain_label == "music_entertainment":
+            return "excluded", "disabled_for_music", {}
         title, url = str(source["payload"].get("title") or ""), str(source["payload"].get("url") or "")
         if len(title.strip()) < 6 or (source["source_type"] not in {"question_expansion", "saved_user_direction"} and not url):
             return "excluded", "material_obviously_insufficient", {}
@@ -1902,6 +1155,9 @@ class Stage1BDailyDiscoveryService:
         }
         source_kind = source_kind_map[source["source_type"]]
         source_content_parts = [title]
+        for key in ("transcript", "content", "description"):
+            if str(payload.get(key) or "").strip():
+                source_content_parts.append(f"{key}：{payload[key]}")
         parent_source_ref = payload.get("parent_source_ref") if source["source_type"] == "question_expansion" else None
         if isinstance(parent_source_ref, dict):
             parent_type = str(parent_source_ref.get("source_type") or "").strip()
@@ -1914,6 +1170,9 @@ class Stage1BDailyDiscoveryService:
             source_content_parts.append(f"来源链接：{url}")
         source_content = "；".join(source_content_parts)
         evidence_items = [title]
+        for key in ("transcript", "content", "description"):
+            if str(payload.get(key) or "").strip():
+                evidence_items.append(str(payload[key]))
         qualification_material_refs = payload.get("qualification_material_refs")
         if source["source_type"] == "question_expansion" and isinstance(qualification_material_refs, list):
             for material_ref in qualification_material_refs:
@@ -1966,6 +1225,7 @@ class Stage1BDailyDiscoveryService:
             f"排除类型/词包括：{', '.join(str(term) for term in policy.get('exclude_terms', [])) or '无'}。"
             f"热点匹配词包括：{', '.join(str(term) for term in policy.get('hotspot_match_terms', [])) or '无'}。"
         )
+        domain_summary += "当前领域的具体内容约束：" + json.dumps(topic_domain_rules(domain_label), ensure_ascii=False)
         if isinstance(expansion_policy, dict) and expansion_policy.get("primary_content_carrier_rule"):
             domain_summary += f"问题拓展的内容承载规则：{expansion_policy['primary_content_carrier_rule']}"
         return {

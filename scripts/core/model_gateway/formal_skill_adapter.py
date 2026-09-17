@@ -8,15 +8,12 @@ from typing import Any
 
 import yaml
 
-from scripts.core.model_gateway.goal07_model_gateway import ModelGateway, ModelRequest
 from scripts.core.model_gateway.goal07_skill_runner import PortableSkillSpec
-from scripts.core.model_gateway.model_router import ModelRouter, ModelRouterError
 from scripts.core.persistence.goal01_store import content_hash
 
 
 ROOT = Path(__file__).resolve().parents[3]
 SOURCE_TO_TOPIC_CONTRACT_PATH = ROOT / "SOURCE_TO_TOPIC_BUSINESS_CONTRACT.yaml"
-HOTSPOT_TO_OPPORTUNITY_CONTRACT_PATH = ROOT / "HOTSPOT_TO_OPPORTUNITY_BUSINESS_CONTRACT.yaml"
 COMPETITOR_BREAKDOWN_SKILL_IDS = frozenset({"competitor_breakdown"})
 COMPETITOR_BREAKDOWN_ANALYSIS_DELIMITER = "---ANALYSIS---"
 
@@ -192,18 +189,6 @@ _AUTHOR_ATTRIBUTION_MARKERS = (
 
 
 @dataclass(frozen=True)
-class FormalSkillRunResult:
-    formal_skill_id: str
-    output_payload: dict[str, Any]
-    model_input_payload: dict[str, Any]
-    model_run_envelope_version_id: str
-    skill_hash: str
-    binding_hash: str
-    model_route: str
-    raw_model_output: str
-
-
-@dataclass(frozen=True)
 class FormalSkillContract:
     formal_skill_id: str
     version: str
@@ -225,6 +210,8 @@ class FormalSkillContract:
     @classmethod
     def from_yaml(cls, path: Path) -> "FormalSkillContract":
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if data.get("runtime_skill"):
+            return cls.from_runtime_skill(str(data["skill_id"]))
         binding = data["model_binding"]
         return cls(
             formal_skill_id=str(data.get("formal_skill_id") or data["skill_id"]),
@@ -273,14 +260,9 @@ class FormalSkillContract:
             standalone_boundaries=dict(manifest.get("standalone_boundaries") or {}),
         )
 
-    def validate_contract(self, *, require_model_route: bool = True) -> None:
+    def validate_contract(self) -> None:
         if not self.formal_skill_id or not self.version or self.route_name not in self.allowed_model_nodes:
             raise FormalSkillValidationError("invalid Skill contract")
-        if require_model_route:
-            try:
-                ModelRouter.from_file().resolve_bound_route(self.route_id, route_name=self.route_name)
-            except ModelRouterError as exc:
-                raise FormalSkillValidationError("invalid model route") from exc
         for schema in (self.input_schema, self.output_schema, self.model_input_schema, self.model_output_schema):
             validate_schema_definition(schema)
         if self.model_response_format is not None:
@@ -294,9 +276,11 @@ class FormalSkillContract:
                 raise FormalSkillValidationError("model response format is unsupported")
         if self.standalone_boundaries and any(self.standalone_boundaries.get(key) is not False for key in (
             "requires_database", "reads_files_at_runtime", "writes_files_at_runtime",
-            "calls_other_skills", "calls_core_api", "accesses_external_url", "uses_chat_memory",
+            "calls_other_skills", "calls_core_api", "uses_chat_memory",
         )):
             raise FormalSkillValidationError("atomic Skill boundary is not standalone")
+        if self.standalone_boundaries.get("accesses_external_url") is True and self.formal_skill_id != "source_to_topic":
+            raise FormalSkillValidationError("external reading is only enabled for the source-to-topic Agent workflow")
 
     @property
     def skill_hash(self) -> str:
@@ -324,7 +308,7 @@ def prepare_external_skill_task(
     receives the formal Skill and its current rendered instructions, but no
     route, provider, fallback, or model choice.
     """
-    contract.validate_contract(require_model_route=False)
+    contract.validate_contract()
     validate_payload(input_payload, contract.input_schema)
     prepared = preprocess_formal_skill_input(contract.formal_skill_id, input_payload)
     model_input = apply_binding(contract.input_map, input_payload, {}, prepared)
@@ -371,7 +355,7 @@ def validate_external_skill_output(
     prepared: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate fields submitted by an outside executor without parsing text."""
-    contract.validate_contract(require_model_route=False)
+    contract.validate_contract()
     if not isinstance(output_payload, dict):
         raise FormalSkillValidationError("external intelligent result must be structured fields")
     validate_payload(input_payload, contract.input_schema)
@@ -393,251 +377,6 @@ def validate_external_skill_output(
         validate_source_to_topic_output_semantics(input_payload, output_payload)
     del prepared
     return dict(output_payload)
-
-
-class FormalBusinessSkillAdapter:
-    def __init__(
-        self,
-        *,
-        contract: FormalSkillContract,
-        gateway: ModelGateway,
-        data_identity: str | None = None,
-    ):
-        if data_identity == "production":
-            raise FormalSkillValidationError(
-                "formal business model execution must use an external executor"
-            )
-        contract.validate_contract()
-        self.contract, self.gateway = contract, gateway
-        self.data_identity = data_identity
-
-    def run(
-        self,
-        input_payload: dict[str, Any],
-        *,
-        request_metadata: dict[str, Any] | None = None,
-    ) -> FormalSkillRunResult:
-        from scripts.core.production.business_runtime_guard import (
-            enforce_atomic_skill_runtime_guard,
-        )
-
-        enforce_atomic_skill_runtime_guard(
-            entrypoint="formal_business_skill_adapter",
-            operation=self.contract.formal_skill_id,
-            data_identity=self.data_identity,
-        )
-        validate_payload(input_payload, self.contract.input_schema)
-        prepared = preprocess_formal_skill_input(self.contract.formal_skill_id, input_payload)
-        model_input = apply_binding(self.contract.input_map, input_payload, {}, prepared)
-        validate_payload(model_input, self.contract.model_input_schema)
-        if self.contract.route_name not in self.gateway.routes:
-            raise FormalSkillValidationError("approved model route is unavailable")
-        rendered_prompt = self.contract.portable_skill().render_prompt(model_input)
-        if self.contract.formal_skill_id in COMPETITOR_BREAKDOWN_SKILL_IDS:
-            rendered_prompt = _bind_competitor_breakdown_source(rendered_prompt, model_input)
-        model_run = self.gateway.complete(ModelRequest(
-            route_name=self.contract.route_name,
-            prompt=rendered_prompt,
-            input_payload=model_input,
-            correlation_id=input_payload["correlation_id"],
-            skill_name=self.contract.formal_skill_id,
-            skill_version=self.contract.version,
-            skill_hash=self.contract.skill_hash,
-            binding_name=self.contract.binding_name,
-            binding_version=self.contract.binding_version,
-            binding_hash=self.contract.binding_hash,
-            response_format=self.contract.model_response_format,
-            metadata={"formal_skill_id": self.contract.formal_skill_id, **(request_metadata or {})},
-        ))
-        try:
-            if self.contract.formal_skill_id == "competitor_breakdown":
-                model_output = parse_competitor_breakdown_delimited_output(model_run.output_text)
-                model_output = normalize_formal_skill_model_output(self.contract.formal_skill_id, model_output)
-                validate_payload(
-                    {key: value for key, value in model_output.items() if key != "analysis_text"},
-                    self.contract.model_output_schema,
-                )
-            else:
-                model_output = parse_model_json(model_run.output_text)
-                model_output = normalize_formal_skill_model_output(self.contract.formal_skill_id, model_output)
-                validate_payload(model_output, self.contract.model_output_schema)
-            output = apply_binding(self.contract.output_map, input_payload, model_output, prepared)
-            if self.contract.formal_skill_id in COMPETITOR_BREAKDOWN_SKILL_IDS:
-                output = resolve_competitor_breakdown_evidence_ids(
-                    output,
-                    list(prepared.get("transcript_catalog") or []),
-                    list(prepared.get("comment_catalog") or []),
-                )
-                if output.get("schema_version") == "competitor_breakdown.output.raw.v4":
-                    output = {
-                        key: output[key]
-                        for key in (
-                            "source_id", "source_content_type",
-                            "analysis_text", "question_expansions", "schema_version",
-                        )
-                    }
-            validate_payload(output, self.contract.output_schema)
-            if self.contract.formal_skill_id == "competitor_breakdown":
-                if output.get("schema_version") == "competitor_breakdown.output.raw.v4":
-                    validate_competitor_breakdown_question_expansion_output(input_payload, output, validate_optional=False)
-                else:
-                    validate_competitor_breakdown_question_expansion_output(
-                        input_payload, output, validate_optional=False
-                    )
-            if self.contract.formal_skill_id == "source_to_topic":
-                validate_source_to_topic_output_semantics(input_payload, output)
-        except FormalSkillValidationError as exc:
-            raise FormalSkillValidationError(
-                str(exc),
-                raw_model_output=exc.raw_model_output or model_run.output_text,
-                model_run_envelope_version_id=model_run.envelope_version_id,
-                model_completion_receipt={
-                    "finish_reason": str((model_run.envelope.metadata or {}).get("finish_reason") or "not_available"),
-                    "completion_tokens": model_run.envelope.usage.completion_tokens,
-                    "duration_ms": model_run.envelope.duration_ms,
-                },
-            ) from exc
-        return FormalSkillRunResult(
-            self.contract.formal_skill_id,
-            output,
-            model_input,
-            model_run.envelope_version_id,
-            self.contract.skill_hash,
-            self.contract.binding_hash,
-            self.contract.route_name,
-            model_run.output_text,
-        )
-
-    def run_test_correction(
-        self,
-        input_payload: dict[str, Any],
-        *,
-        rejected_model_output: str,
-        validation_errors: list[str],
-        request_metadata: dict[str, Any] | None = None,
-    ) -> FormalSkillRunResult:
-        """Run one explicit, test-only correction of one rejected model answer.
-
-        This method has no loop and is deliberately separate from ``run``: formal
-        business execution keeps its one-call, final-outcome boundary.  The
-        correction request receives the same source input, the rejected answer,
-        and the program's exact validation errors as its complete fixed input.
-        """
-        if not isinstance(rejected_model_output, str) or not rejected_model_output.strip():
-            raise FormalSkillValidationError("test correction needs the rejected model answer")
-        errors = [str(item).strip() for item in validation_errors if str(item).strip()]
-        if not errors:
-            raise FormalSkillValidationError("test correction needs at least one validation error")
-        from scripts.core.production.business_runtime_guard import (
-            enforce_atomic_skill_runtime_guard,
-        )
-
-        enforce_atomic_skill_runtime_guard(
-            entrypoint="formal_business_skill_adapter.test_correction",
-            operation=self.contract.formal_skill_id,
-            data_identity=self.data_identity,
-        )
-        validate_payload(input_payload, self.contract.input_schema)
-        prepared = preprocess_formal_skill_input(self.contract.formal_skill_id, input_payload)
-        model_input = apply_binding(self.contract.input_map, input_payload, {}, prepared)
-        validate_payload(model_input, self.contract.model_input_schema)
-        if self.contract.route_name not in self.gateway.routes:
-            raise FormalSkillValidationError("approved model route is unavailable")
-        correction_format = (
-            "只输出 SOURCE_CONTENT_TYPE、MATCHED_SOURCE_CONTENT_TYPE 机器头和完整 analysis 正文。\n"
-            if self.contract.formal_skill_id == "competitor_breakdown"
-            else "只根据原始编号材料和下面的明确错误，提交一份完整修正后的 JSON。\n"
-        )
-        correction_prompt = (
-            self.contract.portable_skill().render_prompt(model_input)
-            + "\n\n【仅用于本次测试的单次修正】\n"
-            + "上一份回答没有通过程序核查。不要重新猜测材料，也不要解释错误；"
-            + correction_format
-            + "核查错误：\n- " + "\n- ".join(errors)
-            + "\n\n上一份被拒绝的回答（仅供修正，不是新的材料）：\n"
-            + "--- previous_model_output ---\n" + rejected_model_output
-            + "\n--- end_previous_model_output ---"
-        )
-        correction_input = {
-            **model_input,
-            "previous_model_output": rejected_model_output,
-            "validation_errors": errors,
-        }
-        model_run = self.gateway.complete(ModelRequest(
-            route_name=self.contract.route_name,
-            prompt=correction_prompt,
-            input_payload=correction_input,
-            correlation_id=input_payload["correlation_id"],
-            skill_name=self.contract.formal_skill_id,
-            skill_version=self.contract.version,
-            skill_hash=self.contract.skill_hash,
-            binding_name=self.contract.binding_name,
-            binding_version=self.contract.binding_version,
-            binding_hash=self.contract.binding_hash,
-            response_format=self.contract.model_response_format,
-            metadata={
-                "formal_skill_id": self.contract.formal_skill_id,
-                "test_only_correction": True,
-                "correction_attempt": 1,
-                "validation_error_count": len(errors),
-                **(request_metadata or {}),
-            },
-        ))
-        try:
-            if self.contract.formal_skill_id == "competitor_breakdown":
-                model_output = parse_competitor_breakdown_delimited_output(model_run.output_text)
-                model_output = normalize_formal_skill_model_output(self.contract.formal_skill_id, model_output)
-                validate_payload(
-                    {key: value for key, value in model_output.items() if key != "analysis_text"},
-                    self.contract.model_output_schema,
-                )
-            else:
-                model_output = parse_model_json(model_run.output_text)
-                model_output = normalize_formal_skill_model_output(self.contract.formal_skill_id, model_output)
-                validate_payload(model_output, self.contract.model_output_schema)
-            output = apply_binding(self.contract.output_map, input_payload, model_output, prepared)
-            if self.contract.formal_skill_id in COMPETITOR_BREAKDOWN_SKILL_IDS:
-                output = resolve_competitor_breakdown_evidence_ids(
-                    output,
-                    list(prepared.get("transcript_catalog") or []),
-                    list(prepared.get("comment_catalog") or []),
-                )
-                if output.get("schema_version") == "competitor_breakdown.output.raw.v4":
-                    output = {
-                        key: output[key]
-                        for key in (
-                            "source_id", "source_content_type",
-                            "analysis_text", "question_expansions", "schema_version",
-                        )
-                    }
-            validate_payload(output, self.contract.output_schema)
-            if self.contract.formal_skill_id == "competitor_breakdown":
-                validate_competitor_breakdown_question_expansion_output(
-                    input_payload, output, validate_optional=False
-                )
-            if self.contract.formal_skill_id == "source_to_topic":
-                validate_source_to_topic_output_semantics(input_payload, output)
-        except FormalSkillValidationError as exc:
-            raise FormalSkillValidationError(
-                str(exc),
-                raw_model_output=exc.raw_model_output or model_run.output_text,
-                model_run_envelope_version_id=model_run.envelope_version_id,
-                model_completion_receipt={
-                    "finish_reason": str((model_run.envelope.metadata or {}).get("finish_reason") or "not_available"),
-                    "completion_tokens": model_run.envelope.usage.completion_tokens,
-                    "duration_ms": model_run.envelope.duration_ms,
-                },
-            ) from exc
-        return FormalSkillRunResult(
-            self.contract.formal_skill_id,
-            output,
-            correction_input,
-            model_run.envelope_version_id,
-            self.contract.skill_hash,
-            self.contract.binding_hash,
-            self.contract.route_name,
-            model_run.output_text,
-        )
 
 
 def apply_binding(binding_map: dict[str, Any], input_payload: dict[str, Any], model_output: dict[str, Any], preprocessed: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1930,6 +1669,14 @@ def _is_abstract_only_delivery(value: str) -> bool:
 
 def validate_source_to_topic_output_semantics(input_payload: dict[str, Any], output_payload: dict[str, Any]) -> None:
     supplied = [str(item) for item in input_payload["source_evidence_items"]]
+    understanding = output_payload["material_understanding"]
+    sources = understanding["sources"]
+    if understanding["search_status"] == "searched" and not sources:
+        raise FormalSkillValidationError("searched material requires the actual read sources")
+    for source in sources:
+        if not source["url"].startswith(("https://", "http://")):
+            raise FormalSkillValidationError("read sources require a traceable web URL")
+    supplied.extend(source["url"] for source in sources)
     normalized_evidence: list[str] = []
     for item in output_payload["supporting_evidence"]:
         evidence = str(item).strip()
@@ -1942,10 +1689,20 @@ def validate_source_to_topic_output_semantics(input_payload: dict[str, Any], out
         normalized_evidence.append(containing[0])
     output_payload["supporting_evidence"] = list(dict.fromkeys(normalized_evidence))
     if output_payload["topic_status"] == "no_result":
+        if output_payload["candidate_topic"].strip() or output_payload["no_result_reason"] == "none":
+            raise FormalSkillValidationError("no-result must explain absence, not carry a candidate")
         return
+    if understanding["input_kind"] == "clue" and understanding["search_status"] != "searched":
+        raise FormalSkillValidationError("a clue must be understood through search before becoming a candidate")
+    if output_payload["no_result_reason"] != "none":
+        raise FormalSkillValidationError("generated candidate cannot also claim no result")
     if not all(output_payload[key] for key in ("candidate_topic", "topic_angle", "core_question")):
         raise FormalSkillValidationError("candidate requires a topic, angle and core question")
+    if not all(str(output_payload["topic_shape"][key]).strip() for key in ("core_subject", "scope_boundary", "one_piece_line")):
+        raise FormalSkillValidationError("candidate must be a formed topic, not an unformed clue")
     delivery = output_payload.get("delivery_contract")
+    if not str(delivery.get("user_gets") or "").strip():
+        raise FormalSkillValidationError("candidate must state its concrete audience delivery")
     if isinstance(delivery, dict) and _is_abstract_only_delivery(str(delivery.get("user_gets") or "")):
         raise FormalSkillValidationError(
             "candidate delivery_contract.user_gets must contain concrete content, not abstract value language"

@@ -5,33 +5,13 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from scripts.core.model_gateway.formal_skill_adapter import (
-    FormalBusinessSkillAdapter,
+    validate_external_skill_output,
     FormalSkillContract,
     FormalSkillValidationError,
     parse_competitor_breakdown_delimited_output,
     prepare_external_skill_task,
     validate_competitor_breakdown_question_expansion_output,
 )
-
-
-class _FakeGateway:
-    routes = {"stage0.competitor_registration_analysis": object()}
-
-    def __init__(self, output_text: str) -> None:
-        self.output_text = output_text
-        self.requests = []
-
-    def complete(self, request):
-        self.requests.append(request)
-        return SimpleNamespace(
-            output_text=self.output_text,
-            envelope_version_id="isolated-envelope",
-            envelope=SimpleNamespace(
-                metadata={},
-                usage=SimpleNamespace(completion_tokens=1),
-                duration_ms=1,
-            ),
-        )
 
 
 def _input(source_id: str) -> dict:
@@ -205,60 +185,21 @@ class CompetitorBreakdownDelimitedOutputTest(unittest.TestCase):
         )
         self.assertIn("QUESTION:", parsed["question_expansions"][0]["core_question"])
 
-    def test_adapter_preserves_formal_object_and_sends_no_response_format(self) -> None:
+
+    def test_external_result_preserves_prose_and_rejects_retired_fields(self) -> None:
+        contract = FormalSkillContract.from_runtime_skill("competitor_breakdown")
+        source = _input("external-result")
         body = "内容围绕一个对象展开，先交付背景，再说明它在本条内容中的意义。"
-        gateway = _FakeGateway(_response("case/explanation", body))
-        contract = FormalSkillContract.from_runtime_skill("competitor_breakdown")
-        self.assertIsNone(contract.model_response_format)
-        self.assertEqual(contract.model_output_schema["required"], ["source_content_type"])
-        self.assertIn("matched_source_content_type", contract.model_output_schema["properties"])
-        self.assertNotIn("analysis_text", contract.model_output_schema["properties"])
-        adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
-        with patch(
-            "scripts.core.production.business_runtime_guard.enforce_atomic_skill_runtime_guard"
-        ):
-            result = adapter.run(_input("real-sample-1"))
-
-        self.assertIsNone(gateway.requests[0].response_format)
-        self.assertEqual(
-            set(result.output_payload),
-            {
-                "source_id",
-                "source_content_type",
-                "analysis_text",
-                "schema_version",
-            },
-        )
-        self.assertEqual(result.output_payload["source_id"], "real-sample-1")
-        self.assertEqual(result.output_payload["analysis_text"].rstrip("\r\n"), body.rstrip("\r\n"))
-
-    def test_adapter_rejects_expansion_text_blocks_for_v5(self) -> None:
-        body = _core_analysis()
-        gateway = _FakeGateway(_response("case/explanation", body, include_blocks=True))
-        contract = FormalSkillContract.from_runtime_skill("competitor_breakdown")
-        adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
-        with self.assertRaises(FormalSkillValidationError):
-            with patch(
-                "scripts.core.production.business_runtime_guard.enforce_atomic_skill_runtime_guard"
-            ):
-                adapter.run(_input("real-sample-blocks"))
-
-    def test_adapter_rejects_boundary_observation_for_v5(self) -> None:
-        body = "内容围绕一个对象展开，先交付背景，再说明它在本条内容中的意义。"
-        gateway = _FakeGateway(
-            _response(
-                "case/explanation",
-                body,
-                boundary_observation="本条对可生产的问题性质提供了新的具体边界观察。",
-            )
-        )
-        contract = FormalSkillContract.from_runtime_skill("competitor_breakdown")
-        adapter = FormalBusinessSkillAdapter(contract=contract, gateway=gateway)
-        with self.assertRaises(FormalSkillValidationError):
-            with patch(
-                "scripts.core.production.business_runtime_guard.enforce_atomic_skill_runtime_guard"
-            ):
-                adapter.run(_input("real-sample-boundary"))
+        result = {
+            "source_id": "external-result",
+            "source_content_type": "case/explanation",
+            "analysis_text": body,
+            "schema_version": "competitor_breakdown.output.raw.v5",
+        }
+        self.assertEqual(validate_external_skill_output(contract, source, result), result)
+        for field, value in (("question_expansions", []), ("boundary_observation", "旧边界提案")):
+            with self.subTest(field=field), self.assertRaises(FormalSkillValidationError):
+                validate_external_skill_output(contract, source, {**result, field: value})
 
     def test_analysis_does_not_require_named_sections(self) -> None:
         base = {

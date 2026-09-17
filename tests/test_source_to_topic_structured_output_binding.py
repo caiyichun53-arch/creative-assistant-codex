@@ -2,7 +2,6 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from scripts.core.model_gateway.goal07_model_gateway import ModelRoute
 from scripts.core.production.stage1b_daily_discovery import Stage1BDailyDiscoveryService
 
 
@@ -80,59 +79,6 @@ class SourceToTopicStructuredOutputBindingTests(unittest.TestCase):
         self.assertEqual(captured["skill"]["formal_skill_id"], "source_to_topic")
         self.assertNotIn("model_route", captured)
         self.assertNotIn("provider", captured)
-
-    def test_request_builder_preserves_structured_response_format(self) -> None:
-        route = ModelRoute(
-            route_name="business.source_to_topic",
-            provider_name="hermes",
-            model_name="mimo-v2.5-pro",
-            config_version="hermes_task_binding.v1",
-            config_hash="config-hash",
-            route_id="business_analysis",
-            provider_ref="mimo_main",
-        )
-
-        class Core:
-            data_identity = "test"
-
-            @staticmethod
-            def _discovery_run(_run_id):
-                return {"status": "processing"}
-
-            @staticmethod
-            def _discovery_source(_source_version_id):
-                return {"run_id": "run-1"}
-
-            @staticmethod
-            def _discovery_assembly(_assembly_id):
-                return {
-                    "run_id": "run-1",
-                    "source_version_id": "source-1",
-                    "payload_json": (
-                        '{"model_binding": {"route_id":"business_analysis",'
-                        '"provider_name":"hermes","provider_ref":"mimo_main",'
-                        '"model_name":"mimo-v2.5-pro",'
-                        '"config_version":"hermes_task_binding.v1",'
-                        '"config_hash":"config-hash"}}'
-                    ),
-                    "model_config_version": "hermes_task_binding.v1",
-                    "skill_version": "1.2.0",
-                    "prompt_version": "source_to_topic.prompt.v2",
-                }
-
-        from scripts.core.production.stage0_content_core import Stage0ContentProductionCore
-
-        result = Stage0ContentProductionCore.prepare_discovery_model_request(
-            Core(),
-            run_id="run-1",
-            source_version_id="source-1",
-            assembly_id="assembly-1",
-            prompt="prompt",
-            model_route=route,
-            response_format={"type": "json_object"},
-        )
-
-        self.assertEqual(result.response_format, {"type": "json_object"})
 
 
 if __name__ == "__main__":

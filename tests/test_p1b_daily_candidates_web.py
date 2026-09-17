@@ -177,6 +177,14 @@ def _insert_discovery_run(
             "VALUES (?, ?, ?, ?, ?, 'test', ?)",
             (f"snapshot-{candidate_key}", run_id, domain, candidate_version_id, position, completed_at),
         )
+        core.conn.execute(
+            "INSERT INTO stage1b_candidate_priority VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (run_id,domain,candidate_version_id,"test-input",_canonical({
+                "candidate":candidate_payload,"created_at":completed_at,
+                "materials":[{"source_version_id":source_id}]}),
+             70,"TEST assessed priority","TEST fixture only",_canonical([source_id]),
+             "test-agent",None,"test-execution","test",completed_at),
+        )
         result[candidate_key] = candidate_version_id
     return result
 
@@ -262,6 +270,22 @@ class DailyCandidatesWebTests(unittest.TestCase):
             payload = json.loads(response.read().decode("utf-8"))
         self.assertTrue(payload["ok"], payload)
         return {item["domain_label"]: item for item in payload["domains"]}
+
+    def test_priority_top_ten_does_not_limit_user_selection(self) -> None:
+        core = Stage0ContentProductionCore.open(self.database, data_identity="test")
+        try:
+            _insert_daily_run(core,domain=MUSIC_DOMAIN,daily_run_id="daily-twelve",business_date="2026-09-01",created_at="2026-09-01T00:00:00+00:00")
+            ids = _insert_discovery_run(core,domain=MUSIC_DOMAIN,daily_run_id="daily-twelve",run_id="discovery-twelve",
+                discovery_date="2026-09-01",completed_at="2026-09-01T00:00:00+00:00",
+                candidates=[("twelve-"+str(i),"十二条测试候选之"+str(i)) for i in range(12)])
+            core.conn.execute("DELETE FROM stage1b_daily_snapshot WHERE run_id='discovery-twelve' AND display_position>10")
+            core.conn.commit()
+        finally: core.close()
+        self.assertEqual(len(self._candidates()[MUSIC_DOMAIN]["candidates"]),10)
+        selected = _post_json(self.base_url+"/api/action",{"action":"select_daily_candidate","domain_label":MUSIC_DOMAIN,
+            "candidate_version_id":ids["twelve-11"],"reason":"用户选择优先展示以外的候选"})
+        self.assertTrue(selected["ok"],selected)
+        self.assertEqual(selected["core_result"]["research_plan_status"],"requires_external_intelligence")
 
     def test_web_page_exposes_daily_candidate_view_and_action(self) -> None:
         with urlopen(self.base_url + "/") as response:

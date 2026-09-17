@@ -37,15 +37,7 @@ def _valid_source_to_topic_output(source_ref: str) -> dict:
         "source_constraints": ["来源只用于发现线索"],
         "no_result_reason": "none",
         "confidence": "medium",
-        "angle_discovery": {
-            "problem_angle": angle,
-            "audience_relevance_angle": angle,
-            "content_increment_angle": angle,
-            "tension_angle": angle,
-            "distinct_angle": angle,
-            "producible_angle": angle,
-            "durable_value_angle": angle,
-        },
+        "angle_discovery": [{"direction": angle["direction"], "reason": angle["reason"]}],
         "candidate_selection": {
             "selected_direction": "解释一个具体问题",
             "why_selected": "材料足以支撑下一步核验",
@@ -56,8 +48,7 @@ def _valid_source_to_topic_output(source_ref: str) -> dict:
         "user_review_required": True,
         "user_review_reasons": ["候选仍需人工选择"],
         "execution_review": {
-            "used_only_supplied_material": True,
-            "did_not_search_by_itself": True,
+            "used_traceable_material": True,
             "did_not_invent_facts": True,
             "respected_domain_boundary": True,
             "respected_risk_boundary": True,
@@ -75,7 +66,8 @@ def _valid_source_to_topic_output(source_ref: str) -> dict:
             "one_piece_line": "解释这个现象的机制",
         },
         "delivery_contract": {"user_gets": "一份解释这个具体问题的候选选题"},
-        "schema_version": "source_to_topic.output.v2",
+        "material_understanding": {"input_kind": "formed_topic", "search_status": "not_needed", "reason": "仅用于协议校验的完整题目夹具，不代表真实业务验收", "summary": source_ref, "domain_fit": "协议夹具", "sources": []},
+        "schema_version": "source_to_topic.output.v3",
     }
 
 
@@ -193,10 +185,9 @@ class Stage2AExternalIntelligenceBoundaryTests(unittest.TestCase):
             run_id=run["run_id"],
             source_version_id=source_row["source_version_id"],
             payload=assembly_payload,
-            prompt_version="source_to_topic.prompt.v2",
-            skill_version="source_to_topic.skill.v1.2.0",
+            prompt_version="source_to_topic.prompt.v3",
+            skill_version="source_to_topic.skill.v2.0.0",
             idempotency_key=f"stage2a-assembly:{suffix}",
-            external_execution=True,
         )
         preprocessed = preprocess_formal_skill_input("source_to_topic", assembly_payload)
         model_input = apply_binding(
@@ -235,9 +226,9 @@ class Stage2AExternalIntelligenceBoundaryTests(unittest.TestCase):
             input_payload=payloads["input"],
         )
         self.assertEqual(receipt.envelope_version_id, receipt.model_run_id)
-        self.assertEqual(output["schema_version"], "source_to_topic.output.v2")
+        self.assertEqual(output["schema_version"], "source_to_topic.output.v3")
         self.assertEqual(captured["task_type"], "source_to_topic")
-        self.assertEqual(captured["skill"]["version"], "1.2.0")
+        self.assertEqual(captured["skill"]["version"], "2.0.0")
         self.assertTrue(captured["constraints"]["cannot_change_business_state"])
         self.assertEqual(captured["output_requirements"]["submission"], "structured_fields")
 

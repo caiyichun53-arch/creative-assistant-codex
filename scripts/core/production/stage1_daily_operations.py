@@ -567,6 +567,14 @@ class ProductionDailyOperationsService:
                 "failure_details": [],
                 "resumed": bool(resume),
             }
+        if existing is not None and str(existing.get("lifecycle_status") or "") == "processing":
+            continuation = self.core.continue_candidate_priority_run(run_id=str(existing["run_id"]))
+            if continuation is not None:
+                if continuation["status"] == "requires_external_intelligence":
+                    return {**continuation, "candidate_discovery": "awaiting_external_intelligence"}
+                snapshot = self.core.get_discovery_snapshot(run_id=str(existing["run_id"]), domain_label=domain_label)
+                return {**continuation, "candidate_discovery": "completed", "candidates": snapshot,
+                        "candidate_count": len(snapshot)}
         source_acquirer = build_production_source_acquirer(
             self.core, source_types=DAILY_REPORT_SOURCE_TYPES,
         )
@@ -587,6 +595,8 @@ class ProductionDailyOperationsService:
             upstream_failures=upstream_failures,
             now=effective_at,
         )
+        if result.get("status") == "requires_external_intelligence":
+            return {**result, "candidate_discovery": "awaiting_external_intelligence"}
         snapshot = discovery.view_daily_snapshot(
             run_id=result["run_id"], domains=(domain_label,)
         )[domain_label]

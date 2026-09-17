@@ -466,24 +466,11 @@ class ActionWebApplication(ReadOnlyWebApplication):
                 raise StateTransitionError(
                     "daily candidate selection requires a domain, candidate and reason"
                 )
-            candidate = next(
-                (
-                    item
-                    for group in self.read_daily_candidates()
-                    if str(group.get("domain_label") or "") == domain_label
-                    for item in group.get("candidates") or []
-                    if str(item.get("candidate_version_id") or "") == candidate_version_id
-                ),
-                None,
-            )
-            if candidate is None:
-                raise StateTransitionError(
-                    "the candidate is not in the current Core daily candidate set for this domain"
-                )
-            if candidate.get("user_decision"):
-                raise StateTransitionError("the daily candidate already has a user decision")
-            if str(candidate.get("status") or "") != "awaiting_user_decision":
-                raise StateTransitionError("the daily candidate is not awaiting user selection")
+            candidate = core.get_discovery_candidate(candidate_version_id)
+            if candidate["domain_label"] != domain_label:
+                raise StateTransitionError("the candidate does not belong to this domain")
+            # Core checks the latest completed assessment and user decision.
+            # A priority display is not a selection cap.
             return dict(
                 business.handoff_daily_discovery_candidate(
                     candidate_version_id=candidate_version_id,

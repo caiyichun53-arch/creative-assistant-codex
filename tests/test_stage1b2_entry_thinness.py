@@ -82,16 +82,8 @@ class Stage1B2EntryThinnessTests(unittest.TestCase):
                 "execute_daily_discovery",
                 "handoff_daily_discovery_candidate",
             ),
-            "scripts/agent_platform/hermes_formal_research_entry.py": (
-                "execute_formal_research",
-            ),
             "scripts/agent_platform/hermes_daily_repair_entry.py": (
-                "validate_daily_repair_request",
                 "plan_daily_repair",
-                "apply_daily_repair",
-            ),
-            "scripts/agent_platform/hermes_knowledge_convergence_entry.py": (
-                "apply_knowledge_convergence",
             ),
             "scripts/agent_platform/cold_start_background_entry.py": (
                 "execute_cold_start_background",

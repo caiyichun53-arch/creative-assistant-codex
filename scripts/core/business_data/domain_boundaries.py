@@ -20,6 +20,16 @@ from scripts.core.business_data.domain_labels import (
 PRODUCTION_BOUNDARY_REGISTRY_STATUSES = frozenset({"not_frozen", "frozen"})
 
 
+def topic_domain_rules(domain_label: str) -> dict[str, Any]:
+    """The same current domain context goes to topic formation and comparison."""
+    pack = get_domain_pack(domain_label)
+    return {
+        "production_boundary": require_frozen_production_boundary(domain_label),
+        "content_type_examples": pack.get("content_type_registry", {}),
+        "content_type_usage": "历史类型用于理解具体交付与排除，不是封闭白名单；排除边界优先于宽泛允许项。",
+    }
+
+
 def get_production_boundary_registry(domain_label: str) -> dict[str, Any]:
     """Return a validated boundary registry; absence is explicitly not frozen."""
 

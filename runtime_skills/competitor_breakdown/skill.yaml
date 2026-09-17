@@ -13,7 +13,6 @@ non_responsibilities:
   - business_state_transition
   - human_confirmation
   - other_skill_invocation
-runner: FormalBusinessSkillAdapter
 route_name: stage0.competitor_registration_analysis
 route_id: business_analysis
 input_schema: input_schema.yaml

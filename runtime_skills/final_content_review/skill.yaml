@@ -3,7 +3,6 @@ formal_skill_id: final_content_review
 skill_version: 1.0.0
 responsibility: Review and produce only the final spoken script from one frozen revised draft.
 non_responsibilities: [collection, external_search, formal_data_write, business_state_transition, human_confirmation, other_skill_invocation]
-runner: FormalBusinessSkillAdapter
 route_name: stage0.review
 route_id: writing_generation
 input_schema: input_schema.yaml

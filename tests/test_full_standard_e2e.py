@@ -510,62 +510,9 @@ def _review_cold_start_results(
 
 
 def _source_to_topic_output(source_ref: str) -> dict[str, Any]:
-    angle = {
-        "found": True,
-        "direction": "解释一个具体问题",
-        "reason": "输入材料支持这个方向",
-    }
-    return {
-        "topic_status": "generated",
-        "candidate_topic": "一个可以继续核验的具体音乐问题",
-        "topic_angle": "从具体机制解释现象",
-        "core_question": "这个音乐现象为什么会发生",
-        "audience_relation": "帮助目标观众理解一个具体问题",
-        "content_increment": "补充机制和核验路径",
-        "supporting_evidence": [source_ref],
-        "source_constraints": ["来源只用于发现线索"],
-        "no_result_reason": "none",
-        "confidence": "medium",
-        "angle_discovery": {
-            "problem_angle": angle,
-            "audience_relevance_angle": angle,
-            "content_increment_angle": angle,
-            "tension_angle": angle,
-            "distinct_angle": angle,
-            "producible_angle": angle,
-            "durable_value_angle": angle,
-        },
-        "candidate_selection": {
-            "selected_direction": "解释一个具体问题",
-            "why_selected": "材料足以支持下一步核验",
-            "rejected_directions": [],
-        },
-        "risks": [],
-        "material_gaps": ["正式研究仍需独立核验"],
-        "user_review_required": True,
-        "user_review_reasons": ["候选仍需人工选择"],
-        "execution_review": {
-            "used_only_supplied_material": True,
-            "did_not_search_by_itself": True,
-            "did_not_invent_facts": True,
-            "respected_domain_boundary": True,
-            "respected_risk_boundary": True,
-            "did_not_force_candidate": True,
-            "no_score_rank_weight": True,
-        },
-        "experience_usage": {
-            "used_experience_ids": [],
-            "unused_experience_ids": [],
-            "rationale": "没有适用的经验卡",
-        },
-        "topic_shape": {
-            "core_subject": "一个具体音乐现象",
-            "scope_boundary": "只讨论当前来源支持的范围",
-            "one_piece_line": "解释这个现象的机制",
-        },
-        "delivery_contract": {"user_gets": "一份有核验边界的候选选题"},
-        "schema_version": "source_to_topic.output.v2",
-    }
+    # Protocol fixture only, not an editorial quality acceptance.
+    from tests.test_stage2a_external_intelligence_boundary import _valid_source_to_topic_output
+    return _valid_source_to_topic_output(source_ref)
 
 
 def _daily_external_executor(received: list[dict[str, Any]]):
